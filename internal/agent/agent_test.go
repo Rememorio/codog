@@ -7732,6 +7732,65 @@ func TestSessionsCommandImportWritesManagedSession(t *testing.T) {
 	require.Contains(t, out.String(), "Overwritten      yes")
 }
 
+func TestSessionsCommandPruneDefaultsToDryRun(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	_, err := store.Create("empty-session")
+	require.NoError(t, err)
+	require.NoError(t, store.Append("kept-session", anthropic.TextMessage("user", "keep me")))
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out}
+
+	require.NoError(t, app.SessionsCommand([]string{"prune"}))
+	var dryRun session.PruneReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &dryRun))
+	require.Equal(t, "session_prune", dryRun.Kind)
+	require.Equal(t, "dry_run", dryRun.Status)
+	require.True(t, dryRun.DryRun)
+	require.True(t, dryRun.EmptyOnly)
+	require.Equal(t, 1, dryRun.CandidateCount)
+	require.Equal(t, 0, dryRun.DeletedCount)
+	require.Equal(t, "empty-session", dryRun.Candidates[0].ID)
+	ok, err := store.Exists("empty-session")
+	require.NoError(t, err)
+	require.True(t, ok)
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"prune", "--confirm", "--output-format", "text"}))
+	require.Contains(t, out.String(), "Session prune")
+	require.Contains(t, out.String(), "Deleted          1")
+	ok, err = store.Exists("empty-session")
+	require.NoError(t, err)
+	require.False(t, ok)
+	ok, err = store.Exists("kept-session")
+	require.NoError(t, err)
+	require.True(t, ok)
+}
+
+func TestSessionSlashPruneSkipsActiveSession(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	active, err := store.Open("active-empty")
+	require.NoError(t, err)
+	_, err = store.Create("other-empty")
+	require.NoError(t, err)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Err: &errOut}
+
+	require.True(t, app.handleSlash(context.Background(), "/session prune --confirm --json", active))
+	require.Empty(t, errOut.String())
+	var report session.PruneReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, 1, report.DeletedCount)
+	require.Equal(t, "other-empty", report.Deleted[0].ID)
+	ok, err := store.Exists("active-empty")
+	require.NoError(t, err)
+	require.True(t, ok)
+	ok, err = store.Exists("other-empty")
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
 func TestSessionsShowJSONUsesStableReport(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))

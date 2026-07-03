@@ -293,6 +293,52 @@ func TestWorkspaceStoreCleanupZeroDisablesPersistenceAndRemovesSessions(t *testi
 	require.ErrorIs(t, err, ErrNoSessions)
 }
 
+func TestStorePruneDryRunAndConfirmEmptySessions(t *testing.T) {
+	store := NewStore(t.TempDir())
+	_, err := store.Create("empty-session")
+	require.NoError(t, err)
+	require.NoError(t, store.Append("kept-session", anthropic.TextMessage("user", "keep me")))
+
+	dryRun, err := store.Prune(PruneOptions{EmptyOnly: true})
+	require.NoError(t, err)
+	require.Equal(t, "session_prune", dryRun.Kind)
+	require.Equal(t, "dry_run", dryRun.Status)
+	require.True(t, dryRun.DryRun)
+	require.Equal(t, 2, dryRun.Scanned)
+	require.Equal(t, 1, dryRun.CandidateCount)
+	require.Equal(t, "empty-session", dryRun.Candidates[0].ID)
+	require.Equal(t, "empty", dryRun.Candidates[0].Reason)
+	require.FileExists(t, filepath.Join(store.Dir, "empty-session.jsonl"))
+	require.FileExists(t, filepath.Join(store.Dir, "kept-session.jsonl"))
+
+	confirmed, err := store.Prune(PruneOptions{EmptyOnly: true, Confirm: true})
+	require.NoError(t, err)
+	require.Equal(t, "ok", confirmed.Status)
+	require.False(t, confirmed.DryRun)
+	require.Equal(t, 1, confirmed.DeletedCount)
+	require.Equal(t, "empty-session", confirmed.Deleted[0].ID)
+	require.NoFileExists(t, filepath.Join(store.Dir, "empty-session.jsonl"))
+	require.FileExists(t, filepath.Join(store.Dir, "kept-session.jsonl"))
+}
+
+func TestStorePruneKeepsNewestSessions(t *testing.T) {
+	store := NewStore(t.TempDir())
+	writeTestSessionRecord(t, store, "older", time.Unix(10, 0).UTC(), time.Unix(10, 0).UTC())
+	writeTestSessionRecord(t, store, "middle", time.Unix(20, 0).UTC(), time.Unix(20, 0).UTC())
+	writeTestSessionRecord(t, store, "newest", time.Unix(30, 0).UTC(), time.Unix(30, 0).UTC())
+
+	report, err := store.Prune(PruneOptions{Keep: 1, Confirm: true})
+	require.NoError(t, err)
+	require.Equal(t, 3, report.Scanned)
+	require.Equal(t, 2, report.CandidateCount)
+	require.Equal(t, 2, report.DeletedCount)
+	require.Equal(t, "middle", report.Deleted[0].ID)
+	require.Equal(t, "older", report.Deleted[1].ID)
+	require.FileExists(t, filepath.Join(store.Dir, "newest.jsonl"))
+	require.NoFileExists(t, filepath.Join(store.Dir, "middle.jsonl"))
+	require.NoFileExists(t, filepath.Join(store.Dir, "older.jsonl"))
+}
+
 func TestOpenExistingDoesNotCreateAndReportsDirectoryPaths(t *testing.T) {
 	store := NewStore(t.TempDir())
 

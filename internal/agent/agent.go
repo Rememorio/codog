@@ -37652,6 +37652,23 @@ func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 			return
 		}
 		renderSessionRenameText(a.Err, report)
+	case "prune":
+		req, err := parseSessionPruneArgs("/session prune", args[1:], "text")
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		report, err := a.pruneSessionsWithReport(req, sess.ID)
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return
+		}
+		renderSessionPruneText(a.Err, report)
 	case "delete":
 		req, err := parseSessionDeleteArgs("/session delete", args[1:])
 		if err != nil {
@@ -37799,6 +37816,21 @@ func (a *App) SessionsCommand(args []string) error {
 			return nil
 		}
 		renderSessionRenameText(a.Out, report)
+	case "prune":
+		req, err := parseSessionPruneArgs("codog sessions prune", args[1:], "json")
+		if err != nil {
+			return err
+		}
+		report, err := a.pruneSessionsWithReport(req, "")
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderSessionPruneText(a.Out, report)
 	case "delete":
 		deleteArgs := args[1:]
 		if !argsHaveOutputFormat(deleteArgs) {
@@ -37852,7 +37884,7 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_sessions_action",
 			Message:   fmt.Sprintf("unsupported sessions action %q", action),
-			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions rename OLD_ID NEW_ID`, or `codog sessions delete ID`.",
+			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions prune`, or `codog sessions delete ID`.",
 		}, format)
 	}
 	return renderCLIError(out, err, format)
@@ -38305,6 +38337,116 @@ func renderSessionRenameText(out io.Writer, report sessionRenameReport) {
 	fmt.Fprintf(out, "  New session      %s\n", report.NewSessionID)
 	fmt.Fprintf(out, "  Messages         %d\n", report.MessageCount)
 	fmt.Fprintf(out, "  File             %s\n", report.NewPath)
+}
+
+type sessionPruneRequest struct {
+	Keep      int
+	EmptyOnly bool
+	Confirm   bool
+	Format    string
+}
+
+func parseSessionPruneArgs(command string, args []string, defaultFormat string) (sessionPruneRequest, error) {
+	req := sessionPruneRequest{Format: defaultFormat}
+	if req.Format == "" {
+		req.Format = "text"
+	}
+	usage := command + " [--empty|--keep N] [--confirm] [--json|--output-format text|json]"
+	emptySet := false
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s output format is required", command)
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--confirm" || arg == "--force":
+			req.Confirm = true
+		case arg == "--empty" || arg == "--empty-only":
+			req.EmptyOnly = true
+			emptySet = true
+		case arg == "--all":
+			req.EmptyOnly = false
+			emptySet = true
+		case arg == "--keep":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
+			}
+			value, err := parsePositiveIntOption(args[index], "--keep", usage)
+			if err != nil {
+				return req, err
+			}
+			req.Keep = value
+		case strings.HasPrefix(arg, "--keep="):
+			value, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--keep="), "--keep", usage)
+			if err != nil {
+				return req, err
+			}
+			req.Keep = value
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: command, Option: arg, Usage: usage}
+		default:
+			return req, unexpectedExtraArgsError{Command: command, Args: []string{arg}, Usage: usage}
+		}
+	}
+	if req.Keep == 0 && !emptySet {
+		req.EmptyOnly = true
+	}
+	if req.Keep == 0 && !req.EmptyOnly {
+		return req, fmt.Errorf("usage: %s", usage)
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown %s output format %q", command, req.Format)
+	}
+	return req, nil
+}
+
+func (a *App) pruneSessionsWithReport(req sessionPruneRequest, excludeID string) (session.PruneReport, error) {
+	return a.Sessions.Prune(session.PruneOptions{
+		ExcludeID: excludeID,
+		Keep:      req.Keep,
+		EmptyOnly: req.EmptyOnly,
+		Confirm:   req.Confirm,
+	})
+}
+
+func renderSessionPruneText(out io.Writer, report session.PruneReport) {
+	title := "Session prune dry-run"
+	if !report.DryRun {
+		title = "Session prune"
+	}
+	fmt.Fprintln(out, title)
+	fmt.Fprintf(out, "  Sessions scanned %d\n", report.Scanned)
+	fmt.Fprintf(out, "  Candidates       %d\n", report.CandidateCount)
+	if report.Keep > 0 {
+		fmt.Fprintf(out, "  Keep newest      %d\n", report.Keep)
+	}
+	if report.EmptyOnly {
+		fmt.Fprintln(out, "  Empty only       yes")
+	}
+	if report.DryRun {
+		fmt.Fprintln(out, "  Deleted          0")
+		fmt.Fprintln(out, "  Confirm          rerun with --confirm")
+	} else {
+		fmt.Fprintf(out, "  Deleted          %d\n", report.DeletedCount)
+	}
+	items := report.Candidates
+	if !report.DryRun {
+		items = report.Deleted
+	}
+	for _, item := range items {
+		fmt.Fprintf(out, "  - %s\t%d messages\t%s\t%s\n", item.ID, item.MessageCount, item.Reason, item.Path)
+	}
 }
 
 type sessionDeleteReport struct {
@@ -48405,8 +48547,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return commandHelpSpec{
 			Topic:                   "session",
 			Command:                 "session",
-			Usage:                   "codog sessions [list|show|exists|export|import|fork|rename|delete] [ARGS...]",
-			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|export|import|fork|rename|delete] [ARGS...]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n\nInspects, imports, exports, and mutates saved session metadata. Help is local and does not open a session.\n",
+			Usage:                   "codog sessions [list|show|exists|export|import|fork|rename|prune|delete] [ARGS...]",
+			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|export|import|fork|rename|prune|delete] [ARGS...]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n  codog sessions prune [--empty|--keep N] [--confirm] [--output-format text|json]\n\nInspects, imports, exports, and mutates saved session metadata. Help is local and does not open a session.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
@@ -48524,7 +48666,7 @@ Usage:
   %s [flags] tui
   %s [flags] clear [--confirm] [--json|--output-format text|json]
   %s [flags] conversation [--confirm] [--json|--output-format text|json]
-  %s [flags] sessions [list|show|exists|export|import|fork|rename|delete]
+  %s [flags] sessions [list|show|exists|export|import|fork|rename|prune|delete]
   %s [flags] backfill-sessions [--json|--output-format text|json]
   %s [flags] generateSessionName [--session ID|--resume ID|latest] [--source first|last] [--rename] [--json|--output-format text|json]
   %s [flags] rename NEW_ID [--session ID] [--json|--output-format text|json]

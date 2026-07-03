@@ -138,6 +138,39 @@ type RenameResult struct {
 	MessageCount int    `json:"message_count"`
 }
 
+// PruneOptions controls saved-session cleanup.
+type PruneOptions struct {
+	ExcludeID string
+	Keep      int
+	EmptyOnly bool
+	Confirm   bool
+}
+
+// PrunedSession describes a session selected by cleanup.
+type PrunedSession struct {
+	ID           string    `json:"id"`
+	Path         string    `json:"path"`
+	MessageCount int       `json:"message_count"`
+	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	ModifiedAt   time.Time `json:"modified_at,omitempty"`
+	Reason       string    `json:"reason"`
+}
+
+// PruneReport describes a dry-run or confirmed saved-session cleanup.
+type PruneReport struct {
+	Kind           string          `json:"kind"`
+	Action         string          `json:"action"`
+	Status         string          `json:"status"`
+	DryRun         bool            `json:"dry_run"`
+	Keep           int             `json:"keep,omitempty"`
+	EmptyOnly      bool            `json:"empty_only,omitempty"`
+	Scanned        int             `json:"scanned"`
+	CandidateCount int             `json:"candidate_count"`
+	DeletedCount   int             `json:"deleted_count"`
+	Candidates     []PrunedSession `json:"candidates,omitempty"`
+	Deleted        []PrunedSession `json:"deleted,omitempty"`
+}
+
 // PinResult describes a message pin mutation in a saved session.
 type PinResult struct {
 	SessionID      string `json:"session_id"`
@@ -838,6 +871,65 @@ func (s *Store) Import(path string, opts ImportOptions) (ImportResult, error) {
 		Overwritten:       exists,
 		Identity:          identity,
 	}, nil
+}
+
+// Prune selects saved sessions for cleanup and deletes them only when Confirm is true.
+func (s *Store) Prune(opts PruneOptions) (PruneReport, error) {
+	if opts.Keep < 0 {
+		return PruneReport{}, errors.New("session prune keep must be non-negative")
+	}
+	report := PruneReport{
+		Kind:      "session_prune",
+		Action:    "prune",
+		Status:    "dry_run",
+		DryRun:    !opts.Confirm,
+		Keep:      opts.Keep,
+		EmptyOnly: opts.EmptyOnly,
+	}
+	if s.PersistenceDisabled {
+		return report, nil
+	}
+	excludeID := strings.TrimSpace(opts.ExcludeID)
+	sessions, err := s.List()
+	if err != nil {
+		return PruneReport{}, err
+	}
+	report.Scanned = len(sessions)
+	for index, sess := range sessions {
+		if excludeID != "" && sess.ID == excludeID {
+			continue
+		}
+		reason := pruneReason(sess, index, opts)
+		if reason == "" {
+			continue
+		}
+		item := PrunedSession{
+			ID:           sess.ID,
+			Path:         sess.Path,
+			MessageCount: len(sess.Messages),
+			UpdatedAt:    sess.Metadata.UpdatedAt,
+			ModifiedAt:   sess.Metadata.ModifiedAt,
+			Reason:       reason,
+		}
+		report.Candidates = append(report.Candidates, item)
+	}
+	report.CandidateCount = len(report.Candidates)
+	if !opts.Confirm {
+		return report, nil
+	}
+	report.Status = "ok"
+	report.DryRun = false
+	for _, candidate := range report.Candidates {
+		if strings.TrimSpace(candidate.Path) == "" {
+			continue
+		}
+		if err := os.Remove(candidate.Path); err != nil && !os.IsNotExist(err) {
+			return report, err
+		}
+		report.Deleted = append(report.Deleted, candidate)
+	}
+	report.DeletedCount = len(report.Deleted)
+	return report, nil
 }
 
 func (s *Store) List() ([]Session, error) {
@@ -2060,6 +2152,17 @@ func sessionIDFromFileName(name string) string {
 		return strings.TrimSuffix(name, extension)
 	}
 	return strings.TrimSuffix(name, primarySessionExtension)
+}
+
+func pruneReason(sess Session, index int, opts PruneOptions) string {
+	reasons := []string{}
+	if opts.EmptyOnly && len(sess.Messages) == 0 {
+		reasons = append(reasons, "empty")
+	}
+	if opts.Keep > 0 && index >= opts.Keep {
+		reasons = append(reasons, "older_than_keep")
+	}
+	return strings.Join(reasons, ",")
 }
 
 func (s *Store) removeSessionFiles(shouldRemove func(os.FileInfo) bool) error {
