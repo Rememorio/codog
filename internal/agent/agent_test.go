@@ -2975,6 +2975,9 @@ func risky(value any) {
 	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "resume-debug.md"), []byte("---\ndescription: Resume debug skill.\n---\nUse this resume debug skill for {{args}}."), 0o644))
 	executableShim := filepath.Join(t.TempDir(), "codog-shim")
 	require.NoError(t, os.WriteFile(executableShim, []byte("#!/bin/sh\necho codog-shim \"$@\"\n"), 0o755))
+	powerShellShimDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(powerShellShimDir, "pwsh"), []byte("#!/bin/sh\nprintf 'ps:%s\\n' \"$*\"\n"), 0o755))
+	t.Setenv("PATH", powerShellShimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	previousExecutableResolver := resolveExecutablePath
 	resolveExecutablePath = func() (string, error) { return executableShim, nil }
 	t.Cleanup(func() { resolveExecutablePath = previousExecutableResolver })
@@ -4104,6 +4107,18 @@ func risky(value any) {
 	require.True(t, resumedDebugToolCall.Success)
 	require.Contains(t, resumedDebugToolCall.Output, "helper")
 
+	out, err = runResumedJSON("/debug-tool-call", "LSPTool", `{"action":"symbols","path":"main.go"}`)
+	require.NoError(t, err)
+	var resumedDebugLSP debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugLSP))
+	require.Equal(t, "debug_tool_call", resumedDebugLSP.Kind)
+	require.Equal(t, "lsp", resumedDebugLSP.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugLSP.Permission)
+	require.True(t, resumedDebugLSP.Success)
+	require.Contains(t, resumedDebugLSP.Output, `"action": "symbols"`)
+	require.Contains(t, resumedDebugLSP.Output, `"source": "static"`)
+	require.Contains(t, resumedDebugLSP.Output, "helper")
+
 	out, err = runResumedJSON("/debug-tool-call", "StructuredOutputTool", `{"status":"ok","items":[1,2]}`)
 	require.NoError(t, err)
 	var resumedDebugStructuredOutput debugToolCallReport
@@ -4371,6 +4386,17 @@ func risky(value any) {
 	require.Equal(t, tools.PermissionDanger, resumedDebugBash.Permission)
 	require.True(t, resumedDebugBash.Success)
 	require.Contains(t, resumedDebugBash.Output, "resumed-debug-bash")
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "PowerShellTool", `{"command":"Get-Content main.go","timeout_ms":1000}`)
+	require.NoError(t, err)
+	var resumedDebugPowerShell debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugPowerShell))
+	require.Equal(t, "debug_tool_call", resumedDebugPowerShell.Kind)
+	require.Equal(t, "powershell", resumedDebugPowerShell.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugPowerShell.Permission)
+	require.True(t, resumedDebugPowerShell.Success)
+	require.Contains(t, resumedDebugPowerShell.Output, `ps:-NoProfile -NonInteractive -Command Get-Content main.go`)
+	require.Contains(t, resumedDebugPowerShell.Output, `"exit_code": 0`)
 
 	out, err = runResumedJSON("/allowed-tools", "add", "TodoWrite", "--path", configPath)
 	require.NoError(t, err)
