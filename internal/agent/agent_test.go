@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -5904,6 +5905,10 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Contains(t, report.Protocol.Methods, "lsp/actions")
 	require.Contains(t, report.Protocol.Methods, "lsp/discover")
 	require.Contains(t, report.Protocol.Methods, "lsp/list")
+	require.Contains(t, report.Protocol.Methods, "lsp/start")
+	require.Contains(t, report.Protocol.Methods, "lsp/status")
+	require.Contains(t, report.Protocol.Methods, "lsp/stop")
+	require.Contains(t, report.Protocol.Methods, "lsp/query")
 	require.Contains(t, report.Protocol.Methods, "session/open")
 	require.Contains(t, report.Protocol.Methods, "session/list")
 	require.Contains(t, report.Protocol.Methods, "session/append_message")
@@ -6419,6 +6424,68 @@ func TestACPServeExposesLSPMetadata(t *testing.T) {
 	require.Empty(t, list["servers"].([]any))
 }
 
+func TestACPServeExposesLSPLifecycleAndQuery(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte(strings.Join([]string{
+		"package main",
+		"",
+		"func main() {",
+		"\tprintln(\"hi\")",
+		"}",
+		"",
+	}, "\n")), 0o644))
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	fakeCommand := "CODOG_AGENT_FAKE_LSP=1 " + shellQuote(os.Args[0]) + " -test.run '^TestACPFakeLSPServer$'"
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"lsp/start","params":{"language":"go","command":` + strconv.Quote(fakeCommand) + `}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"lsp/query","params":{"language":"go","action":"hover","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"lsp/query","params":{"language":"go","action":"diagnostics","file_path":"main.go","timeout_ms":1000}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"lsp/status","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"lsp/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"lsp/stop","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+		Sessions:  store,
+		In:        strings.NewReader(input),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses := decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 7)
+	start := responses[0]["result"].(map[string]any)
+	require.Equal(t, "lsp_start", start["kind"])
+	require.Equal(t, "ok", start["status"])
+	startServer := start["server"].(map[string]any)
+	require.Equal(t, "go", startServer["language"])
+	hover := responses[1]["result"].(map[string]any)
+	require.Equal(t, "lsp_query", hover["kind"])
+	require.Equal(t, "hover", hover["action"])
+	require.Equal(t, "textDocument/hover", hover["method"])
+	hoverResult := hover["result"].(map[string]any)
+	hoverContents := hoverResult["contents"].(map[string]any)
+	require.Equal(t, "agent fake hover", hoverContents["value"])
+	diagnostics := responses[2]["result"].(map[string]any)
+	require.Equal(t, "diagnostics", diagnostics["action"])
+	require.Len(t, diagnostics["diagnostics"].([]any), 1)
+	status := responses[3]["result"].(map[string]any)
+	require.Equal(t, "lsp_status", status["kind"])
+	statusServer := status["server"].(map[string]any)
+	require.Equal(t, "go", statusServer["language"])
+	list := responses[4]["result"].(map[string]any)
+	require.Equal(t, "lsp_list", list["kind"])
+	require.EqualValues(t, 1, list["count"])
+	stop := responses[5]["result"].(map[string]any)
+	require.Equal(t, "lsp_stop", stop["kind"])
+	require.Equal(t, "ok", stop["status"])
+}
+
 func TestACPServeAliasesStartAndStdio(t *testing.T) {
 	for _, alias := range []string{"start", "stdio"} {
 		t.Run(alias, func(t *testing.T) {
@@ -6469,6 +6536,10 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			require.Equal(t, true, lspCaps["actions"])
 			require.Equal(t, true, lspCaps["discover"])
 			require.Equal(t, true, lspCaps["list"])
+			require.Equal(t, true, lspCaps["start"])
+			require.Equal(t, true, lspCaps["status"])
+			require.Equal(t, true, lspCaps["stop"])
+			require.Equal(t, true, lspCaps["query"])
 			sessions := capabilities["sessions"].(map[string]any)
 			require.Equal(t, true, sessions["open"])
 			require.Equal(t, true, sessions["append"])
@@ -6505,6 +6576,110 @@ func TestParseACPGlobalInvocationSupportsOutputFormatBeforeCommand(t *testing.T)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Nil(t, args)
+}
+
+func TestACPFakeLSPServer(t *testing.T) {
+	if os.Getenv("CODOG_AGENT_FAKE_LSP") != "1" {
+		return
+	}
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		raw, err := readACPTestLSPMessage(reader)
+		if err != nil {
+			return
+		}
+		var msg struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      any             `json:"id,omitempty"`
+			Method  string          `json:"method,omitempty"`
+			Params  json.RawMessage `json:"params,omitempty"`
+		}
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			return
+		}
+		switch msg.Method {
+		case "initialize":
+			_ = writeACPTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"capabilities": map[string]any{}}})
+		case "textDocument/didOpen":
+			uri := acpTestLSPDocumentURI(msg.Params)
+			_ = writeACPTestLSPMessage(os.Stdout, map[string]any{
+				"jsonrpc": "2.0",
+				"method":  "textDocument/publishDiagnostics",
+				"params": map[string]any{
+					"uri": uri,
+					"diagnostics": []map[string]any{{
+						"range": map[string]any{
+							"start": map[string]any{"line": 2, "character": 0},
+							"end":   map[string]any{"line": 2, "character": 4},
+						},
+						"severity": 2,
+						"source":   "agent-fake-lsp",
+						"message":  "agent fake diagnostic",
+					}},
+				},
+			})
+		case "textDocument/hover":
+			_ = writeACPTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"contents": map[string]any{"kind": "markdown", "value": "agent fake hover"}}})
+		case "shutdown":
+			_ = writeACPTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": nil})
+			return
+		default:
+			if msg.ID != nil {
+				_ = writeACPTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": nil})
+			}
+		}
+	}
+}
+
+func readACPTestLSPMessage(reader *bufio.Reader) (json.RawMessage, error) {
+	contentLength := 0
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			break
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "Content-Length") {
+			continue
+		}
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return nil, err
+		}
+		contentLength = parsed
+	}
+	if contentLength <= 0 {
+		return nil, io.ErrUnexpectedEOF
+	}
+	data := make([]byte, contentLength)
+	_, err := io.ReadFull(reader, data)
+	return data, err
+}
+
+func writeACPTestLSPMessage(writer io.Writer, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n", len(data)); err != nil {
+		return err
+	}
+	_, err = writer.Write(data)
+	return err
+}
+
+func acpTestLSPDocumentURI(params json.RawMessage) string {
+	var payload struct {
+		TextDocument struct {
+			URI string `json:"uri"`
+		} `json:"textDocument"`
+	}
+	_ = json.Unmarshal(params, &payload)
+	return payload.TextDocument.URI
 }
 
 func decodeJSONRPCResponses(t *testing.T, output string) []map[string]any {

@@ -51,6 +51,10 @@ type Handlers struct {
 	LSPActions      func(context.Context) (any, error)
 	LSPDiscover     func(context.Context) (any, error)
 	LSPList         func(context.Context) (any, error)
+	LSPStart        func(context.Context, LSPStartRequest) (any, error)
+	LSPStatus       func(context.Context, LSPStatusRequest) (any, error)
+	LSPStop         func(context.Context, LSPStopRequest) (any, error)
+	LSPQuery        func(context.Context, LSPQueryRequest) (any, error)
 }
 
 type SessionInfo struct {
@@ -240,6 +244,29 @@ type NotebookEditRequest struct {
 	NewSource    *string `json:"new_source,omitempty"`
 }
 
+type LSPStartRequest struct {
+	Language    string   `json:"language"`
+	CommandArgs []string `json:"command_args,omitempty"`
+}
+
+type LSPStatusRequest struct {
+	Language string `json:"language"`
+}
+
+type LSPStopRequest struct {
+	Language string `json:"language"`
+}
+
+type LSPQueryRequest struct {
+	Language  string `json:"language"`
+	Action    string `json:"action"`
+	Path      string `json:"path,omitempty"`
+	FilePath  string `json:"file_path,omitempty"`
+	Line      int    `json:"line,omitempty"`
+	Character int    `json:"character,omitempty"`
+	TimeoutMS int    `json:"timeout_ms,omitempty"`
+}
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -339,6 +366,14 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleLSPDiscover(ctx, out, handlers, req)
 	case "lsp/list":
 		return false, handleLSPList(ctx, out, handlers, req)
+	case "lsp/start":
+		return false, handleLSPStart(ctx, out, handlers, req)
+	case "lsp/status":
+		return false, handleLSPStatus(ctx, out, handlers, req)
+	case "lsp/stop":
+		return false, handleLSPStop(ctx, out, handlers, req)
+	case "lsp/query", "lsp/request":
+		return false, handleLSPQuery(ctx, out, handlers, req)
 	case "session/new", "session/create", "sessions/new":
 		return false, handleNewSession(ctx, out, handlers, opts, req)
 	case "session/open", "sessions/open":
@@ -422,6 +457,10 @@ func initializeResult(opts Options) map[string]any {
 				"actions":  true,
 				"discover": true,
 				"list":     true,
+				"start":    true,
+				"status":   true,
+				"stop":     true,
+				"query":    true,
 			},
 			"prompt": true,
 			"status": true,
@@ -711,6 +750,75 @@ func handleLSPList(ctx context.Context, out io.Writer, handlers Handlers, req re
 		return writeError(out, req.ID, -32603, "lsp list handler is not configured")
 	}
 	result, err := handlers.LSPList(ctx)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleLSPStart(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.LSPStart == nil {
+		return writeError(out, req.ID, -32603, "lsp start handler is not configured")
+	}
+	request, err := parseLSPStartRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.LSPStart(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleLSPStatus(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.LSPStatus == nil {
+		return writeError(out, req.ID, -32603, "lsp status handler is not configured")
+	}
+	var request LSPStatusRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.LSPStatus(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleLSPStop(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.LSPStop == nil {
+		return writeError(out, req.ID, -32603, "lsp stop handler is not configured")
+	}
+	var request LSPStopRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.LSPStop(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleLSPQuery(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.LSPQuery == nil {
+		return writeError(out, req.ID, -32603, "lsp query handler is not configured")
+	}
+	var request LSPQueryRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if request.Line < 0 {
+		return writeError(out, req.ID, -32602, "line must be non-negative")
+	}
+	if request.Character < 0 {
+		return writeError(out, req.ID, -32602, "character must be non-negative")
+	}
+	if request.TimeoutMS < 0 {
+		return writeError(out, req.ID, -32602, "timeout_ms must be non-negative")
+	}
+	result, err := handlers.LSPQuery(ctx, request)
 	if err != nil {
 		return writeError(out, req.ID, -32603, err.Error())
 	}
@@ -1216,6 +1324,51 @@ func parsePromptRequest(params json.RawMessage) (PromptRequest, error) {
 		SessionID: firstNonEmpty(raw.SessionID, raw.SessionIDCamel),
 		Prompt:    prompt,
 	}, nil
+}
+
+func parseLSPStartRequest(params json.RawMessage) (LSPStartRequest, error) {
+	var payload struct {
+		Language    string          `json:"language"`
+		Command     json.RawMessage `json:"command"`
+		CommandArgs []string        `json:"command_args"`
+		Args        []string        `json:"args"`
+	}
+	if err := unmarshalParams(params, &payload); err != nil {
+		return LSPStartRequest{}, err
+	}
+	commandArgs, err := parseLSPCommandArgs(payload.Command, payload.CommandArgs, payload.Args)
+	if err != nil {
+		return LSPStartRequest{}, err
+	}
+	return LSPStartRequest{
+		Language:    payload.Language,
+		CommandArgs: commandArgs,
+	}, nil
+}
+
+func parseLSPCommandArgs(command json.RawMessage, commandArgs []string, args []string) ([]string, error) {
+	if len(commandArgs) > 0 {
+		return append([]string(nil), commandArgs...), nil
+	}
+	if len(args) > 0 {
+		return append([]string(nil), args...), nil
+	}
+	if len(command) == 0 || string(command) == "null" {
+		return nil, nil
+	}
+	var list []string
+	if err := json.Unmarshal(command, &list); err == nil {
+		return list, nil
+	}
+	var raw string
+	if err := json.Unmarshal(command, &raw); err != nil {
+		return nil, fmt.Errorf("command must be a string or string array")
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	return []string{"sh", "-lc", raw}, nil
 }
 
 func firstNonEmpty(values ...string) string {

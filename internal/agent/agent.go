@@ -20758,6 +20758,10 @@ var acpJSONRPCMethods = []string{
 	"lsp/actions",
 	"lsp/discover",
 	"lsp/list",
+	"lsp/start",
+	"lsp/status",
+	"lsp/stop",
+	"lsp/query",
 	"session/new",
 	"session/open",
 	"session/list",
@@ -20822,7 +20826,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, lsp/actions, lsp/discover, lsp/list, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, lsp/actions, lsp/discover, lsp/list, lsp/start, lsp/status, lsp/stop, lsp/query, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -21168,6 +21172,44 @@ func (a *App) serveACP(ctx context.Context) error {
 				"count":   len(statuses),
 				"servers": statuses,
 			}, nil
+		},
+		LSPStart: func(_ context.Context, req acpserver.LSPStartRequest) (any, error) {
+			store := codeintel.NewLSPStore(a.Config.ConfigHome, a.Workspace)
+			status, err := store.Start(req.Language, req.CommandArgs)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "lsp_start", "status": "ok", "server": status}, nil
+		},
+		LSPStatus: func(_ context.Context, req acpserver.LSPStatusRequest) (any, error) {
+			store := codeintel.NewLSPStore(a.Config.ConfigHome, a.Workspace)
+			status, err := store.Status(req.Language)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "lsp_status", "server": status}, nil
+		},
+		LSPStop: func(_ context.Context, req acpserver.LSPStopRequest) (any, error) {
+			store := codeintel.NewLSPStore(a.Config.ConfigHome, a.Workspace)
+			status, err := store.Stop(req.Language)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "lsp_stop", "status": "ok", "server": status}, nil
+		},
+		LSPQuery: func(ctx context.Context, req acpserver.LSPQueryRequest) (any, error) {
+			if req.TimeoutMS > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, time.Duration(req.TimeoutMS)*time.Millisecond)
+				defer cancel()
+			}
+			store := codeintel.NewLSPStore(a.Config.ConfigHome, a.Workspace)
+			return store.Query(ctx, req.Language, codeintel.LSPQueryRequest{
+				Action:    req.Action,
+				Path:      firstNonEmpty(req.Path, req.FilePath),
+				Line:      req.Line,
+				Character: req.Character,
+			})
 		},
 		OpenSession: func(_ context.Context, req acpserver.SessionOpenRequest) (acpserver.SessionDetail, error) {
 			if a.Sessions == nil {
