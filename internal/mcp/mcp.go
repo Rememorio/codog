@@ -686,16 +686,16 @@ func Initialize(ctx context.Context, serverName string, server config.MCPServerC
 			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
 		},
 	}); err != nil {
-		message := mcpError(err, &stderr).Error()
+		message := mcpProcessError(err, cmd, &stderr).Error()
 		return InitializeResult{Server: serverName, Status: "error", Error: message, Lifecycle: lifecycleFailure("initialize_handshake", message, true, map[string]string{"server": serverName})}
 	}
 	resp, err := readResponse(reader)
 	if err != nil {
-		message := mcpError(err, &stderr).Error()
+		message := mcpProcessError(err, cmd, &stderr).Error()
 		return InitializeResult{Server: serverName, Status: "error", Error: message, Lifecycle: lifecycleFailure("initialize_handshake", message, true, map[string]string{"server": serverName})}
 	}
 	if resp.Error != nil {
-		message := mcpError(errors.New(resp.Error.Message), &stderr).Error()
+		message := mcpProcessError(errors.New(resp.Error.Message), cmd, &stderr).Error()
 		return InitializeResult{Server: serverName, Status: "error", Error: message, Lifecycle: lifecycleFailure("initialize_handshake", message, true, map[string]string{"server": serverName})}
 	}
 	_ = send(stdin, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
@@ -813,19 +813,19 @@ func ListTools(ctx context.Context, serverName string, server config.MCPServerCo
 			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
 		},
 	}); err != nil {
-		return ToolListResult{Server: serverName, Error: mcpError(err, &stderr).Error()}
+		return ToolListResult{Server: serverName, Error: mcpProcessError(err, cmd, &stderr).Error()}
 	}
 	if _, err := readResponse(reader); err != nil {
-		return ToolListResult{Server: serverName, Error: mcpError(err, &stderr).Error()}
+		return ToolListResult{Server: serverName, Error: mcpProcessError(err, cmd, &stderr).Error()}
 	}
 	_ = send(stdin, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
 	_ = send(stdin, rpcRequest{JSONRPC: "2.0", ID: 2, Method: "tools/list"})
 	resp, err := readResponse(reader)
 	if err != nil {
-		return ToolListResult{Server: serverName, Error: mcpError(err, &stderr).Error()}
+		return ToolListResult{Server: serverName, Error: mcpProcessError(err, cmd, &stderr).Error()}
 	}
 	if resp.Error != nil {
-		return ToolListResult{Server: serverName, Error: mcpError(errors.New(resp.Error.Message), &stderr).Error()}
+		return ToolListResult{Server: serverName, Error: mcpProcessError(errors.New(resp.Error.Message), cmd, &stderr).Error()}
 	}
 	return decodeToolListResult(serverName, resp.Result)
 }
@@ -1038,21 +1038,21 @@ func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, 
 			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
 		},
 	}); err != nil {
-		return nil, mcpError(err, &stderr)
+		return nil, mcpProcessError(err, cmd, &stderr)
 	}
 	if _, err := readResponse(reader); err != nil {
-		return nil, mcpError(err, &stderr)
+		return nil, mcpProcessError(err, cmd, &stderr)
 	}
 	_ = send(stdin, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
 	if err := send(stdin, req); err != nil {
-		return nil, mcpError(err, &stderr)
+		return nil, mcpProcessError(err, cmd, &stderr)
 	}
 	resp, err := readResponse(reader)
 	if err != nil {
-		return nil, mcpError(err, &stderr)
+		return nil, mcpProcessError(err, cmd, &stderr)
 	}
 	if resp.Error != nil {
-		return nil, mcpError(errors.New(resp.Error.Message), &stderr)
+		return nil, mcpProcessError(errors.New(resp.Error.Message), cmd, &stderr)
 	}
 	return resp.Result, nil
 }
@@ -1337,6 +1337,26 @@ func mcpError(err error, stderr *bytes.Buffer) error {
 		return err
 	}
 	return fmt.Errorf("%w; stderr: %s", err, clipMCPText(preview, 4096))
+}
+
+func mcpProcessError(err error, cmd *exec.Cmd, stderr *bytes.Buffer) error {
+	waitForMCPProcess(cmd, 200*time.Millisecond)
+	return mcpError(err, stderr)
+}
+
+func waitForMCPProcess(cmd *exec.Cmd, timeout time.Duration) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
 }
 
 func clipMCPText(value string, limit int) string {
