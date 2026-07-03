@@ -989,6 +989,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "session_identity_reconciliation")
 	require.Contains(t, report.Features, "stale_branch_guard")
 	require.Contains(t, report.Features, "status_boot_preflight")
+	require.Contains(t, report.Features, "status_boot_required_binaries")
 	require.Contains(t, report.Features, "status_config_load_degraded")
 	require.Contains(t, report.Features, "status_config_validation")
 	require.Contains(t, report.Features, "team_watch")

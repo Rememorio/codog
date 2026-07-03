@@ -232,10 +232,13 @@ func TestBuildMarksInvalidValidationDegraded(t *testing.T) {
 func TestBuildBootPreflightReportsStartupReadiness(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(workspace, ".git"), 0o755))
+	executable := filepath.Join(workspace, "codog-test-bin")
+	require.NoError(t, os.WriteFile(executable, []byte("bin"), 0o755))
 
 	snapshot := Build(Options{
 		Version:              "test-version",
 		Workspace:            workspace,
+		Executable:           executable,
 		GitStatus:            "## main...origin/main",
 		TrustedRoots:         []string{filepath.Dir(workspace), "  "},
 		InstalledPluginCount: 2,
@@ -258,12 +261,28 @@ func TestBuildBootPreflightReportsStartupReadiness(t *testing.T) {
 	require.Equal(t, 1, snapshot.BootPreflight.MCPStartup.Loaded)
 	require.True(t, snapshot.BootPreflight.PluginStartup.Eligible)
 	require.Equal(t, 2, snapshot.BootPreflight.PluginStartup.Configured)
+	require.Len(t, snapshot.BootPreflight.RequiredBinaries, 3)
+	codogBinary := bootBinaryByName(snapshot.BootPreflight.RequiredBinaries, "codog")
+	require.True(t, codogBinary.Available)
+	require.Equal(t, executable, codogBinary.Path)
+	require.Equal(t, "git", bootBinaryByName(snapshot.BootPreflight.RequiredBinaries, "git").Name)
+	require.Equal(t, "tmux", bootBinaryByName(snapshot.BootPreflight.RequiredBinaries, "tmux").Name)
 	require.Equal(t, "previous mcp discovery timeout", snapshot.BootPreflight.LastFailedBootReason)
 
 	var out bytes.Buffer
 	RenderText(&out, snapshot)
 	require.Contains(t, out.String(), "Boot preflight   repo=true trust=true mcp=true plugins=true")
+	require.Contains(t, out.String(), "Required bins    available=")
 	require.Contains(t, out.String(), "Last boot error  previous mcp discovery timeout")
+}
+
+func bootBinaryByName(binaries []BootBinaryPreflightStatus, name string) BootBinaryPreflightStatus {
+	for _, binary := range binaries {
+		if binary.Name == name {
+			return binary
+		}
+	}
+	return BootBinaryPreflightStatus{}
 }
 
 func TestBuildBootPreflightPluginLoadErrorDegrades(t *testing.T) {

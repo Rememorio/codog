@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -314,6 +315,7 @@ type RuntimeStatus struct {
 type BootPreflightStatus struct {
 	Repo                 BootRepoPreflightStatus      `json:"repo"`
 	Trust                BootTrustPreflightStatus     `json:"trust"`
+	RequiredBinaries     []BootBinaryPreflightStatus  `json:"required_binaries,omitempty"`
 	MCPStartup           BootComponentPreflightStatus `json:"mcp_startup"`
 	PluginStartup        BootComponentPreflightStatus `json:"plugin_startup"`
 	LastFailedBootReason string                       `json:"last_failed_boot_reason,omitempty"`
@@ -331,6 +333,13 @@ type BootRepoPreflightStatus struct {
 type BootTrustPreflightStatus struct {
 	Allowed           bool `json:"allowed"`
 	TrustedRootsCount int  `json:"trusted_roots_count"`
+}
+
+// BootBinaryPreflightStatus reports availability for one startup binary.
+type BootBinaryPreflightStatus struct {
+	Name      string `json:"name"`
+	Available bool   `json:"available"`
+	Path      string `json:"path,omitempty"`
 }
 
 // BootComponentPreflightStatus reports startup eligibility for optional runtime subsystems.
@@ -546,6 +555,7 @@ func buildBootPreflightStatus(opts Options, git GitStatus) BootPreflightStatus {
 			Allowed:           trustAllowed,
 			TrustedRootsCount: len(nonEmptyStrings(opts.TrustedRoots)),
 		},
+		RequiredBinaries: buildRequiredBinaryPreflight(opts.Executable),
 		MCPStartup: BootComponentPreflightStatus{
 			Eligible:   configLoadError == "" && opts.MCPValidation.InvalidCount == 0,
 			Configured: opts.MCPValidation.TotalConfigured,
@@ -561,6 +571,31 @@ func buildBootPreflightStatus(opts Options, git GitStatus) BootPreflightStatus {
 		},
 		LastFailedBootReason: strings.TrimSpace(opts.LastFailedBootReason),
 	}
+}
+
+func buildRequiredBinaryPreflight(executable string) []BootBinaryPreflightStatus {
+	return []BootBinaryPreflightStatus{
+		binaryPreflightFromPath("codog", executable),
+		binaryPreflightFromLookPath("git"),
+		binaryPreflightFromLookPath("tmux"),
+	}
+}
+
+func binaryPreflightFromPath(name string, path string) BootBinaryPreflightStatus {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return BootBinaryPreflightStatus{Name: name}
+	}
+	info, err := os.Stat(path)
+	return BootBinaryPreflightStatus{Name: name, Available: err == nil && !info.IsDir(), Path: path}
+}
+
+func binaryPreflightFromLookPath(name string) BootBinaryPreflightStatus {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return BootBinaryPreflightStatus{Name: name}
+	}
+	return BootBinaryPreflightStatus{Name: name, Available: true, Path: path}
 }
 
 func startupError(configLoadError string, invalid int, invalidMessage string) string {
@@ -921,6 +956,12 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 	if snapshot.BootPreflight.LastFailedBootReason != "" {
 		fmt.Fprintf(w, "  Last boot error  %s\n", snapshot.BootPreflight.LastFailedBootReason)
 	}
+	if len(snapshot.BootPreflight.RequiredBinaries) != 0 {
+		fmt.Fprintf(w, "  Required bins    available=%d/%d\n",
+			availableBinaryCount(snapshot.BootPreflight.RequiredBinaries),
+			len(snapshot.BootPreflight.RequiredBinaries),
+		)
+	}
 	fmt.Fprintf(w, "  Sandbox          available=%t default=%s\n", snapshot.Sandbox.Available, snapshot.Sandbox.Default)
 	if snapshot.LaneBoard.Available {
 		fmt.Fprintf(w, "  Task lanes       active=%d blocked=%d finished=%d\n",
@@ -932,6 +973,16 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 		fmt.Fprintf(w, "  Task lanes       unavailable: %s\n", snapshot.LaneBoard.Error)
 	}
 	fmt.Fprintf(w, "  Tools            %d\n", snapshot.Tools.Count)
+}
+
+func availableBinaryCount(binaries []BootBinaryPreflightStatus) int {
+	count := 0
+	for _, binary := range binaries {
+		if binary.Available {
+			count++
+		}
+	}
+	return count
 }
 
 func buildLaneBoardStatus(board *background.LaneBoard, errText string) LaneBoardStatus {

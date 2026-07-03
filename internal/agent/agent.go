@@ -24462,6 +24462,7 @@ func codogCapabilityFeatures() []string {
 		"stale_base_guard",
 		"stale_branch_guard",
 		"status_boot_preflight",
+		"status_boot_required_binaries",
 		"status_config_load_degraded",
 		"status_config_validation",
 		"team_watch",
