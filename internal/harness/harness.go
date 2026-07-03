@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/acpserver"
+	"github.com/Rememorio/codog/internal/agentruns"
 	"github.com/Rememorio/codog/internal/anthropic"
+	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/customcommands"
@@ -175,6 +177,7 @@ var scenarioOrder = []string{
 	"provider_routing_roundtrip",
 	"session_resume_jsonl_roundtrip",
 	"plugin_lifecycle_roundtrip",
+	"background_agent_run_roundtrip",
 	"remote_trigger_roundtrip",
 	"remote_api_listener_roundtrip",
 	"mcp_lifecycle_roundtrip",
@@ -689,6 +692,7 @@ func Run(ctx context.Context) (Report, error) {
 		providerRoutingScenario(),
 		sessionResumeJSONLRoundtripScenario(),
 		pluginLifecycleScenario(),
+		backgroundAgentRunScenario(),
 		remoteTriggerScenario(),
 		remoteAPIListenerScenario(),
 		mcpLifecycleScenario(),
@@ -1230,6 +1234,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Description: "Exercises plugin lifecycle metadata loading without invoking a tool.",
 		ParityRefs:  []string{"Plugin lifecycle", "Plugin manifest loading"},
 	},
+	"background_agent_run_roundtrip": {
+		Category:    "background-agents",
+		Description: "Runs, watches, heartbeats, restarts, supervises, and summarizes a background agent lane.",
+		ParityRefs:  []string{"Background tasks", "Agent runs", "Lane board", "Supervisor restarts"},
+	},
 	"remote_trigger_roundtrip": {
 		Category:    "remote-control",
 		Description: "Executes the remote trigger tool against a local control endpoint.",
@@ -1302,6 +1311,59 @@ func finalAssistantMessage(messages []anthropic.Message) string {
 		}
 	}
 	return ""
+}
+
+func waitForBackgroundTask(ctx context.Context, store background.Store, id string, timeout time.Duration, ready func(background.Task) bool) (background.Task, error) {
+	if ready == nil {
+		return background.Task{}, errors.New("background task predicate is required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	var last background.Task
+	var lastErr error
+	for {
+		task, err := store.Status(id)
+		if err == nil {
+			last = task
+			if ready(task) {
+				return task, nil
+			}
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return last, fmt.Errorf("waiting for background task %s: %w", id, lastErr)
+			}
+			return last, fmt.Errorf("timed out waiting for background task %s", id)
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitForBackgroundLogs(ctx context.Context, store background.Store, id string, contains string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	var last string
+	for {
+		logs, err := store.Logs(id, 4096)
+		if err == nil {
+			last = logs
+			if strings.Contains(logs, contains) {
+				return logs, nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return last, fmt.Errorf("timed out waiting for background logs from %s", id)
+		case <-ticker.C:
+		}
+	}
 }
 
 func configPrecedenceScenario() scenario {
@@ -2531,6 +2593,181 @@ func pluginLifecycleScenario() scenario {
 				}
 			}
 			return nil
+		},
+	}
+}
+
+func backgroundAgentRunScenario() scenario {
+	return scenario{
+		name: "background_agent_run_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			taskStore := background.NewStore(configHome)
+			runStore := agentruns.NewStore(configHome)
+			now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+			sessionID := "session-bg"
+
+			task, err := taskStore.RunWithOptions("printf codog-bg-ready; sleep 5", workspace, background.RunOptions{
+				Kind:        "agent",
+				AgentType:   "reviewer",
+				SessionID:   sessionID,
+				Prompt:      "review branch",
+				Description: "Parity reviewer",
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			defer func() { _, _ = taskStore.Stop(task.ID) }()
+
+			if _, err := waitForBackgroundLogs(ctx, taskStore, task.ID, "codog-bg-ready", 2*time.Second); err != nil {
+				return localScenarioResult{}, err
+			}
+			updatedTask, err := taskStore.UpdateHeartbeat(task.ID, background.LaneHeartbeat{
+				ObservedAt:     now.Add(-5 * time.Second),
+				TransportAlive: true,
+				Status:         "working",
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if updatedTask.Heartbeat == nil || updatedTask.Heartbeat.Status != "working" {
+				return localScenarioResult{}, fmt.Errorf("background heartbeat was not persisted")
+			}
+
+			run, err := runStore.Save(agentruns.Run{
+				ID:        "run-" + task.ID,
+				Agent:     "reviewer",
+				Prompt:    "review branch",
+				Workspace: workspace,
+				SessionID: sessionID,
+				TaskID:    task.ID,
+				CreatedAt: now,
+				UpdatedAt: now,
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			status := agentruns.StatusForTaskAt(taskStore, run, now, 30*time.Second)
+			if status.CurrentStatus != "running" || status.Freshness != background.LaneFreshnessHealthy || status.Health.State != "healthy" {
+				return localScenarioResult{}, fmt.Errorf("unexpected agent run status: %#v", status)
+			}
+			agentBoard := agentruns.BuildBoard(taskStore, []agentruns.Run{run}, now, 30*time.Second)
+			if len(agentBoard.Active) != 1 || agentBoard.Active[0].Run.ID != run.ID || agentBoard.Active[0].Freshness != background.LaneFreshnessHealthy {
+				return localScenarioResult{}, fmt.Errorf("unexpected agent lane board: %#v", agentBoard)
+			}
+			taskBoard, err := taskStore.LaneBoardAt(now, 30*time.Second)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if len(taskBoard.Active) != 1 || taskBoard.Active[0].TaskID != task.ID || taskBoard.Active[0].Freshness != background.LaneFreshnessHealthy {
+				return localScenarioResult{}, fmt.Errorf("unexpected background lane board: %#v", taskBoard)
+			}
+
+			var events []background.WatchEvent
+			watchCtx, cancelWatch := context.WithTimeout(ctx, 2*time.Second)
+			err = taskStore.Watch(watchCtx, task.ID, background.WatchOptions{Interval: 20 * time.Millisecond, MaxEvents: 2}, func(event background.WatchEvent) error {
+				events = append(events, event)
+				return nil
+			})
+			cancelWatch()
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if len(events) != 2 || events[0].Type != "status" || events[1].Type != "log" || !strings.Contains(events[1].Data, "codog-bg-ready") {
+				return localScenarioResult{}, fmt.Errorf("unexpected background watch events: %#v", events)
+			}
+
+			stopped, err := taskStore.Stop(task.ID)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if stopped.Status != "stopped" {
+				return localScenarioResult{}, fmt.Errorf("expected stopped task, got %q", stopped.Status)
+			}
+			restarted, err := taskStore.Restart(task.ID, workspace)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			defer func() { _, _ = taskStore.Stop(restarted.ID) }()
+			if restarted.RestartedFrom != task.ID || restarted.Kind != "agent" || restarted.AgentType != "reviewer" || restarted.SessionID != sessionID {
+				return localScenarioResult{}, fmt.Errorf("unexpected restarted task: %#v", restarted)
+			}
+			source, err := taskStore.Get(task.ID)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if source.RestartedBy != restarted.ID {
+				return localScenarioResult{}, fmt.Errorf("source task missing restarted_by link")
+			}
+
+			failing, err := taskStore.RunWithOptions("printf codog-bg-fail; exit 7", workspace, background.RunOptions{
+				Kind:      "agent",
+				AgentType: "fixer",
+				SessionID: sessionID,
+				Prompt:    "fix failure",
+				RestartPolicy: &background.RestartPolicy{
+					Enabled:     true,
+					Mode:        "on-failure",
+					MaxAttempts: 1,
+				},
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			failed, err := waitForBackgroundTask(ctx, taskStore, failing.ID, 2*time.Second, func(task background.Task) bool {
+				return task.Status == "failed" && task.ExitCode != nil && *task.ExitCode == 7
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if failed.RestartPolicy == nil || !failed.RestartPolicy.Enabled {
+				return localScenarioResult{}, fmt.Errorf("failing task lost restart policy")
+			}
+			supervised, err := taskStore.SuperviseOnce(now.Add(time.Minute))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if len(supervised.Restarted) != 1 || supervised.Restarted[0].RestartedFrom != failing.ID || supervised.Restarted[0].RestartCount != 1 {
+				return localScenarioResult{}, fmt.Errorf("unexpected supervise result: %#v", supervised)
+			}
+			defer func() { _, _ = taskStore.Stop(supervised.Restarted[0].ID) }()
+
+			report := map[string]any{
+				"kind": "background_agent_run",
+				"task": map[string]any{
+					"kind":           task.Kind,
+					"agent_type":     task.AgentType,
+					"session_id":     task.SessionID,
+					"watch_events":   []string{events[0].Type, events[1].Type},
+					"stopped":        stopped.Status,
+					"restarted":      restarted.RestartedFrom == task.ID,
+					"lane":           "active",
+					"lane_freshness": string(taskBoard.Active[0].Freshness),
+				},
+				"agent_run": map[string]any{
+					"agent":        run.Agent,
+					"status":       status.CurrentStatus,
+					"freshness":    string(status.Freshness),
+					"health":       status.Health.State,
+					"active_lanes": len(agentBoard.Active),
+				},
+				"supervisor": map[string]any{
+					"failed_status":    failed.Status,
+					"failed_exit_code": *failed.ExitCode,
+					"restarted":        len(supervised.Restarted),
+					"restart_count":    supervised.Restarted[0].RestartCount,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "background agent run harness ok",
+				RequestCount: 7,
+				MessageCount: 1,
+			}, nil
 		},
 	}
 }

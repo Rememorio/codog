@@ -257,6 +257,24 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 0, pluginLifecycle.ToolCalls)
 	require.Contains(t, pluginLifecycle.Output, "plugin lifecycle harness ok")
 
+	backgroundAgent := findScenario(t, report, "background_agent_run_roundtrip")
+	require.True(t, backgroundAgent.OK)
+	require.Equal(t, "background-agents", backgroundAgent.Category)
+	require.Equal(t, 0, backgroundAgent.ToolCalls)
+	require.Equal(t, 7, backgroundAgent.RequestCount)
+	require.Equal(t, "background agent run harness ok", backgroundAgent.FinalMessage)
+	require.Contains(t, backgroundAgent.Output, `"kind":"background_agent_run"`)
+	require.Contains(t, backgroundAgent.Output, `"agent":"reviewer"`)
+	require.Contains(t, backgroundAgent.Output, `"freshness":"healthy"`)
+	require.Contains(t, backgroundAgent.Output, `"watch_events":["status","log"]`)
+	require.Contains(t, backgroundAgent.Output, `"stopped":"stopped"`)
+	require.Contains(t, backgroundAgent.Output, `"restarted":true`)
+	require.Contains(t, backgroundAgent.Output, `"failed_exit_code":7`)
+	backgroundAgents := findCategory(t, report, "background-agents")
+	require.True(t, backgroundAgents.OK)
+	require.Equal(t, 1, backgroundAgents.Total)
+	require.ElementsMatch(t, []string{"background_agent_run_roundtrip"}, backgroundAgents.Scenarios)
+
 	remoteTrigger := findScenario(t, report, "remote_trigger_roundtrip")
 	require.True(t, remoteTrigger.OK)
 	require.Equal(t, 1, remoteTrigger.ToolCalls)
@@ -412,6 +430,12 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Contains(t, workflow.ParityRefs, "Slash commands")
 	require.Contains(t, workflow.ParityRefs, "Skills")
 	require.Contains(t, workflow.ParityRefs, "Templates")
+
+	backgroundAgent := findManifestScenario(t, manifest, "background_agent_run_roundtrip")
+	require.Equal(t, "background-agents", backgroundAgent.Category)
+	require.Contains(t, backgroundAgent.ParityRefs, "Background tasks")
+	require.Contains(t, backgroundAgent.ParityRefs, "Agent runs")
+	require.Contains(t, backgroundAgent.ParityRefs, "Supervisor restarts")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {
