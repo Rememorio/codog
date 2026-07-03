@@ -922,7 +922,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "bridge-kick")
 	require.Contains(t, report.Commands, "bootstrap-plan")
 	require.Contains(t, report.Commands, "cron")
+	require.Contains(t, report.Commands, "deferred-init")
 	require.Contains(t, report.Commands, "team")
+	require.Contains(t, report.Commands, "startup-report")
 	require.Contains(t, report.Commands, "budget")
 	require.Contains(t, report.Commands, "capabilities")
 	require.Contains(t, report.Commands, "bug")
@@ -973,6 +975,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "bootstrap_plan")
 	require.Contains(t, report.Features, "config_load_degraded")
 	require.Contains(t, report.Features, "config_reset")
+	require.Contains(t, report.Features, "deferred_init")
 	require.Contains(t, report.Features, "doctor_config_load_degraded")
 	require.Contains(t, report.Features, "doctor_config_validation")
 	require.Contains(t, report.Features, "hooks_health")
@@ -1268,11 +1271,13 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("bridge-kick"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bootstrap-plan"))
 	require.True(t, commandAcceptsGlobalOutputFormat("checkpoint"))
+	require.True(t, commandAcceptsGlobalOutputFormat("deferred-init"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ide"))
 	require.True(t, commandAcceptsGlobalOutputFormat("install"))
 	require.True(t, commandAcceptsGlobalOutputFormat("notebook-read"))
 	require.True(t, commandAcceptsGlobalOutputFormat("notebook-edit"))
 	require.True(t, commandAcceptsGlobalOutputFormat("teleport"))
+	require.True(t, commandAcceptsGlobalOutputFormat("startup-report"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ultraplan"))
 	require.True(t, commandAcceptsGlobalOutputFormat("upgrade"))
 	require.True(t, commandAcceptsGlobalOutputFormat("workspace"))
@@ -1345,6 +1350,105 @@ func TestBootstrapPlanDegradesOnMalformedConfigFile(t *testing.T) {
 	require.Contains(t, configPhase.Evidence["config_load_error"], "broken.json")
 }
 
+func TestDeferredInitCommandReportsTrustGatedStartup(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			TrustedRoots:   []string{workspace},
+			EnabledSkills:  []string{"review"},
+			MCPServers:     map[string]config.MCPServerConfig{"local": {Command: "codog-test-mcp"}},
+			PermissionMode: "workspace-write",
+			Hooks: config.HookConfig{
+				SessionStart: []string{"echo session"},
+				Notification: []string{"echo notify"},
+			},
+		},
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.DeferredInit("deferred-init", nil))
+	require.Contains(t, out.String(), "Deferred Init")
+	require.Contains(t, out.String(), "Trusted          true")
+	out.Reset()
+
+	require.NoError(t, app.DeferredInit("startup-report", []string{"--json"}))
+	var report deferredInitReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "deferred_init", report.Kind)
+	require.Equal(t, "startup-report", report.Action)
+	require.Equal(t, "ready", report.Status)
+	require.True(t, report.Trusted)
+	require.Equal(t, "workspace_matches_trusted_root", report.TrustReason)
+	require.True(t, report.PluginInit)
+	require.True(t, report.SkillInit)
+	require.True(t, report.MCPPrefetch)
+	require.True(t, report.SessionHooks)
+	require.Equal(t, report.TaskCount, len(report.Tasks))
+	require.Equal(t, "idle", deferredInitTaskByName(t, report, "plugin_init").Status)
+	require.Equal(t, "enabled", deferredInitTaskByName(t, report, "skill_init").Status)
+	require.Equal(t, 1, deferredInitTaskByName(t, report, "mcp_prefetch").Configured)
+	require.Equal(t, "enabled", deferredInitTaskByName(t, report, "session_hooks").Status)
+	require.Equal(t, "enabled", deferredInitTaskByName(t, report, "notification_hooks").Status)
+}
+
+func TestDeferredInitSkipsUntrustedWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:    t.TempDir(),
+			Model:         "claude-test",
+			TrustedRoots:  []string{filepath.Join(t.TempDir(), "other")},
+			EnabledSkills: []string{"review"},
+			MCPServers:    map[string]config.MCPServerConfig{"local": {Command: "codog-test-mcp"}},
+		},
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(t.TempDir(), workspace),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.DeferredInit("deferred-init", []string{"--json"}))
+	var report deferredInitReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "skipped", report.Status)
+	require.False(t, report.Trusted)
+	require.Equal(t, "workspace_not_trusted", report.TrustReason)
+	require.False(t, report.PluginInit)
+	require.False(t, report.SkillInit)
+	require.False(t, report.MCPPrefetch)
+	require.False(t, report.SessionHooks)
+	require.Equal(t, "skipped", deferredInitTaskByName(t, report, "mcp_prefetch").Status)
+}
+
+func TestDeferredInitDegradesOnMalformedConfigFile(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	configPath := filepath.Join(t.TempDir(), "broken.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "deferred-init"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report deferredInitReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "deferred_init", report.Kind)
+	require.Equal(t, "warn", report.Status)
+	require.Equal(t, "config_load_failed", report.ConfigLoadErrorKind)
+	require.Contains(t, report.ConfigLoadError, "broken.json")
+	require.False(t, report.PluginInit)
+}
+
 func bootstrapPlanPhaseByName(t *testing.T, report bootstrapPlanReport, name string) bootstrapPlanPhase {
 	t.Helper()
 	for _, phase := range report.Phases {
@@ -1354,6 +1458,17 @@ func bootstrapPlanPhaseByName(t *testing.T, report bootstrapPlanReport, name str
 	}
 	require.Failf(t, "missing bootstrap phase", "phase %q was not reported", name)
 	return bootstrapPlanPhase{}
+}
+
+func deferredInitTaskByName(t *testing.T, report deferredInitReport, name string) deferredInitTask {
+	t.Helper()
+	for _, task := range report.Tasks {
+		if task.Name == name {
+			return task
+		}
+	}
+	require.Failf(t, "missing deferred init task", "task %q was not reported", name)
+	return deferredInitTask{}
 }
 
 func TestReasoningCommandPersistsPreference(t *testing.T) {

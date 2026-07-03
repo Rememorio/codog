@@ -345,6 +345,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if config.IsFileError(err) && isBootstrapPlanCommand(command) {
 			return renderBootstrapPlanWithConfigLoadError(os.Stdout, rest, overrides, originalArgs, err)
 		}
+		if config.IsFileError(err) && isDeferredInitCommand(command) {
+			return renderDeferredInitWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
+		}
 		if config.IsFileError(err) && isDoctorCommand(command) {
 			return renderDoctorWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
@@ -935,6 +938,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.Brief(rest))
 	case "bootstrap-plan":
 		return wrapStructured(app.BootstrapPlan(rest))
+	case "deferred-init", "startup-report":
+		return wrapStructured(app.DeferredInit(command, rest))
 	case "status":
 		return wrapStructured(app.Status(rest, overrides))
 	case "statusline":
@@ -1110,6 +1115,15 @@ func isBootstrapPlanCommand(command string) bool {
 	}
 }
 
+func isDeferredInitCommand(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "deferred-init", "startup-report":
+		return true
+	default:
+		return false
+	}
+}
+
 func isConfigCommand(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "config", "settings", "/config", "/settings":
@@ -1215,6 +1229,35 @@ func renderBootstrapPlanWithConfigLoadError(out io.Writer, rest []string, overri
 		ConfigLoadErrorKind: buildCLIErrorReport(loadErr).ErrorKind,
 	}
 	return app.BootstrapPlan(rest)
+}
+
+func renderDeferredInitWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
+	cfg, err := config.Default(overrides)
+	if err != nil {
+		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
+	}
+	applyStoredOAuthToken(&cfg, time.Now().UTC())
+	workspace, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	additionalDirs, err := pathscope.EffectiveDirs(workspace, cfg.AdditionalDirs)
+	if err != nil {
+		return err
+	}
+	app := &App{
+		Config:              cfg,
+		Client:              anthropicClientFromConfig(cfg),
+		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
+		Sessions:            session.NewWorkspaceStore(cfg.ConfigHome, workspace),
+		Workspace:           workspace,
+		Out:                 out,
+		Err:                 os.Stderr,
+		In:                  os.Stdin,
+		ConfigLoadError:     strings.TrimSpace(loadErr.Error()),
+		ConfigLoadErrorKind: buildCLIErrorReport(loadErr).ErrorKind,
+	}
+	return app.DeferredInit(command, rest)
 }
 
 func renderDoctorWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
@@ -22772,6 +22815,280 @@ func renderBootstrapPlanText(out io.Writer, report bootstrapPlanReport) {
 	}
 }
 
+type deferredInitReport struct {
+	Kind                string             `json:"kind"`
+	Action              string             `json:"action"`
+	Status              string             `json:"status"`
+	Version             string             `json:"version"`
+	Workspace           string             `json:"workspace"`
+	Trusted             bool               `json:"trusted"`
+	TrustedRootsCount   int                `json:"trusted_roots_count"`
+	TrustReason         string             `json:"trust_reason"`
+	PluginInit          bool               `json:"plugin_init"`
+	SkillInit           bool               `json:"skill_init"`
+	MCPPrefetch         bool               `json:"mcp_prefetch"`
+	SessionHooks        bool               `json:"session_hooks"`
+	TaskCount           int                `json:"task_count"`
+	Tasks               []deferredInitTask `json:"tasks"`
+	ConfigLoadError     string             `json:"config_load_error,omitempty"`
+	ConfigLoadErrorKind string             `json:"config_load_error_kind,omitempty"`
+	Message             string             `json:"message,omitempty"`
+}
+
+type deferredInitTask struct {
+	Name        string         `json:"name"`
+	Status      string         `json:"status"`
+	Enabled     bool           `json:"enabled"`
+	Configured  int            `json:"configured"`
+	Description string         `json:"description"`
+	Reason      string         `json:"reason,omitempty"`
+	Evidence    map[string]any `json:"evidence,omitempty"`
+}
+
+func (a *App) DeferredInit(command string, args []string) error {
+	format, err := parseSimpleOutputFormat(command, args)
+	if err != nil {
+		return err
+	}
+	report := a.buildDeferredInitReport(command)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderDeferredInitText(a.Out, report)
+	return nil
+}
+
+func (a *App) buildDeferredInitReport(action string) deferredInitReport {
+	trusted, trustReason := a.deferredInitTrust()
+	mcpValidation := buildMCPValidation(a.Config.MCPServers)
+	runtimeHooks := a.Config.Hooks
+	hooksDisabled := a.Config.EffectiveDisableAllHooks()
+	if hooksDisabled {
+		runtimeHooks = config.HookConfig{}
+	}
+	hookValidation := buildHookValidation(runtimeHooks)
+	installedPlugins, pluginLoadError := installedPluginCount(a.Workspace)
+	sessionHookCount := bootstrapHookCount(runtimeHooks, "session_start")
+	notificationHookCount := bootstrapHookCount(runtimeHooks, "notification")
+	sessionHooksValid := hookValidation.InvalidCount == 0
+	mcpValid := mcpValidation.InvalidCount == 0
+	configLoaded := strings.TrimSpace(a.ConfigLoadError) == ""
+
+	pluginInit := trusted && configLoaded && pluginLoadError == ""
+	skillInit := trusted && configLoaded
+	mcpPrefetch := trusted && configLoaded && mcpValid
+	sessionHooks := trusted && configLoaded && !hooksDisabled && sessionHooksValid
+
+	tasks := []deferredInitTask{
+		deferredInitTaskFor(
+			"plugin_init",
+			pluginInit,
+			installedPlugins,
+			"Load trusted plugin manifests and plugin-provided runtime surfaces after the trust gate.",
+			deferredInitReason(trusted, configLoaded, pluginLoadError, installedPlugins > 0),
+			map[string]any{"installed_count": installedPlugins, "load_error": pluginLoadError},
+		),
+		deferredInitTaskFor(
+			"skill_init",
+			skillInit,
+			len(a.Config.EnabledSkills),
+			"Prepare trusted local skill discovery for prompt routing and slash invocation.",
+			deferredInitReason(trusted, configLoaded, "", true),
+			map[string]any{"enabled_skill_count": len(a.Config.EnabledSkills)},
+		),
+		deferredInitTaskFor(
+			"mcp_prefetch",
+			mcpPrefetch,
+			mcpValidation.TotalConfigured,
+			"Prefetch valid MCP server metadata and tool manifests after configuration validation.",
+			deferredInitReason(trusted, configLoaded, deferredInitInvalidReason("invalid_mcp", mcpValidation.InvalidCount), mcpValidation.TotalConfigured > 0),
+			map[string]any{
+				"configured_count": mcpValidation.TotalConfigured,
+				"valid_count":      mcpValidation.ValidCount,
+				"invalid_count":    mcpValidation.InvalidCount,
+			},
+		),
+		deferredInitTaskFor(
+			"session_hooks",
+			sessionHooks,
+			sessionHookCount,
+			"Arm session-start hooks for the first created or resumed session.",
+			deferredInitReason(trusted, configLoaded && !hooksDisabled, deferredInitInvalidReason("invalid_hooks", hookValidation.InvalidCount), sessionHookCount > 0),
+			map[string]any{"hook_count": sessionHookCount, "hooks_disabled": hooksDisabled, "invalid_count": hookValidation.InvalidCount},
+		),
+		deferredInitTaskFor(
+			"notification_hooks",
+			trusted && configLoaded && !hooksDisabled && notificationsEnabled(a.Config.Future.NotificationsEnabled) && hookValidation.InvalidCount == 0,
+			notificationHookCount,
+			"Arm notification hooks for background, team, cron, and lifecycle events.",
+			deferredInitReason(trusted, configLoaded && !hooksDisabled, deferredInitInvalidReason("invalid_hooks", hookValidation.InvalidCount), notificationHookCount > 0 && notificationsEnabled(a.Config.Future.NotificationsEnabled)),
+			map[string]any{
+				"hook_count":               notificationHookCount,
+				"notifications_enabled":    notificationsEnabled(a.Config.Future.NotificationsEnabled),
+				"notifications_configured": a.Config.Future.NotificationsEnabled != nil,
+				"hooks_disabled":           hooksDisabled,
+				"invalid_count":            hookValidation.InvalidCount,
+			},
+		),
+		deferredInitTaskFor(
+			"background_supervisor",
+			trusted && configLoaded,
+			1,
+			"Permit background task lane state and supervisor checks after the trust gate.",
+			deferredInitReason(trusted, configLoaded, "", true),
+			map[string]any{"config_home": a.Config.ConfigHome},
+		),
+	}
+
+	report := deferredInitReport{
+		Kind:                "deferred_init",
+		Action:              strings.TrimSpace(action),
+		Version:             version,
+		Workspace:           a.Workspace,
+		Trusted:             trusted,
+		TrustedRootsCount:   len(nonEmptyStrings(a.Config.TrustedRoots)),
+		TrustReason:         trustReason,
+		PluginInit:          pluginInit,
+		SkillInit:           skillInit,
+		MCPPrefetch:         mcpPrefetch,
+		SessionHooks:        sessionHooks,
+		Tasks:               tasks,
+		ConfigLoadError:     strings.TrimSpace(a.ConfigLoadError),
+		ConfigLoadErrorKind: strings.TrimSpace(a.ConfigLoadErrorKind),
+	}
+	report.TaskCount = len(report.Tasks)
+	report.Status = deferredInitStatus(report.Tasks, report.ConfigLoadError)
+	report.Message = deferredInitMessage(report)
+	return report
+}
+
+func (a *App) deferredInitTrust() (bool, string) {
+	roots := nonEmptyStrings(a.Config.TrustedRoots)
+	if len(roots) == 0 {
+		return false, "no_trusted_roots"
+	}
+	entries := make([]trustresolver.AllowlistEntry, 0, len(roots))
+	for _, root := range roots {
+		entries = append(entries, trustresolver.AllowlistEntry{Pattern: root})
+	}
+	worktree := ""
+	if strings.TrimSpace(a.Workspace) != "" {
+		worktree = filepath.Join(a.Workspace, ".git")
+	}
+	if trustresolver.New(trustresolver.Config{Allowlisted: entries}).Trusts(a.Workspace, worktree) {
+		return true, "workspace_matches_trusted_root"
+	}
+	return false, "workspace_not_trusted"
+}
+
+func installedPluginCount(workspace string) (int, string) {
+	manifests, err := plugins.Load(workspace)
+	if err != nil {
+		return 0, err.Error()
+	}
+	return len(manifests), ""
+}
+
+func deferredInitTaskFor(name string, enabled bool, configured int, description string, reason string, evidence map[string]any) deferredInitTask {
+	status := "enabled"
+	if !enabled {
+		status = "skipped"
+	}
+	if enabled && configured == 0 {
+		status = "idle"
+	}
+	if strings.HasPrefix(reason, "blocked:") || strings.HasPrefix(reason, "warn:") {
+		status = "warn"
+	}
+	return deferredInitTask{
+		Name:        name,
+		Status:      status,
+		Enabled:     enabled,
+		Configured:  configured,
+		Description: description,
+		Reason:      strings.TrimSpace(reason),
+		Evidence:    compactEvidence(evidence),
+	}
+}
+
+func deferredInitReason(trusted bool, configReady bool, warning string, configured bool) string {
+	if !trusted {
+		return "workspace_not_trusted"
+	}
+	if !configReady {
+		return "blocked:config_not_ready"
+	}
+	if strings.TrimSpace(warning) != "" {
+		return "warn:" + strings.TrimSpace(warning)
+	}
+	if !configured {
+		return "not_configured"
+	}
+	return "ready"
+}
+
+func deferredInitInvalidReason(kind string, count int) string {
+	if count <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", kind, count)
+}
+
+func deferredInitStatus(tasks []deferredInitTask, configLoadError string) string {
+	if strings.TrimSpace(configLoadError) != "" {
+		return "warn"
+	}
+	enabled := false
+	for _, task := range tasks {
+		if task.Status == "warn" {
+			return "warn"
+		}
+		if task.Enabled {
+			enabled = true
+		}
+	}
+	if enabled {
+		return "ready"
+	}
+	return "skipped"
+}
+
+func deferredInitMessage(report deferredInitReport) string {
+	switch report.Status {
+	case "ready":
+		return "trust-gated deferred init is ready"
+	case "warn":
+		return "deferred init has warnings"
+	default:
+		return "deferred init is skipped until the workspace is trusted or configured"
+	}
+}
+
+func renderDeferredInitText(out io.Writer, report deferredInitReport) {
+	fmt.Fprintln(out, "Deferred Init")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Trusted          %t (%s)\n", report.Trusted, report.TrustReason)
+	fmt.Fprintf(out, "  Plugin init      %t\n", report.PluginInit)
+	fmt.Fprintf(out, "  Skill init       %t\n", report.SkillInit)
+	fmt.Fprintf(out, "  MCP prefetch     %t\n", report.MCPPrefetch)
+	fmt.Fprintf(out, "  Session hooks    %t\n", report.SessionHooks)
+	if report.ConfigLoadError != "" {
+		fmt.Fprintf(out, "  Config load      degraded: %s\n", report.ConfigLoadError)
+	}
+	fmt.Fprintln(out, "  Tasks")
+	for _, task := range report.Tasks {
+		fmt.Fprintf(out, "    - %-22s %-7s configured=%d enabled=%t\n", task.Name, task.Status, task.Configured, task.Enabled)
+		if task.Reason != "" {
+			fmt.Fprintf(out, "      reason=%s\n", task.Reason)
+		}
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
 func (a *App) Status(args []string, overrides config.FlagOverrides) error {
 	format, err := parseSimpleOutputFormat("status", args)
 	if err != nil {
@@ -24702,6 +25019,7 @@ func codogCapabilityFeatures() []string {
 		"config_load_degraded",
 		"config_reset",
 		"cost_token_tracking",
+		"deferred_init",
 		"doctor_config_load_degraded",
 		"doctor_config_validation",
 		"doctor_sandbox_runtime_status",
@@ -24855,6 +25173,7 @@ func builtInCommandNames() []string {
 		"cwd",
 		"ctx_viz",
 		"debug-tool-call",
+		"deferred-init",
 		"definition",
 		"desktop",
 		"diagnostics",
@@ -24998,6 +25317,7 @@ func builtInCommandNames() []string {
 		"stats",
 		"status",
 		"statusline",
+		"startup-report",
 		"stickers",
 		"SuccessStep",
 		"summary",
@@ -48541,14 +48861,14 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "subagent", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "backfill-sessions", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
 		"break-cache", "bridge", "bridge-kick", "bootstrap-plan", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
-		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
+		"debug-tool-call", "deferred-init", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
 		"help", "ide", "init", "init-verifiers", "insights", "install", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "state", "status", "statusline",
-		"bashes", "stash", "stale-base", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details", "trust",
+		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"teleport", "ultraplan", "ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "unpin", "upgrade", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
 		return true
@@ -48946,6 +49266,23 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "warn"},
 			false,
 		), true
+	case "deferred-init", "startup-report":
+		spec := localCommandHelpSpec(
+			"deferred-init",
+			"deferred-init",
+			"codog deferred-init [--output-format text|json]",
+			"Deferred Init\n\nUsage:\n  codog deferred-init [--output-format text|json]\n  codog startup-report [same flags]\n\nReports the trust-gated deferred startup decisions Codog would apply after local preflight. The report mirrors claw-code's plugin_init, skill_init, mcp_prefetch, and session_hooks booleans, then adds task-level evidence for plugins, skills, MCP, hooks, notifications, and background startup without executing those side effects.\n",
+			[]string{"kind", "status", "trusted", "plugin_init", "skill_init", "mcp_prefetch", "session_hooks", "tasks", "config_load_error"},
+			[]string{"ready", "skipped", "warn"},
+			false,
+		)
+		spec.Aliases = []string{"startup-report"}
+		if topic == "startup-report" {
+			spec.Topic = "startup-report"
+			spec.Command = "startup-report"
+			spec.Usage = "codog startup-report [--output-format text|json]"
+		}
+		return spec, true
 	case "status":
 		return commandHelpSpec{
 			Topic:                   "status",
@@ -49965,6 +50302,7 @@ Usage:
   %s [flags] mcp [list|serve|self|show|add|remove|tools|auth|call|resources|resource-templates|read|prompts|prompt]
   %s [flags] capabilities [--json|--output-format text|json]
   %s [flags] bootstrap-plan [--json|--output-format text|json]
+  %s [flags] deferred-init|startup-report [--json|--output-format text|json]
   %s acp [serve] [--json|--output-format text|json]
   %s [flags] status [--json|--output-format text|json]
   %s [flags] statusline [--json|--output-format text|json]
