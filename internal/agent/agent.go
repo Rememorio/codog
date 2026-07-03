@@ -20739,6 +20739,9 @@ type acpRequest struct {
 var acpJSONRPCMethods = []string{
 	"initialize",
 	"status",
+	"workspace/info",
+	"workspace/files",
+	"workspace/search",
 	"session/new",
 	"session/open",
 	"session/list",
@@ -20803,7 +20806,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -20957,6 +20960,15 @@ func (a *App) serveACP(ctx context.Context) error {
 				return acpserver.SessionInfo{}, err
 			}
 			return acpserver.SessionInfo{SessionID: sess.ID, Workspace: a.Workspace}, nil
+		},
+		WorkspaceInfo: func(context.Context) (workspaceops.InfoResult, error) {
+			return (workspaceops.Service{Workspace: a.Workspace}).Info()
+		},
+		WorkspaceFiles: func(_ context.Context, options workspaceops.FilesOptions) (workspaceops.FilesResult, error) {
+			return (workspaceops.Service{Workspace: a.Workspace}).Files(options)
+		},
+		WorkspaceSearch: func(_ context.Context, options workspaceops.SearchOptions) (workspaceops.SearchResult, error) {
+			return (workspaceops.Service{Workspace: a.Workspace}).Search(options)
 		},
 		OpenSession: func(_ context.Context, req acpserver.SessionOpenRequest) (acpserver.SessionDetail, error) {
 			if a.Sessions == nil {

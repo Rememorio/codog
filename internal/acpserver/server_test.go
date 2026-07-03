@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Rememorio/codog/internal/workspaceops"
 	"github.com/stretchr/testify/require"
 )
 
@@ -106,6 +107,10 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.Equal(t, "test", responses[0]["result"].(map[string]any)["serverInfo"].(map[string]any)["version"])
 	capabilities := responses[0]["result"].(map[string]any)["capabilities"].(map[string]any)
 	require.Equal(t, true, capabilities["prompt"])
+	workspaceCaps := capabilities["workspace"].(map[string]any)
+	require.Equal(t, true, workspaceCaps["info"])
+	require.Equal(t, true, workspaceCaps["files"])
+	require.Equal(t, true, workspaceCaps["search"])
 	sessionCaps := capabilities["sessions"].(map[string]any)
 	require.Equal(t, true, sessionCaps["open"])
 	require.Equal(t, true, sessionCaps["history"])
@@ -159,6 +164,65 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.Equal(t, "session_prune", pruneResult["kind"])
 	require.EqualValues(t, 1, pruneResult["deleted_count"])
 	require.NotNil(t, responses[15]["result"])
+}
+
+func TestServeHandlesWorkspaceRequests(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"workspace/info","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"workspace/files","params":{"path":"src","pattern":"*.go","limit":3}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"workspace/search","params":{"query":"needle","glob":"*.go","limit":2}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
+		WorkspaceInfo: func(context.Context) (workspaceops.InfoResult, error) {
+			return workspaceops.InfoResult{Path: "/workspace", Name: "workspace"}, nil
+		},
+		WorkspaceFiles: func(_ context.Context, options workspaceops.FilesOptions) (workspaceops.FilesResult, error) {
+			require.Equal(t, "src", options.Path)
+			require.Equal(t, "*.go", options.Pattern)
+			require.Equal(t, 3, options.Limit)
+			return workspaceops.FilesResult{Root: "src", Files: []workspaceops.FileEntry{{Path: "src/main.go"}}}, nil
+		},
+		WorkspaceSearch: func(_ context.Context, options workspaceops.SearchOptions) (workspaceops.SearchResult, error) {
+			require.Equal(t, "needle", options.Query)
+			require.Equal(t, "*.go", options.Glob)
+			require.Equal(t, 2, options.Limit)
+			return workspaceops.SearchResult{Matches: []workspaceops.SearchMatch{{Path: "src/main.go", Line: 1, Text: "needle"}}}, nil
+		},
+	}, Options{})
+	require.NoError(t, err)
+
+	responses := decodeACPResponses(t, out.String())
+	require.Len(t, responses, 3)
+	info := responses[0]["result"].(map[string]any)
+	require.Equal(t, "/workspace", info["path"])
+	require.Equal(t, "workspace", info["name"])
+	files := responses[1]["result"].(map[string]any)
+	require.Equal(t, "src", files["root"])
+	require.Len(t, files["files"].([]any), 1)
+	search := responses[2]["result"].(map[string]any)
+	require.Len(t, search["matches"].([]any), 1)
+}
+
+func TestServeReportsWorkspaceValidationErrors(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"workspace/files","params":{"limit":"bad"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"workspace/search","params":{"query":"missing handler"}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{}, Options{})
+	require.NoError(t, err)
+
+	responses := decodeACPResponses(t, out.String())
+	require.Len(t, responses, 2)
+	require.EqualValues(t, -32603, responses[0]["error"].(map[string]any)["code"])
+	require.Contains(t, responses[0]["error"].(map[string]any)["message"], "workspace files handler")
+	require.EqualValues(t, -32603, responses[1]["error"].(map[string]any)["code"])
+	require.Contains(t, responses[1]["error"].(map[string]any)["message"], "workspace search handler")
 }
 
 func TestServeReportsPromptValidationErrors(t *testing.T) {

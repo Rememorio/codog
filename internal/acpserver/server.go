@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Rememorio/codog/internal/anthropic"
+	"github.com/Rememorio/codog/internal/workspaceops"
 )
 
 type Options struct {
@@ -17,20 +18,23 @@ type Options struct {
 }
 
 type Handlers struct {
-	NewSession    func(context.Context) (SessionInfo, error)
-	OpenSession   func(context.Context, SessionOpenRequest) (SessionDetail, error)
-	ListSessions  func(context.Context) (SessionList, error)
-	GetSession    func(context.Context, SessionLookupRequest) (SessionDetail, error)
-	History       func(context.Context, SessionHistoryRequest) (SessionHistory, error)
-	AppendMessage func(context.Context, SessionAppendMessageRequest) (SessionMutationResult, error)
-	AppendInput   func(context.Context, SessionAppendInputRequest) (SessionMutationResult, error)
-	RewindSession func(context.Context, SessionRewindRequest) (SessionRewindResult, error)
-	ForkSession   func(context.Context, SessionForkRequest) (SessionMutationResult, error)
-	RenameSession func(context.Context, SessionRenameRequest) (SessionMutationResult, error)
-	DeleteSession func(context.Context, SessionLookupRequest) (SessionMutationResult, error)
-	PruneSessions func(context.Context, SessionPruneRequest) (any, error)
-	Prompt        func(context.Context, PromptRequest) (PromptResult, error)
-	Status        func(context.Context) (any, error)
+	NewSession      func(context.Context) (SessionInfo, error)
+	OpenSession     func(context.Context, SessionOpenRequest) (SessionDetail, error)
+	ListSessions    func(context.Context) (SessionList, error)
+	GetSession      func(context.Context, SessionLookupRequest) (SessionDetail, error)
+	History         func(context.Context, SessionHistoryRequest) (SessionHistory, error)
+	AppendMessage   func(context.Context, SessionAppendMessageRequest) (SessionMutationResult, error)
+	AppendInput     func(context.Context, SessionAppendInputRequest) (SessionMutationResult, error)
+	RewindSession   func(context.Context, SessionRewindRequest) (SessionRewindResult, error)
+	ForkSession     func(context.Context, SessionForkRequest) (SessionMutationResult, error)
+	RenameSession   func(context.Context, SessionRenameRequest) (SessionMutationResult, error)
+	DeleteSession   func(context.Context, SessionLookupRequest) (SessionMutationResult, error)
+	PruneSessions   func(context.Context, SessionPruneRequest) (any, error)
+	Prompt          func(context.Context, PromptRequest) (PromptResult, error)
+	Status          func(context.Context) (any, error)
+	WorkspaceInfo   func(context.Context) (workspaceops.InfoResult, error)
+	WorkspaceFiles  func(context.Context, workspaceops.FilesOptions) (workspaceops.FilesResult, error)
+	WorkspaceSearch func(context.Context, workspaceops.SearchOptions) (workspaceops.SearchResult, error)
 }
 
 type SessionInfo struct {
@@ -225,6 +229,12 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return true, writeResult(out, req.ID, map[string]any{})
 	case "status":
 		return false, handleStatus(ctx, out, handlers, opts, req)
+	case "workspace/info":
+		return false, handleWorkspaceInfo(ctx, out, handlers, opts, req)
+	case "workspace/files":
+		return false, handleWorkspaceFiles(ctx, out, handlers, req)
+	case "workspace/search":
+		return false, handleWorkspaceSearch(ctx, out, handlers, req)
 	case "session/new", "session/create", "sessions/new":
 		return false, handleNewSession(ctx, out, handlers, opts, req)
 	case "session/open", "sessions/open":
@@ -278,6 +288,11 @@ func initializeResult(opts Options) map[string]any {
 				"delete":  true,
 				"prune":   true,
 			},
+			"workspace": map[string]any{
+				"info":   true,
+				"files":  true,
+				"search": true,
+			},
 			"prompt": true,
 			"status": true,
 		},
@@ -297,6 +312,51 @@ func handleStatus(ctx context.Context, out io.Writer, handlers Handlers, opts Op
 		"status":    "ok",
 		"workspace": opts.Workspace,
 	})
+}
+
+func handleWorkspaceInfo(ctx context.Context, out io.Writer, handlers Handlers, opts Options, req request) error {
+	if handlers.WorkspaceInfo != nil {
+		info, err := handlers.WorkspaceInfo(ctx)
+		if err != nil {
+			return writeError(out, req.ID, -32603, err.Error())
+		}
+		return writeResult(out, req.ID, info)
+	}
+	return writeResult(out, req.ID, workspaceops.InfoResult{Path: opts.Workspace, Name: workspaceName(opts.Workspace)})
+}
+
+func handleWorkspaceFiles(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.WorkspaceFiles == nil {
+		return writeError(out, req.ID, -32603, "workspace files handler is not configured")
+	}
+	var options workspaceops.FilesOptions
+	if len(req.Params) != 0 {
+		if err := json.Unmarshal(req.Params, &options); err != nil {
+			return writeError(out, req.ID, -32602, err.Error())
+		}
+	}
+	result, err := handlers.WorkspaceFiles(ctx, options)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleWorkspaceSearch(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.WorkspaceSearch == nil {
+		return writeError(out, req.ID, -32603, "workspace search handler is not configured")
+	}
+	var options workspaceops.SearchOptions
+	if len(req.Params) != 0 {
+		if err := json.Unmarshal(req.Params, &options); err != nil {
+			return writeError(out, req.ID, -32602, err.Error())
+		}
+	}
+	result, err := handlers.WorkspaceSearch(ctx, options)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
 }
 
 func handleNewSession(ctx context.Context, out io.Writer, handlers Handlers, opts Options, req request) error {
@@ -816,6 +876,18 @@ func firstPositive(values ...int) int {
 		}
 	}
 	return 0
+}
+
+func workspaceName(path string) string {
+	path = strings.TrimRight(strings.TrimSpace(path), `/\`)
+	if path == "" {
+		return ""
+	}
+	index := strings.LastIndexAny(path, `/\`)
+	if index >= 0 {
+		return path[index+1:]
+	}
+	return path
 }
 
 func writeResult(out io.Writer, id json.RawMessage, result any) error {

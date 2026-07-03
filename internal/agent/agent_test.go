@@ -5885,6 +5885,9 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.NotNil(t, report.Protocol.Endpoint)
 	require.True(t, report.Protocol.ServeStartsDaemon)
 	require.Contains(t, report.Protocol.Methods, "initialize")
+	require.Contains(t, report.Protocol.Methods, "workspace/info")
+	require.Contains(t, report.Protocol.Methods, "workspace/files")
+	require.Contains(t, report.Protocol.Methods, "workspace/search")
 	require.Contains(t, report.Protocol.Methods, "session/open")
 	require.Contains(t, report.Protocol.Methods, "session/list")
 	require.Contains(t, report.Protocol.Methods, "session/append_message")
@@ -6110,6 +6113,50 @@ func TestACPServeOpenCreatesAndGetRequiresExisting(t *testing.T) {
 	require.False(t, exists)
 }
 
+func TestACPServeExposesWorkspaceQueries(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "src"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "src", "main.go"), []byte("package main\n// needle\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("needle in docs\n"), 0o644))
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"workspace/info","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"workspace/files","params":{"path":"src","pattern":"*.go","limit":5}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"workspace/search","params":{"query":"needle","glob":"*.go","limit":5}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"workspace/search","params":{}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	app := &App{
+		Workspace: workspace,
+		Sessions:  store,
+		In:        strings.NewReader(input),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses := decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 5)
+	info := responses[0]["result"].(map[string]any)
+	require.Equal(t, workspace, info["path"])
+	require.Equal(t, filepath.Base(workspace), info["name"])
+	files := responses[1]["result"].(map[string]any)
+	require.Equal(t, "src", files["root"])
+	fileEntries := files["files"].([]any)
+	require.Len(t, fileEntries, 1)
+	require.Equal(t, "src/main.go", fileEntries[0].(map[string]any)["path"])
+	search := responses[2]["result"].(map[string]any)
+	matches := search["matches"].([]any)
+	require.Len(t, matches, 1)
+	require.Equal(t, "src/main.go", matches[0].(map[string]any)["path"])
+	require.EqualValues(t, 2, matches[0].(map[string]any)["line"])
+	errPayload := responses[3]["error"].(map[string]any)
+	require.EqualValues(t, -32603, errPayload["code"])
+	require.Contains(t, errPayload["message"], "query is required")
+}
+
 func TestACPServeAliasesStartAndStdio(t *testing.T) {
 	for _, alias := range []string{"start", "stdio"} {
 		t.Run(alias, func(t *testing.T) {
@@ -6135,6 +6182,10 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			result := responses[0]["result"].(map[string]any)
 			require.Equal(t, "codog-acp-0.1", result["protocolVersion"])
 			capabilities := result["capabilities"].(map[string]any)
+			workspaceCaps := capabilities["workspace"].(map[string]any)
+			require.Equal(t, true, workspaceCaps["info"])
+			require.Equal(t, true, workspaceCaps["files"])
+			require.Equal(t, true, workspaceCaps["search"])
 			sessions := capabilities["sessions"].(map[string]any)
 			require.Equal(t, true, sessions["open"])
 			require.Equal(t, true, sessions["append"])
