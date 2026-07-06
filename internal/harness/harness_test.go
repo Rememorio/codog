@@ -476,6 +476,32 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, workers.Total)
 	require.Equal(t, []string{"worker_lifecycle_roundtrip"}, workers.Scenarios)
 
+	recoveryLifecycle := findScenario(t, report, "recovery_lifecycle_roundtrip")
+	require.True(t, recoveryLifecycle.OK)
+	require.Equal(t, "recovery", recoveryLifecycle.Category)
+	require.Equal(t, 6, recoveryLifecycle.ToolCalls)
+	require.Equal(t, 6, recoveryLifecycle.RequestCount)
+	require.Equal(t, []string{
+		"recovery_recipe",
+		"recovery_status",
+		"recovery_attempt",
+		"recovery_attempt",
+		"recovery_attempt",
+		"recovery_status",
+	}, recoveryLifecycle.ToolUses)
+	require.Equal(t, "recovery lifecycle harness ok", recoveryLifecycle.FinalMessage)
+	require.Contains(t, recoveryLifecycle.Output, `"kind":"recovery_lifecycle"`)
+	require.Contains(t, recoveryLifecycle.Output, `"first_result":"recovered"`)
+	require.Contains(t, recoveryLifecycle.Output, `"second_result":"escalation_required"`)
+	require.Contains(t, recoveryLifecycle.Output, `"partial_result":"partial_recovery"`)
+	require.Contains(t, recoveryLifecycle.Output, `"stale_state":"exhausted"`)
+	require.Contains(t, recoveryLifecycle.Output, `"partial_state":"failed"`)
+	require.Contains(t, recoveryLifecycle.Output, `"ledger_entries":2`)
+	recoveryCategory := findCategory(t, report, "recovery")
+	require.True(t, recoveryCategory.OK)
+	require.Equal(t, 1, recoveryCategory.Total)
+	require.Equal(t, []string{"recovery_lifecycle_roundtrip"}, recoveryCategory.Scenarios)
+
 	backgroundAgent := findScenario(t, report, "background_agent_run_roundtrip")
 	require.True(t, backgroundAgent.OK)
 	require.Equal(t, "background-agents", backgroundAgent.Category)
@@ -772,6 +798,13 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Contains(t, workerLifecycle.ParityRefs, "Worker trust recovery")
 	require.Contains(t, workerLifecycle.ParityRefs, "Worker prompt delivery")
 	require.Contains(t, workerLifecycle.ParityRefs, "Worker startup diagnostics")
+
+	recoveryLifecycle := findManifestScenario(t, manifest, "recovery_lifecycle_roundtrip")
+	require.Equal(t, "recovery", recoveryLifecycle.Category)
+	require.Contains(t, recoveryLifecycle.ParityRefs, "Recovery recipes")
+	require.Contains(t, recoveryLifecycle.ParityRefs, "Recovery attempts")
+	require.Contains(t, recoveryLifecycle.ParityRefs, "Recovery ledger")
+	require.Contains(t, recoveryLifecycle.ParityRefs, "Escalation tracking")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {

@@ -218,6 +218,7 @@ var scenarioOrder = []string{
 	"task_packet_roundtrip",
 	"team_cron_lifecycle_roundtrip",
 	"worker_lifecycle_roundtrip",
+	"recovery_lifecycle_roundtrip",
 	"background_agent_run_roundtrip",
 	"remote_trigger_roundtrip",
 	"remote_api_listener_roundtrip",
@@ -755,6 +756,7 @@ func Run(ctx context.Context) (Report, error) {
 		taskPacketRoundtripScenario(),
 		teamCronLifecycleScenario(),
 		workerLifecycleScenario(),
+		recoveryLifecycleScenario(),
 		backgroundAgentRunScenario(),
 		remoteTriggerScenario(),
 		remoteAPIListenerScenario(),
@@ -1149,6 +1151,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "structured task packets", RequiredRefs: []string{"Task packet schema", "Task packet scope resolution", "Task packet persistence"}},
 	{Capability: "team and scheduled tasks", RequiredRefs: []string{"Team tools", "Team task assignment", "Cron tools", "Cron lifecycle"}},
 	{Capability: "worker orchestration", RequiredRefs: []string{"Worker tools", "Worker trust recovery", "Worker prompt delivery", "Worker startup diagnostics"}},
+	{Capability: "recovery recipes and ledger", RequiredRefs: []string{"Recovery recipes", "Recovery attempts", "Recovery ledger", "Escalation tracking"}},
 	{Capability: "notebook and code intelligence", RequiredRefs: []string{"Notebook read", "Notebook edit", "LSP tool", "Code intelligence"}},
 	{Capability: "git and worktree management", RequiredRefs: []string{"Git tools", "Branch freshness", "Worktree allocation", "Worktree cleanup"}},
 	{Capability: "OAuth and account lifecycle", RequiredRefs: []string{"OAuth refresh", "Token redaction", "MCP auth"}},
@@ -1523,6 +1526,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "workers",
 		Description: "Creates a prompt worker, resolves trust, sends work, restarts, records completion, classifies startup timeout, and terminates it.",
 		ParityRefs:  []string{"Worker tools", "Worker trust recovery", "Worker prompt delivery", "Worker startup diagnostics", "Tool result roundtrip"},
+	},
+	"recovery_lifecycle_roundtrip": {
+		Category:    "recovery",
+		Description: "Reads recovery recipes, records successful, exhausted, and partial recovery attempts, and verifies the ledger status surface.",
+		ParityRefs:  []string{"Recovery recipes", "Recovery attempts", "Recovery ledger", "Escalation tracking", "Tool result roundtrip"},
 	},
 	"background_agent_run_roundtrip": {
 		Category:    "background-agents",
@@ -4952,6 +4960,232 @@ func workerLifecycleScenario() scenario {
 					"worker_observe_completion",
 					"worker_startup_timeout",
 					"worker_terminate",
+				},
+			}, nil
+		},
+	}
+}
+
+func recoveryLifecycleScenario() scenario {
+	return scenario{
+		name: "recovery_lifecycle_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
+
+			recipeOut, err := registry.Execute(ctx, "RecoveryRecipeTool", json.RawMessage(`{"scenario":"stale_branch"}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var recipeReport struct {
+				Kind   string `json:"kind"`
+				Recipe struct {
+					ID               string `json:"id"`
+					Scenario         string `json:"scenario"`
+					MaxAttempts      int    `json:"max_attempts"`
+					EscalationPolicy string `json:"escalation_policy"`
+					Steps            []struct {
+						Kind string `json:"kind"`
+					} `json:"steps"`
+				} `json:"recipe"`
+			}
+			if err := json.Unmarshal([]byte(recipeOut), &recipeReport); err != nil {
+				return localScenarioResult{}, err
+			}
+			if recipeReport.Kind != "recovery_recipe" || recipeReport.Recipe.ID != "stale_branch" || recipeReport.Recipe.MaxAttempts != 1 || len(recipeReport.Recipe.Steps) != 2 || recipeReport.Recipe.Steps[0].Kind != "merge_forward_branch" {
+				return localScenarioResult{}, fmt.Errorf("unexpected recovery recipe output: %s", recipeOut)
+			}
+
+			statusOut, err := registry.Execute(ctx, "recovery_status", json.RawMessage(`{"scenario":"stale_branch"}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var initialStatus struct {
+				Kind   string `json:"kind"`
+				Status struct {
+					Scenario          string `json:"scenario"`
+					Attempted         bool   `json:"attempted"`
+					AttemptsRemaining int    `json:"attempts_remaining"`
+				} `json:"status"`
+			}
+			if err := json.Unmarshal([]byte(statusOut), &initialStatus); err != nil {
+				return localScenarioResult{}, err
+			}
+			if initialStatus.Kind != "recovery_status" || initialStatus.Status.Scenario != "stale_branch" || initialStatus.Status.Attempted || initialStatus.Status.AttemptsRemaining != 1 {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial recovery status output: %s", statusOut)
+			}
+
+			firstAttemptOut, err := registry.Execute(ctx, "recovery_attempt", json.RawMessage(`{"scenario":"stale_branch"}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var firstAttempt struct {
+				Kind   string `json:"kind"`
+				Result struct {
+					Kind       string `json:"kind"`
+					StepsTaken int    `json:"steps_taken"`
+				} `json:"result"`
+				Entry struct {
+					State        string `json:"state"`
+					AttemptCount int    `json:"attempt_count"`
+				} `json:"entry"`
+				Events []struct {
+					Type string `json:"type"`
+				} `json:"events"`
+			}
+			if err := json.Unmarshal([]byte(firstAttemptOut), &firstAttempt); err != nil {
+				return localScenarioResult{}, err
+			}
+			if firstAttempt.Kind != "recovery_attempt" || firstAttempt.Result.Kind != "recovered" || firstAttempt.Result.StepsTaken != 2 || firstAttempt.Entry.State != "succeeded" || firstAttempt.Entry.AttemptCount != 1 || len(firstAttempt.Events) == 0 || firstAttempt.Events[len(firstAttempt.Events)-1].Type != "recovery.succeeded" {
+				return localScenarioResult{}, fmt.Errorf("unexpected first recovery attempt output: %s", firstAttemptOut)
+			}
+
+			secondAttemptOut, err := registry.Execute(ctx, "RecoveryAttemptTool", json.RawMessage(`{"scenario":"stale_branch"}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var secondAttempt struct {
+				Result struct {
+					Kind   string `json:"kind"`
+					Reason string `json:"reason"`
+				} `json:"result"`
+				Entry struct {
+					State            string `json:"state"`
+					EscalationReason string `json:"escalation_reason"`
+				} `json:"entry"`
+				Events []struct {
+					Type string `json:"type"`
+				} `json:"events"`
+			}
+			if err := json.Unmarshal([]byte(secondAttemptOut), &secondAttempt); err != nil {
+				return localScenarioResult{}, err
+			}
+			if secondAttempt.Result.Kind != "escalation_required" || secondAttempt.Entry.State != "exhausted" || !strings.Contains(secondAttempt.Entry.EscalationReason, "max recovery attempts") || len(secondAttempt.Events) == 0 || secondAttempt.Events[len(secondAttempt.Events)-1].Type != "recovery.escalated" {
+				return localScenarioResult{}, fmt.Errorf("unexpected second recovery attempt output: %s", secondAttemptOut)
+			}
+
+			partialAttemptOut, err := registry.Execute(ctx, "recovery_attempt", json.RawMessage(`{
+				"scenario": "partial_plugin_startup",
+				"failure_summary": "mcp still unhealthy",
+				"failed_step_index": 1
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var partialAttempt struct {
+				Result struct {
+					Kind      string `json:"kind"`
+					Recovered []struct {
+						Kind string `json:"kind"`
+					} `json:"recovered"`
+					Remaining []struct {
+						Kind string `json:"kind"`
+					} `json:"remaining"`
+				} `json:"result"`
+				Entry struct {
+					State              string `json:"state"`
+					LastFailureSummary string `json:"last_failure_summary"`
+				} `json:"entry"`
+				Events []struct {
+					Type string `json:"type"`
+				} `json:"events"`
+			}
+			if err := json.Unmarshal([]byte(partialAttemptOut), &partialAttempt); err != nil {
+				return localScenarioResult{}, err
+			}
+			if partialAttempt.Result.Kind != "partial_recovery" || partialAttempt.Entry.State != "failed" || partialAttempt.Entry.LastFailureSummary != "mcp still unhealthy" || len(partialAttempt.Result.Recovered) != 1 || partialAttempt.Result.Recovered[0].Kind != "restart_plugin" || len(partialAttempt.Result.Remaining) != 1 || partialAttempt.Result.Remaining[0].Kind != "retry_mcp_handshake" || len(partialAttempt.Events) == 0 || partialAttempt.Events[len(partialAttempt.Events)-1].Type != "recovery.failed" {
+				return localScenarioResult{}, fmt.Errorf("unexpected partial recovery attempt output: %s", partialAttemptOut)
+			}
+
+			ledgerOut, err := registry.Execute(ctx, "RecoveryStatusTool", json.RawMessage(`{}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var ledger struct {
+				Kind     string `json:"kind"`
+				Statuses []struct {
+					Scenario           string `json:"scenario"`
+					Attempted          bool   `json:"attempted"`
+					State              string `json:"state"`
+					AttemptCount       int    `json:"attempt_count"`
+					EscalationReason   string `json:"escalation_reason"`
+					LastFailureSummary string `json:"last_failure_summary"`
+				} `json:"statuses"`
+				Entries []struct {
+					Trigger      string `json:"trigger"`
+					State        string `json:"state"`
+					AttemptCount int    `json:"attempt_count"`
+				} `json:"entries"`
+			}
+			if err := json.Unmarshal([]byte(ledgerOut), &ledger); err != nil {
+				return localScenarioResult{}, err
+			}
+			if ledger.Kind != "recovery_ledger" || len(ledger.Entries) != 2 {
+				return localScenarioResult{}, fmt.Errorf("unexpected recovery ledger output: %s", ledgerOut)
+			}
+			var staleStatus struct {
+				Scenario           string `json:"scenario"`
+				Attempted          bool   `json:"attempted"`
+				State              string `json:"state"`
+				AttemptCount       int    `json:"attempt_count"`
+				EscalationReason   string `json:"escalation_reason"`
+				LastFailureSummary string `json:"last_failure_summary"`
+			}
+			var partialStatus struct {
+				Scenario           string `json:"scenario"`
+				Attempted          bool   `json:"attempted"`
+				State              string `json:"state"`
+				AttemptCount       int    `json:"attempt_count"`
+				EscalationReason   string `json:"escalation_reason"`
+				LastFailureSummary string `json:"last_failure_summary"`
+			}
+			for _, status := range ledger.Statuses {
+				switch status.Scenario {
+				case "stale_branch":
+					staleStatus = status
+				case "partial_plugin_startup":
+					partialStatus = status
+				}
+			}
+			if !staleStatus.Attempted || staleStatus.State != "exhausted" || staleStatus.AttemptCount != 1 || !strings.Contains(staleStatus.EscalationReason, "max recovery attempts") {
+				return localScenarioResult{}, fmt.Errorf("unexpected stale branch ledger status: %#v", staleStatus)
+			}
+			if !partialStatus.Attempted || partialStatus.State != "failed" || partialStatus.AttemptCount != 1 || partialStatus.LastFailureSummary != "mcp still unhealthy" {
+				return localScenarioResult{}, fmt.Errorf("unexpected partial plugin ledger status: %#v", partialStatus)
+			}
+
+			report := map[string]any{
+				"kind": "recovery_lifecycle",
+				"recovery": map[string]any{
+					"recipe":               recipeReport.Recipe.ID,
+					"steps":                len(recipeReport.Recipe.Steps),
+					"first_result":         firstAttempt.Result.Kind,
+					"second_result":        secondAttempt.Result.Kind,
+					"partial_result":       partialAttempt.Result.Kind,
+					"stale_state":          staleStatus.State,
+					"partial_state":        partialStatus.State,
+					"ledger_entries":       len(ledger.Entries),
+					"escalation_recorded":  staleStatus.EscalationReason != "",
+					"failure_summary_seen": partialStatus.LastFailureSummary,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "recovery lifecycle harness ok",
+				RequestCount: 6,
+				MessageCount: 1,
+				ToolCalls:    6,
+				ToolUses: []string{
+					"recovery_recipe",
+					"recovery_status",
+					"recovery_attempt",
+					"recovery_attempt",
+					"recovery_attempt",
+					"recovery_status",
 				},
 			}, nil
 		},
