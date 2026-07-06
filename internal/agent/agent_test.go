@@ -2768,7 +2768,7 @@ func TestMockParityInteractiveSlashContracts(t *testing.T) {
 	require.Empty(t, errOut.String())
 	out.Reset()
 
-	require.True(t, app.handleSlash(context.Background(), "/self-test manifest", sess))
+	require.True(t, app.handleSlash(context.Background(), "/SELF-TEST manifest", sess))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &manifest))
 	require.Equal(t, harness.ManifestSchemaVersion, manifest.SchemaVersion)
 	require.Empty(t, errOut.String())
@@ -15296,6 +15296,10 @@ func TestStatusCommandAndSlash(t *testing.T) {
 
 	sess := &session.Session{ID: "source", Messages: []anthropic.Message{anthropic.TextMessage("user", "slash")}}
 	require.True(t, app.handleSlash(context.Background(), "/status", sess))
+	require.Contains(t, out.String(), "Session          source (1 messages)")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/STATUS", sess))
 	require.Contains(t, out.String(), "Session          source (1 messages)")
 	out.Reset()
 

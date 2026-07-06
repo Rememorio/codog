@@ -34041,7 +34041,11 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	if len(fields) == 0 {
 		return true
 	}
-	switch fields[0] {
+	command := fields[0]
+	if spec, ok := slash.Lookup(command); ok {
+		command = spec.Name
+	}
+	switch command {
 	case "/help":
 		a.renderSlashHelp(a.Err)
 	case "/status":
@@ -34099,7 +34103,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/ios", "/android":
-		platform := strings.TrimPrefix(fields[0], "/")
+		platform := strings.TrimPrefix(command, "/")
 		args := append([]string{platform}, fields[1:]...)
 		if err := a.Mobile(args, config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -34373,7 +34377,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/mock-parity", "/parity", "/self-test":
 		defaultFormat := "text"
-		if fields[0] == "/self-test" {
+		if command == "/self-test" {
 			defaultFormat = "json"
 		}
 		if err := runMockParityCommand(ctx, a.Out, fields[1:], "", defaultFormat); err != nil {
@@ -34504,7 +34508,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/node", "/python":
-		language := strings.TrimPrefix(fields[0], "/")
+		language := strings.TrimPrefix(command, "/")
 		if err := a.LanguageCommand(ctx, language, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
