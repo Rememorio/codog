@@ -260,6 +260,44 @@ func TestShowReturnsSelectedMemoryBody(t *testing.T) {
 	require.Contains(t, string(data), "Second line")
 }
 
+func TestSelectPreviewsDefaultAndTargetWithoutCreatingFiles(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".codog"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("Project instructions\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".codog", "instructions.md"), []byte("Codog instructions\n"), 0o644))
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	require.NoError(t, err)
+
+	report, err := Select(root, "")
+
+	require.NoError(t, err)
+	require.Equal(t, "memory", report.Kind)
+	require.Equal(t, "select", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, filepath.Join(canonicalRoot, "AGENTS.md"), report.Selected)
+	require.Equal(t, 2, report.OptionCount)
+	require.Len(t, report.Options, 2)
+	require.True(t, report.Options[0].Selected)
+	require.True(t, report.Options[0].Exists)
+	require.Equal(t, "agents_md", report.Options[0].Source)
+
+	targetReport, err := Select(root, "NEW.md")
+
+	require.NoError(t, err)
+	require.Equal(t, "NEW.md", targetReport.Target)
+	require.Equal(t, filepath.Join(canonicalRoot, "NEW.md"), targetReport.Selected)
+	require.Equal(t, 3, targetReport.OptionCount)
+	require.Equal(t, "NEW.md", targetReport.Options[2].Name)
+	require.False(t, targetReport.Options[2].Exists)
+	require.True(t, targetReport.Options[2].Selected)
+	require.NoFileExists(t, filepath.Join(root, "NEW.md"))
+
+	var out bytes.Buffer
+	RenderSelectionReport(&out, targetReport)
+	require.Contains(t, out.String(), "Memory Selection")
+	require.Contains(t, out.String(), "selected=true")
+}
+
 func TestAppendAddsWorkspaceAgentsMemory(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("Existing"), 0o644))

@@ -15199,6 +15199,20 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 	require.NotContains(t, out.String(), "secret body")
 	out.Reset()
 
+	require.NoError(t, app.Memory([]string{"select", "--json"}))
+	require.Contains(t, out.String(), `"action": "select"`)
+	require.Contains(t, out.String(), `"selected":`)
+	require.Contains(t, out.String(), `"option_count": 1`)
+	require.Contains(t, out.String(), `"exists": true`)
+	out.Reset()
+
+	require.NoError(t, app.Memory([]string{"select", "NEW.md", "--json"}))
+	require.Contains(t, out.String(), `"target": "NEW.md"`)
+	require.Contains(t, out.String(), `"option_count": 2`)
+	require.Contains(t, out.String(), `"exists": false`)
+	require.NoFileExists(t, filepath.Join(workspace, "NEW.md"))
+	out.Reset()
+
 	require.NoError(t, app.Memory([]string{"show", "AGENTS.md"}))
 	require.Contains(t, out.String(), "Memory File")
 	require.Contains(t, out.String(), "secret body")
@@ -15275,6 +15289,11 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/memory show AGENTS.md", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Memory")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/memory select AGENTS.md", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Memory Selection")
+	require.Contains(t, out.String(), "Selected")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/memory search focused", &session.Session{ID: "session"}))

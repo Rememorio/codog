@@ -129,6 +129,29 @@ type AppendReport struct {
 	Bytes  int    `json:"bytes"`
 }
 
+// SelectionOption describes a memory file candidate for selector UIs.
+type SelectionOption struct {
+	Path     string `json:"path"`
+	Name     string `json:"name"`
+	Source   string `json:"source"`
+	Origin   string `json:"origin"`
+	Scope    string `json:"scope"`
+	Exists   bool   `json:"exists"`
+	Selected bool   `json:"selected,omitempty"`
+}
+
+// SelectionReport previews the memory file that would be edited or created.
+type SelectionReport struct {
+	Kind             string            `json:"kind"`
+	Action           string            `json:"action"`
+	Status           string            `json:"status"`
+	WorkingDirectory string            `json:"working_directory"`
+	Target           string            `json:"target,omitempty"`
+	Selected         string            `json:"selected"`
+	OptionCount      int               `json:"option_count"`
+	Options          []SelectionOption `json:"options"`
+}
+
 // FileReport describes a memory file path, creation, or editor operation.
 type FileReport struct {
 	Kind    string `json:"kind"`
@@ -251,6 +274,62 @@ func Append(workspace string, text string) (AppendReport, error) {
 		return AppendReport{}, err
 	}
 	return AppendReport{Kind: "memory", Action: "add", Status: "ok", Path: path, Bytes: len(payload)}, nil
+}
+
+// Select returns memory selector candidates without creating files or opening
+// an editor.
+func Select(workspace string, target string) (SelectionReport, error) {
+	absWorkspace, err := absWorkspacePath(workspace)
+	if err != nil {
+		return SelectionReport{}, err
+	}
+	files, err := Discover(absWorkspace)
+	if err != nil {
+		return SelectionReport{}, err
+	}
+	target = strings.TrimSpace(target)
+	defaultPath, err := ResolvePath(absWorkspace, "")
+	if err != nil {
+		return SelectionReport{}, err
+	}
+	selectedPath := defaultPath
+	if target != "" {
+		selectedPath, err = ResolvePath(absWorkspace, target)
+		if err != nil {
+			return SelectionReport{}, err
+		}
+	} else if len(files) == 1 {
+		selectedPath = files[0].Path
+	}
+	report := SelectionReport{
+		Kind:             "memory",
+		Action:           "select",
+		Status:           "ok",
+		WorkingDirectory: canonicalPath(absWorkspace),
+		Target:           target,
+		Selected:         canonicalPath(selectedPath),
+		Options:          make([]SelectionOption, 0, len(files)+1),
+	}
+	seen := map[string]int{}
+	projectRoot := absWorkspace
+	if root, ok := gitRoot(absWorkspace); ok && isWithin(absWorkspace, root) {
+		projectRoot = root
+	}
+	for _, file := range files {
+		option := selectionOptionForFile(file, absWorkspace, projectRoot)
+		index := len(report.Options)
+		seen[canonicalPath(option.Path)] = index
+		report.Options = append(report.Options, option)
+	}
+	selectedKey := canonicalPath(selectedPath)
+	if index, ok := seen[selectedKey]; ok {
+		report.Options[index].Selected = true
+	} else {
+		report.Options = append(report.Options, selectionOptionForPath(absWorkspace, selectedPath, target, true))
+		report.Options[len(report.Options)-1].Selected = true
+	}
+	report.OptionCount = len(report.Options)
+	return report, nil
 }
 
 // Path resolves the target memory file path without creating it.
@@ -553,6 +632,25 @@ func RenderSearchReport(w io.Writer, report SearchReport) {
 	}
 }
 
+// RenderSelectionReport writes a human-readable memory selector report.
+func RenderSelectionReport(w io.Writer, report SelectionReport) {
+	fmt.Fprintln(w, "Memory Selection")
+	fmt.Fprintf(w, "  Working directory %s\n", report.WorkingDirectory)
+	if report.Target != "" {
+		fmt.Fprintf(w, "  Target            %s\n", report.Target)
+	}
+	fmt.Fprintf(w, "  Selected          %s\n", report.Selected)
+	fmt.Fprintf(w, "  Options           %d\n", report.OptionCount)
+	for i, option := range report.Options {
+		selected := ""
+		if option.Selected {
+			selected = " selected=true"
+		}
+		fmt.Fprintf(w, "  %d. %s\n", i+1, option.Path)
+		fmt.Fprintf(w, "     source=%s origin=%s exists=%t%s\n", option.Name, option.Origin, option.Exists, selected)
+	}
+}
+
 // RenderFileReport writes a human-readable memory file operation report.
 func RenderFileReport(w io.Writer, report FileReport) {
 	fmt.Fprintln(w, "Memory File")
@@ -673,6 +771,50 @@ func originForFile(file File, workspace string, projectRoot string) string {
 		return "project"
 	}
 	return "ancestor"
+}
+
+func selectionOptionForFile(file File, workspace string, projectRoot string) SelectionOption {
+	path := canonicalPath(file.Path)
+	file.Path = path
+	file.Scope = canonicalPath(file.Scope)
+	return SelectionOption{
+		Path:   path,
+		Name:   file.Name,
+		Source: sourceForName(file.Name),
+		Origin: originForFile(file, workspace, projectRoot),
+		Scope:  file.Scope,
+		Exists: true,
+	}
+}
+
+func selectionOptionForPath(workspace string, path string, target string, selected bool) SelectionOption {
+	path = canonicalPath(path)
+	name := memoryNameForPath(workspace, path, target)
+	return SelectionOption{
+		Path:     path,
+		Name:     name,
+		Source:   sourceForName(name),
+		Origin:   "workspace",
+		Scope:    canonicalPath(workspace),
+		Exists:   pathExists(path),
+		Selected: selected,
+	}
+}
+
+func memoryNameForPath(workspace string, path string, target string) string {
+	target = strings.TrimSpace(target)
+	if target != "" && !filepath.IsAbs(target) {
+		return filepath.ToSlash(filepath.Clean(target))
+	}
+	if rel, err := filepath.Rel(workspace, path); err == nil && isWithin(path, workspace) {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.Base(path)
+}
+
+func pathExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func matchesTarget(file File, target string) bool {
