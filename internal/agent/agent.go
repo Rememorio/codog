@@ -7637,6 +7637,12 @@ func (a *App) Marketplace(args []string) error {
 	if err != nil {
 		return err
 	}
+	if len(args) > 0 {
+		normalizedAction := normalizeMarketplaceAction(args[0])
+		if normalizedAction != args[0] {
+			args = append([]string{normalizedAction}, args[1:]...)
+		}
+	}
 	if len(args) == 0 || args[0] == "list" {
 		if len(args) > 1 {
 			if option := firstFlagShapedArg(args[1:]); option != "" {
@@ -8733,6 +8739,19 @@ func normalizePluginAction(raw string) string {
 		return "remote"
 	default:
 		return strings.ToLower(strings.TrimSpace(raw))
+	}
+}
+
+func normalizeMarketplaceAction(raw string) string {
+	action := strings.ToLower(strings.TrimSpace(raw))
+	switch action {
+	case "", "list", "show", "info", "describe", "health", "healthcheck", "lifecycle", "validate",
+		"sources", "source", "marketplaces", "manage-marketplaces", "add-marketplace", "remove-marketplace",
+		"delete-marketplace", "settings", "remote", "browse", "discover", "updates", "install", "install-remote",
+		"update", "enable", "disable", "remove", "uninstall":
+		return action
+	default:
+		return normalizePluginAction(raw)
 	}
 }
 
@@ -29798,7 +29817,7 @@ func (a *App) runResumedAgentsSlash(args []string, overrides config.FlagOverride
 func (a *App) runResumedMarketplaceSlash(args []string, format string) error {
 	action := ""
 	if meaningful := routeMeaningfulArgs(args); len(meaningful) > 0 {
-		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
+		action = normalizeMarketplaceAction(meaningful[0])
 	}
 	switch action {
 	case "", "list", "show", "info", "describe", "health", "healthcheck", "lifecycle", "validate", "sources", "source", "marketplaces", "manage-marketplaces", "add-marketplace", "remove-marketplace", "delete-marketplace", "settings", "remote", "browse", "discover", "updates", "install", "install-remote", "update", "enable", "disable", "remove", "uninstall":

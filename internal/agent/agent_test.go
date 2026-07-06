@@ -5441,7 +5441,7 @@ func risky(value any) {
 	require.Equal(t, "agents", resumedSubagentRuns.Kind)
 	require.Equal(t, "runs", resumedSubagentRuns.Action)
 
-	out, err = runResumedJSON("/plugins", "list")
+	out, err = runResumedJSON("/plugins", "ls")
 	require.NoError(t, err)
 	var resumedPlugins pluginsListReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedPlugins))
@@ -5458,7 +5458,7 @@ func risky(value any) {
 	require.Equal(t, 1, resumedPluginHealth.Total)
 	require.Equal(t, 1, resumedPluginHealth.Healthy)
 
-	out, err = runResumedJSON("/plugins", "install", pluginInstallSource)
+	out, err = runResumedJSON("/plugins", "add", pluginInstallSource)
 	require.NoError(t, err)
 	var resumedPluginInstall plugins.Manifest
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedPluginInstall))
@@ -5468,21 +5468,21 @@ func risky(value any) {
 	require.FileExists(t, filepath.Join(workspace, ".codog", "plugins", "resume-install", "plugin.json"))
 	require.FileExists(t, filepath.Join(workspace, ".codog", "plugins", "resume-install", "tool.sh"))
 
-	out, err = runResumedJSON("/plugins", "disable", "resume-install")
+	out, err = runResumedJSON("/plugins", "off", "resume-install")
 	require.NoError(t, err)
 	var resumedPluginDisable plugins.Manifest
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedPluginDisable))
 	require.Equal(t, "resume-install", resumedPluginDisable.ID)
 	require.False(t, resumedPluginDisable.Enabled)
 
-	out, err = runResumedJSON("/plugins", "enable", "resume-install")
+	out, err = runResumedJSON("/plugins", "on", "resume-install")
 	require.NoError(t, err)
 	var resumedPluginEnable plugins.Manifest
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedPluginEnable))
 	require.Equal(t, "resume-install", resumedPluginEnable.ID)
 	require.True(t, resumedPluginEnable.Enabled)
 
-	out, err = runResumedJSON("/plugins", "show", "resume-install")
+	out, err = runResumedJSON("/plugins", "details", "resume-install")
 	require.NoError(t, err)
 	var resumedPluginShow struct {
 		Kind   string           `json:"kind"`
@@ -5510,7 +5510,7 @@ func risky(value any) {
 	require.Contains(t, resumedReloadPlugins.EnabledPluginIDs, "resume-install")
 	require.GreaterOrEqual(t, resumedReloadPlugins.ToolCountAfter, resumedReloadPlugins.ToolCountBefore)
 
-	out, err = runResumedJSON("/plugins", "remove", "resume-install")
+	out, err = runResumedJSON("/plugins", "rm", "resume-install")
 	require.NoError(t, err)
 	var resumedPluginRemove struct {
 		Removed bool   `json:"removed"`
