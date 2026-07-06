@@ -31,6 +31,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/customcommands"
+	"github.com/Rememorio/codog/internal/doctor"
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/modelrouting"
@@ -44,7 +45,9 @@ import (
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/skills"
+	localstatus "github.com/Rememorio/codog/internal/status"
 	prompttemplates "github.com/Rememorio/codog/internal/templates"
+	"github.com/Rememorio/codog/internal/terminalsetup"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/tui"
 	"github.com/Rememorio/codog/internal/updater"
@@ -215,6 +218,7 @@ var scenarioOrder = []string{
 	"onboarding_bookmarks_roundtrip",
 	"memory_lifecycle_roundtrip",
 	"output_style_lifecycle_roundtrip",
+	"diagnostics_status_roundtrip",
 	"tui_prompt_completion_roundtrip",
 	"ask_user_question_roundtrip",
 	"runtime_output_tools_roundtrip",
@@ -758,6 +762,7 @@ func Run(ctx context.Context) (Report, error) {
 		onboardingBookmarksScenario(),
 		memoryLifecycleScenario(),
 		outputStyleLifecycleScenario(),
+		diagnosticsStatusScenario(),
 		tuiPromptCompletionScenario(),
 		askUserQuestionScenario(),
 		runtimeOutputToolsScenario(),
@@ -1176,6 +1181,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "TUI and interactive rendering", RequiredRefs: []string{"Bubble Tea TUI", "Interactive rendering", "Output styles"}},
 	{Capability: "interactive question handling", RequiredRefs: []string{"AskUserQuestion tool", "Interactive questions"}},
 	{Capability: "runtime utility tools", RequiredRefs: []string{"Brief tool", "SendUserMessage tool", "StructuredOutput tool", "Sleep tool", "REPL tool"}},
+	{Capability: "setup and diagnostics", RequiredRefs: []string{"Doctor", "Status diagnostics", "Terminal setup"}},
 }
 
 func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
@@ -1432,6 +1438,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "interactive-ui",
 		Description: "Loads, sets, injects, and clears output styles with workspace precedence over user and built-in styles.",
 		ParityRefs:  []string{"Output styles", "Interactive rendering", "Workspace state"},
+	},
+	"diagnostics_status_roundtrip": {
+		Category:    "diagnostics",
+		Description: "Builds runtime status, doctor checks, and terminal setup reports from local configuration facts.",
+		ParityRefs:  []string{"Doctor", "Status diagnostics", "Terminal setup", "Setup diagnostics"},
 	},
 	"tui_prompt_completion_roundtrip": {
 		Category:    "interactive-ui",
@@ -2443,6 +2454,160 @@ func outputStyleLifecycleScenario() scenario {
 				Output:       string(data),
 				FinalMessage: "output style lifecycle harness ok",
 				RequestCount: 4,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+func diagnosticsStatusScenario() scenario {
+	return scenario{
+		name: "diagnostics_status_roundtrip",
+		runLocal: func(_ context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, ".codog")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			profilePath := filepath.Join(workspace, ".zshrc")
+			if err := os.WriteFile(profilePath, []byte("# shell profile\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			permissionRules := config.PermissionRules{
+				DefaultMode: "workspace-write",
+				Allow:       []string{"read_file"},
+				Deny:        []string{"bash"},
+			}
+			toolNames := []string{"bash", "read_file", "write_file"}
+			ruleStatus := localstatus.BuildPermissionRulesStatus(permissionRules, toolNames, nil)
+
+			statusReport := localstatus.Build(localstatus.Options{
+				Version:               "dev",
+				FormatSource:          "default",
+				Workspace:             workspace,
+				ConfigHome:            configHome,
+				Model:                 "claude-test",
+				RuntimeProvider:       "anthropic",
+				RuntimeProviderSource: "config",
+				PermissionMode:        "workspace-write",
+				PermissionModeRaw:     "workspace-write",
+				PermissionModeSource:  "config",
+				PermissionRules:       permissionRules,
+				APIKey:                "test-key",
+				AuthConfigured:        true,
+				ToolNames:             toolNames,
+				AllowedToolSource:     "default",
+				AllowedToolEntries:    []string{"read_file", "write_file"},
+				SetupHookCount:        1,
+				MemoryFiles: []localstatus.MemoryFileStatus{{
+					Path:  "AGENTS.md",
+					Name:  "AGENTS.md",
+					Scope: "workspace",
+				}},
+				GitStatus:        "## main",
+				SandboxOS:        "darwin",
+				SandboxDefault:   "seatbelt",
+				SandboxAvailable: true,
+			})
+			if statusReport.Kind != "status" || statusReport.Action != "show" {
+				return localScenarioResult{}, fmt.Errorf("unexpected status report identity: %#v", statusReport)
+			}
+			if statusReport.Workspace.MemoryFileCount != 1 || statusReport.Config.PermissionRules.UnknownCount != 0 {
+				return localScenarioResult{}, fmt.Errorf("unexpected status workspace/config summary: %#v", statusReport)
+			}
+			if !statusReport.BootPreflight.Repo.WorkspaceExists || statusReport.Runtime.OS == "" {
+				return localScenarioResult{}, fmt.Errorf("status report missing boot or runtime diagnostics")
+			}
+
+			doctorReport := doctor.Run(doctor.Options{
+				Workspace:             workspace,
+				ConfigHome:            configHome,
+				Model:                 "claude-test",
+				RuntimeProvider:       "anthropic",
+				RuntimeProviderSource: "config",
+				APIKey:                "test-key",
+				PermissionMode:        "workspace-write",
+				PermissionModeRaw:     "workspace-write",
+				PermissionModeSource:  "config",
+				PermissionRules:       ruleStatus,
+				ToolCount:             len(toolNames),
+				ToolPermissions: []doctor.ToolPermission{
+					{Name: "read_file", RequiredPermission: "read-only"},
+					{Name: "write_file", RequiredPermission: "workspace-write"},
+				},
+				SessionCount:   1,
+				MemoryFiles:    statusReport.Workspace.MemoryFiles,
+				Setup:          []string{"printf setup-ok"},
+				SandboxDefault: "seatbelt",
+				SandboxOK:      true,
+			})
+			if doctorReport.Kind != "doctor" || doctorReport.Action != "doctor" {
+				return localScenarioResult{}, fmt.Errorf("unexpected doctor report identity: %#v", doctorReport)
+			}
+			for _, expected := range []string{"auth", "config home", "workspace", "permissions", "tools", "hooks", "sandbox"} {
+				if !slices.Contains(doctorReport.CheckNames, expected) {
+					return localScenarioResult{}, fmt.Errorf("doctor report missing %q check: %#v", expected, doctorReport.CheckNames)
+				}
+			}
+			if doctorReport.Summary.Total != len(doctorReport.Checks) || doctorReport.Summary.Total == 0 {
+				return localScenarioResult{}, fmt.Errorf("unexpected doctor check summary: %#v", doctorReport.Summary)
+			}
+
+			terminalStatus, err := terminalsetup.Run(terminalsetup.Options{
+				Action: "status",
+				Shell:  "zsh",
+				Path:   profilePath,
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if terminalStatus.Kind != "terminal_setup" || terminalStatus.Action != "status" || terminalStatus.Installed {
+				return localScenarioResult{}, fmt.Errorf("unexpected terminal setup status report: %#v", terminalStatus)
+			}
+			terminalSnippet, err := terminalsetup.Run(terminalsetup.Options{
+				Action: "snippet",
+				Shell:  "zsh",
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if terminalSnippet.Action != "snippet" || !strings.Contains(terminalSnippet.Snippet, "CODOG_SHELL_INTEGRATION") {
+				return localScenarioResult{}, fmt.Errorf("unexpected terminal setup snippet report: %#v", terminalSnippet)
+			}
+
+			report := map[string]any{
+				"kind": "diagnostics_status",
+				"status": map[string]any{
+					"kind":                statusReport.Kind,
+					"action":              statusReport.Action,
+					"workspace_name":      statusReport.Workspace.Name,
+					"memory_file_count":   statusReport.Workspace.MemoryFileCount,
+					"permission_unknowns": statusReport.Config.PermissionRules.UnknownCount,
+					"boot_workspace":      statusReport.BootPreflight.Repo.WorkspaceExists,
+				},
+				"doctor": map[string]any{
+					"kind":        doctorReport.Kind,
+					"status":      doctorReport.Status,
+					"checks":      doctorReport.Summary.Total,
+					"has_auth":    slices.Contains(doctorReport.CheckNames, "auth"),
+					"has_hooks":   slices.Contains(doctorReport.CheckNames, "hooks"),
+					"has_sandbox": slices.Contains(doctorReport.CheckNames, "sandbox"),
+				},
+				"terminal_setup": map[string]any{
+					"status_action":  terminalStatus.Action,
+					"installed":      terminalStatus.Installed,
+					"snippet_action": terminalSnippet.Action,
+					"snippet":        strings.Contains(terminalSnippet.Snippet, "codog_statusline"),
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "diagnostics status harness ok",
+				RequestCount: 3,
 				MessageCount: 1,
 			}, nil
 		},

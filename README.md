@@ -72,7 +72,8 @@ The strongest surfaces are:
   background tasks, and bridge surfaces;
 - deterministic mock parity scenarios for remote control, IDE bridge commands,
   MCP auth recovery, policy checks, updater manifests, background agents,
-  project memory, output styles, onboarding, bookmarks, and command validation.
+  project memory, output styles, onboarding, bookmarks, command validation, and
+  setup diagnostics.
 
 The broad integration surfaces still need real deployment hardening before they
 should be relied on for multi-user or enterprise use, especially around hosted
