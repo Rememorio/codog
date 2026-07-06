@@ -3122,16 +3122,23 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "/approve", slashReport.Command)
 	require.NotContains(t, slashReport.Hint, "--resume")
 
+	newConfigPath := filepath.Join(t.TempDir(), "config.json")
+	newConfigData, err := json.Marshal(map[string]string{"config_home": t.TempDir()})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(newConfigPath, newConfigData, 0o644))
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/new"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", newConfigPath, "--output-format", "json", "/new"}, config.FlagOverrides{})
 	})
-	require.Error(t, err)
-	require.ErrorAs(t, err, &exitErr)
-	require.True(t, exitErr.Silent)
-	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
-	require.Equal(t, "interactive_only", slashReport.ErrorKind)
-	require.Equal(t, "/new", slashReport.Command)
-	require.Contains(t, slashReport.Hint, "--resume")
+	require.NoError(t, err)
+	var newReport clearCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &newReport))
+	require.Equal(t, "clear", newReport.Kind)
+	require.Equal(t, "create_session", newReport.Action)
+	require.Equal(t, "ok", newReport.Status)
+	require.NotEmpty(t, newReport.SessionID)
+	require.Equal(t, 0, newReport.MessageCount)
+	require.NotEmpty(t, newReport.Path)
+	require.Contains(t, newReport.ContinueCommands[0], "--session")
 
 	for _, command := range []string{"/quit"} {
 		out, err = captureStdout(t, func() error {
@@ -12312,6 +12319,17 @@ func TestSessionsListHonorsGlobalJSONOutputFormat(t *testing.T) {
 		require.Equal(t, "source", report.SessionDetails[0].ID)
 		require.Equal(t, 1, report.SessionDetails[0].MessageCount)
 	}
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "session", "switch", "source"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var switchReport sessionSwitchReport
+	require.NoError(t, json.Unmarshal([]byte(out), &switchReport))
+	require.Equal(t, "session_switch", switchReport.Kind)
+	require.Equal(t, "switch", switchReport.Action)
+	require.Equal(t, "source", switchReport.SessionID)
+	require.Contains(t, switchReport.ContinueCommands[0], "--resume 'source' repl")
 }
 
 func TestSessionSlashExistsJSONMarksActiveSession(t *testing.T) {

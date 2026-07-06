@@ -30036,6 +30036,8 @@ func directSlashCommandName(name string) string {
 		return "sessions"
 	case "/settings":
 		return "config"
+	case "/new":
+		return "clear"
 	case "/bug":
 		return "feedback"
 	case "/checkpoint":
@@ -30091,7 +30093,7 @@ func joinReadable(values []string) string {
 
 func directSlashInteractiveOnly(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/attach", "/new", "/exit", "/quit":
+	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/attach", "/exit", "/quit":
 		return true
 	default:
 		return false
@@ -30264,7 +30266,7 @@ func renderLocalRouteGuard(out io.Writer, command string, args []string, format 
 
 func isSessionAction(action string) bool {
 	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "", "list", "show", "exists", "export", "import", "fork", "rename", "prune", "delete":
+	case "", "list", "show", "exists", "export", "import", "fork", "switch", "rename", "prune", "delete":
 		return true
 	default:
 		return false
