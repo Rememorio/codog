@@ -188,6 +188,7 @@ var scenarioOrder = []string{
 	"multi_edit_apply_patch_roundtrip",
 	"bash_stdout_roundtrip",
 	"bash_background_output_roundtrip",
+	"bash_kill_roundtrip",
 	"powershell_stdout_roundtrip",
 	"bash_output_truncation_roundtrip",
 	"bash_permission_prompt_approved",
@@ -634,6 +635,7 @@ func Run(ctx context.Context) (Report, error) {
 			},
 		},
 		bashBackgroundOutputScenario(),
+		bashKillScenario(),
 		powerShellStdoutScenario(),
 		bashOutputTruncationScenario(),
 		{
@@ -1118,7 +1120,7 @@ type capabilityTarget struct {
 var capabilityTargets = []capabilityTarget{
 	{Capability: "one-shot prompt and streaming", RequiredRefs: []string{"Anthropic streaming", "Tool result roundtrip"}},
 	{Capability: "file tools", RequiredRefs: []string{"File tools", "Edit tool", "Grep chunk assembly", "Glob tool", "MultiEdit tool", "ApplyPatch tool"}},
-	{Capability: "bash and shell safety", RequiredRefs: []string{"Bash tool", "BashOutput tool", "Permission prompts", "Output truncation"}},
+	{Capability: "bash and shell safety", RequiredRefs: []string{"Bash tool", "BashOutput tool", "KillBash tool", "Permission prompts", "Output truncation"}},
 	{Capability: "permissions and sandbox", RequiredRefs: []string{"Permission enforcement", "Workspace-write permissions", "Sandbox", "Permission safety"}},
 	{Capability: "sessions and resume", RequiredRefs: []string{"Session JSONL", "Resume", "Session context management"}},
 	{Capability: "slash commands and custom workflows", RequiredRefs: []string{"Slash commands", "Skills", "Templates", "Project workflow surfaces"}},
@@ -1339,6 +1341,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "bash",
 		Description: "Starts a background bash task and reads its output through BashOutput.",
 		ParityRefs:  []string{"Bash tool", "BashOutput tool", "Background shell output", "Tool result roundtrip"},
+	},
+	"bash_kill_roundtrip": {
+		Category:    "bash",
+		Description: "Stops a running background bash task with KillBash and verifies stopped output status.",
+		ParityRefs:  []string{"Bash tool", "BashOutput tool", "KillBash tool", "Background shell output"},
 	},
 	"powershell_stdout_roundtrip": {
 		Category:    "powershell",
@@ -2596,6 +2603,116 @@ func bashBackgroundOutputScenario() scenario {
 				FinalMessage: "bash background output harness ok",
 				ToolUses:     []string{"bash", "bash_output"},
 				ToolCalls:    2,
+			}, nil
+		},
+	}
+}
+
+func bashKillScenario() scenario {
+	return scenario{
+		name: "bash_kill_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
+			startOut, err := registry.Execute(ctx, "Bash", json.RawMessage(`{
+				"command":"printf kill-ready; sleep 10",
+				"run_in_background":true
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var started struct {
+				BackgroundTaskID string `json:"backgroundTaskId"`
+				Background       bool   `json:"background"`
+			}
+			if err := json.Unmarshal([]byte(startOut), &started); err != nil {
+				return localScenarioResult{}, err
+			}
+			if !started.Background || started.BackgroundTaskID == "" {
+				return localScenarioResult{}, fmt.Errorf("unexpected kill bash start payload: %s", startOut)
+			}
+			killedTask := false
+			defer func() {
+				if !killedTask {
+					_, _ = registry.Execute(ctx, "KillBash", json.RawMessage(fmt.Sprintf(`{"bash_id":%q}`, started.BackgroundTaskID)), nil)
+				}
+			}()
+
+			beforeKillOut, err := registry.Execute(ctx, "BashOutput", json.RawMessage(fmt.Sprintf(`{
+				"bash_id":%q,
+				"offset":0,
+				"limit":64,
+				"block":true,
+				"timeout_ms":2000
+			}`, started.BackgroundTaskID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var beforeKill struct {
+				Stdout      string `json:"stdout"`
+				Interrupted bool   `json:"interrupted"`
+				TimedOut    bool   `json:"timedOut"`
+			}
+			if err := json.Unmarshal([]byte(beforeKillOut), &beforeKill); err != nil {
+				return localScenarioResult{}, err
+			}
+			if beforeKill.Stdout != "kill-ready" || beforeKill.Interrupted || beforeKill.TimedOut {
+				return localScenarioResult{}, fmt.Errorf("unexpected pre-kill bash output: %s", beforeKillOut)
+			}
+
+			killOut, err := registry.Execute(ctx, "KillBash", json.RawMessage(fmt.Sprintf(`{"bash_id":%q}`, started.BackgroundTaskID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var killed struct {
+				BackgroundTaskID string `json:"backgroundTaskId"`
+				Status           string `json:"status"`
+				Interrupted      bool   `json:"interrupted"`
+				NoOutputExpected bool   `json:"noOutputExpected"`
+			}
+			if err := json.Unmarshal([]byte(killOut), &killed); err != nil {
+				return localScenarioResult{}, err
+			}
+			if killed.BackgroundTaskID != started.BackgroundTaskID || killed.Status != "stopped" || !killed.Interrupted || !killed.NoOutputExpected {
+				return localScenarioResult{}, fmt.Errorf("unexpected kill bash payload: %s", killOut)
+			}
+			killedTask = true
+
+			afterKillOut, err := registry.Execute(ctx, "BashOutput", json.RawMessage(fmt.Sprintf(`{
+				"bash_id":%q,
+				"offset":0,
+				"limit":64
+			}`, started.BackgroundTaskID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var afterKill struct {
+				Stdout           string `json:"stdout"`
+				Status           string `json:"status"`
+				Interrupted      bool   `json:"interrupted"`
+				BackgroundTaskID string `json:"backgroundTaskId"`
+				RawOutputPath    string `json:"rawOutputPath"`
+			}
+			if err := json.Unmarshal([]byte(afterKillOut), &afterKill); err != nil {
+				return localScenarioResult{}, err
+			}
+			if afterKill.BackgroundTaskID != started.BackgroundTaskID || afterKill.Status != "stopped" || !afterKill.Interrupted || afterKill.Stdout != "kill-ready" {
+				return localScenarioResult{}, fmt.Errorf("unexpected post-kill bash output: %s", afterKillOut)
+			}
+			if afterKill.RawOutputPath == "" {
+				return localScenarioResult{}, fmt.Errorf("missing post-kill raw output path: %s", afterKillOut)
+			}
+			if _, err := os.Stat(afterKill.RawOutputPath); err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       strings.Join([]string{startOut, beforeKillOut, killOut, afterKillOut, "bash kill harness ok"}, "\n"),
+				FinalMessage: "bash kill harness ok",
+				ToolUses:     []string{"bash", "bash_output", "kill_bash", "bash_output"},
+				ToolCalls:    4,
 			}, nil
 		},
 	}

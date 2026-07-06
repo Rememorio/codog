@@ -123,6 +123,15 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, bashBackgroundOutput.Output, "background-harness")
 	require.Contains(t, bashBackgroundOutput.Output, "bash background output harness ok")
 
+	bashKill := findScenario(t, report, "bash_kill_roundtrip")
+	require.True(t, bashKill.OK)
+	require.Equal(t, "bash", bashKill.Category)
+	require.Equal(t, []string{"bash", "bash_output", "kill_bash", "bash_output"}, bashKill.ToolUses)
+	require.Equal(t, 4, bashKill.ToolCalls)
+	require.Equal(t, 0, bashKill.ToolErrorCount)
+	require.Contains(t, bashKill.Output, `"status": "stopped"`)
+	require.Contains(t, bashKill.Output, "bash kill harness ok")
+
 	powerShellStdout := findScenario(t, report, "powershell_stdout_roundtrip")
 	require.True(t, powerShellStdout.OK)
 	require.Equal(t, "powershell", powerShellStdout.Category)
@@ -484,6 +493,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	bashBackgroundOutput := findManifestScenario(t, manifest, "bash_background_output_roundtrip")
 	require.Equal(t, "bash", bashBackgroundOutput.Category)
 	require.Contains(t, bashBackgroundOutput.ParityRefs, "BashOutput tool")
+
+	bashKill := findManifestScenario(t, manifest, "bash_kill_roundtrip")
+	require.Equal(t, "bash", bashKill.Category)
+	require.Contains(t, bashKill.ParityRefs, "KillBash tool")
 
 	powerShellStdout := findManifestScenario(t, manifest, "powershell_stdout_roundtrip")
 	require.Equal(t, "powershell", powerShellStdout.Category)
