@@ -23736,6 +23736,88 @@ Review body.
 	require.Equal(t, "skill_not_found", report.ErrorKind)
 }
 
+func TestSkillsCommandActionAliases(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{
+		"config_home": configHome,
+		"workspace":   workspace,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "review.md"), []byte("Review body."), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "ls", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var listReport struct {
+		Kind   string         `json:"kind"`
+		Action string         `json:"action"`
+		Skills []skills.Skill `json:"skills"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &listReport))
+	require.Equal(t, "skills", listReport.Kind)
+	require.Equal(t, "list", listReport.Action)
+	require.NotEmpty(t, skillReportEntry(listReport.Skills, "review", "user").Path)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "view", "review"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Equal(t, "Review body.\n", out)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "exec", "review", "audit"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `<skill name="review"`)
+	require.Contains(t, out, "User request: audit")
+
+	sourceFile := filepath.Join(t.TempDir(), "lint.md")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("Lint body."), 0o644))
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "add", sourceFile, "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var install skills.InstallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &install))
+	require.Equal(t, "install", install.Action)
+	require.Equal(t, "lint", install.Name)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "rm", "lint", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var uninstall skills.UninstallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &uninstall))
+	require.Equal(t, "uninstall", uninstall.Action)
+	require.Equal(t, "lint", uninstall.Name)
+	require.True(t, uninstall.Removed)
+
+	var slashOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Out:       &slashOut,
+		Err:       io.Discard,
+	}
+	require.True(t, app.handleSlash(context.Background(), "/skills cat review", &session.Session{ID: "session"}))
+	require.Equal(t, "Review body.\n", slashOut.String())
+	slashOut.Reset()
+
+	require.NoError(t, app.runResumedSkillsSlash("/skills", []string{"root", "--json"}, "json"))
+	var rootsReport struct {
+		Kind   string `json:"kind"`
+		Action string `json:"action"`
+	}
+	require.NoError(t, json.Unmarshal(slashOut.Bytes(), &rootsReport))
+	require.Equal(t, "skills", rootsReport.Kind)
+	require.Equal(t, "sources", rootsReport.Action)
+}
+
 func TestSkillsActivationCommandsAndUnsupportedAction(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")

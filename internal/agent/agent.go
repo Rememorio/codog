@@ -29116,14 +29116,10 @@ func validateResumedBackgroundWatch(args []string) error {
 func (a *App) runResumedSkillsSlash(command string, args []string, format string) error {
 	action := "list"
 	if meaningful := routeMeaningfulArgs(args); len(meaningful) > 0 && !strings.HasPrefix(strings.TrimSpace(meaningful[0]), "-") {
-		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
+		action = normalizeSkillsAction(meaningful[0])
 	}
 	switch action {
-	case "list", "show", "info", "describe", "help", "sources", "roots",
-		"invoke", "run",
-		"install", "add",
-		"uninstall", "remove", "delete",
-		"enable", "on", "disable", "off", "status", "enabled":
+	case "list", "show", "help", "sources", "invoke", "install", "uninstall", "enable", "disable", "status":
 		return a.Skills(args)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel(command, action), format)
@@ -44592,17 +44588,17 @@ func (a *App) Skills(args []string) error {
 	action := "list"
 	rest := args
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		action = strings.ToLower(args[0])
+		action = normalizeSkillsAction(args[0])
 		rest = args[1:]
 	}
 	switch action {
 	case "list":
 		return a.listSkills(rest)
-	case "sources", "roots":
+	case "sources":
 		return a.skillSources(rest)
 	case "help":
 		return renderCommandHelpTopic(a.Out, "skills", rest, "text")
-	case "show", "info", "describe":
+	case "show":
 		format, remaining, err := parseTemplateOutputArgs("skills show", rest)
 		if err != nil {
 			return err
@@ -44630,7 +44626,7 @@ func (a *App) Skills(args []string) error {
 		if !strings.HasSuffix(skill.Body, "\n") {
 			fmt.Fprintln(a.Out)
 		}
-	case "invoke", "run":
+	case "invoke":
 		format, remaining, err := parseTemplateOutputArgs("skills invoke", rest)
 		if err != nil {
 			return err
@@ -44656,7 +44652,7 @@ func (a *App) Skills(args []string) error {
 			return nil
 		}
 		fmt.Fprintln(a.Out, rendered)
-	case "install", "add":
+	case "install":
 		req, err := parseSkillInstallArgs(rest)
 		if err != nil {
 			if errors.Is(err, errSkillInstallMissingSource) {
@@ -44681,7 +44677,7 @@ func (a *App) Skills(args []string) error {
 		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
 		fmt.Fprintf(a.Out, "  Target           %s\n", report.Target)
 		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
-	case "uninstall", "remove", "delete":
+	case "uninstall":
 		req, err := parseSkillUninstallArgs(rest)
 		if err != nil {
 			if errors.Is(err, errSkillUninstallMissingName) {
@@ -44702,11 +44698,11 @@ func (a *App) Skills(args []string) error {
 		fmt.Fprintln(a.Out, "Skill Uninstalled")
 		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
 		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
-	case "enable", "on":
+	case "enable":
 		return a.skillActivation("enable", rest)
-	case "disable", "off":
+	case "disable":
 		return a.skillActivation("disable", rest)
-	case "status", "enabled":
+	case "status":
 		return a.skillActivation("status", rest)
 	default:
 		_, format, err := stripJSONOnlyOutputFormat("skills", rest)
@@ -44716,6 +44712,33 @@ func (a *App) Skills(args []string) error {
 		return renderUnsupportedSkillsAction(a.Out, action, format)
 	}
 	return nil
+}
+
+func normalizeSkillsAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "list", "ls":
+		return "list"
+	case "source", "sources", "root", "roots":
+		return "sources"
+	case "show", "info", "describe", "get", "view", "cat":
+		return "show"
+	case "invoke", "run", "exec", "execute", "call":
+		return "invoke"
+	case "install", "add":
+		return "install"
+	case "uninstall", "remove", "delete", "rm", "del":
+		return "uninstall"
+	case "enable", "on":
+		return "enable"
+	case "disable", "off":
+		return "disable"
+	case "status", "enabled":
+		return "status"
+	case "help":
+		return "help"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
 }
 
 func renderSkillLookupError(out io.Writer, action string, subject string, err error, format string) error {
@@ -44780,7 +44803,7 @@ func renderUnsupportedSkillsAction(out io.Writer, action string, format string) 
 		Status:    "error",
 		ErrorKind: "unsupported_skills_action",
 		Message:   fmt.Sprintf("unsupported skills action %q", action),
-		Hint:      "Supported: `codog skills list`, `codog skills status`, `codog skills enable NAME`, `codog skills disable NAME`, `codog skills show|info|describe NAME`, `codog skills invoke NAME [ARGS...]`, `codog skills add SOURCE`, `codog skills install SOURCE`, `codog skills uninstall NAME`, or `codog skills help`.",
+		Hint:      "Supported: `codog skills list|ls`, `codog skills sources|roots`, `codog skills status`, `codog skills enable|on NAME`, `codog skills disable|off NAME`, `codog skills show|info|describe|view NAME`, `codog skills invoke|run|exec NAME [ARGS...]`, `codog skills add|install SOURCE`, `codog skills uninstall|remove|rm NAME`, or `codog skills help`.",
 	}, format)
 }
 
@@ -53768,8 +53791,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec := localCommandHelpSpec(
 			"skills",
 			"skills",
-			"codog skill|skills [list|sources|status|enable|disable|show|info|describe|invoke|add|install|uninstall|help]",
-			"Skills\n\nUsage:\n  codog skills [list|sources|status|enable|disable|show|info|describe|invoke|add|install|uninstall|help]\n  codog skill [same actions]\n\nLists, audits sources, enables, disables, renders, invokes, installs, or removes bundled, user, workspace, plugin, compatible Claude Markdown skills, and legacy `/commands` Markdown exposed as skill-like compatibility entries. `info` and `describe` are aliases for `show`; `add` is an alias for `install`; `roots` is an alias for `sources`; `on` and `off` are aliases for `enable` and `disable`. Run `codog skills help` for this local command reference.\n",
+			"codog skill|skills [list|ls|sources|roots|status|enable|disable|show|info|describe|view|invoke|run|exec|add|install|uninstall|remove|rm|help]",
+			"Skills\n\nUsage:\n  codog skills [list|ls|sources|roots|status|enable|disable|show|info|describe|view|invoke|run|exec|add|install|uninstall|remove|rm|help]\n  codog skill [same actions]\n\nLists, audits sources, enables, disables, renders, invokes, installs, or removes bundled, user, workspace, plugin, compatible Claude Markdown skills, and legacy `/commands` Markdown exposed as skill-like compatibility entries. `ls` is an alias for `list`; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `run`, `exec`, `execute`, and `call` are aliases for `invoke`; `add` is an alias for `install`; `remove`, `rm`, and `del` are aliases for `uninstall`; `on` and `off` are aliases for `enable` and `disable`. Run `codog skills help` for this local command reference.\n",
 			[]string{"skills", "roots", "name", "path", "body", "origin", "active", "shadowed_by", "metadata_drift", "metadata_drift_count"},
 			[]string{"ok", "error"},
 			true,
@@ -53778,7 +53801,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		if strings.EqualFold(strings.TrimSpace(topic), "skill") {
 			spec.Topic = "skill"
 			spec.Command = "skill"
-			spec.Usage = "codog skill [list|sources|status|enable|disable|show|invoke|add|install|uninstall|help]"
+			spec.Usage = "codog skill [list|ls|sources|roots|status|enable|disable|show|view|invoke|run|exec|add|install|uninstall|remove|rm|help]"
 			spec.Aliases = []string{"skills"}
 		}
 		return spec, true
