@@ -4225,7 +4225,7 @@ func risky(value any) {
 	require.Equal(t, "status", resumedTheme.Action)
 	require.Equal(t, "dark", resumedTheme.Theme)
 
-	out, err = runResumedJSON("/theme", "light")
+	out, err = runResumedJSON("/theme", "use", "light")
 	require.NoError(t, err)
 	var resumedThemeSet themeReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedThemeSet))
@@ -4235,7 +4235,7 @@ func risky(value any) {
 	require.Equal(t, "dark", resumedThemeSet.Previous)
 	require.NotEmpty(t, resumedThemeSet.Path)
 
-	out, err = runResumedJSON("/color", "list")
+	out, err = runResumedJSON("/color", "ls")
 	require.NoError(t, err)
 	var resumedColor themeReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedColor))
@@ -4250,7 +4250,7 @@ func risky(value any) {
 	require.Equal(t, "status", resumedLanguage.Action)
 	require.Equal(t, "Japanese", resumedLanguage.Language)
 
-	out, err = runResumedJSON("/language", "French")
+	out, err = runResumedJSON("/language", "use", "French")
 	require.NoError(t, err)
 	var resumedLanguageSet languageReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedLanguageSet))
@@ -4260,6 +4260,14 @@ func risky(value any) {
 	require.Equal(t, "French", resumedLanguageSet.Language)
 	require.Equal(t, "Japanese", resumedLanguageSet.Previous)
 	require.NotEmpty(t, resumedLanguageSet.Path)
+
+	out, err = runResumedJSON("/language", "off")
+	require.NoError(t, err)
+	var resumedLanguageClear languageReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedLanguageClear))
+	require.Equal(t, "language", resumedLanguageClear.Kind)
+	require.Equal(t, "clear", resumedLanguageClear.Action)
+	require.False(t, resumedLanguageClear.Configured)
 
 	out, err = runResumedJSON("/effort")
 	require.NoError(t, err)
@@ -17462,7 +17470,23 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.Contains(t, string(data), `"theme": "light"`)
 	out.Reset()
 
-	require.NoError(t, app.Language([]string{"Japanese", "--json"}))
+	require.NoError(t, app.Theme([]string{"view", "--json"}))
+	require.Contains(t, out.String(), `"action": "status"`)
+	require.Contains(t, out.String(), `"theme": "light"`)
+	out.Reset()
+
+	require.NoError(t, app.Theme([]string{"off", "--json"}))
+	require.Contains(t, out.String(), `"action": "clear"`)
+	require.Equal(t, "", app.Config.Theme)
+	out.Reset()
+
+	require.NoError(t, app.Theme([]string{"use", "dark", "--json"}))
+	require.Contains(t, out.String(), `"action": "set"`)
+	require.Contains(t, out.String(), `"theme": "dark"`)
+	require.Equal(t, "dark", app.Config.Theme)
+	out.Reset()
+
+	require.NoError(t, app.Language([]string{"use", "Japanese", "--json"}))
 	require.Contains(t, out.String(), `"kind": "language"`)
 	require.Contains(t, out.String(), `"language": "Japanese"`)
 	require.Equal(t, "Japanese", app.Config.Language)
@@ -17470,6 +17494,22 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	data, err = os.ReadFile(configPath)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"language": "Japanese"`)
+	out.Reset()
+
+	require.NoError(t, app.Language([]string{"view", "--json"}))
+	require.Contains(t, out.String(), `"action": "status"`)
+	require.Contains(t, out.String(), `"language": "Japanese"`)
+	out.Reset()
+
+	require.NoError(t, app.Language([]string{"off", "--json"}))
+	require.Contains(t, out.String(), `"action": "clear"`)
+	require.Equal(t, "", app.Config.Language)
+	out.Reset()
+
+	require.NoError(t, app.Language([]string{"select", "Japanese", "--json"}))
+	require.Contains(t, out.String(), `"action": "set"`)
+	require.Contains(t, out.String(), `"language": "Japanese"`)
+	require.Equal(t, "Japanese", app.Config.Language)
 	out.Reset()
 
 	require.NoError(t, app.Vim([]string{"on", "--json"}))

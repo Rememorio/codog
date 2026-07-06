@@ -14336,7 +14336,7 @@ type themeReport struct {
 	Available []string `json:"available"`
 }
 
-const themeUsage = "codog theme [status|list|set|clear] [NAME] [--target user|project|local] [--path PATH] [--output-format text|json]"
+const themeUsage = "codog theme [status|show|list|ls|set|use|clear|off] [NAME] [--target user|project|local] [--path PATH] [--output-format text|json]"
 
 func (a *App) Theme(args []string) error {
 	req, err := parseThemeArgs(args)
@@ -14458,11 +14458,13 @@ func parseThemeArgs(args []string) (themeRequest, error) {
 	if len(rest) == 0 {
 		return req, nil
 	}
-	switch strings.ToLower(rest[0]) {
-	case "status", "show":
+	rawAction := strings.ToLower(strings.TrimSpace(rest[0]))
+	action := normalizeThemeAction(rawAction)
+	switch action {
+	case "status":
 		if len(rest) > 1 {
 			return req, unexpectedExtraArgsError{
-				Command: "theme " + strings.ToLower(rest[0]),
+				Command: "theme " + rawAction,
 				Args:    rest[1:],
 				Usage:   themeUsage,
 			}
@@ -14471,7 +14473,7 @@ func parseThemeArgs(args []string) (themeRequest, error) {
 	case "list":
 		if len(rest) > 1 {
 			return req, unexpectedExtraArgsError{
-				Command: "theme list",
+				Command: "theme " + rawAction,
 				Args:    rest[1:],
 				Usage:   themeUsage,
 			}
@@ -14480,24 +14482,24 @@ func parseThemeArgs(args []string) (themeRequest, error) {
 	case "set":
 		if len(rest) < 2 {
 			return req, requiredArgumentError{
-				Command:  "theme set",
+				Command:  "theme " + action,
 				Argument: "NAME",
 				Usage:    themeUsage,
 			}
 		}
 		if len(rest) > 2 {
 			return req, unexpectedExtraArgsError{
-				Command: "theme set",
+				Command: "theme " + action,
 				Args:    rest[2:],
 				Usage:   themeUsage,
 			}
 		}
 		req.Action = "set"
 		req.Name = rest[1]
-	case "clear", "reset":
+	case "clear":
 		if len(rest) > 1 {
 			return req, unexpectedExtraArgsError{
-				Command: "theme " + strings.ToLower(rest[0]),
+				Command: "theme " + rawAction,
 				Args:    rest[1:],
 				Usage:   themeUsage,
 			}
@@ -14515,6 +14517,21 @@ func parseThemeArgs(args []string) (themeRequest, error) {
 		req.Name = rest[0]
 	}
 	return req, nil
+}
+
+func normalizeThemeAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "status", "show", "info", "current", "get", "view":
+		return "status"
+	case "list", "ls", "available":
+		return "list"
+	case "set", "use", "select", "enable", "on":
+		return "set"
+	case "clear", "reset", "unset", "disable", "off", "default":
+		return "clear"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
 }
 
 func renderThemeReport(out io.Writer, report themeReport) {
@@ -14578,7 +14595,7 @@ type languageReport struct {
 	Path       string `json:"path,omitempty"`
 }
 
-const languageUsage = "codog language [status|set|clear] [LANGUAGE] [--target user|project|local] [--path PATH] [--output-format text|json]"
+const languageUsage = "codog language [status|show|set|use|clear|off] [LANGUAGE] [--target user|project|local] [--path PATH] [--output-format text|json]"
 
 func (a *App) Language(args []string) error {
 	req, err := parseLanguageArgs(args)
@@ -14702,11 +14719,13 @@ func parseLanguageArgs(args []string) (languageRequest, error) {
 	if len(rest) == 0 {
 		return req, nil
 	}
-	switch strings.ToLower(rest[0]) {
-	case "status", "show":
+	rawAction := strings.ToLower(strings.TrimSpace(rest[0]))
+	action := normalizeLanguageAction(rawAction)
+	switch action {
+	case "status":
 		if len(rest) > 1 {
 			return req, unexpectedExtraArgsError{
-				Command: "language " + strings.ToLower(rest[0]),
+				Command: "language " + rawAction,
 				Args:    rest[1:],
 				Usage:   languageUsage,
 			}
@@ -14715,17 +14734,17 @@ func parseLanguageArgs(args []string) (languageRequest, error) {
 	case "set":
 		if len(rest) < 2 {
 			return req, requiredArgumentError{
-				Command:  "language set",
+				Command:  "language " + action,
 				Argument: "LANGUAGE",
 				Usage:    languageUsage,
 			}
 		}
 		req.Action = "set"
 		req.Language = strings.Join(rest[1:], " ")
-	case "clear", "reset", "unset", "default":
+	case "clear":
 		if len(rest) > 1 {
 			return req, unexpectedExtraArgsError{
-				Command: "language " + strings.ToLower(rest[0]),
+				Command: "language " + rawAction,
 				Args:    rest[1:],
 				Usage:   languageUsage,
 			}
@@ -14736,6 +14755,19 @@ func parseLanguageArgs(args []string) (languageRequest, error) {
 		req.Language = strings.Join(rest, " ")
 	}
 	return req, nil
+}
+
+func normalizeLanguageAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "status", "show", "info", "current", "get", "view":
+		return "status"
+	case "set", "use", "select", "enable", "on":
+		return "set"
+	case "clear", "reset", "unset", "disable", "off", "default":
+		return "clear"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
 }
 
 func renderLanguageReport(out io.Writer, report languageReport) {
@@ -53429,8 +53461,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"language",
 			"language",
-			"codog language [status|LANGUAGE|set LANGUAGE|clear] [--target user|project|local] [--output-format text|json]",
-			"Language\n\nUsage:\n  codog language [status|LANGUAGE|set LANGUAGE|clear] [--target user|project|local] [--output-format text|json]\n\nShows or changes the interface language preference stored as `language`. The preference is injected into provider prompts as runtime context.\n",
+			"codog language [status|show|LANGUAGE|set|use LANGUAGE|clear|off] [--target user|project|local] [--output-format text|json]",
+			"Language\n\nUsage:\n  codog language [status|show|LANGUAGE|set|use LANGUAGE|clear|off] [--target user|project|local] [--output-format text|json]\n\nShows or changes the interface language preference stored as `language`. The preference is injected into provider prompts as runtime context. `current`, `get`, and `view` are aliases for `status`; `use`, `select`, `enable`, and `on` are aliases for `set`; `reset`, `unset`, `disable`, `off`, and `default` are aliases for `clear`.\n",
 			[]string{"configured", "language", "previous", "path"},
 			[]string{"ok", "error"},
 			true,
@@ -54102,7 +54134,7 @@ Usage:
   %s [flags] api [routes|status|serve] [ADDR|--addr ADDR] [--json|--output-format text|json]
   %s [flags] api-key [status|set KEY|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] language [status|LANGUAGE|set LANGUAGE|clear] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] language [status|show|LANGUAGE|set|use LANGUAGE|clear|off] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] repl
   %s [flags] tui
   %s [flags] clear [--confirm] [--json|--output-format text|json]
@@ -54173,7 +54205,7 @@ Usage:
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
   %s [flags] add-dir [PATH...|list|remove PATH|clear] [--json|--output-format text|json]
   %s [flags] validation [add-dir] [PATH...] [--json|--output-format text|json]
-  %s [flags] theme [list|NAME|clear] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] theme [status|show|list|ls|NAME|set|use NAME|clear|off] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] color [list|NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] vim [on|off|toggle|status] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] effort [auto|low|medium|high|clear] [--target user|project|local] [--json|--output-format text|json]
