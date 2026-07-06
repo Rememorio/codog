@@ -36195,7 +36195,7 @@ func (a *App) Budget(args []string) error {
 	return nil
 }
 
-const budgetUsage = "codog budget [status|set|reset] [--max-tokens N] [--max-turns N] [--target user|project|local] [--path PATH] [--output-format text|json]"
+const budgetUsage = "codog budget [status|show|ls|set|use|reset|clear|off] [--max-tokens N] [--max-turns N] [--target user|project|local] [--path PATH] [--output-format text|json]"
 
 func (req budgetRequest) hasSetValues() bool {
 	return req.MaxTokens != nil || req.MaxTurns != nil
@@ -36294,13 +36294,15 @@ func parseBudgetArgs(args []string) (budgetRequest, error) {
 		}
 		return req, nil
 	}
-	switch strings.ToLower(strings.TrimSpace(rest[0])) {
-	case "status", "show", "list":
+	rawAction := strings.ToLower(strings.TrimSpace(rest[0]))
+	action := normalizeBudgetAction(rawAction)
+	switch action {
+	case "show":
 		if len(rest) > 1 {
-			return req, unexpectedExtraArgsError{Command: "budget " + strings.ToLower(rest[0]), Args: rest[1:], Usage: budgetUsage}
+			return req, unexpectedExtraArgsError{Command: "budget " + rawAction, Args: rest[1:], Usage: budgetUsage}
 		}
 		if req.hasSetValues() {
-			return req, unexpectedExtraArgsError{Command: "budget " + strings.ToLower(rest[0]), Args: budgetSetValueArgs(req), Usage: budgetUsage}
+			return req, unexpectedExtraArgsError{Command: "budget " + rawAction, Args: budgetSetValueArgs(req), Usage: budgetUsage}
 		}
 		req.Action = "show"
 	case "set":
@@ -36308,12 +36310,12 @@ func parseBudgetArgs(args []string) (budgetRequest, error) {
 		if err := parseBudgetSetArgs(&req, rest[1:]); err != nil {
 			return req, err
 		}
-	case "reset", "clear", "default":
+	case "reset":
 		if len(rest) > 1 {
-			return req, unexpectedExtraArgsError{Command: "budget " + strings.ToLower(rest[0]), Args: rest[1:], Usage: budgetUsage}
+			return req, unexpectedExtraArgsError{Command: "budget " + rawAction, Args: rest[1:], Usage: budgetUsage}
 		}
 		if req.hasSetValues() {
-			return req, unexpectedExtraArgsError{Command: "budget " + strings.ToLower(rest[0]), Args: budgetSetValueArgs(req), Usage: budgetUsage}
+			return req, unexpectedExtraArgsError{Command: "budget " + rawAction, Args: budgetSetValueArgs(req), Usage: budgetUsage}
 		}
 		req.Action = "reset"
 	default:
@@ -36328,6 +36330,19 @@ func parseBudgetArgs(args []string) (budgetRequest, error) {
 		return req, unexpectedExtraArgsError{Command: "budget", Args: []string{rest[0]}, Usage: budgetUsage}
 	}
 	return req, nil
+}
+
+func normalizeBudgetAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "status", "show", "list", "ls", "current", "view", "get":
+		return "show"
+	case "set", "use", "update", "configure", "config":
+		return "set"
+	case "reset", "clear", "default", "unset", "disable", "off":
+		return "reset"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
 }
 
 func parseBudgetSetArgs(req *budgetRequest, args []string) error {
@@ -53647,8 +53662,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"budget",
 			"budget",
-			"codog budget [status|set|reset] [--max-tokens N] [--max-turns N] [--target user|project|local] [--output-format text|json]",
-			"Budget\n\nUsage:\n  codog budget [status|set|reset] [--max-tokens N] [--max-turns N] [--target user|project|local] [--output-format text|json]\n\nShows or changes token budget limits backed by `max_tokens` and `max_turns`.\n",
+			"codog budget [status|show|ls|set|use|reset|clear|off] [--max-tokens N] [--max-turns N] [--target user|project|local] [--output-format text|json]",
+			"Budget\n\nUsage:\n  codog budget [status|show|ls|set|use|reset|clear|off] [--max-tokens N] [--max-turns N] [--target user|project|local] [--output-format text|json]\n\nShows or changes token budget limits backed by `max_tokens` and `max_turns`. `current`, `view`, and `get` are aliases for `show`; `use`, `update`, and `configure` are aliases for `set`; `unset`, `disable`, `off`, and `default` are aliases for `reset`.\n",
 			[]string{"max_tokens", "max_turns", "previous", "path"},
 			[]string{"ok", "error"},
 			true,
@@ -54178,7 +54193,7 @@ Usage:
   %s [flags] output-style [list|ls|status|show|view|set|use|clear|off] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME] | models [list|ls|aliases|routes|search|find QUERY|show|view [MODEL]|current|help] [--json|--output-format text|json]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] budget [status|set|reset] [--max-tokens N] [--max-turns N] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] budget [status|show|ls|set|use|reset|clear|off] [--max-tokens N] [--max-turns N] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] max-tokens [N]
   %s [flags] temperature [VALUE|set VALUE|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] max-turns [N]

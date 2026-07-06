@@ -2060,7 +2060,7 @@ func TestBudgetCommandSetsShowsAndResetsConfig(t *testing.T) {
 	out, err := captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{
 			"--config", configPath,
-			"budget", "set",
+			"budget", "use",
 			"--path", configPath,
 			"--max-tokens", "8192",
 			"--max-turns", "12",
@@ -2079,7 +2079,7 @@ func TestBudgetCommandSetsShowsAndResetsConfig(t *testing.T) {
 	require.Contains(t, string(stored), `"max_turns": 12`)
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "budget", "status"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "budget", "current"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
 	require.Contains(t, out, `"kind": "budget"`)
@@ -2089,7 +2089,7 @@ func TestBudgetCommandSetsShowsAndResetsConfig(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("budget"))
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "budget", "reset", "--path", configPath, "--json"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "budget", "off", "--path", configPath, "--json"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
 	require.Contains(t, out, `"action": "reset"`)
@@ -4046,7 +4046,7 @@ func risky(value any) {
 	require.Equal(t, "work", resumedProfileSet.Profile.Name)
 	require.NotEmpty(t, resumedProfileSet.Path)
 
-	out, err = runResumedJSON("/budget")
+	out, err = runResumedJSON("/budget", "ls")
 	require.NoError(t, err)
 	var resumedBudget budgetReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedBudget))
@@ -4055,7 +4055,7 @@ func risky(value any) {
 	require.Equal(t, 1000, resumedBudget.MaxTokens)
 	require.Equal(t, 3, resumedBudget.MaxTurns)
 
-	out, err = runResumedJSON("/budget", "set", "--max-tokens", "2000")
+	out, err = runResumedJSON("/budget", "use", "--max-tokens", "2000")
 	require.NoError(t, err)
 	var resumedBudgetSet budgetReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedBudgetSet))
