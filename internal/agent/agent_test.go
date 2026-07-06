@@ -336,6 +336,7 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	helpOutput := out.String()
 	require.Contains(t, helpOutput, "Usage:")
 	require.Contains(t, helpOutput, "prompt")
+	require.Contains(t, helpOutput, "--continue | -c")
 	resumeLine := requireResumeSafeHelpLine(t, helpOutput)
 	require.Contains(t, resumeLine, "/status")
 	require.Contains(t, resumeLine, "/mcp")
@@ -355,6 +356,7 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "help", globalReport.Kind)
 	require.Equal(t, "show", globalReport.Action)
 	require.Equal(t, "ok", globalReport.Status)
+	require.Contains(t, globalReport.Help, "--continue | -c")
 	require.Equal(t, resumeLine, requireResumeSafeHelpLine(t, globalReport.Help))
 	out.Reset()
 
@@ -620,6 +622,16 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 		{
 			name:  "resume global flag",
 			args:  []string{"--resume", "--help", "--output-format", "json"},
+			topic: "resume",
+		},
+		{
+			name:  "continue global flag",
+			args:  []string{"--continue", "--help", "--output-format", "json"},
+			topic: "resume",
+		},
+		{
+			name:  "continue short global flag",
+			args:  []string{"-c", "--help", "--output-format", "json"},
 			topic: "resume",
 		},
 		{

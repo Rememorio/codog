@@ -54710,7 +54710,7 @@ func providerCommandHelpSpec(topic, command, usage, text string, fields, statuse
 }
 
 func renderGlobalResumeHelp(out io.Writer, args []string) (bool, error) {
-	if len(args) < 2 || args[0] != "--resume" || !isHelpFlag(args[1]) {
+	if len(args) < 2 || (args[0] != "--resume" && args[0] != "--continue" && args[0] != "-c") || !isHelpFlag(args[1]) {
 		return false, nil
 	}
 	return true, renderCommandHelpTopic(out, "resume", args[2:], requestedOutputFormat(args))
@@ -55984,8 +55984,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return commandHelpSpec{
 			Topic:                   "resume",
 			Command:                 "resume",
-			Usage:                   "codog --resume ID|latest [prompt TEXT|repl|/slash-command]",
-			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, /paste, /bookmarks, or /session. Help is local and does not open a session.\n",
+			Usage:                   "codog --resume ID|latest [prompt TEXT|repl|/slash-command] | codog --continue|-c [prompt TEXT|repl|/slash-command]",
+			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl|/slash-command]\n  codog --continue|-c [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, /paste, /bookmarks, or /session. `--continue` and `-c` resume the latest session. Help is local and does not open a session.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
@@ -56197,6 +56197,7 @@ Flags:
   --session-id ID
   --name NAME
   --resume ID|latest
+  --continue | -c
   --permission-mode read-only|workspace-write|danger-full-access|prompt|allow
   --dangerously-skip-permissions
   --skip-permissions
