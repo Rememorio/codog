@@ -951,6 +951,16 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "textDocument/publishDiagnostics", result.Method)
 	require.Len(t, result.Diagnostics, 1)
 	require.Equal(t, "fake diagnostic", result.Diagnostics[0].Message)
+	require.Equal(t, "fake-code", result.Diagnostics[0].Code)
+	require.NotNil(t, result.Diagnostics[0].CodeDescription)
+	require.Equal(t, "https://example.test/diagnostics/fake-code", result.Diagnostics[0].CodeDescription.Href)
+	require.Equal(t, []int{1}, result.Diagnostics[0].Tags)
+	require.Len(t, result.Diagnostics[0].RelatedInformation, 1)
+	require.Equal(t, "related fake diagnostic", result.Diagnostics[0].RelatedInformation[0].Message)
+	require.True(t, strings.HasPrefix(result.Diagnostics[0].RelatedInformation[0].Location.URI, "file://"))
+	require.True(t, strings.HasSuffix(result.Diagnostics[0].RelatedInformation[0].Location.URI, "/main.go"))
+	require.IsType(t, map[string]any{}, result.Diagnostics[0].Data)
+	require.Equal(t, "fake-rule", result.Diagnostics[0].Data.(map[string]any)["rule"])
 }
 
 func TestApplyLSPTextEdits(t *testing.T) {
@@ -1148,8 +1158,24 @@ func TestFakeLSPServer(t *testing.T) {
 							"end":   map[string]any{"line": 2, "character": 9},
 						},
 						"severity": 1,
-						"source":   "fake-lsp",
-						"message":  "fake diagnostic",
+						"code":     "fake-code",
+						"codeDescription": map[string]any{
+							"href": "https://example.test/diagnostics/fake-code",
+						},
+						"source":  "fake-lsp",
+						"message": "fake diagnostic",
+						"tags":    []int{1},
+						"relatedInformation": []map[string]any{{
+							"location": map[string]any{
+								"uri": params.TextDocument.URI,
+								"range": map[string]any{
+									"start": map[string]any{"line": 1, "character": 0},
+									"end":   map[string]any{"line": 1, "character": 4},
+								},
+							},
+							"message": "related fake diagnostic",
+						}},
+						"data": map[string]any{"rule": "fake-rule"},
 					}},
 				}})
 			}

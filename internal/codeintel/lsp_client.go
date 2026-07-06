@@ -135,16 +135,41 @@ type LSPPosition struct {
 	Character int `json:"character"`
 }
 
+// LSPRange is a zero-based language-server document range.
+type LSPRange struct {
+	Start LSPPosition `json:"start"`
+	End   LSPPosition `json:"end"`
+}
+
+// LSPCodeDescription links a diagnostic code to external documentation.
+type LSPCodeDescription struct {
+	Href string `json:"href"`
+}
+
+// LSPLocation describes a range within a language-server document URI.
+type LSPLocation struct {
+	URI   string   `json:"uri"`
+	Range LSPRange `json:"range"`
+}
+
+// LSPDiagnosticRelatedInformation explains another location related to a
+// diagnostic.
+type LSPDiagnosticRelatedInformation struct {
+	Location LSPLocation `json:"location"`
+	Message  string      `json:"message"`
+}
+
 // LSPDiagnostic describes a language-server diagnostic entry.
 type LSPDiagnostic struct {
-	Range struct {
-		Start LSPPosition `json:"start"`
-		End   LSPPosition `json:"end"`
-	} `json:"range"`
-	Severity int    `json:"severity,omitempty"`
-	Code     any    `json:"code,omitempty"`
-	Source   string `json:"source,omitempty"`
-	Message  string `json:"message"`
+	Range              LSPRange                          `json:"range"`
+	Severity           int                               `json:"severity,omitempty"`
+	Code               any                               `json:"code,omitempty"`
+	CodeDescription    *LSPCodeDescription               `json:"codeDescription,omitempty"`
+	Source             string                            `json:"source,omitempty"`
+	Message            string                            `json:"message"`
+	Tags               []int                             `json:"tags,omitempty"`
+	RelatedInformation []LSPDiagnosticRelatedInformation `json:"relatedInformation,omitempty"`
+	Data               any                               `json:"data,omitempty"`
 }
 
 type lspPublishDiagnosticsParams struct {

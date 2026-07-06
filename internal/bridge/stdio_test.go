@@ -419,6 +419,10 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"value":"bridge fake hover"`)
 	require.Contains(t, out.String(), `"action":"diagnostics"`)
 	require.Contains(t, out.String(), `"message":"bridge fake diagnostic"`)
+	require.Contains(t, out.String(), `"href":"https://example.test/bridge-diagnostic"`)
+	require.Contains(t, out.String(), `"tags":[1]`)
+	require.Contains(t, out.String(), `"message":"bridge related diagnostic"`)
+	require.Contains(t, out.String(), `"rule":"bridge-rule"`)
 	require.Contains(t, out.String(), `"action":"rename"`)
 	require.Contains(t, out.String(), `"file_edits":1`)
 	require.Contains(t, out.String(), `"applied":true`)
@@ -643,8 +647,24 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 							"end":   map[string]any{"line": 2, "character": 4},
 						},
 						"severity": 2,
-						"source":   "bridge-fake-lsp",
-						"message":  "bridge fake diagnostic",
+						"code":     "bridge-code",
+						"codeDescription": map[string]any{
+							"href": "https://example.test/bridge-diagnostic",
+						},
+						"source":  "bridge-fake-lsp",
+						"message": "bridge fake diagnostic",
+						"tags":    []int{1},
+						"relatedInformation": []map[string]any{{
+							"location": map[string]any{
+								"uri": uri,
+								"range": map[string]any{
+									"start": map[string]any{"line": 1, "character": 0},
+									"end":   map[string]any{"line": 1, "character": 4},
+								},
+							},
+							"message": "bridge related diagnostic",
+						}},
+						"data": map[string]any{"rule": "bridge-rule"},
 					}},
 				},
 			})
