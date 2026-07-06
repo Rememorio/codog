@@ -52254,6 +52254,32 @@ func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, err
 	resuming := strings.TrimSpace(overrides.Resume) != ""
 	var sess *session.Session
 	var err error
+	if overrides.ForkSession {
+		if strings.TrimSpace(overrides.Resume) == "" {
+			return nil, errors.New("--fork-session requires --resume or --continue")
+		}
+		id = overrides.Resume
+		if id == "true" {
+			id = "latest"
+		}
+		sess, err = a.Sessions.Fork(id, "")
+		if err != nil {
+			return nil, err
+		}
+		if customID := strings.TrimSpace(overrides.SessionID); customID != "" {
+			if _, err := a.Sessions.Rename(sess.ID, customID); err != nil {
+				return nil, err
+			}
+			sess, err = a.Sessions.OpenExisting(customID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err := a.restoreTodosFromSession(sess); err != nil {
+			return nil, err
+		}
+		return sess, nil
+	}
 	if overrides.Resume != "" {
 		id = overrides.Resume
 		if id == "true" {
@@ -54083,6 +54109,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.Resume, "r", base.Resume, "alias for --resume")
 	flags.BoolVar(&continueMode, "continue", false, "resume the latest session")
 	flags.BoolVar(&continueMode, "c", false, "alias for --continue")
+	flags.BoolVar(&base.ForkSession, "fork-session", base.ForkSession, "fork the resumed session before continuing")
 	flags.BoolVar(&printMode, "p", false, "run a one-shot prompt")
 	flags.BoolVar(&printMode, "print", false, "run a one-shot prompt")
 	flags.BoolVar(&compactPromptMode, "compact", false, "run a compact one-shot prompt")
@@ -54122,6 +54149,22 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	base.ToolNames = append([]string(nil), toolNames...)
 	if continueMode && strings.TrimSpace(base.Resume) == "" {
 		base.Resume = "latest"
+	}
+	if base.ForkSession && strings.TrimSpace(base.Resume) == "" {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--fork-session",
+			Value:   "",
+			Message: "--fork-session requires --resume or --continue",
+			Usage:   "codog --resume ID --fork-session [repl|prompt TEXT]",
+		}
+	}
+	if strings.TrimSpace(base.Resume) != "" && strings.TrimSpace(base.SessionID) != "" && !base.ForkSession {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--session-id",
+			Value:   base.SessionID,
+			Message: "--session-id can only be used with --resume or --continue when --fork-session is also specified",
+			Usage:   "codog --resume ID --fork-session --session-id NEW_ID [repl|prompt TEXT]",
+		}
 	}
 	rest := flags.Args()
 	if compactPromptMode && len(rest) > 0 && !strings.EqualFold(rest[0], "prompt") && isKnownNonPromptCommand(rest[0]) {
@@ -56062,8 +56105,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return commandHelpSpec{
 			Topic:                   "resume",
 			Command:                 "resume",
-			Usage:                   "codog --resume|-r ID|latest [prompt TEXT|repl|/slash-command] | codog --continue|-c [prompt TEXT|repl|/slash-command]",
-			Text:                    "Resume\n\nUsage:\n  codog --resume|-r ID|latest [prompt TEXT|repl|/slash-command]\n  codog --continue|-c [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, /paste, /bookmarks, or /session. `-r` is an alias for `--resume`; `--continue` and `-c` resume the latest session. Help is local and does not open a session.\n",
+			Usage:                   "codog --resume|-r ID|latest [--fork-session] [prompt TEXT|repl|/slash-command] | codog --continue|-c [--fork-session] [prompt TEXT|repl|/slash-command]",
+			Text:                    "Resume\n\nUsage:\n  codog --resume|-r ID|latest [--fork-session] [prompt TEXT|repl|/slash-command]\n  codog --continue|-c [--fork-session] [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, /paste, /bookmarks, or /session. `-r` is an alias for `--resume`; `--continue` and `-c` resume the latest session. With `--fork-session`, Codog copies the resumed transcript into a new session before continuing; combine it with `--session-id` to choose the fork ID. Help is local and does not open a session.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
@@ -56277,6 +56320,7 @@ Flags:
   --name NAME
   --resume ID|latest | -r ID|latest
   --continue | -c
+  --fork-session
   --permission-mode read-only|workspace-write|danger-full-access|prompt|allow
   --dangerously-skip-permissions
   --skip-permissions

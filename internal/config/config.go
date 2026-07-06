@@ -1212,6 +1212,7 @@ type FlagOverrides struct {
 	InputFormat                    string
 	ReplayUserMessages             bool
 	JSONSchema                     string
+	ForkSession                    bool
 	MCPConfigs                     []string
 	StrictMCPConfig                bool
 	OutputFormatSource             string

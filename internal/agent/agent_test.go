@@ -338,6 +338,7 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, helpOutput, "prompt")
 	require.Contains(t, helpOutput, "--continue | -c")
 	require.Contains(t, helpOutput, "--resume ID|latest | -r ID|latest")
+	require.Contains(t, helpOutput, "--fork-session")
 	require.Contains(t, helpOutput, "<cc-url|cc+unix-url>")
 	resumeLine := requireResumeSafeHelpLine(t, helpOutput)
 	require.Contains(t, resumeLine, "/status")
@@ -360,6 +361,7 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "ok", globalReport.Status)
 	require.Contains(t, globalReport.Help, "--continue | -c")
 	require.Contains(t, globalReport.Help, "--resume ID|latest | -r ID|latest")
+	require.Contains(t, globalReport.Help, "--fork-session")
 	require.Contains(t, globalReport.Help, "<cc-url|cc+unix-url>")
 	require.Equal(t, resumeLine, requireResumeSafeHelpLine(t, globalReport.Help))
 	out.Reset()
@@ -19902,6 +19904,56 @@ func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
 	require.Equal(t, "short-session", overrides.Resume)
 	require.Equal(t, "repl", command)
 	require.Empty(t, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--resume", "source", "--fork-session", "repl"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "source", overrides.Resume)
+	require.True(t, overrides.ForkSession)
+	require.Equal(t, "repl", command)
+	require.Empty(t, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--continue", "--fork-session", "--session-id", "custom-fork", "repl"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "latest", overrides.Resume)
+	require.Equal(t, "custom-fork", overrides.SessionID)
+	require.True(t, overrides.ForkSession)
+	require.Equal(t, "repl", command)
+	require.Empty(t, rest)
+
+	_, _, _, err = parseFlags([]string{"--fork-session", "repl"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--fork-session requires")
+
+	_, _, _, err = parseFlags([]string{"--resume", "source", "--session-id", "custom", "repl"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--session-id can only be used")
+}
+
+func TestOpenSessionForksResumedSession(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "original prompt")))
+	app := &App{Sessions: store, Workspace: t.TempDir()}
+
+	forked, err := app.openSession(config.FlagOverrides{Resume: "source", ForkSession: true})
+	require.NoError(t, err)
+	require.NotEqual(t, "source", forked.ID)
+	require.Len(t, forked.Messages, 1)
+	require.Equal(t, "original prompt", forked.Messages[0].Content[0].Text)
+	require.Equal(t, "source", forked.Metadata.ParentSessionID)
+
+	source, err := store.OpenExisting("source")
+	require.NoError(t, err)
+	require.Len(t, source.Messages, 1)
+
+	custom, err := app.openSession(config.FlagOverrides{Resume: "source", ForkSession: true, SessionID: "custom-fork"})
+	require.NoError(t, err)
+	require.Equal(t, "custom-fork", custom.ID)
+	require.Len(t, custom.Messages, 1)
+	require.Equal(t, "source", custom.Metadata.ParentSessionID)
+
+	_, err = app.openSession(config.FlagOverrides{ForkSession: true})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--fork-session requires")
 }
 
 func TestOpenTargetParsing(t *testing.T) {
