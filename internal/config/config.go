@@ -1197,6 +1197,9 @@ type FlagOverrides struct {
 	Resume                         string
 	ResumeSessionAt                string
 	Prefill                        string
+	DeepLinkOrigin                 bool
+	DeepLinkRepo                   string
+	DeepLinkLastFetchMS            int64
 	Model                          string
 	BaseURL                        string
 	SystemPrompt                   string

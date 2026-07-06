@@ -464,6 +464,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "repl":
 		return app.REPL(ctx, overrides)
 	case "tui":
+		app.renderDeepLinkBanner(overrides)
 		result, err := tui.PromptWithCandidatesPrefill(app.slashCompletionCandidates(""), overrides.Prefill)
 		if err != nil {
 			return err
@@ -35639,6 +35640,7 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 		return err
 	}
 	a.writeWorkerState("repl", "idle", sess, "")
+	a.renderDeepLinkBanner(overrides)
 	fmt.Fprintf(a.Err, "Codog %s (%s). Type /help for commands, Tab for completions, /exit to quit.\n", version, sess.ID)
 	if rl, ok, err := a.newLineReader(sess.ID); err != nil {
 		return err
@@ -35664,6 +35666,87 @@ func (a *App) finishREPL(ctx context.Context, sess *session.Session, loopErr err
 		return err
 	}
 	return loopErr
+}
+
+func (a *App) renderDeepLinkBanner(overrides config.FlagOverrides) {
+	banner := buildDeepLinkBanner(a.Workspace, overrides, time.Now())
+	if banner == "" || a.Err == nil {
+		return
+	}
+	fmt.Fprintln(a.Err, banner)
+}
+
+func buildDeepLinkBanner(workspace string, overrides config.FlagOverrides, now time.Time) string {
+	if !overrides.DeepLinkOrigin && strings.TrimSpace(overrides.Prefill) == "" {
+		return ""
+	}
+	if !overrides.DeepLinkOrigin {
+		return "Warning: launched with a pre-filled prompt - review it before pressing Enter."
+	}
+	lines := []string{"Warning: this session was opened by an external deep link in " + displayDeepLinkPath(workspace)}
+	if repo := strings.TrimSpace(overrides.DeepLinkRepo); repo != "" {
+		age := "never"
+		stale := true
+		if overrides.DeepLinkLastFetchMS > 0 {
+			fetched := time.UnixMilli(overrides.DeepLinkLastFetchMS)
+			age = relativeTimeAgo(fetched, now)
+			stale = now.Sub(fetched) > 7*24*time.Hour
+		}
+		line := "Resolved " + repo + " from local clones; last fetched " + age
+		if stale {
+			line += " - project instructions may be stale"
+		}
+		lines = append(lines, line)
+	}
+	if length := len(overrides.Prefill); length > 0 {
+		if length > 1000 {
+			lines = append(lines, fmt.Sprintf("The prompt below (%d chars) was supplied by the link - scroll to review the entire prompt before pressing Enter.", length))
+		} else {
+			lines = append(lines, "The prompt below was supplied by the link - review carefully before pressing Enter.")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func displayDeepLinkPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "."
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if path == home {
+		return "~"
+	}
+	if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+		return "~" + strings.TrimPrefix(path, home)
+	}
+	return path
+}
+
+func relativeTimeAgo(then time.Time, now time.Time) string {
+	if then.IsZero() {
+		return "never"
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if then.After(now) {
+		return "just now"
+	}
+	delta := now.Sub(then)
+	switch {
+	case delta < time.Minute:
+		return "just now"
+	case delta < time.Hour:
+		return fmt.Sprintf("%dm ago", int(delta/time.Minute))
+	case delta < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(delta/time.Hour))
+	default:
+		return fmt.Sprintf("%dd ago", int(delta/(24*time.Hour)))
+	}
 }
 
 func (a *App) replScanner(ctx context.Context, sess *session.Session) error {
@@ -54135,6 +54218,10 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	outputFormat := ""
 	inputFormat := strings.TrimSpace(base.InputFormat)
 	jsonSchema := strings.TrimSpace(base.JSONSchema)
+	deepLinkLastFetch := ""
+	if base.DeepLinkLastFetchMS > 0 {
+		deepLinkLastFetch = strconv.FormatInt(base.DeepLinkLastFetchMS, 10)
+	}
 	allowedTools := stringListFlag(base.AllowedTools)
 	disallowedTools := stringListFlag(base.DisallowedTools)
 	mcpConfigs := appendStringFlag(base.MCPConfigs)
@@ -54159,6 +54246,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.Resume, "r", base.Resume, "alias for --resume")
 	flags.StringVar(&base.ResumeSessionAt, "resume-session-at", base.ResumeSessionAt, "resume up to an assistant message id")
 	flags.StringVar(&base.Prefill, "prefill", base.Prefill, "pre-fill the next interactive input")
+	flags.BoolVar(&base.DeepLinkOrigin, "deep-link-origin", base.DeepLinkOrigin, "signal launch from a deep link")
+	flags.StringVar(&base.DeepLinkRepo, "deep-link-repo", base.DeepLinkRepo, "repo slug resolved by a deep link")
+	flags.StringVar(&deepLinkLastFetch, "deep-link-last-fetch", deepLinkLastFetch, "deep link fetch timestamp in epoch milliseconds")
 	flags.BoolVar(&continueMode, "continue", false, "resume the latest session")
 	flags.BoolVar(&continueMode, "c", false, "alias for --continue")
 	flags.BoolVar(&base.ForkSession, "fork-session", base.ForkSession, "fork the resumed session before continuing")
@@ -54199,6 +54289,11 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	base.DisallowedTools = []string(disallowedTools)
 	base.MCPConfigs = []string(mcpConfigs)
 	base.ToolNames = append([]string(nil), toolNames...)
+	if fetched, err := strconv.ParseInt(strings.TrimSpace(deepLinkLastFetch), 10, 64); err == nil && fetched > 0 {
+		base.DeepLinkLastFetchMS = fetched
+	} else {
+		base.DeepLinkLastFetchMS = 0
+	}
 	if continueMode && strings.TrimSpace(base.Resume) == "" {
 		base.Resume = "latest"
 	}
@@ -54509,7 +54604,8 @@ func globalFlagConsumesNext(arg string) bool {
 		"--system-prompt-file", "-system-prompt-file", "--append-system-prompt", "-append-system-prompt",
 		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
 		"--session-id", "-session-id", "--name", "-name", "--resume", "-resume", "-r",
-		"--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--output-format", "-output-format", "-o", "--o",
+		"--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo",
+		"--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-output-format", "-o", "--o",
 		"--input-format", "-input-format", "--json-schema", "-json-schema",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
 		"--max-tokens", "-max-tokens", "--temperature", "-temperature",
@@ -54547,7 +54643,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false

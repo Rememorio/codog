@@ -19939,6 +19939,20 @@ func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
 	require.Equal(t, "tui", command)
 	require.Empty(t, rest)
 
+	overrides, command, rest, err = parseFlags([]string{"--deep-link-origin", "--deep-link-repo", "Rememorio/codog", "--deep-link-last-fetch", "1700000000000", "--prefill", "review this diff", "repl"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.True(t, overrides.DeepLinkOrigin)
+	require.Equal(t, "Rememorio/codog", overrides.DeepLinkRepo)
+	require.Equal(t, int64(1700000000000), overrides.DeepLinkLastFetchMS)
+	require.Equal(t, "review this diff", overrides.Prefill)
+	require.Equal(t, "repl", command)
+	require.Empty(t, rest)
+
+	overrides, _, _, err = parseFlags([]string{"--deep-link-origin", "--deep-link-last-fetch", "not-a-number", "repl"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.True(t, overrides.DeepLinkOrigin)
+	require.Zero(t, overrides.DeepLinkLastFetchMS)
+
 	_, _, _, err = parseFlags([]string{"--fork-session", "repl"}, config.FlagOverrides{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--fork-session requires")
@@ -19962,6 +19976,30 @@ func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
 	_, _, _, err = parseFlags([]string{"--prefill", "queued prompt", "-p", "hello"}, config.FlagOverrides{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "interactive")
+}
+
+func TestBuildDeepLinkBanner(t *testing.T) {
+	now := time.UnixMilli(1700864000000)
+
+	banner := buildDeepLinkBanner("/repo/codog", config.FlagOverrides{Prefill: "review this diff"}, now)
+	require.Equal(t, "Warning: launched with a pre-filled prompt - review it before pressing Enter.", banner)
+
+	banner = buildDeepLinkBanner("/repo/codog", config.FlagOverrides{
+		DeepLinkOrigin:      true,
+		DeepLinkRepo:        "Rememorio/codog",
+		DeepLinkLastFetchMS: now.Add(-48 * time.Hour).UnixMilli(),
+		Prefill:             strings.Repeat("x", 1001),
+	}, now)
+	require.Contains(t, banner, "external deep link in /repo/codog")
+	require.Contains(t, banner, "Resolved Rememorio/codog from local clones; last fetched 2d ago")
+	require.NotContains(t, banner, "project instructions may be stale")
+	require.Contains(t, banner, "1001 chars")
+
+	banner = buildDeepLinkBanner("/repo/codog", config.FlagOverrides{
+		DeepLinkOrigin: true,
+		DeepLinkRepo:   "Rememorio/codog",
+	}, now)
+	require.Contains(t, banner, "last fetched never - project instructions may be stale")
 }
 
 func TestOpenSessionForksResumedSession(t *testing.T) {
