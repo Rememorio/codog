@@ -583,6 +583,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	case "ssh":
+		if err := app.SSH(ctx, rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "api-key":
 		if err := app.APIKey(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -2215,7 +2220,32 @@ type openReport struct {
 	Message             string         `json:"message,omitempty"`
 }
 
+type sshRequest struct {
+	Host                       string
+	Directory                  string
+	PermissionMode             string
+	DangerouslySkipPermissions bool
+	Local                      bool
+	Format                     string
+}
+
+type sshReport struct {
+	Kind                       string   `json:"kind"`
+	Action                     string   `json:"action"`
+	Status                     string   `json:"status"`
+	Host                       string   `json:"host"`
+	Directory                  string   `json:"directory,omitempty"`
+	Local                      bool     `json:"local"`
+	PermissionMode             string   `json:"permission_mode,omitempty"`
+	DangerouslySkipPermissions bool     `json:"dangerously_skip_permissions,omitempty"`
+	Command                    []string `json:"command"`
+	RemoteShell                string   `json:"remote_shell,omitempty"`
+	Executed                   bool     `json:"executed"`
+	Message                    string   `json:"message,omitempty"`
+}
+
 const openUsage = "codog open <cc-url|http-url> [-p|--print [PROMPT]] [--output-format text|json|stream-json]"
+const sshUsage = "codog ssh <host> [dir] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--json|--output-format text|json]"
 
 func (a *App) Open(ctx context.Context, args []string) error {
 	req, err := parseOpenArgs(args)
@@ -2252,6 +2282,145 @@ func (a *App) Open(ctx context.Context, args []string) error {
 		report.Message = "Connected to Codog control server and submitted prompt."
 	}
 	return renderOpenReport(a.Out, report, req.Format)
+}
+
+func (a *App) SSH(ctx context.Context, args []string) error {
+	req, err := parseSSHArgs(args)
+	if err != nil {
+		return err
+	}
+	report := a.buildSSHReport(req)
+	if req.Format == "json" {
+		report.Message = "SSH execution plan generated. Run without --json to start the remote session."
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	return a.runSSHCommand(ctx, req, report.Command)
+}
+
+func parseSSHArgs(args []string) (sshRequest, error) {
+	req := sshRequest{Format: "text"}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "ssh", Flag: arg, Usage: sshUsage}
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--permission-mode":
+			index++
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "ssh", Flag: arg, Usage: sshUsage}
+			}
+			req.PermissionMode = strings.TrimSpace(args[index])
+		case strings.HasPrefix(arg, "--permission-mode="):
+			req.PermissionMode = strings.TrimSpace(strings.TrimPrefix(arg, "--permission-mode="))
+		case arg == "--dangerously-skip-permissions" || arg == "--skip-permissions":
+			req.DangerouslySkipPermissions = true
+		case arg == "--local":
+			req.Local = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "ssh", Option: arg, Usage: sshUsage}
+			}
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) == 0 || strings.TrimSpace(positionals[0]) == "" {
+		return req, requiredArgumentError{Command: "ssh", Argument: "host", Usage: sshUsage}
+	}
+	if len(positionals) > 2 {
+		return req, unexpectedExtraArgsError{Command: "ssh", Args: positionals[2:], Usage: sshUsage}
+	}
+	req.Host = strings.TrimSpace(positionals[0])
+	if len(positionals) == 2 {
+		req.Directory = strings.TrimSpace(positionals[1])
+	}
+	if req.PermissionMode != "" && !validPermissionMode(req.PermissionMode) {
+		return req, fmt.Errorf("invalid --permission-mode %q; expected read-only, workspace-write, danger-full-access, prompt, or allow", req.PermissionMode)
+	}
+	normalizedFormat, err := normalizeOutputFormat("ssh", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalizedFormat
+	return req, nil
+}
+
+func (a *App) buildSSHReport(req sshRequest) sshReport {
+	remoteArgs := a.sshRemoteCodogArgs(req)
+	remoteShell := sshRemoteShell(req.Directory, remoteArgs)
+	command := []string{"ssh", req.Host, remoteShell}
+	if req.Local {
+		command = remoteArgs
+	}
+	return sshReport{
+		Kind:                       "ssh",
+		Action:                     "connect",
+		Status:                     "planned",
+		Host:                       req.Host,
+		Directory:                  req.Directory,
+		Local:                      req.Local,
+		PermissionMode:             req.PermissionMode,
+		DangerouslySkipPermissions: req.DangerouslySkipPermissions,
+		Command:                    command,
+		RemoteShell:                remoteShell,
+		Executed:                   false,
+	}
+}
+
+func (a *App) runSSHCommand(ctx context.Context, req sshRequest, command []string) error {
+	if len(command) == 0 {
+		return errors.New("ssh command is empty")
+	}
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	if req.Local && strings.TrimSpace(req.Directory) != "" {
+		cmd.Dir = req.Directory
+	}
+	cmd.Stdin = a.In
+	cmd.Stdout = a.Out
+	cmd.Stderr = a.Err
+	return cmd.Run()
+}
+
+func (a *App) sshRemoteCodogArgs(req sshRequest) []string {
+	executable := "codog"
+	if req.Local {
+		executable = strings.TrimSpace(a.Executable)
+	}
+	if req.Local && executable == "" {
+		if path, err := resolveExecutablePath(); err == nil {
+			executable = strings.TrimSpace(path)
+		}
+	}
+	if executable == "" {
+		executable = "codog"
+	}
+	out := []string{executable}
+	if req.PermissionMode != "" {
+		out = append(out, "--permission-mode", req.PermissionMode)
+	}
+	if req.DangerouslySkipPermissions {
+		out = append(out, "--dangerously-skip-permissions")
+	}
+	out = append(out, "repl")
+	return out
+}
+
+func sshRemoteShell(directory string, args []string) string {
+	command := strings.Join(shellQuoteArgs(args), " ")
+	if strings.TrimSpace(directory) == "" {
+		return command
+	}
+	return "cd " + shellQuote(directory) + " && " + command
 }
 
 func parseOpenArgs(args []string) (openRequest, error) {
@@ -28731,6 +28900,7 @@ func builtInCommandNames() []string {
 		"skill",
 		"skills",
 		"speak",
+		"ssh",
 		"stash",
 		"stale-base",
 		"state",
@@ -54077,7 +54247,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "open", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "pr_comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-control", "remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "sandbox-toggle",
-		"search", "security-review", "self-test", "server", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "state", "status", "statusline",
+		"search", "security-review", "self-test", "server", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "ssh", "state", "status", "statusline",
 		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "terminalsetup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"teleport", "ultraplan", "ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "unpin", "upgrade", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
@@ -54910,6 +55080,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"connected", "error"},
 			false,
 		), true
+	case "ssh":
+		return localCommandHelpSpec(
+			"ssh",
+			"ssh",
+			sshUsage,
+			"SSH\n\nUsage:\n  codog ssh <host> [dir] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--output-format text|json]\n\nStarts a Codog REPL on a remote host through SSH using a Claude Code-compatible command shape. Text mode executes `ssh HOST 'cd DIR && codog ... repl'`; JSON mode prints the execution plan without connecting. `--local` runs the child Codog process locally for end-to-end plumbing tests.\n",
+			[]string{"kind", "status", "host", "directory", "local", "command", "remote_shell", "executed"},
+			[]string{"planned", "error"},
+			false,
+		), true
 	case "model":
 		return localCommandHelpSpec(
 			"model",
@@ -55730,6 +55910,7 @@ Usage:
   %s upgrade [status|show|check|verify|download|install|rollback] ARGS...
   %s install [ARTIFACT [TARGET]] [--json|--output-format json]
   %s rollback [TARGET] [--json|--output-format text|json]
+  %s ssh <host> [dir] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--json|--output-format text|json]
   %s remote-env [show|set|clear] [--enabled on|off] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s remote-setup|web-setup [status|enable|disable|clear] [--addr HOST:PORT] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s desktop|app [status] [--session ID|--resume latest] [--json|--output-format text|json]

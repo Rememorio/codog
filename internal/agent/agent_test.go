@@ -19613,6 +19613,54 @@ func TestRunCLIOpenHonorsGlobalOutputFormat(t *testing.T) {
 	require.Contains(t, out, `"session_id": "cli-session"`)
 }
 
+func TestSSHCommandReportsPlan(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{Out: &out, Executable: "codog"}
+	require.NoError(t, app.SSH(context.Background(), []string{
+		"devbox",
+		"/workspace/repo dir",
+		"--permission-mode", "read-only",
+		"--dangerously-skip-permissions",
+		"--json",
+	}))
+
+	var report sshReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "ssh", report.Kind)
+	require.Equal(t, "connect", report.Action)
+	require.Equal(t, "planned", report.Status)
+	require.Equal(t, "devbox", report.Host)
+	require.Equal(t, "/workspace/repo dir", report.Directory)
+	require.False(t, report.Local)
+	require.False(t, report.Executed)
+	require.Equal(t, "read-only", report.PermissionMode)
+	require.True(t, report.DangerouslySkipPermissions)
+	require.Equal(t, "cd '/workspace/repo dir' && codog --permission-mode read-only --dangerously-skip-permissions repl", report.RemoteShell)
+	require.Equal(t, []string{"ssh", "devbox", report.RemoteShell}, report.Command)
+}
+
+func TestSSHCommandLocalExecutesChild(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script child process test is POSIX-specific")
+	}
+	workspace := t.TempDir()
+	script := filepath.Join(t.TempDir(), "codog-child")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'cwd=%s\\n' \"$PWD\"\nprintf 'args=%s\\n' \"$*\"\n"), 0o755))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Out:        &out,
+		Err:        &errOut,
+		In:         strings.NewReader(""),
+		Executable: script,
+	}
+	require.NoError(t, app.SSH(context.Background(), []string{"--local", "localhost", workspace, "--permission-mode", "read-only"}))
+	require.Contains(t, out.String(), "cwd="+workspace)
+	require.Contains(t, out.String(), "args=--permission-mode read-only repl")
+	require.Empty(t, errOut.String())
+}
+
 func TestOpenTargetParsing(t *testing.T) {
 	target, err := parseOpenTarget("cc://127.0.0.1:9876?authToken=secret")
 	require.NoError(t, err)
