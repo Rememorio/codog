@@ -404,6 +404,31 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, taskLifecycle.Output, `"listed_total":1`)
 	require.Contains(t, taskLifecycle.Output, `"status":"stopped"`)
 
+	teamCron := findScenario(t, report, "team_cron_lifecycle_roundtrip")
+	require.True(t, teamCron.OK)
+	require.Equal(t, "team-cron", teamCron.Category)
+	require.Equal(t, 7, teamCron.ToolCalls)
+	require.Equal(t, 7, teamCron.RequestCount)
+	require.Equal(t, []string{
+		"team_create",
+		"team_list",
+		"team_get",
+		"team_delete",
+		"cron_create",
+		"cron_list",
+		"cron_delete",
+	}, teamCron.ToolUses)
+	require.Equal(t, "team cron lifecycle harness ok", teamCron.FinalMessage)
+	require.Contains(t, teamCron.Output, `"kind":"team_cron_lifecycle"`)
+	require.Contains(t, teamCron.Output, `"task_count":2`)
+	require.Contains(t, teamCron.Output, `"stopped_tasks":2`)
+	require.Contains(t, teamCron.Output, `"schedule":"0 9 * * 1"`)
+	require.Contains(t, teamCron.Output, `"deleted":"deleted"`)
+	teamCronCategory := findCategory(t, report, "team-cron")
+	require.True(t, teamCronCategory.OK)
+	require.Equal(t, 1, teamCronCategory.Total)
+	require.Equal(t, []string{"team_cron_lifecycle_roundtrip"}, teamCronCategory.Scenarios)
+
 	backgroundAgent := findScenario(t, report, "background_agent_run_roundtrip")
 	require.True(t, backgroundAgent.OK)
 	require.Equal(t, "background-agents", backgroundAgent.Category)
@@ -680,6 +705,13 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Contains(t, taskLifecycle.ParityRefs, "Task create")
 	require.Contains(t, taskLifecycle.ParityRefs, "Task output")
 	require.Contains(t, taskLifecycle.ParityRefs, "Task stop")
+
+	teamCron := findManifestScenario(t, manifest, "team_cron_lifecycle_roundtrip")
+	require.Equal(t, "team-cron", teamCron.Category)
+	require.Contains(t, teamCron.ParityRefs, "Team tools")
+	require.Contains(t, teamCron.ParityRefs, "Team task assignment")
+	require.Contains(t, teamCron.ParityRefs, "Cron tools")
+	require.Contains(t, teamCron.ParityRefs, "Cron lifecycle")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {

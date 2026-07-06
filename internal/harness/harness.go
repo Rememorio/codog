@@ -215,6 +215,7 @@ var scenarioOrder = []string{
 	"resume_slash_command_roundtrip",
 	"plugin_lifecycle_roundtrip",
 	"task_lifecycle_roundtrip",
+	"team_cron_lifecycle_roundtrip",
 	"background_agent_run_roundtrip",
 	"remote_trigger_roundtrip",
 	"remote_api_listener_roundtrip",
@@ -749,6 +750,7 @@ func Run(ctx context.Context) (Report, error) {
 		resumeSlashCommandScenario(),
 		pluginLifecycleScenario(),
 		taskLifecycleScenario(),
+		teamCronLifecycleScenario(),
 		backgroundAgentRunScenario(),
 		remoteTriggerScenario(),
 		remoteAPIListenerScenario(),
@@ -1140,6 +1142,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "token, cost, and compaction", RequiredRefs: []string{"Token usage", "Cost tracking", "Auto-compaction"}},
 	{Capability: "IDE bridge and remote control", RequiredRefs: []string{"IDE bridge", "ACP/Zed", "Remote sessions", "Control API listener"}},
 	{Capability: "multi-agent and background tasks", RequiredRefs: []string{"Background tasks", "Agent runs", "Lane board", "Supervisor restarts"}},
+	{Capability: "team and scheduled tasks", RequiredRefs: []string{"Team tools", "Team task assignment", "Cron tools", "Cron lifecycle"}},
 	{Capability: "notebook and code intelligence", RequiredRefs: []string{"Notebook read", "Notebook edit", "LSP tool", "Code intelligence"}},
 	{Capability: "git and worktree management", RequiredRefs: []string{"Git tools", "Branch freshness", "Worktree allocation", "Worktree cleanup"}},
 	{Capability: "OAuth and account lifecycle", RequiredRefs: []string{"OAuth refresh", "Token redaction", "MCP auth"}},
@@ -1499,6 +1502,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "background-agents",
 		Description: "Creates, reads, updates, lists, and stops background tasks through the tool registry.",
 		ParityRefs:  []string{"Background tasks", "Task create", "Task status", "Task output", "Task updates", "Task stop"},
+	},
+	"team_cron_lifecycle_roundtrip": {
+		Category:    "team-cron",
+		Description: "Creates, inspects, and deletes team task groups plus scheduled cron task entries through the tool registry.",
+		ParityRefs:  []string{"Team tools", "Team task assignment", "Cron tools", "Cron lifecycle", "Tool result roundtrip"},
 	},
 	"background_agent_run_roundtrip": {
 		Category:    "background-agents",
@@ -4277,6 +4285,208 @@ func taskLifecycleScenario() scenario {
 					"task_create",
 					"task_output",
 					"task_stop",
+				},
+			}, nil
+		},
+	}
+}
+
+func teamCronLifecycleScenario() scenario {
+	return scenario{
+		name: "team_cron_lifecycle_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			shim := filepath.Join(workspace, "team-shim")
+			if err := os.WriteFile(shim, []byte("#!/bin/sh\nprintf 'team-shim:%s\\n' \"$*\"\nsleep 5\n"), 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{
+				ConfigHome: configHome,
+				Executable: shim,
+			})
+
+			teamCreateOut, err := registry.Execute(ctx, "TeamCreateTool", json.RawMessage(`{
+				"name": "review",
+				"session_id": "session-team",
+				"tasks": [
+					{"description": "auth", "prompt": "check auth flow"},
+					{"description": "tests", "prompt": "check test suite"}
+				]
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var createdTeam struct {
+				ID        string   `json:"team_id"`
+				Name      string   `json:"name"`
+				TaskCount int      `json:"task_count"`
+				TaskIDs   []string `json:"task_ids"`
+				Status    string   `json:"status"`
+			}
+			if err := json.Unmarshal([]byte(teamCreateOut), &createdTeam); err != nil {
+				return localScenarioResult{}, err
+			}
+			if createdTeam.ID == "" || createdTeam.Name != "review" || createdTeam.TaskCount != 2 || len(createdTeam.TaskIDs) != 2 || createdTeam.Status != "running" {
+				return localScenarioResult{}, fmt.Errorf("unexpected team create output: %s", teamCreateOut)
+			}
+			defer func() {
+				_, _ = registry.Execute(ctx, "team_delete", json.RawMessage(fmt.Sprintf(`{"team_id":%q}`, createdTeam.ID)), nil)
+			}()
+
+			taskStore := background.NewStore(configHome)
+			if _, err := waitForBackgroundLogs(ctx, taskStore, createdTeam.TaskIDs[0], "Task: auth", 2*time.Second); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := waitForBackgroundLogs(ctx, taskStore, createdTeam.TaskIDs[1], "check test suite", 2*time.Second); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			teamListOut, err := registry.Execute(ctx, "team_list", json.RawMessage(`{"status":"running"}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var listedTeams struct {
+				Kind  string `json:"kind"`
+				Total int    `json:"total"`
+				Teams []struct {
+					ID           string           `json:"team_id"`
+					TaskStatuses []map[string]any `json:"task_statuses"`
+				} `json:"teams"`
+			}
+			if err := json.Unmarshal([]byte(teamListOut), &listedTeams); err != nil {
+				return localScenarioResult{}, err
+			}
+			if listedTeams.Kind != "team_list" || listedTeams.Total != 1 || len(listedTeams.Teams) != 1 || listedTeams.Teams[0].ID != createdTeam.ID || len(listedTeams.Teams[0].TaskStatuses) != 2 {
+				return localScenarioResult{}, fmt.Errorf("unexpected team list output: %s", teamListOut)
+			}
+
+			teamGetOut, err := registry.Execute(ctx, "TeamGetTool", json.RawMessage(fmt.Sprintf(`{"team_id":%q}`, createdTeam.ID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var fetchedTeam struct {
+				Kind      string `json:"kind"`
+				ID        string `json:"team_id"`
+				TaskCount int    `json:"task_count"`
+				Tasks     []struct {
+					Description string `json:"description"`
+					Prompt      string `json:"prompt"`
+				} `json:"tasks"`
+			}
+			if err := json.Unmarshal([]byte(teamGetOut), &fetchedTeam); err != nil {
+				return localScenarioResult{}, err
+			}
+			if fetchedTeam.Kind != "team" || fetchedTeam.ID != createdTeam.ID || fetchedTeam.TaskCount != 2 || len(fetchedTeam.Tasks) != 2 || fetchedTeam.Tasks[0].Description != "auth" {
+				return localScenarioResult{}, fmt.Errorf("unexpected team get output: %s", teamGetOut)
+			}
+
+			teamDeleteOut, err := registry.Execute(ctx, "team_delete", json.RawMessage(fmt.Sprintf(`{"team_id":%q}`, createdTeam.ID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var deletedTeam struct {
+				ID           string   `json:"team_id"`
+				Status       string   `json:"status"`
+				StoppedTasks []string `json:"stopped_tasks"`
+				Message      string   `json:"message"`
+			}
+			if err := json.Unmarshal([]byte(teamDeleteOut), &deletedTeam); err != nil {
+				return localScenarioResult{}, err
+			}
+			if deletedTeam.ID != createdTeam.ID || deletedTeam.Status != "deleted" || deletedTeam.Message != "Team deleted" || len(deletedTeam.StoppedTasks) != 2 {
+				return localScenarioResult{}, fmt.Errorf("unexpected team delete output: %s", teamDeleteOut)
+			}
+
+			cronCreateOut, err := registry.Execute(ctx, "CronCreateTool", json.RawMessage(`{
+				"schedule": "0 9 * * 1",
+				"prompt": "review weekly status",
+				"description": "weekly review"
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var createdCron struct {
+				ID          string `json:"cron_id"`
+				Schedule    string `json:"schedule"`
+				Prompt      string `json:"prompt"`
+				Description string `json:"description"`
+				Enabled     bool   `json:"enabled"`
+			}
+			if err := json.Unmarshal([]byte(cronCreateOut), &createdCron); err != nil {
+				return localScenarioResult{}, err
+			}
+			if createdCron.ID == "" || createdCron.Schedule != "0 9 * * 1" || createdCron.Prompt != "review weekly status" || createdCron.Description != "weekly review" || !createdCron.Enabled {
+				return localScenarioResult{}, fmt.Errorf("unexpected cron create output: %s", cronCreateOut)
+			}
+
+			cronListOut, err := registry.Execute(ctx, "cron_list", json.RawMessage(`{}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var listedCrons struct {
+				Count int `json:"count"`
+				Crons []struct {
+					ID       string `json:"cron_id"`
+					Schedule string `json:"schedule"`
+				} `json:"crons"`
+			}
+			if err := json.Unmarshal([]byte(cronListOut), &listedCrons); err != nil {
+				return localScenarioResult{}, err
+			}
+			if listedCrons.Count != 1 || len(listedCrons.Crons) != 1 || listedCrons.Crons[0].ID != createdCron.ID || listedCrons.Crons[0].Schedule != createdCron.Schedule {
+				return localScenarioResult{}, fmt.Errorf("unexpected cron list output: %s", cronListOut)
+			}
+
+			cronDeleteOut, err := registry.Execute(ctx, "CronDeleteTool", json.RawMessage(fmt.Sprintf(`{"cron_id":%q}`, createdCron.ID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var deletedCron struct {
+				ID      string `json:"cron_id"`
+				Status  string `json:"status"`
+				Message string `json:"message"`
+			}
+			if err := json.Unmarshal([]byte(cronDeleteOut), &deletedCron); err != nil {
+				return localScenarioResult{}, err
+			}
+			if deletedCron.ID != createdCron.ID || deletedCron.Status != "deleted" || deletedCron.Message != "Cron entry removed" {
+				return localScenarioResult{}, fmt.Errorf("unexpected cron delete output: %s", cronDeleteOut)
+			}
+
+			report := map[string]any{
+				"kind": "team_cron_lifecycle",
+				"team": map[string]any{
+					"id":            createdTeam.ID,
+					"task_count":    createdTeam.TaskCount,
+					"listed_total":  listedTeams.Total,
+					"deleted":       deletedTeam.Status,
+					"stopped_tasks": len(deletedTeam.StoppedTasks),
+				},
+				"cron": map[string]any{
+					"id":       createdCron.ID,
+					"schedule": createdCron.Schedule,
+					"listed":   listedCrons.Count,
+					"deleted":  deletedCron.Status,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "team cron lifecycle harness ok",
+				RequestCount: 7,
+				MessageCount: 1,
+				ToolCalls:    7,
+				ToolUses: []string{
+					"team_create",
+					"team_list",
+					"team_get",
+					"team_delete",
+					"cron_create",
+					"cron_list",
+					"cron_delete",
 				},
 			}, nil
 		},
