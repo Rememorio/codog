@@ -5828,9 +5828,6 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			"error":  err.Error(),
 		}
 	}
-	if lspActionRequiresServer(action) {
-		return "", fmt.Errorf("lsp action %q requires a configured LSP server", action)
-	}
 	switch action {
 	case "symbols":
 		symbols, err := codeintel.GoSymbols(t.Workspace)
@@ -6192,6 +6189,98 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "items": items, "total": len(items)})), nil
+	case "implementation":
+		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
+		if err != nil {
+			return "", err
+		}
+		items, err := codeintel.TypeHierarchySubtypes(t.Workspace, query, payload.Limit)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "implementations": items, "total": len(items)})), nil
+	case "code-action":
+		if strings.TrimSpace(payload.Path) == "" {
+			return "", errors.New("path is required for lsp code_action")
+		}
+		rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, payload.Path)
+		if err != nil {
+			return "", err
+		}
+		diagnostics, err := codeintel.GoDiagnostics(ctx, t.Workspace, []string{rel})
+		if err != nil {
+			return "", err
+		}
+		format, err := codeintel.FormatGoFile(t.Workspace, rel, false)
+		if err != nil {
+			return "", err
+		}
+		actions := []map[string]any{}
+		if format.Changed {
+			actions = append(actions, map[string]any{
+				"title": "Format Go file",
+				"kind":  "source.format",
+				"path":  rel,
+				"edit":  format,
+			})
+		}
+		if len(diagnostics) > 0 {
+			actions = append(actions, map[string]any{
+				"title":       "Review Go diagnostics",
+				"kind":        "quickfix",
+				"path":        rel,
+				"diagnostics": diagnostics,
+			})
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "actions": actions, "total": len(actions)})), nil
+	case "code-action-resolve":
+		if strings.TrimSpace(payload.Path) == "" {
+			return "", errors.New("path is required for lsp code_action_resolve")
+		}
+		title := strings.TrimSpace(payload.Query)
+		if title == "" && len(payload.Arguments) > 0 {
+			if value, ok := payload.Arguments[0].(string); ok {
+				title = strings.TrimSpace(value)
+			}
+		}
+		if title == "" {
+			title = "Format Go file"
+		}
+		rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, payload.Path)
+		if err != nil {
+			return "", err
+		}
+		switch strings.ToLower(title) {
+		case "format go file", "format", "source.format":
+			format, err := codeintel.FormatGoFile(t.Workspace, rel, false)
+			if err != nil {
+				return "", err
+			}
+			resolved := map[string]any{"title": "Format Go file", "kind": "source.format", "path": rel, "edit": format}
+			return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "selected": title, "resolved": resolved})), nil
+		case "review go diagnostics", "diagnostics", "quickfix":
+			diagnostics, err := codeintel.GoDiagnostics(ctx, t.Workspace, []string{rel})
+			if err != nil {
+				return "", err
+			}
+			resolved := map[string]any{"title": "Review Go diagnostics", "kind": "quickfix", "path": rel, "diagnostics": diagnostics}
+			return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "selected": title, "resolved": resolved})), nil
+		default:
+			return "", fmt.Errorf("unsupported static code action %q", title)
+		}
+	case "inline-value":
+		if strings.TrimSpace(payload.Path) == "" {
+			return "", errors.New("path is required for lsp inline_value")
+		}
+		rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, payload.Path)
+		if err != nil {
+			return "", err
+		}
+		values, err := codeintel.InlineValues(t.Workspace, rel, payload.Line, payload.Character, payload.Limit)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "values": values, "total": len(values)})), nil
 	case "hover":
 		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
 		if err != nil {
@@ -6312,6 +6401,50 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		return pretty(staticLSPToolReport(action, fallback, map[string]any{"diagnostics": diagnostics, "total": len(diagnostics)})), nil
+	case "execute-command":
+		command := strings.ToLower(strings.TrimSpace(payload.Query))
+		if command == "" {
+			return "", errors.New("query is required for lsp execute_command")
+		}
+		commandPath := strings.TrimSpace(payload.Path)
+		if commandPath == "" && len(payload.Arguments) > 0 {
+			if value, ok := payload.Arguments[0].(string); ok {
+				commandPath = value
+			}
+		}
+		switch command {
+		case "format", "gofmt", "source.format":
+			if strings.TrimSpace(commandPath) == "" {
+				return "", errors.New("path or first string argument is required for lsp execute_command format")
+			}
+			rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, commandPath)
+			if err != nil {
+				return "", err
+			}
+			result, err := codeintel.FormatGoFile(t.Workspace, rel, false)
+			if err != nil {
+				return "", err
+			}
+			return pretty(staticLSPToolReport(action, fallback, map[string]any{"command": command, "path": rel, "format": result})), nil
+		case "diagnostics", "go.diagnostics":
+			patterns := []string{}
+			if strings.TrimSpace(commandPath) != "" {
+				patterns = append(patterns, commandPath)
+			}
+			diagnostics, err := codeintel.GoDiagnostics(ctx, t.Workspace, patterns)
+			if err != nil {
+				return "", err
+			}
+			return pretty(staticLSPToolReport(action, fallback, map[string]any{"command": command, "diagnostics": diagnostics, "total": len(diagnostics)})), nil
+		case "symbols", "workspace.symbols":
+			symbols, err := codeintel.WorkspaceSymbols(t.Workspace, "", payload.Limit)
+			if err != nil {
+				return "", err
+			}
+			return pretty(staticLSPToolReport(action, fallback, map[string]any{"command": command, "symbols": symbols, "total": len(symbols)})), nil
+		default:
+			return "", fmt.Errorf("unsupported static execute command %q", payload.Query)
+		}
 	case "diagnostics":
 		patterns := []string{}
 		if strings.TrimSpace(payload.Path) != "" {
@@ -6326,15 +6459,6 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		return pretty(staticLSPToolReport(action, fallback, map[string]any{"diagnostics": diagnostics, "total": len(diagnostics)})), nil
 	default:
 		return "", fmt.Errorf("unknown lsp action %q", payload.Action)
-	}
-}
-
-func lspActionRequiresServer(action string) bool {
-	switch action {
-	case "implementation", "code-action", "code-action-resolve", "inline-value", "execute-command":
-		return true
-	default:
-		return false
 	}
 }
 

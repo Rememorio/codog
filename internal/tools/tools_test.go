@@ -2768,6 +2768,8 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "hierarchy.go"), []byte(hierarchySource), 0o644))
 	brokenSource := "package demo\n\nfunc Broken() { MissingSymbol() }\n"
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "broken.go"), []byte(brokenSource), 0o644))
+	inlineSource := "package demo\n\nconst InlineAnswer = 42\n\nfunc InlineValuesDemo() {\n\tlocal := \"codog\"\n\t_ = local\n}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "inline.go"), []byte(inlineSource), 0o644))
 	hintArgChar := strings.Index(strings.Split(hintSource, "\n")[3], `"codog"`)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "messy.go"), []byte("package demo\n\nfunc messy(){return}\n"), 0o644))
 	tool := LSPTool{Workspace: workspace}
@@ -3086,6 +3088,14 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, interfaceSubtypesOut, `"query": "WidgetContract"`)
 	require.Contains(t, interfaceSubtypesOut, `"name": "WidgetChild"`)
 
+	implementationOut, err := tool.Execute(context.Background(), []byte(`{"action":"implementation","query":"WidgetContract","limit":5}`))
+	require.NoError(t, err)
+	require.Contains(t, implementationOut, `"action": "implementation"`)
+	require.Contains(t, implementationOut, `"source": "static"`)
+	require.Contains(t, implementationOut, `"query": "WidgetContract"`)
+	require.Contains(t, implementationOut, `"name": "WidgetChild"`)
+	require.Contains(t, implementationOut, `"total": 1`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -3227,13 +3237,40 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 
-	_, err = tool.Execute(context.Background(), []byte(`{"action":"code_action","path":"demo.go","line":4,"character":6}`))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "requires a configured LSP server")
+	codeActionOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_action","path":"messy.go","line":2,"character":10}`))
+	require.NoError(t, err)
+	require.Contains(t, codeActionOut, `"action": "code-action"`)
+	require.Contains(t, codeActionOut, `"source": "static"`)
+	require.Contains(t, codeActionOut, `"title": "Format Go file"`)
+	require.Contains(t, codeActionOut, `"kind": "source.format"`)
+	require.Contains(t, codeActionOut, `"total": 1`)
 
-	_, err = tool.Execute(context.Background(), []byte(`{"action":"implementation","query":"Widget"}`))
+	codeActionResolveOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_action_resolve","path":"messy.go","query":"Format Go file"}`))
+	require.NoError(t, err)
+	require.Contains(t, codeActionResolveOut, `"action": "code-action-resolve"`)
+	require.Contains(t, codeActionResolveOut, `"source": "static"`)
+	require.Contains(t, codeActionResolveOut, `"selected": "Format Go file"`)
+	require.Contains(t, codeActionResolveOut, `"title": "Format Go file"`)
+	require.Contains(t, codeActionResolveOut, `func messy()`)
+
+	inlineValueOut, err := tool.Execute(context.Background(), []byte(`{"action":"inline_value","path":"inline.go","limit":5}`))
+	require.NoError(t, err)
+	require.Contains(t, inlineValueOut, `"action": "inline-value"`)
+	require.Contains(t, inlineValueOut, `"source": "static"`)
+	require.Contains(t, inlineValueOut, `"name": "InlineAnswer"`)
+	require.Contains(t, inlineValueOut, `"text": "local = \"codog\""`)
+	require.Contains(t, inlineValueOut, `"total": 2`)
+
+	executeCommandOut, err := tool.Execute(context.Background(), []byte(`{"action":"execute_command","query":"format","path":"messy.go"}`))
+	require.NoError(t, err)
+	require.Contains(t, executeCommandOut, `"action": "execute-command"`)
+	require.Contains(t, executeCommandOut, `"source": "static"`)
+	require.Contains(t, executeCommandOut, `"command": "format"`)
+	require.Contains(t, executeCommandOut, `func messy()`)
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"execute_command","query":"unsupported.command"}`))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "requires a configured LSP server")
+	require.Contains(t, err.Error(), "unsupported static execute command")
 
 	hoverOut, err := tool.Execute(context.Background(), []byte(`{"action":"hover","path":"demo.go","line":4,"character":6}`))
 	require.NoError(t, err)

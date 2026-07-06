@@ -205,6 +205,27 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, hints[0], resolvedHint)
 
+	inlineSource := "package pkg\n\nconst InlineAnswer = 42\n\nfunc InlineValuesDemo() {\n\tlocal := \"codog\"\n\t_ = local\n}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "inline.go"), []byte(inlineSource), 0o644))
+	inlineValues, err := InlineValues(workspace, "pkg/inline.go", 0, 0, 10)
+	require.NoError(t, err)
+	require.Contains(t, inlineValues, InlineValue{
+		Path:  "pkg/inline.go",
+		Name:  "InlineAnswer",
+		Value: "42",
+		Text:  "InlineAnswer = 42",
+		Kind:  "const",
+		Range: LSPRange{Start: LSPPosition{Line: 2, Character: 6}, End: LSPPosition{Line: 2, Character: 18}},
+	})
+	require.Contains(t, inlineValues, InlineValue{
+		Path:  "pkg/inline.go",
+		Name:  "local",
+		Value: "\"codog\"",
+		Text:  "local = \"codog\"",
+		Kind:  "assignment",
+		Range: LSPRange{Start: LSPPosition{Line: 5, Character: 1}, End: LSPPosition{Line: 5, Character: 6}},
+	})
+
 	_, found, err = InlayHintAtPosition(workspace, "pkg/hints.go", 3, hintArgChar+1)
 	require.NoError(t, err)
 	require.False(t, found)

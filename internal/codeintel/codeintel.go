@@ -120,6 +120,17 @@ type InlayHint struct {
 	PaddingRight bool        `json:"paddingRight,omitempty"`
 }
 
+// InlineValue describes a statically known value that can be shown inline in a
+// source document.
+type InlineValue struct {
+	Path  string   `json:"path"`
+	Name  string   `json:"name"`
+	Value string   `json:"value"`
+	Text  string   `json:"text"`
+	Kind  string   `json:"kind,omitempty"`
+	Range LSPRange `json:"range"`
+}
+
 // SignatureHelp describes static function call signature context.
 type SignatureHelp struct {
 	Path            string              `json:"path"`
@@ -1039,6 +1050,102 @@ func InlayHintAtPosition(workspace string, relPath string, line int, character i
 		}
 	}
 	return InlayHint{}, false, nil
+}
+
+// InlineValues returns simple statically known values from one Go source file.
+func InlineValues(workspace string, relPath string, line int, character int, limit int) ([]InlineValue, error) {
+	if strings.TrimSpace(relPath) == "" {
+		return nil, errors.New("path is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	path, rel, err := resolveWorkspaceFile(workspace, relPath)
+	if err != nil {
+		return nil, err
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	values := []InlineValue{}
+	add := func(name *ast.Ident, expr ast.Expr, kind string) {
+		if name == nil || expr == nil || len(values) >= limit {
+			return
+		}
+		value, ok := inlineValueLabel(fset, expr)
+		if !ok {
+			return
+		}
+		rng := nodeRange(fset, name)
+		if line > 0 && rng.Start.Line < line {
+			return
+		}
+		if line > 0 && character > 0 && rng.Start.Line == line && rng.Start.Character < character {
+			return
+		}
+		values = append(values, InlineValue{
+			Path:  rel,
+			Name:  name.Name,
+			Value: value,
+			Text:  name.Name + " = " + value,
+			Kind:  kind,
+			Range: rng,
+		})
+	}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		kind := strings.ToLower(gen.Tok.String())
+		if kind != "const" && kind != "var" {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, name := range valueSpec.Names {
+				if i < len(valueSpec.Values) {
+					add(name, valueSpec.Values[i], kind)
+				}
+			}
+		}
+	}
+	ast.Inspect(file, func(node ast.Node) bool {
+		if len(values) >= limit {
+			return false
+		}
+		assign, ok := node.(*ast.AssignStmt)
+		if !ok || assign.Tok != token.DEFINE {
+			return true
+		}
+		for i, lhs := range assign.Lhs {
+			if i >= len(assign.Rhs) {
+				continue
+			}
+			name, ok := lhs.(*ast.Ident)
+			if !ok || name.Name == "_" {
+				continue
+			}
+			add(name, assign.Rhs[i], "assignment")
+		}
+		return true
+	})
+	return values, nil
+}
+
+func inlineValueLabel(fset *token.FileSet, expr ast.Expr) (string, bool) {
+	switch expr.(type) {
+	case *ast.BasicLit, *ast.Ident, *ast.UnaryExpr, *ast.BinaryExpr:
+		label := strings.TrimSpace(exprLabel(fset, expr))
+		return label, label != ""
+	default:
+		return "", false
+	}
 }
 
 func workspaceFunctionParams(workspace string) (map[string][]string, error) {
