@@ -3342,11 +3342,12 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("USERPROFILE", "")
 	var oauthServer *httptest.Server
+	oauthRevoked := []string{}
 	oauthServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		switch r.URL.Path {
 		case "/.well-known/oauth-authorization-server":
-			_, _ = w.Write([]byte(`{"authorization_endpoint":"` + oauthServer.URL + `/authorize","token_endpoint":"` + oauthServer.URL + `/token","device_authorization_endpoint":"` + oauthServer.URL + `/device"}`))
+			_, _ = w.Write([]byte(`{"authorization_endpoint":"` + oauthServer.URL + `/authorize","token_endpoint":"` + oauthServer.URL + `/token","device_authorization_endpoint":"` + oauthServer.URL + `/device","revocation_endpoint":"` + oauthServer.URL + `/revoke"}`))
 		case "/device":
 			require.NoError(t, r.ParseForm())
 			require.Equal(t, "client-resume", r.Form.Get("client_id"))
@@ -3370,6 +3371,11 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 			default:
 				http.Error(w, "unsupported grant", http.StatusBadRequest)
 			}
+		case "/revoke":
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, "client-resume", r.Form.Get("client_id"))
+			oauthRevoked = append(oauthRevoked, r.Form.Get("token_type_hint")+":"+r.Form.Get("token"))
+			_, _ = w.Write([]byte(`{}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -3991,6 +3997,24 @@ func risky(value any) {
 	require.False(t, resumedOAuthToken.Expired)
 	require.NotContains(t, out, "resume-oauth-access-1234")
 
+	out, err = runResumedJSON("/oauth", "token", "status")
+	require.NoError(t, err)
+	var resumedOAuthTokenStatus oauth.Status
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthTokenStatus))
+	require.Equal(t, "default", resumedOAuthTokenStatus.ProfileName)
+	require.True(t, resumedOAuthTokenStatus.TokenPresent)
+	require.True(t, resumedOAuthTokenStatus.Ready)
+	require.NotContains(t, out, "resume-oauth-access-1234")
+
+	out, err = runResumedJSON("/oauth", "token", "revoke", "default", "refresh")
+	require.NoError(t, err)
+	var resumedOAuthTokenRevoke map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthTokenRevoke))
+	require.Equal(t, true, resumedOAuthTokenRevoke["revoked"])
+	require.Equal(t, "default", resumedOAuthTokenRevoke["profile"])
+	require.Equal(t, "refresh", resumedOAuthTokenRevoke["token"])
+	require.Contains(t, oauthRevoked, "refresh_token:resume-oauth-refresh-1234")
+
 	out, err = runResumedJSON("/oauth", "token", "save", "resume-oauth-new-access", "resume-oauth-new-refresh")
 	require.NoError(t, err)
 	var resumedOAuthTokenSave oauth.TokenView
@@ -4014,7 +4038,9 @@ func risky(value any) {
 	var resumedOAuthLogout oauth.LogoutResult
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthLogout))
 	require.True(t, resumedOAuthLogout.Deleted)
-	require.Equal(t, "unavailable", resumedOAuthLogout.Revocation)
+	require.Equal(t, "revoked", resumedOAuthLogout.Revocation)
+	require.True(t, resumedOAuthLogout.AccessRevoked)
+	require.Contains(t, oauthRevoked, "access_token:resume-oauth-logout-access")
 
 	out, err = runResumedJSON("/oauth", "token", "save", "resume-oauth-logout-alias-access")
 	require.NoError(t, err)
@@ -4025,7 +4051,9 @@ func risky(value any) {
 	var resumedLogoutAlias oauth.LogoutResult
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedLogoutAlias))
 	require.True(t, resumedLogoutAlias.Deleted)
-	require.Equal(t, "unavailable", resumedLogoutAlias.Revocation)
+	require.Equal(t, "revoked", resumedLogoutAlias.Revocation)
+	require.True(t, resumedLogoutAlias.AccessRevoked)
+	require.Contains(t, oauthRevoked, "access_token:resume-oauth-logout-alias-access")
 
 	out, err = runResumedJSON("/profile", "list")
 	require.NoError(t, err)

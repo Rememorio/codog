@@ -29875,6 +29875,10 @@ func (a *App) runResumedOAuthSlash(args []string, format string) error {
 				if len(normalized) == 2 {
 					return a.OAuth(normalized)
 				}
+			case "status":
+				if len(normalized) <= 3 {
+					return a.OAuth(normalized)
+				}
 			case "refresh":
 				if len(normalized) <= 3 {
 					return a.OAuth(normalized)
@@ -29885,6 +29889,10 @@ func (a *App) runResumedOAuthSlash(args []string, format string) error {
 				}
 			case "delete":
 				if len(normalized) == 2 {
+					return a.OAuth(normalized)
+				}
+			case "revoke":
+				if len(normalized) <= 4 {
 					return a.OAuth(normalized)
 				}
 			}
