@@ -19920,6 +19920,13 @@ func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
 	require.Equal(t, "repl", command)
 	require.Empty(t, rest)
 
+	overrides, command, rest, err = parseFlags([]string{"--resume", "source", "--resume-session-at", "msg-1", "prompt", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "source", overrides.Resume)
+	require.Equal(t, "msg-1", overrides.ResumeSessionAt)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+
 	_, _, _, err = parseFlags([]string{"--fork-session", "repl"}, config.FlagOverrides{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--fork-session requires")
@@ -19927,6 +19934,14 @@ func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
 	_, _, _, err = parseFlags([]string{"--resume", "source", "--session-id", "custom", "repl"}, config.FlagOverrides{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--session-id can only be used")
+
+	_, _, _, err = parseFlags([]string{"--resume-session-at", "msg-1", "prompt", "hello"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--resume-session-at requires")
+
+	_, _, _, err = parseFlags([]string{"--resume", "source", "--resume-session-at", "msg-1", "repl"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "prompt mode")
 }
 
 func TestOpenSessionForksResumedSession(t *testing.T) {
@@ -19954,6 +19969,72 @@ func TestOpenSessionForksResumedSession(t *testing.T) {
 	_, err = app.openSession(config.FlagOverrides{ForkSession: true})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--fork-session requires")
+}
+
+func TestOpenSessionResumesAtAssistantMessageID(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "first prompt")))
+	require.NoError(t, store.Append("source", anthropic.Message{
+		ID:   "msg-first",
+		Role: "assistant",
+		Content: []anthropic.ContentBlock{{
+			Type: "text",
+			Text: "first answer",
+		}},
+	}))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "second prompt")))
+	require.NoError(t, store.Append("source", anthropic.Message{
+		ID:   "msg-second",
+		Role: "assistant",
+		Content: []anthropic.ContentBlock{{
+			Type: "text",
+			Text: "second answer",
+		}},
+	}))
+	app := &App{Sessions: store, Workspace: t.TempDir()}
+
+	resumed, err := app.openSession(config.FlagOverrides{Resume: "source", ResumeSessionAt: "msg-first"})
+	require.NoError(t, err)
+	require.Equal(t, "source", resumed.ID)
+	require.Len(t, resumed.Messages, 2)
+	require.Equal(t, "msg-first", resumed.Messages[1].ID)
+
+	persisted, err := store.OpenExisting("source")
+	require.NoError(t, err)
+	require.Len(t, persisted.Messages, 2)
+	require.Equal(t, "msg-first", persisted.Messages[1].ID)
+}
+
+func TestOpenSessionForkResumesAtAssistantMessageID(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "first prompt")))
+	require.NoError(t, store.Append("source", anthropic.Message{
+		ID:      "msg-first",
+		Role:    "assistant",
+		Content: []anthropic.ContentBlock{{Type: "text", Text: "first answer"}},
+	}))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "second prompt")))
+	require.NoError(t, store.Append("source", anthropic.Message{
+		ID:      "msg-second",
+		Role:    "assistant",
+		Content: []anthropic.ContentBlock{{Type: "text", Text: "second answer"}},
+	}))
+	app := &App{Sessions: store, Workspace: t.TempDir()}
+
+	forked, err := app.openSession(config.FlagOverrides{Resume: "source", ForkSession: true, SessionID: "forked", ResumeSessionAt: "msg-first"})
+	require.NoError(t, err)
+	require.Equal(t, "forked", forked.ID)
+	require.Equal(t, "source", forked.Metadata.ParentSessionID)
+	require.Len(t, forked.Messages, 2)
+	require.Equal(t, "msg-first", forked.Messages[1].ID)
+
+	source, err := store.OpenExisting("source")
+	require.NoError(t, err)
+	require.Len(t, source.Messages, 4)
+
+	_, err = app.openSession(config.FlagOverrides{Resume: "source", ResumeSessionAt: "missing"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not found")
 }
 
 func TestOpenTargetParsing(t *testing.T) {

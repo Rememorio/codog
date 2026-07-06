@@ -44,6 +44,31 @@ func (c errorClient) Stream(context.Context, anthropic.Request, func(string)) (a
 	return anthropic.AssistantMessage{}, errors.New("model failed")
 }
 
+func TestRunPreservesAssistantMessageID(t *testing.T) {
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{{
+			ID:     "msg_123",
+			Blocks: []anthropic.ContentBlock{{Type: "text", Text: "done"}},
+		}},
+	}
+	runner := Runner{
+		Config: config.Config{
+			Model:     "mock",
+			MaxTokens: 64,
+			MaxTurns:  1,
+		},
+		Client: client,
+		Tools:  tools.NewRegistry(t.TempDir()),
+	}
+
+	result, err := runner.Run(context.Background(), nil, "hello")
+
+	require.NoError(t, err)
+	require.Len(t, result.Messages, 2)
+	require.Equal(t, "msg_123", result.Messages[1].ID)
+	require.Equal(t, "assistant", result.Messages[1].Role)
+}
+
 func TestRunnerExecutesToolLoop(t *testing.T) {
 	workspace := t.TempDir()
 	client := &scriptedClient{

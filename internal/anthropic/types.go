@@ -20,6 +20,7 @@ type Request struct {
 }
 
 type Message struct {
+	ID      string         `json:"id,omitempty"`
 	Role    string         `json:"role"`
 	Content []ContentBlock `json:"content"`
 }
@@ -54,6 +55,7 @@ type Usage struct {
 }
 
 type AssistantMessage struct {
+	ID     string
 	Blocks []ContentBlock
 	Usage  Usage
 }

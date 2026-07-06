@@ -904,8 +904,11 @@ func retryAfterDelay(value string, now time.Time) time.Duration {
 }
 
 type streamEnvelope struct {
-	Type         string `json:"type"`
-	Index        int    `json:"index"`
+	Type    string `json:"type"`
+	Index   int    `json:"index"`
+	Message struct {
+		ID string `json:"id"`
+	} `json:"message"`
 	ContentBlock struct {
 		Type  string          `json:"type"`
 		Text  string          `json:"text"`
@@ -933,10 +936,11 @@ func parseStream(r io.Reader, onText func(string)) (AssistantMessage, error) {
 	var dataLines []string
 	builders := map[int]*blockBuilder{}
 	var usage Usage
+	var messageID string
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
-			if err := consumeEvent(dataLines, builders, &usage, onText); err != nil {
+			if err := consumeEvent(dataLines, builders, &usage, &messageID, onText); err != nil {
 				return AssistantMessage{}, err
 			}
 			dataLines = nil
@@ -947,7 +951,7 @@ func parseStream(r io.Reader, onText func(string)) (AssistantMessage, error) {
 		}
 	}
 	if len(dataLines) > 0 {
-		if err := consumeEvent(dataLines, builders, &usage, onText); err != nil {
+		if err := consumeEvent(dataLines, builders, &usage, &messageID, onText); err != nil {
 			return AssistantMessage{}, err
 		}
 	}
@@ -970,7 +974,7 @@ func parseStream(r io.Reader, onText func(string)) (AssistantMessage, error) {
 		}
 		blocks = append(blocks, builder.block)
 	}
-	return AssistantMessage{Blocks: blocks, Usage: usage}, nil
+	return AssistantMessage{ID: messageID, Blocks: blocks, Usage: usage}, nil
 }
 
 type openAIStreamEnvelope struct {
@@ -1124,7 +1128,7 @@ func usageFromOpenAI(usage openAIUsage) Usage {
 	}
 }
 
-func consumeEvent(lines []string, builders map[int]*blockBuilder, usage *Usage, onText func(string)) error {
+func consumeEvent(lines []string, builders map[int]*blockBuilder, usage *Usage, messageID *string, onText func(string)) error {
 	if len(lines) == 0 {
 		return nil
 	}
@@ -1137,6 +1141,10 @@ func consumeEvent(lines []string, builders map[int]*blockBuilder, usage *Usage, 
 		return err
 	}
 	switch event.Type {
+	case "message_start":
+		if messageID != nil && event.Message.ID != "" {
+			*messageID = event.Message.ID
+		}
 	case "content_block_start":
 		builder := &blockBuilder{}
 		switch event.ContentBlock.Type {
@@ -1172,7 +1180,7 @@ func consumeEvent(lines []string, builders map[int]*blockBuilder, usage *Usage, 
 		}
 	case "message_delta":
 		*usage = event.Usage
-	case "message_stop", "content_block_stop", "message_start", "ping":
+	case "message_stop", "content_block_stop", "ping":
 		return nil
 	case "error":
 		return fmt.Errorf("anthropic stream error: %s", payload)

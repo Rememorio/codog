@@ -46,6 +46,46 @@ func TestClientStreamsText(t *testing.T) {
 	require.Equal(t, 10, msg.Usage.InputTokens)
 }
 
+func TestClientStreamsAnthropicMessageID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/messages", r.URL.Path)
+		w.Header().Set("content-type", "text/event-stream")
+		writeAnthropicSSE(t, w,
+			map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_123"}},
+			map[string]any{
+				"type":  "content_block_start",
+				"index": 0,
+				"content_block": map[string]any{
+					"type": "text",
+					"text": "",
+				},
+			},
+			map[string]any{
+				"type":  "content_block_delta",
+				"index": 0,
+				"delta": map[string]any{
+					"type": "text_delta",
+					"text": "hello",
+				},
+			},
+			map[string]any{"type": "content_block_stop", "index": 0},
+			map[string]any{"type": "message_stop"},
+		)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test", "")
+	msg, err := client.Stream(context.Background(), Request{
+		Model:     "mock",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "msg_123", msg.ID)
+	require.Equal(t, "hello", msg.Blocks[0].Text)
+}
+
 func TestClientStreamsAnthropicAliasAsResolvedModel(t *testing.T) {
 	var requestBody map[string]any
 	server := httptest.NewServer(mockanthropic.Server{
@@ -1020,6 +1060,16 @@ func writeOpenAISSE(t *testing.T, w http.ResponseWriter, payloads ...any) {
 	}
 	_, err := fmt.Fprint(w, "data: [DONE]\n\n")
 	require.NoError(t, err)
+}
+
+func writeAnthropicSSE(t *testing.T, w http.ResponseWriter, payloads ...any) {
+	t.Helper()
+	for _, payload := range payloads {
+		data, err := json.Marshal(payload)
+		require.NoError(t, err)
+		_, err = fmt.Fprintf(w, "data: %s\n\n", data)
+		require.NoError(t, err)
+	}
 }
 
 func unsetForeignProviderCredentialEnv(t *testing.T) {

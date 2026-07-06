@@ -52278,7 +52278,7 @@ func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, err
 		if err := a.restoreTodosFromSession(sess); err != nil {
 			return nil, err
 		}
-		return sess, nil
+		return a.applyResumeSessionAt(sess, overrides.ResumeSessionAt)
 	}
 	if overrides.Resume != "" {
 		id = overrides.Resume
@@ -52297,7 +52297,50 @@ func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, err
 			return nil, err
 		}
 	}
+	return a.applyResumeSessionAt(sess, overrides.ResumeSessionAt)
+}
+
+func (a *App) applyResumeSessionAt(sess *session.Session, messageID string) (*session.Session, error) {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return sess, nil
+	}
+	if sess == nil {
+		return nil, errors.New("session is required")
+	}
+	index := assistantMessageIndexByID(sess.Messages, messageID)
+	if index < 0 {
+		return nil, fmt.Errorf("assistant message id %q not found in resumed session %q", messageID, sess.ID)
+	}
+	kept := append([]anthropic.Message(nil), sess.Messages[:index+1]...)
+	if a.Sessions != nil {
+		if _, err := a.Sessions.ReplaceMessages(sess, kept); err != nil {
+			return nil, err
+		}
+	}
+	sess.Messages = kept
 	return sess, nil
+}
+
+func assistantMessageIndexByID(messages []anthropic.Message, id string) int {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return -1
+	}
+	for index, msg := range messages {
+		if msg.Role != "assistant" {
+			continue
+		}
+		if msg.ID == id {
+			return index
+		}
+		for _, block := range msg.Content {
+			if block.ID == id {
+				return index
+			}
+		}
+	}
+	return -1
 }
 
 func (a *App) restoreTodosFromSession(sess *session.Session) error {
@@ -54107,6 +54150,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.SessionName, "name", base.SessionName, "display name for the current session")
 	flags.StringVar(&base.Resume, "resume", base.Resume, "resume session id or latest")
 	flags.StringVar(&base.Resume, "r", base.Resume, "alias for --resume")
+	flags.StringVar(&base.ResumeSessionAt, "resume-session-at", base.ResumeSessionAt, "resume up to an assistant message id")
 	flags.BoolVar(&continueMode, "continue", false, "resume the latest session")
 	flags.BoolVar(&continueMode, "c", false, "alias for --continue")
 	flags.BoolVar(&base.ForkSession, "fork-session", base.ForkSession, "fork the resumed session before continuing")
@@ -54166,6 +54210,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 			Usage:   "codog --resume ID --fork-session --session-id NEW_ID [repl|prompt TEXT]",
 		}
 	}
+	if strings.TrimSpace(base.ResumeSessionAt) != "" && strings.TrimSpace(base.Resume) == "" {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--resume-session-at",
+			Value:   base.ResumeSessionAt,
+			Message: "--resume-session-at requires --resume or --continue",
+			Usage:   "codog --resume ID --resume-session-at MESSAGE_ID prompt TEXT",
+		}
+	}
 	rest := flags.Args()
 	if compactPromptMode && len(rest) > 0 && !strings.EqualFold(rest[0], "prompt") && isKnownNonPromptCommand(rest[0]) {
 		return base, "", nil, invalidFlagValueError{
@@ -54176,6 +54228,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		}
 	}
 	if printMode || compactPromptMode {
+		if strings.TrimSpace(base.ResumeSessionAt) != "" && len(rest) > 0 && rest[0] != "prompt" && isKnownNonPromptCommand(rest[0]) {
+			return base, "", nil, invalidFlagValueError{
+				Flag:    "--resume-session-at",
+				Value:   rest[0],
+				Message: "--resume-session-at is only supported with prompt mode",
+				Usage:   "codog --resume ID --resume-session-at MESSAGE_ID prompt TEXT",
+			}
+		}
 		if len(rest) > 0 && rest[0] == "prompt" {
 			rest = rest[1:]
 		}
@@ -54204,6 +54264,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		return base, "prompt", rest, nil
 	}
 	if len(rest) == 0 {
+		if base.ResumeSessionAt != "" {
+			return base, "", nil, invalidFlagValueError{
+				Flag:    "--resume-session-at",
+				Value:   "",
+				Message: "--resume-session-at is only supported with prompt mode",
+				Usage:   "codog --resume ID --resume-session-at MESSAGE_ID prompt TEXT",
+			}
+		}
 		if base.NoSessionPersistence {
 			return base, "", nil, invalidFlagValueError{
 				Flag:    "--no-session-persistence",
@@ -54239,6 +54307,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		return base, "", nil, nil
 	}
 	command, rest := rest[0], rest[1:]
+	if base.ResumeSessionAt != "" && !strings.EqualFold(command, "prompt") {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--resume-session-at",
+			Value:   command,
+			Message: "--resume-session-at is only supported with prompt mode",
+			Usage:   "codog --resume ID --resume-session-at MESSAGE_ID prompt TEXT",
+		}
+	}
 	if base.NoSessionPersistence && !strings.EqualFold(command, "prompt") {
 		return base, "", nil, invalidFlagValueError{
 			Flag:    "--no-session-persistence",
@@ -54374,6 +54450,8 @@ func duplicateTrackedGlobalFlagKey(arg string) (string, bool) {
 		return "--model", true
 	case "--resume", "-resume", "-r":
 		return "--resume", true
+	case "--resume-session-at", "-resume-session-at":
+		return "--resume-session-at", true
 	case "--output-format", "-output-format", "-o", "--o", "--json", "-json":
 		return "--output-format", true
 	case "--permission-mode", "-permission-mode", "--skip-permissions", "-skip-permissions", "--dangerously-skip-permissions", "-dangerously-skip-permissions":
@@ -54393,6 +54471,8 @@ func duplicateFlagUsage(flag string) string {
 		return "codog [--permission-mode MODE | --skip-permissions] COMMAND"
 	case "--resume":
 		return "codog --resume ID|latest COMMAND"
+	case "--resume-session-at":
+		return "codog --resume ID --resume-session-at MESSAGE_ID prompt TEXT"
 	default:
 		return "codog [flags] COMMAND"
 	}
@@ -54404,7 +54484,8 @@ func globalFlagConsumesNext(arg string) bool {
 		"--model", "-model", "--base-url", "-base-url", "--system-prompt", "-system-prompt",
 		"--system-prompt-file", "-system-prompt-file", "--append-system-prompt", "-append-system-prompt",
 		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
-		"--session-id", "-session-id", "--name", "-name", "--resume", "-resume", "-r", "--output-format", "-output-format", "-o", "--o",
+		"--session-id", "-session-id", "--name", "-name", "--resume", "-resume", "-r",
+		"--resume-session-at", "-resume-session-at", "--output-format", "-output-format", "-o", "--o",
 		"--input-format", "-input-format", "--json-schema", "-json-schema",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
 		"--max-tokens", "-max-tokens", "--temperature", "-temperature",
@@ -54442,7 +54523,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--resume-session-at", "-resume-session-at", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
@@ -56105,8 +56186,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return commandHelpSpec{
 			Topic:                   "resume",
 			Command:                 "resume",
-			Usage:                   "codog --resume|-r ID|latest [--fork-session] [prompt TEXT|repl|/slash-command] | codog --continue|-c [--fork-session] [prompt TEXT|repl|/slash-command]",
-			Text:                    "Resume\n\nUsage:\n  codog --resume|-r ID|latest [--fork-session] [prompt TEXT|repl|/slash-command]\n  codog --continue|-c [--fork-session] [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, /paste, /bookmarks, or /session. `-r` is an alias for `--resume`; `--continue` and `-c` resume the latest session. With `--fork-session`, Codog copies the resumed transcript into a new session before continuing; combine it with `--session-id` to choose the fork ID. Help is local and does not open a session.\n",
+			Usage:                   "codog --resume|-r ID|latest [--fork-session] [--resume-session-at MESSAGE_ID] [prompt TEXT|repl|/slash-command] | codog --continue|-c [--fork-session] [prompt TEXT|repl|/slash-command]",
+			Text:                    "Resume\n\nUsage:\n  codog --resume|-r ID|latest [--fork-session] [--resume-session-at MESSAGE_ID] [prompt TEXT|repl|/slash-command]\n  codog --continue|-c [--fork-session] [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, /paste, /bookmarks, or /session. `-r` is an alias for `--resume`; `--continue` and `-c` resume the latest session. With `--fork-session`, Codog copies the resumed transcript into a new session before continuing; combine it with `--session-id` to choose the fork ID. With `--resume-session-at`, prompt mode resumes only through the assistant message with the requested message id. Help is local and does not open a session.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
@@ -56321,6 +56402,7 @@ Flags:
   --resume ID|latest | -r ID|latest
   --continue | -c
   --fork-session
+  --resume-session-at MESSAGE_ID
   --permission-mode read-only|workspace-write|danger-full-access|prompt|allow
   --dangerously-skip-permissions
   --skip-permissions

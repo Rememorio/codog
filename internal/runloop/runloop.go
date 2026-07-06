@@ -169,7 +169,7 @@ func (r Runner) RunWithUserContent(ctx context.Context, previous []anthropic.Mes
 			}
 			return TurnResult{}, err
 		}
-		assistantMsg := anthropic.Message{Role: "assistant", Content: assistant.Blocks}
+		assistantMsg := anthropic.Message{ID: assistant.ID, Role: "assistant", Content: assistant.Blocks}
 		assistantIndex := len(messages)
 		messages = append(messages, assistantMsg)
 		messageUsages = appendMessageUsage(messageUsages, assistantIndex, assistant.Usage)
