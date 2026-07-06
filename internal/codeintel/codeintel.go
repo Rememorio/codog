@@ -53,6 +53,13 @@ type FoldingRange struct {
 	Kind      string `json:"kind,omitempty"`
 }
 
+// SelectionRange describes one static AST range containing a document position.
+type SelectionRange struct {
+	Path  string   `json:"path"`
+	Range LSPRange `json:"range"`
+	Kind  string   `json:"kind,omitempty"`
+}
+
 // Hover contains static hover context for a discovered symbol.
 type Hover struct {
 	Symbol  string   `json:"symbol"`
@@ -430,6 +437,79 @@ func FoldingRanges(workspace string, relPath string, limit int) ([]FoldingRange,
 		ranges = ranges[:limit]
 	}
 	return ranges, nil
+}
+
+// SelectionRanges returns nested static AST ranges containing a document position.
+func SelectionRanges(workspace string, relPath string, line int, character int, limit int) ([]SelectionRange, error) {
+	if strings.TrimSpace(relPath) == "" {
+		return nil, errors.New("path is required")
+	}
+	if line < 0 || character < 0 {
+		return nil, errors.New("line and character must be non-negative")
+	}
+	if limit <= 0 {
+		limit = 16
+	}
+	relPath = filepath.ToSlash(strings.TrimSpace(relPath))
+	path := filepath.Join(workspace, filepath.FromSlash(relPath))
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	tokenFile := fset.File(file.Pos())
+	if tokenFile == nil || line+1 > tokenFile.LineCount() {
+		return nil, nil
+	}
+	target := tokenFile.LineStart(line+1) + token.Pos(character)
+	var ranges []SelectionRange
+	ast.Inspect(file, func(node ast.Node) bool {
+		if node == nil || !node.Pos().IsValid() || !node.End().IsValid() {
+			return true
+		}
+		if node.Pos() <= target && target <= node.End() {
+			start := fset.Position(node.Pos())
+			end := fset.Position(node.End())
+			if start.IsValid() && end.IsValid() && (end.Line > start.Line || end.Column > start.Column) {
+				ranges = append(ranges, SelectionRange{
+					Path: relPath,
+					Range: LSPRange{
+						Start: LSPPosition{Line: start.Line - 1, Character: start.Column - 1},
+						End:   LSPPosition{Line: end.Line - 1, Character: end.Column - 1},
+					},
+					Kind: astNodeKind(node),
+				})
+			}
+			return true
+		}
+		return false
+	})
+	sort.SliceStable(ranges, func(i, j int) bool {
+		iStart := ranges[i].Range.Start
+		iEnd := ranges[i].Range.End
+		jStart := ranges[j].Range.Start
+		jEnd := ranges[j].Range.End
+		iLines := iEnd.Line - iStart.Line
+		jLines := jEnd.Line - jStart.Line
+		if iLines != jLines {
+			return iLines < jLines
+		}
+		iChars := iEnd.Character - iStart.Character
+		jChars := jEnd.Character - jStart.Character
+		return iChars < jChars
+	})
+	if len(ranges) > limit {
+		ranges = ranges[:limit]
+	}
+	return ranges, nil
+}
+
+func astNodeKind(node ast.Node) string {
+	name := fmt.Sprintf("%T", node)
+	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		name = name[dot+1:]
+	}
+	return strings.TrimPrefix(name, "*")
 }
 
 // HoverInfo returns static hover context around a symbol definition.

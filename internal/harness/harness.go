@@ -1515,8 +1515,8 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 	},
 	"lsp_static_roundtrip": {
 		Category:    "code-intelligence",
-		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, references, hover, completions, diagnostics, and formatting.",
-		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Diagnostics"},
+		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, selection ranges, references, hover, completions, diagnostics, and formatting.",
+		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Selection ranges", "Diagnostics"},
 	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
@@ -4426,6 +4426,16 @@ func lspStaticScenario() scenario {
 				}
 			}
 
+			selectionRangeOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"selection_range","path":"pkg/runner.go","line":4,"character":6,"limit":5}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "selection-range"`, `"source": "static"`, `"path": "pkg/runner.go"`, `"kind": "Ident"`, `"character": 5`} {
+				if !strings.Contains(selectionRangeOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp selection range output missing %s", expected)
+				}
+			}
+
 			referencesOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"references","query":"Runner","limit":10}`))
 			if err != nil {
 				return localScenarioResult{}, err
@@ -4484,11 +4494,11 @@ func lspStaticScenario() scenario {
 			}
 
 			return localScenarioResult{
-				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
+				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
 				FinalMessage: "lsp static harness ok",
-				ToolCalls:    13,
-				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
-				RequestCount: 13,
+				ToolCalls:    14,
+				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
+				RequestCount: 14,
 			}, nil
 		},
 	}

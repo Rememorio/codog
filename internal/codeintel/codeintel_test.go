@@ -106,6 +106,14 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.Equal(t, 4, folds[0].EndLine)
 	require.Equal(t, "region", folds[0].Kind)
 
+	selections, err := SelectionRanges(workspace, "pkg/runner.go", 4, 6, 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, selections)
+	require.Equal(t, "pkg/runner.go", selections[0].Path)
+	require.Equal(t, LSPPosition{Line: 4, Character: 5}, selections[0].Range.Start)
+	require.Equal(t, LSPPosition{Line: 4, Character: 8}, selections[0].Range.End)
+	require.Equal(t, "Ident", selections[0].Kind)
+
 	hover, err := HoverInfo(workspace, "Run", 1)
 	require.NoError(t, err)
 	require.True(t, hover.Found)

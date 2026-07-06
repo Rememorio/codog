@@ -2872,6 +2872,14 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, foldingRangeOut, `"endLine": 4`)
 	require.Contains(t, foldingRangeOut, `"total": 1`)
 
+	selectionRangeOut, err := tool.Execute(context.Background(), []byte(`{"action":"selection_range","path":"demo.go","line":4,"character":6,"limit":5}`))
+	require.NoError(t, err)
+	require.Contains(t, selectionRangeOut, `"action": "selection-range"`)
+	require.Contains(t, selectionRangeOut, `"source": "static"`)
+	require.Contains(t, selectionRangeOut, `"path": "demo.go"`)
+	require.Contains(t, selectionRangeOut, `"kind": "Ident"`)
+	require.Contains(t, selectionRangeOut, `"character": 5`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -2900,6 +2908,10 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, err.Error(), "config home is required")
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"folding_range","path":"fold.go","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"selection_range","path":"demo.go","line":4,"character":6,"use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 
