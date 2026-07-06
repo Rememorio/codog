@@ -2958,6 +2958,16 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, inlayHintResolveOut, `"label": "name:"`)
 	require.Contains(t, inlayHintResolveOut, `"tooltip": "Build parameter 1"`)
 
+	signatureHelpInput := fmt.Sprintf(`{"action":"signature_help","path":"hints.go","line":3,"character":%d}`, hintArgChar)
+	signatureHelpOut, err := tool.Execute(context.Background(), []byte(signatureHelpInput))
+	require.NoError(t, err)
+	require.Contains(t, signatureHelpOut, `"action": "signature-help"`)
+	require.Contains(t, signatureHelpOut, `"source": "static"`)
+	require.Contains(t, signatureHelpOut, `"found": true`)
+	require.Contains(t, signatureHelpOut, `"function": "Build"`)
+	require.Contains(t, signatureHelpOut, `"label": "Build(name string, count int) int"`)
+	require.Contains(t, signatureHelpOut, `"activeParameter": 0`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -3023,6 +3033,11 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 
 	inlayHintResolveServerInput := fmt.Sprintf(`{"action":"inlay_hint_resolve","path":"hints.go","line":3,"character":%d,"use_server":true}`, hintArgChar)
 	_, err = tool.Execute(context.Background(), []byte(inlayHintResolveServerInput))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	signatureHelpServerInput := fmt.Sprintf(`{"action":"signature_help","path":"hints.go","line":3,"character":%d,"use_server":true}`, hintArgChar)
+	_, err = tool.Execute(context.Background(), []byte(signatureHelpServerInput))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 

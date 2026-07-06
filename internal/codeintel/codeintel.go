@@ -10,6 +10,7 @@ import (
 	"go/ast"
 	goformat "go/format"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"net/url"
 	"os"
@@ -114,6 +115,32 @@ type InlayHint struct {
 	Kind         string      `json:"kind,omitempty"`
 	Tooltip      string      `json:"tooltip,omitempty"`
 	PaddingRight bool        `json:"paddingRight,omitempty"`
+}
+
+// SignatureHelp describes static function call signature context.
+type SignatureHelp struct {
+	Path            string              `json:"path"`
+	Function        string              `json:"function"`
+	Found           bool                `json:"found"`
+	Signatures      []Signature         `json:"signatures,omitempty"`
+	ActiveSignature int                 `json:"activeSignature"`
+	ActiveParameter int                 `json:"activeParameter"`
+	CallRange       LSPRange            `json:"callRange,omitempty"`
+	Parameters      []SignatureArgument `json:"parameters,omitempty"`
+}
+
+// Signature describes one static function signature.
+type Signature struct {
+	Label         string              `json:"label"`
+	Documentation string              `json:"documentation,omitempty"`
+	Parameters    []SignatureArgument `json:"parameters,omitempty"`
+}
+
+// SignatureArgument describes one function parameter.
+type SignatureArgument struct {
+	Label string `json:"label"`
+	Name  string `json:"name,omitempty"`
+	Type  string `json:"type,omitempty"`
 }
 
 // Hover contains static hover context for a discovered symbol.
@@ -964,6 +991,180 @@ func callName(expr ast.Expr) string {
 	default:
 		return ""
 	}
+}
+
+// SignatureHelpAtPosition returns static signature help for the function call
+// containing a document position.
+func SignatureHelpAtPosition(workspace string, relPath string, line int, character int) (SignatureHelp, error) {
+	if strings.TrimSpace(relPath) == "" {
+		return SignatureHelp{}, errors.New("path is required")
+	}
+	if line < 0 || character < 0 {
+		return SignatureHelp{}, errors.New("line and character must be non-negative")
+	}
+	path, rel, err := resolveWorkspaceFile(workspace, relPath)
+	if err != nil {
+		return SignatureHelp{}, err
+	}
+	signatures, err := workspaceFunctionSignatures(workspace)
+	if err != nil {
+		return SignatureHelp{}, err
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return SignatureHelp{}, err
+	}
+	tokenFile := fset.File(file.Pos())
+	if tokenFile == nil || line+1 > tokenFile.LineCount() {
+		return SignatureHelp{Path: rel, Found: false}, nil
+	}
+	target := tokenFile.LineStart(line+1) + token.Pos(character)
+	var selected *ast.CallExpr
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if call.Lparen <= target && target <= call.Rparen {
+			if selected == nil || (call.Pos() >= selected.Pos() && call.End() <= selected.End()) {
+				selected = call
+			}
+		}
+		return true
+	})
+	if selected == nil {
+		return SignatureHelp{Path: rel, Found: false}, nil
+	}
+	name := callName(selected.Fun)
+	signature, ok := signatures[name]
+	if !ok {
+		return SignatureHelp{Path: rel, Function: name, Found: false, CallRange: nodeRange(fset, selected)}, nil
+	}
+	active := activeCallParameter(selected, target)
+	if len(signature.Parameters) == 0 {
+		active = 0
+	} else if active >= len(signature.Parameters) {
+		active = len(signature.Parameters) - 1
+	}
+	signature.Documentation = fmt.Sprintf("func %s", signature.Label)
+	return SignatureHelp{
+		Path:            rel,
+		Function:        name,
+		Found:           true,
+		Signatures:      []Signature{signature},
+		ActiveSignature: 0,
+		ActiveParameter: active,
+		CallRange:       nodeRange(fset, selected),
+		Parameters:      signature.Parameters,
+	}, nil
+}
+
+func activeCallParameter(call *ast.CallExpr, target token.Pos) int {
+	for i, arg := range call.Args {
+		if target <= arg.End() {
+			return i
+		}
+	}
+	if len(call.Args) == 0 {
+		return 0
+	}
+	return len(call.Args) - 1
+}
+
+func nodeRange(fset *token.FileSet, node ast.Node) LSPRange {
+	start := fset.Position(node.Pos())
+	end := fset.Position(node.End())
+	return LSPRange{
+		Start: LSPPosition{Line: start.Line - 1, Character: start.Column - 1},
+		End:   LSPPosition{Line: end.Line - 1, Character: end.Column - 1},
+	}
+}
+
+func workspaceFunctionSignatures(workspace string) (map[string]Signature, error) {
+	signatures := map[string]Signature{}
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if ignoredDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Type == nil {
+				continue
+			}
+			parameters := signatureArguments(fset, fn.Type.Params)
+			label := fn.Name.Name + "(" + signatureArgumentLabels(parameters) + ")"
+			if results := signatureResults(fset, fn.Type.Results); results != "" {
+				label += " " + results
+			}
+			signatures[fn.Name.Name] = Signature{Label: label, Parameters: parameters}
+		}
+		return nil
+	})
+	return signatures, err
+}
+
+func signatureArguments(fset *token.FileSet, fields *ast.FieldList) []SignatureArgument {
+	if fields == nil {
+		return nil
+	}
+	args := []SignatureArgument{}
+	for _, field := range fields.List {
+		typ := exprLabel(fset, field.Type)
+		if len(field.Names) == 0 {
+			args = append(args, SignatureArgument{Label: typ, Type: typ})
+			continue
+		}
+		for _, name := range field.Names {
+			label := strings.TrimSpace(name.Name + " " + typ)
+			args = append(args, SignatureArgument{Label: label, Name: name.Name, Type: typ})
+		}
+	}
+	return args
+}
+
+func signatureArgumentLabels(args []SignatureArgument) string {
+	labels := make([]string, 0, len(args))
+	for _, arg := range args {
+		labels = append(labels, arg.Label)
+	}
+	return strings.Join(labels, ", ")
+}
+
+func signatureResults(fset *token.FileSet, fields *ast.FieldList) string {
+	if fields == nil || len(fields.List) == 0 {
+		return ""
+	}
+	args := signatureArguments(fset, fields)
+	if len(args) == 1 && args[0].Name == "" {
+		return args[0].Label
+	}
+	return "(" + signatureArgumentLabels(args) + ")"
+}
+
+func exprLabel(fset *token.FileSet, expr ast.Expr) string {
+	if expr == nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := printer.Fprint(&buf, fset, expr); err != nil {
+		return ""
+	}
+	return buf.String()
 }
 
 // HoverInfo returns static hover context around a symbol definition.
