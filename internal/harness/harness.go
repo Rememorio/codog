@@ -29,9 +29,11 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bookmarks"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/contextview"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/customcommands"
 	"github.com/Rememorio/codog/internal/doctor"
+	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/modelrouting"
@@ -217,6 +219,7 @@ var scenarioOrder = []string{
 	"command_skill_template_roundtrip",
 	"onboarding_bookmarks_roundtrip",
 	"memory_lifecycle_roundtrip",
+	"context_view_roundtrip",
 	"output_style_lifecycle_roundtrip",
 	"diagnostics_status_roundtrip",
 	"tui_prompt_completion_roundtrip",
@@ -761,6 +764,7 @@ func Run(ctx context.Context) (Report, error) {
 		commandSkillTemplateScenario(),
 		onboardingBookmarksScenario(),
 		memoryLifecycleScenario(),
+		contextViewScenario(),
 		outputStyleLifecycleScenario(),
 		diagnosticsStatusScenario(),
 		tuiPromptCompletionScenario(),
@@ -1182,6 +1186,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "interactive question handling", RequiredRefs: []string{"AskUserQuestion tool", "Interactive questions"}},
 	{Capability: "runtime utility tools", RequiredRefs: []string{"Brief tool", "SendUserMessage tool", "StructuredOutput tool", "Sleep tool", "REPL tool"}},
 	{Capability: "setup and diagnostics", RequiredRefs: []string{"Doctor", "Status diagnostics", "Terminal setup"}},
+	{Capability: "context view and focus", RequiredRefs: []string{"Context view", "Focused paths", "Context signals"}},
 }
 
 func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
@@ -1433,6 +1438,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "context-management",
 		Description: "Discovers, appends, searches, selects, and resets project memory instruction files.",
 		ParityRefs:  []string{"Project memory", "Session context management", "Slash commands", "Workspace state"},
+	},
+	"context_view_roundtrip": {
+		Category:    "context-management",
+		Description: "Builds structured context summaries with memory, focused paths, token estimates, and text plus HTML rendering.",
+		ParityRefs:  []string{"Context view", "Focused paths", "Context signals", "Session context management", "Workspace state"},
 	},
 	"output_style_lifecycle_roundtrip": {
 		Category:    "interactive-ui",
@@ -2348,6 +2358,142 @@ func memoryLifecycleScenario() scenario {
 				Output:       string(data),
 				FinalMessage: "memory lifecycle harness ok",
 				RequestCount: 6,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+func contextViewScenario() scenario {
+	return scenario{
+		name: "context_view_roundtrip",
+		runLocal: func(_ context.Context, workspace string) (localScenarioResult, error) {
+			notesPath := filepath.Join(workspace, "notes.md")
+			if err := os.WriteFile(notesPath, []byte("review context\nkeep tests focused\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			agentsPath := filepath.Join(workspace, "AGENTS.md")
+			if err := os.WriteFile(agentsPath, []byte("Prefer focused tests.\nMention validation.\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			focusReport, err := focus.Add(workspace, []string{"notes.md"})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if focusReport.Kind != "focus" || focusReport.Action != "add" || focusReport.Total != 1 {
+				return localScenarioResult{}, fmt.Errorf("unexpected focus report: %#v", focusReport)
+			}
+
+			statusReport := localstatus.Build(localstatus.Options{
+				Version:               "dev",
+				Workspace:             workspace,
+				Model:                 "claude-test",
+				PermissionMode:        "workspace-write",
+				MaxTokens:             4096,
+				MaxTurns:              8,
+				AuthConfigured:        true,
+				PlanActive:            true,
+				PlanText:              "review context before edits",
+				ToolNames:             []string{"bash", "read_file", "write_file"},
+				SessionID:             "session-context",
+				SessionMessages:       4,
+				GitStatus:             "## main\n M notes.md\n",
+				EnabledSkillCount:     2,
+				SetupHookCount:        1,
+				PreHookCount:          1,
+				PostHookCount:         1,
+				MemoryFiles:           []localstatus.MemoryFileStatus{{Path: "AGENTS.md", Name: "AGENTS.md", Scope: "workspace", Chars: 40, Lines: 2}},
+				AllowedToolSource:     "default",
+				AllowedToolEntries:    []string{"read_file", "write_file"},
+				SandboxOS:             "darwin",
+				SandboxDefault:        "seatbelt",
+				SandboxAvailable:      true,
+				RuntimeProvider:       "anthropic",
+				RuntimeProviderSource: "config",
+			})
+			memoryReport := memory.Report{
+				Kind:             "memory",
+				Action:           "list",
+				Status:           "ok",
+				WorkingDirectory: workspace,
+				InstructionFiles: 1,
+				Files: []memory.Summary{{
+					Path:      "AGENTS.md",
+					Name:      "AGENTS.md",
+					Scope:     "workspace",
+					Lines:     2,
+					Words:     5,
+					Chars:     40,
+					SizeBytes: 40,
+					Preview:   "Prefer focused tests.",
+				}},
+			}
+			contextReport := contextview.Build(contextview.Options{
+				Status:       statusReport,
+				Memory:       memoryReport,
+				Focus:        focusReport,
+				TokenUsage:   usage.Summary{InputTokens: 120, OutputTokens: 30, TotalTokens: 150, EstimatedUSD: 0.00042, Source: "actual"},
+				SystemPrompt: "system line one\nsystem line two",
+				Warnings:     []string{"context budget near threshold"},
+			})
+			if contextReport.Kind != "context" || contextReport.Action != "show" || contextReport.Status != "degraded" {
+				return localScenarioResult{}, fmt.Errorf("unexpected context report identity: %#v", contextReport)
+			}
+			if contextReport.Memory.InstructionFiles != 1 || contextReport.Focus.FocusedPaths != 1 || contextReport.Prompt.Lines != 2 {
+				return localScenarioResult{}, fmt.Errorf("unexpected context counts: %#v", contextReport)
+			}
+			for _, expected := range []string{
+				"context budget near threshold",
+				"git working tree has local changes",
+				"plan mode is active; tool permissions are read-only",
+			} {
+				if !slices.Contains(contextReport.Signals, expected) {
+					return localScenarioResult{}, fmt.Errorf("context report missing signal %q: %#v", expected, contextReport.Signals)
+				}
+			}
+
+			var text bytes.Buffer
+			contextview.RenderText(&text, contextReport)
+			textOutput := text.String()
+			for _, expected := range []string{"Context", "Plan             active", "Memory files     1", "Focused paths    1", "notes.md"} {
+				if !strings.Contains(textOutput, expected) {
+					return localScenarioResult{}, fmt.Errorf("context text missing %q: %s", expected, textOutput)
+				}
+			}
+			htmlOutput := contextview.RenderHTML(contextReport)
+			for _, expected := range []string{"<!doctype html>", "Codog Context", "Estimated tokens", "context budget near threshold"} {
+				if !strings.Contains(htmlOutput, expected) {
+					return localScenarioResult{}, fmt.Errorf("context html missing %q", expected)
+				}
+			}
+
+			report := map[string]any{
+				"kind": "context_view",
+				"context": map[string]any{
+					"status":            contextReport.Status,
+					"workspace_name":    contextReport.Workspace.Name,
+					"memory_files":      contextReport.Memory.InstructionFiles,
+					"focused_paths":     contextReport.Focus.FocusedPaths,
+					"prompt_lines":      contextReport.Prompt.Lines,
+					"signals":           len(contextReport.Signals),
+					"plan_active":       contextReport.Plan.Active,
+					"token_total":       contextReport.TokenEstimate.TotalTokens,
+					"text_rendered":     strings.Contains(textOutput, "Focused paths    1"),
+					"html_rendered":     strings.Contains(htmlOutput, "Codog Context"),
+					"git_dirty_signal":  slices.Contains(contextReport.Signals, "git working tree has local changes"),
+					"plan_mode_signal":  slices.Contains(contextReport.Signals, "plan mode is active; tool permissions are read-only"),
+					"warning_preserved": slices.Contains(contextReport.Signals, "context budget near threshold"),
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "context view harness ok",
+				RequestCount: 4,
 				MessageCount: 1,
 			}, nil
 		},
