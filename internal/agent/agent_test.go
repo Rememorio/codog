@@ -3328,16 +3328,34 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 }
 
 func TestDirectSlashCommandNameCanonicalizesAliases(t *testing.T) {
-	require.Equal(t, "desktop", directSlashCommandName("/app"))
-	require.Equal(t, "bridge", directSlashCommandName("/remote-control"))
-	require.Equal(t, "bridge", directSlashCommandName("/rc"))
-	require.Equal(t, "terminal-setup", directSlashCommandName("/terminalSetup"))
-	require.Equal(t, "pr-comments", directSlashCommandName("/pr_comments"))
-
-	require.Equal(t, "/desktop", resumedSlashCanonicalName(directSlashCommandName("/app")))
-	require.Equal(t, "/bridge", resumedSlashCanonicalName(directSlashCommandName("/remote-control")))
-	require.Equal(t, "/terminal-setup", resumedSlashCanonicalName(directSlashCommandName("/terminalSetup")))
-	require.Equal(t, "/pr-comments", resumedSlashCanonicalName(directSlashCommandName("/pr_comments")))
+	for input, expected := range map[string]string{
+		"/app":            "desktop",
+		"/remote-control": "bridge",
+		"/rc":             "bridge",
+		"/terminalSetup":  "terminal-setup",
+		"/pr_comments":    "pr-comments",
+		"/web-setup":      "remote-setup",
+		"/color":          "theme",
+		"/caches":         "cache",
+		"/stats":          "usage",
+		"/thinkback":      "think-back",
+		"/thinkback-play": "think-back",
+		"/parity":         "mock-parity",
+		"/branchlock":     "branch-lock",
+		"/base-check":     "stale-base",
+		"/green":          "green-contract",
+		"/g004":           "g004-conformance",
+		"/prompt-history": "history",
+		"/continue":       "resume",
+		"/reviewRemote":   "reviewRemote",
+		"/review-remote":  "reviewRemote",
+		"/cwd":            "workspace",
+		"/session":        "sessions",
+		"/exit_plan_mode": "exit-plan",
+	} {
+		require.Equal(t, expected, directSlashCommandName(input), input)
+		require.Equal(t, "/"+strings.ToLower(expected), resumedSlashCanonicalName(directSlashCommandName(input)), input)
+	}
 }
 
 func TestModelsCommandActionAliases(t *testing.T) {
@@ -4008,6 +4026,14 @@ func risky(value any) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &settingsPaths))
 	require.Equal(t, configPaths.Paths, settingsPaths.Paths)
+
+	out, err = runResumedJSON("/session", "list")
+	require.NoError(t, err)
+	var resumedSessionList sessionListReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSessionList))
+	require.Equal(t, "sessions", resumedSessionList.Kind)
+	require.Equal(t, "list", resumedSessionList.Action)
+	require.Contains(t, resumedSessionList.Sessions, "resume-slash")
 
 	out, err = runResumedJSON("/api")
 	require.NoError(t, err)

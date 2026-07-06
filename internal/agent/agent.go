@@ -28774,7 +28774,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return renderHelpCommand(a.Out, resumeSlashArgs("help", args, format))
 	case "/version":
 		return renderVersion(a.Out, a.Workspace, resumeSlashArgs("version", args, format))
-	case "/config", "/settings":
+	case "/config":
 		return a.ConfigCommand(resumeSlashArgs("config", args, format))
 	case "/api":
 		return a.runResumedAPISlash(resumeSlashArgs("api", args, format), resumed, format)
@@ -28798,7 +28798,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedBudgetSlash(resumeSlashArgs("budget", args, format), format)
 	case "/output-style":
 		return a.runResumedOutputStyleSlash(resumeSlashArgs("output-style", args, format), format)
-	case "/theme", "/color":
+	case "/theme":
 		return a.runResumedThemeSlash(resumeSlashArgs("theme", args, format), format)
 	case "/language":
 		return a.runResumedLanguageSlash(resumeSlashArgs("language", args, format), format)
@@ -28912,7 +28912,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedCronSlash(resumeSlashArgs("cron", args, format), format)
 	case "/team":
 		return a.runResumedTeamSlash(resumeSlashArgs("team", args, format), format)
-	case "/terminal-setup", "/terminalsetup":
+	case "/terminal-setup":
 		return a.runResumedTerminalSetupSlash(resumeSlashArgs("terminal-setup", args, format), format)
 	case "/files":
 		return a.Files(resumeSlashArgs("files", args, format))
@@ -28922,7 +28922,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.SecurityReview(resumeSlashArgs("security-review", args, format))
 	case "/bughunter":
 		return a.Bughunter(resumeSlashArgs("bughunter", args, format))
-	case "/feedback", "/bug":
+	case "/feedback":
 		return a.Feedback(resumeSlashArgs("feedback", args, format), resumed)
 	case "/pr":
 		return a.PullRequestDraft(resumeSlashArgs("pr", args, format), resumed)
@@ -28930,7 +28930,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.IssueDraft(resumeSlashArgs("issue", args, format), resumed)
 	case "/autofix-pr":
 		return a.AutofixPR(ctx, resumeSlashArgs("autofix-pr", args, format))
-	case "/pr-comments", "/pr_comments":
+	case "/pr-comments":
 		return a.PRComments(ctx, resumeSlashArgs("pr-comments", args, format))
 	case "/brief":
 		return a.Brief(resumeSlashArgs("brief", args, format))
@@ -28944,7 +28944,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Install(ctx, resumeSlashArgs("install", args, format))
 	case "/review", "/ultrareview":
 		return a.Review(resumeSlashArgs("review", args, format))
-	case "/reviewremote", "/review-remote":
+	case "/reviewremote":
 		return a.ReviewRemote(ctx, resumeSlashArgs("reviewRemote", args, format))
 	case "/symbols":
 		return a.Symbols(resumeSlashArgs("symbols", args, format))
@@ -28976,9 +28976,9 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Insights(resumeSlashArgs("insights", args, format))
 	case "/perf-issue":
 		return a.runResumedPerfIssueSlash(resumeSlashArgs("perf-issue", args, format), format)
-	case "/think-back", "/thinkback", "/thinkback-play":
+	case "/think-back":
 		return a.runResumedThinkBackSlash(name, resumeSlashArgs("think-back", args, format), format)
-	case "/desktop", "/app":
+	case "/desktop":
 		return a.Desktop(resumeSlashArgs("desktop", args, format), resumed)
 	case "/mobile":
 		return a.Mobile(resumeSlashArgs("mobile", args, format), resumed)
@@ -28990,15 +28990,15 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedRemoteEnvSlash(resumeSlashArgs("remote-env", args, format), format)
 	case "/remote":
 		return a.runResumedRemoteSlash(resumeSlashArgs("remote", args, format), resumed, format)
-	case "/remote-setup", "/web-setup":
+	case "/remote-setup":
 		return a.runResumedRemoteSetupSlash(resumeSlashArgs("remote-setup", args, format), resumed, format)
-	case "/bridge", "/remote-control", "/rc":
+	case "/bridge":
 		return a.runResumedBridgeSlash(name, resumeSlashArgs("bridge", args, format), resumed, format)
 	case "/ide":
 		return a.runResumedIDESlash(resumeSlashArgs("ide", args, format), format)
 	case "/bridge-kick":
 		return a.runResumedBridgeKickSlash(resumeSlashArgs("bridge-kick", args, format), format)
-	case "/workspace", "/cwd":
+	case "/workspace":
 		return a.runResumedWorkspaceSlash(resumeSlashArgs("workspace", args, format), format)
 	case "/focus":
 		return a.runResumedFocusSlash(resumeSlashArgs("focus", args, format), format)
@@ -29012,7 +29012,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedAntTraceSlash(ctx, resumeSlashArgs("ant-trace", args, format), format)
 	case "/mock-limits":
 		return a.runResumedMockLimitsSlash(resumeSlashArgs("mock-limits", args, format), resumed, format)
-	case "/mock-parity", "/parity", "/self-test":
+	case "/mock-parity", "/self-test":
 		defaultFormat := "text"
 		if name == "/self-test" {
 			defaultFormat = "json"
@@ -29060,17 +29060,17 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Undo(resumeSlashArgs("undo", args, format))
 	case "/plan", "/ultraplan":
 		return a.runResumedPlanSlash(resumeSlashArgs("plan", args, format), format)
-	case "/exit-plan", "/exit_plan_mode":
+	case "/exit-plan":
 		return a.runResumedPlanSlash(resumeSlashArgs("plan", append([]string{"exit"}, args...), format), format)
 	case "/branch":
 		return a.runResumedBranchSlash(resumeSlashArgs("branch", args, format), format)
-	case "/branch-lock", "/branchlock":
+	case "/branch-lock":
 		return a.BranchLock(resumeSlashArgs("branch-lock", args, format))
-	case "/stale-base", "/base-check":
+	case "/stale-base":
 		return a.StaleBase(resumeSlashArgs("stale-base", args, format))
-	case "/green-contract", "/green":
+	case "/green-contract":
 		return a.GreenContract(resumeSlashArgs("green-contract", args, format))
-	case "/g004-conformance", "/g004":
+	case "/g004-conformance":
 		return a.G004Conformance(resumeSlashArgs("g004-conformance", args, format))
 	case "/report-schema":
 		return a.ReportSchema(resumeSlashArgs("report-schema", args, format))
@@ -29080,25 +29080,25 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedTagSlash(resumeSlashArgs("tag", args, format), format)
 	case "/stash":
 		return a.runResumedStashSlash(resumeSlashArgs("stash", args, format), format)
-	case "/clear", "/new":
+	case "/clear":
 		return a.ClearResumedSession(resumeSlashArgs("clear", args, format), resumed)
 	case "/compact":
 		return a.Compact(resumeSlashArgs("compact", args, format), resumed)
 	case "/conversation":
 		return a.Conversation(resumeSlashArgs("conversation", args, format), resumed)
-	case "/session":
+	case "/sessions":
 		return a.runResumedSessionSlash(resumeSlashArgs("sessions", args, format), resumed)
-	case "/resume", "/continue":
+	case "/resume":
 		return a.ResumeCommand(resumeSlashArgs("resume", args, format))
 	case "/summary":
 		return a.Summary(resumeSlashArgs("summary", args, format), resumed)
-	case "/history", "/prompt-history":
+	case "/history":
 		return a.History(resumeSlashArgs("history", args, format), resumed)
 	case "/backfill-sessions":
 		return a.BackfillSessions(resumeSlashArgs("backfill-sessions", args, format))
 	case "/generatesessionname", "/generate-session-name":
 		return a.GenerateSessionName(resumeSlashArgs("generateSessionName", args, format), resumed)
-	case "/rewind", "/checkpoint":
+	case "/rewind":
 		return a.Rewind(resumeSlashArgs("rewind", args, format), resumed)
 	case "/context":
 		return a.Context(resumeSlashArgs("context", args, format), resumed)
@@ -29116,11 +29116,11 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Pin(resumeSlashArgs("pin", args, format), resumed)
 	case "/unpin":
 		return a.Unpin(resumeSlashArgs("unpin", args, format), resumed)
-	case "/cost", "/tokens":
+	case "/cost":
 		return a.ShowCost(resumed)
-	case "/usage", "/stats":
+	case "/usage":
 		return a.Usage(resumeSlashArgs("usage", args, format), resumed)
-	case "/cache", "/caches":
+	case "/cache":
 		return a.Cache(resumeSlashArgs("cache", args, format), resumed)
 	case "/break-cache":
 		return a.BreakCache(resumeSlashArgs("break-cache", args, format), resumed)
@@ -30224,6 +30224,34 @@ func directSlashCommandName(name string) string {
 		return "terminal-setup"
 	case "/pr_comments":
 		return "pr-comments"
+	case "/web-setup":
+		return "remote-setup"
+	case "/color":
+		return "theme"
+	case "/caches":
+		return "cache"
+	case "/stats":
+		return "usage"
+	case "/thinkback", "/thinkback-play":
+		return "think-back"
+	case "/parity":
+		return "mock-parity"
+	case "/branchlock":
+		return "branch-lock"
+	case "/base-check":
+		return "stale-base"
+	case "/green":
+		return "green-contract"
+	case "/g004":
+		return "g004-conformance"
+	case "/prompt-history":
+		return "history"
+	case "/continue":
+		return "resume"
+	case "/reviewremote", "/review-remote":
+		return "reviewRemote"
+	case "/cwd":
+		return "workspace"
 	}
 	spec, ok := slash.Lookup(name)
 	if !ok {
