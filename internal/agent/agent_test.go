@@ -10058,17 +10058,24 @@ func TestParseFlagsSupportsNoSessionPersistenceForPrompt(t *testing.T) {
 }
 
 func TestParseFlagsSupportsInputFormatForPrompt(t *testing.T) {
-	overrides, command, rest, err := parseFlags([]string{"-p", "--input-format", "stream-json", "--output-format", "stream-json"}, config.FlagOverrides{})
+	overrides, command, rest, err := parseFlags([]string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--replay-user-messages"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "stream-json", overrides.InputFormat)
+	require.True(t, overrides.ReplayUserMessages)
 	require.Equal(t, "prompt", command)
-	require.Equal(t, []string{"--output-format", "stream-json", "--input-format", "stream-json"}, rest)
+	require.Equal(t, []string{"--output-format", "stream-json", "--input-format", "stream-json", "--replay-user-messages"}, rest)
 
 	_, _, _, err = parseFlags([]string{"--input-format", "stream-json", "status"}, config.FlagOverrides{})
 	require.Error(t, err)
 	var flagErr invalidFlagValueError
 	require.ErrorAs(t, err, &flagErr)
 	require.Equal(t, "--input-format", flagErr.Flag)
+	require.Contains(t, flagErr.Message, "prompt mode")
+
+	_, _, _, err = parseFlags([]string{"--replay-user-messages", "status"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &flagErr)
+	require.Equal(t, "--replay-user-messages", flagErr.Flag)
 	require.Contains(t, flagErr.Message, "prompt mode")
 }
 
@@ -10234,10 +10241,11 @@ func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
 	require.Equal(t, "Describe", req.Prompt)
 	require.Equal(t, []string{"notes.txt", "image.png", "report.pdf"}, req.Attachments)
 
-	req, err = parsePromptArgs([]string{"--input-format", "stream-json", "--output-format", "stream-json"})
+	req, err = parsePromptArgs([]string{"--input-format", "stream-json", "--output-format", "stream-json", "--replay-user-messages"})
 	require.NoError(t, err)
 	require.Equal(t, "stream-json", req.InputFormat)
 	require.Equal(t, "stream-json", req.Format)
+	require.True(t, req.ReplayUserMessages)
 
 	_, err = parsePromptArgs([]string{"--input-format", "stream-json"})
 	require.Error(t, err)
@@ -10246,6 +10254,10 @@ func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
 	_, err = parsePromptArgs([]string{"--input-format", "xml", "--output-format", "stream-json"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown prompt input format")
+
+	_, err = parsePromptArgs([]string{"--replay-user-messages", "--output-format", "stream-json"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires --input-format=stream-json")
 }
 
 func TestReadPromptStreamJSONInputExtractsSDKUserMessages(t *testing.T) {
@@ -10261,6 +10273,13 @@ func TestReadPromptStreamJSONInputExtractsSDKUserMessages(t *testing.T) {
 	prompt, err := readPromptStreamJSONInput(strings.NewReader(input))
 	require.NoError(t, err)
 	require.Equal(t, "first prompt\n\nsecond prompt", prompt)
+	state, err := readPromptStreamJSONInputState(strings.NewReader(input))
+	require.NoError(t, err)
+	require.Equal(t, prompt, state.Prompt)
+	require.Len(t, state.ReplayMessages, 2)
+	require.True(t, state.ReplayMessages[0].IsReplay)
+	require.Equal(t, "first prompt", state.ReplayMessages[0].Message.Content[0].Text)
+	require.Equal(t, "second prompt", state.ReplayMessages[1].Message.Content[0].Text)
 
 	_, err = readPromptStreamJSONInput(strings.NewReader("{bad json}\n"))
 	require.Error(t, err)
@@ -10301,9 +10320,9 @@ func TestPromptUsesStreamJSONInputForModelRequest(t *testing.T) {
 	}
 
 	streamInput := `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"stream prompt body"}]},"parent_tool_use_id":null}` + "\n"
-	prompt, err := readPromptStreamJSONInput(strings.NewReader(streamInput))
+	inputState, err := readPromptStreamJSONInputState(strings.NewReader(streamInput))
 	require.NoError(t, err)
-	require.NoError(t, app.PromptWithOutput(context.Background(), prompt, config.FlagOverrides{SessionID: "stream-input-session"}, "stream-json"))
+	require.NoError(t, app.promptWithOutputOptions(context.Background(), inputState.Prompt, config.FlagOverrides{SessionID: "stream-input-session"}, "stream-json", false, turnOptions{ReplayUserMessages: inputState.ReplayMessages}))
 
 	var request struct {
 		Messages []anthropic.Message `json:"messages"`
@@ -10312,6 +10331,11 @@ func TestPromptUsesStreamJSONInputForModelRequest(t *testing.T) {
 	require.NotEmpty(t, request.Messages)
 	require.Equal(t, "user", request.Messages[len(request.Messages)-1].Role)
 	require.Contains(t, request.Messages[len(request.Messages)-1].Content[0].Text, "stream prompt body")
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.GreaterOrEqual(t, len(lines), 4)
+	require.Contains(t, lines[1], `"type":"user"`)
+	require.Contains(t, lines[1], `"isReplay":true`)
+	require.Contains(t, lines[1], "stream prompt body")
 	require.Contains(t, out.String(), `"type":"result"`)
 }
 

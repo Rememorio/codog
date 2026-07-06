@@ -1103,6 +1103,7 @@ type FlagOverrides struct {
 	ToolNamesSet                   bool
 	NoSessionPersistence           bool
 	InputFormat                    string
+	ReplayUserMessages             bool
 	OutputFormatSource             string
 	OutputFormatRaw                string
 	OutputFormatOverridden         bool

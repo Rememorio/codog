@@ -467,12 +467,16 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIError(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		input := req.Prompt
+		streamReplayMessages := []promptStreamJSONReplayMessage{}
 		if req.InputFormat == "stream-json" {
-			streamInput, err := readPromptStreamJSONInput(app.In)
+			streamInput, err := readPromptStreamJSONInputState(app.In)
 			if err != nil {
 				return renderCLIError(app.Out, err, req.Format)
 			}
-			input = mergePromptWithStdin(input, streamInput)
+			input = mergePromptWithStdin(input, streamInput.Prompt)
+			if req.ReplayUserMessages {
+				streamReplayMessages = streamInput.ReplayMessages
+			}
 		} else if !req.PromptProvided {
 			data, err := readPromptInput(app.In)
 			if err != nil {
@@ -492,7 +496,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			}
 			return renderMissingPrompt(app.Out, req.Format)
 		}
-		return app.promptWithOutputOptions(ctx, input, overrides, req.Format, req.Compact, turnOptions{Attachments: req.Attachments})
+		return app.promptWithOutputOptions(ctx, input, overrides, req.Format, req.Compact, turnOptions{Attachments: req.Attachments, ReplayUserMessages: streamReplayMessages})
 	case "acp":
 		return wrapStructured(app.ACP(ctx, rest))
 	case "btw":
@@ -32379,6 +32383,18 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 		}); err != nil {
 			return err
 		}
+		for _, message := range opts.ReplayUserMessages {
+			payload := message
+			payload.IsReplay = true
+			if err := writer.Event("user", map[string]any{
+				"session_id":         sess.ID,
+				"message":            payload.Message,
+				"parent_tool_use_id": payload.ParentToolUseID,
+				"isReplay":           payload.IsReplay,
+			}); err != nil {
+				return err
+			}
+		}
 		turnOut = writer
 	}
 	turnOpts := opts
@@ -32761,20 +32777,22 @@ func (a *App) btwSideSession(source *session.Session) (*session.Session, error) 
 }
 
 type turnOptions struct {
-	Skill        *skills.Skill
-	Attachments  []string
-	AllowedTools []string
-	Out          io.Writer
+	Skill              *skills.Skill
+	Attachments        []string
+	AllowedTools       []string
+	ReplayUserMessages []promptStreamJSONReplayMessage
+	Out                io.Writer
 }
 
 type promptCLIRequest struct {
-	Prompt         string
-	Format         string
-	InputFormat    string
-	PromptProvided bool
-	Compact        bool
-	UseStdin       bool
-	Attachments    []string
+	Prompt             string
+	Format             string
+	InputFormat        string
+	ReplayUserMessages bool
+	PromptProvided     bool
+	Compact            bool
+	UseStdin           bool
+	Attachments        []string
 }
 
 func parsePromptArgs(args []string) (promptCLIRequest, error) {
@@ -32807,6 +32825,8 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 			req.InputFormat = args[index]
 		case strings.HasPrefix(arg, "--input-format="):
 			req.InputFormat = strings.TrimPrefix(arg, "--input-format=")
+		case arg == "--replay-user-messages":
+			req.ReplayUserMessages = true
 		case arg == "--compact":
 			req.Compact = true
 		case arg == "--stdin" || arg == "--prompt-stdin":
@@ -32845,6 +32865,14 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 			Value:   req.InputFormat,
 			Message: "--input-format=stream-json requires --output-format=stream-json",
 			Usage:   "codog -p --input-format stream-json --output-format stream-json",
+		}
+	}
+	if req.ReplayUserMessages && (req.InputFormat != "stream-json" || req.Format != "stream-json") {
+		return req, invalidFlagValueError{
+			Flag:    "--replay-user-messages",
+			Value:   "",
+			Message: "--replay-user-messages requires --input-format=stream-json and --output-format=stream-json",
+			Usage:   "codog -p --input-format stream-json --output-format stream-json --replay-user-messages",
 		}
 	}
 	return req, nil
@@ -32919,13 +32947,33 @@ func readPromptInputState(in io.Reader) (string, bool, error) {
 	return string(data), nonTerminal, nil
 }
 
+type promptStreamJSONInput struct {
+	Prompt         string
+	ReplayMessages []promptStreamJSONReplayMessage
+}
+
+type promptStreamJSONReplayMessage struct {
+	Message         anthropic.Message `json:"message"`
+	ParentToolUseID *string           `json:"parent_tool_use_id"`
+	IsReplay        bool              `json:"isReplay"`
+}
+
 func readPromptStreamJSONInput(in io.Reader) (string, error) {
+	state, err := readPromptStreamJSONInputState(in)
+	if err != nil {
+		return "", err
+	}
+	return state.Prompt, nil
+}
+
+func readPromptStreamJSONInputState(in io.Reader) (promptStreamJSONInput, error) {
 	if in == nil {
-		return "", nil
+		return promptStreamJSONInput{}, nil
 	}
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	parts := []string{}
+	replayMessages := []promptStreamJSONReplayMessage{}
 	lineNumber := 0
 	for scanner.Scan() {
 		lineNumber++
@@ -32933,21 +32981,34 @@ func readPromptStreamJSONInput(in io.Reader) (string, error) {
 		if line == "" {
 			continue
 		}
-		text, ok, err := promptTextFromSDKUserMessageLine([]byte(line))
+		message, ok, err := promptMessageFromSDKUserMessageLine([]byte(line))
 		if err != nil {
-			return "", fmt.Errorf("invalid stream-json input line %d: %w", lineNumber, err)
+			return promptStreamJSONInput{}, fmt.Errorf("invalid stream-json input line %d: %w", lineNumber, err)
 		}
+		text := promptTextFromAnthropicContent(message.Content)
 		if ok && strings.TrimSpace(text) != "" {
 			parts = append(parts, strings.TrimSpace(text))
+			replayMessages = append(replayMessages, promptStreamJSONReplayMessage{
+				Message:  message,
+				IsReplay: true,
+			})
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return "", err
+		return promptStreamJSONInput{}, err
 	}
-	return strings.Join(parts, "\n\n"), nil
+	return promptStreamJSONInput{Prompt: strings.Join(parts, "\n\n"), ReplayMessages: replayMessages}, nil
 }
 
 func promptTextFromSDKUserMessageLine(line []byte) (string, bool, error) {
+	message, ok, err := promptMessageFromSDKUserMessageLine(line)
+	if err != nil || !ok {
+		return "", ok, err
+	}
+	return promptTextFromAnthropicContent(message.Content), true, nil
+}
+
+func promptMessageFromSDKUserMessageLine(line []byte) (anthropic.Message, bool, error) {
 	var msg struct {
 		Type            string          `json:"type"`
 		Message         json.RawMessage `json:"message"`
@@ -32956,50 +33017,57 @@ func promptTextFromSDKUserMessageLine(line []byte) (string, bool, error) {
 		IsReplay        bool            `json:"isReplay"`
 	}
 	if err := json.Unmarshal(line, &msg); err != nil {
-		return "", false, err
+		return anthropic.Message{}, false, err
 	}
 	if msg.Type != "user" || msg.ParentToolUseID != nil || msg.IsSynthetic || msg.IsReplay {
-		return "", false, nil
+		return anthropic.Message{}, false, nil
 	}
 	var message struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	}
 	if err := json.Unmarshal(msg.Message, &message); err != nil {
-		return "", false, err
+		return anthropic.Message{}, false, err
 	}
 	if message.Role != "" && message.Role != "user" {
-		return "", false, nil
+		return anthropic.Message{}, false, nil
 	}
-	text, ok, err := promptTextFromSDKContent(message.Content)
+	content, ok, err := promptContentFromSDKContent(message.Content)
 	if err != nil || !ok {
-		return "", ok, err
+		return anthropic.Message{}, ok, err
 	}
-	return text, true, nil
+	return anthropic.Message{Role: "user", Content: content}, true, nil
 }
 
-func promptTextFromSDKContent(content json.RawMessage) (string, bool, error) {
+func promptContentFromSDKContent(content json.RawMessage) ([]anthropic.ContentBlock, bool, error) {
 	var text string
 	if err := json.Unmarshal(content, &text); err == nil {
-		return text, true, nil
+		return []anthropic.ContentBlock{{Type: "text", Text: text}}, true, nil
 	}
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
+	var blocks []anthropic.ContentBlock
 	if err := json.Unmarshal(content, &blocks); err != nil {
-		return "", false, err
+		return nil, false, err
 	}
-	parts := []string{}
+	filtered := []anthropic.ContentBlock{}
 	for _, block := range blocks {
+		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
+			filtered = append(filtered, block)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, false, nil
+	}
+	return filtered, true, nil
+}
+
+func promptTextFromAnthropicContent(content []anthropic.ContentBlock) string {
+	parts := []string{}
+	for _, block := range content {
 		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
 			parts = append(parts, strings.TrimSpace(block.Text))
 		}
 	}
-	if len(parts) == 0 {
-		return "", false, nil
-	}
-	return strings.Join(parts, "\n\n"), true, nil
+	return strings.Join(parts, "\n\n")
 }
 
 func mergePromptWithStdin(prompt string, stdin string) string {
@@ -51530,6 +51598,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.BoolVar(&printMode, "print", false, "run a one-shot prompt")
 	flags.BoolVar(&compactPromptMode, "compact", false, "run a compact one-shot prompt")
 	flags.BoolVar(&base.NoSessionPersistence, "no-session-persistence", base.NoSessionPersistence, "disable session persistence for prompt mode")
+	flags.BoolVar(&base.ReplayUserMessages, "replay-user-messages", base.ReplayUserMessages, "replay stream-json user messages to prompt output")
 	flags.BoolVar(&jsonOutput, "json", false, "alias for --output-format json for local commands")
 	flags.StringVar(&outputFormat, "output-format", "", "text or json output for local commands")
 	flags.StringVar(&outputFormat, "o", "", "text or json output for local commands")
@@ -51586,6 +51655,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		if base.InputFormat != "" {
 			rest = append(rest, "--input-format", base.InputFormat)
 		}
+		if base.ReplayUserMessages {
+			rest = append(rest, "--replay-user-messages")
+		}
 		return base, "prompt", rest, nil
 	}
 	if len(rest) == 0 {
@@ -51603,6 +51675,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 				Value:   base.InputFormat,
 				Message: "--input-format is only supported with prompt mode",
 				Usage:   "codog -p --input-format text|stream-json \"<prompt>\"",
+			}
+		}
+		if base.ReplayUserMessages {
+			return base, "", nil, invalidFlagValueError{
+				Flag:    "--replay-user-messages",
+				Value:   "",
+				Message: "--replay-user-messages is only supported with prompt mode",
+				Usage:   "codog -p --input-format stream-json --output-format stream-json --replay-user-messages",
 			}
 		}
 		return base, "", nil, nil
@@ -51624,6 +51704,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 			Usage:   "codog -p --input-format text|stream-json \"<prompt>\"",
 		}
 	}
+	if base.ReplayUserMessages && !strings.EqualFold(command, "prompt") {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--replay-user-messages",
+			Value:   command,
+			Message: "--replay-user-messages is only supported with prompt mode",
+			Usage:   "codog -p --input-format stream-json --output-format stream-json --replay-user-messages",
+		}
+	}
 	outputFormat = resolveGlobalOutputFormat(outputFormat, jsonOutput)
 	base.OutputFormatSubcommandExplicit = argsHaveOutputFormat(rest)
 	if outputFormat != "" && commandAcceptsGlobalOutputFormat(command) && !base.OutputFormatSubcommandExplicit {
@@ -51640,6 +51728,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	rest = injectGlobalOutputFormat(command, rest, outputFormat)
 	if strings.EqualFold(command, "prompt") && base.InputFormat != "" && !argsHaveInputFormat(rest) {
 		rest = append(rest, "--input-format", base.InputFormat)
+	}
+	if strings.EqualFold(command, "prompt") && base.ReplayUserMessages && !argsHaveReplayUserMessages(rest) {
+		rest = append(rest, "--replay-user-messages")
 	}
 	return base, command, rest, nil
 }
@@ -51999,6 +52090,15 @@ func argsHaveOutputFormat(args []string) bool {
 func argsHaveInputFormat(args []string) bool {
 	for _, arg := range args {
 		if arg == "--input-format" || strings.HasPrefix(arg, "--input-format=") {
+			return true
+		}
+	}
+	return false
+}
+
+func argsHaveReplayUserMessages(args []string) bool {
+	for _, arg := range args {
+		if arg == "--replay-user-messages" {
 			return true
 		}
 	}
@@ -53572,6 +53672,7 @@ Flags:
   --allow-broad-cwd
   --no-session-persistence
   --input-format text|stream-json
+  --replay-user-messages
   --allowed-tools TOOL[,TOOL]
   --disallowed-tools TOOL[,TOOL]
   --tools TOOL[,TOOL]
