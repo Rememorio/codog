@@ -28757,14 +28757,14 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 	if !strings.HasPrefix(name, "/") {
 		return fmt.Errorf("resume slash command must start with /: %q", command)
 	}
-	if _, ok := slash.Lookup(name); !ok {
-		if mapped := directSlashCommandName(name); mapped == "" {
-			if handled, err := a.runDirectCustomSlash(ctx, command, args, overrides, format); handled {
-				return err
-			}
-			return renderUnknownSlashCommand(a.Out, command, format, a.customSlashCompletionCandidates())
+	mapped := directSlashCommandName(name)
+	if mapped == "" {
+		if handled, err := a.runDirectCustomSlash(ctx, command, args, overrides, format); handled {
+			return err
 		}
+		return renderUnknownSlashCommand(a.Out, command, format, a.customSlashCompletionCandidates())
 	}
+	name = resumedSlashCanonicalName(mapped)
 	resumed := overrides
 	if strings.TrimSpace(resumed.Resume) == "" {
 		resumed.Resume = "latest"
@@ -29236,6 +29236,14 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 		withSession := append([]string{args[0], overrides.Resume}, args[1:]...)
 		return a.SessionsCommand(withSession)
 	}
+}
+
+func resumedSlashCanonicalName(mapped string) string {
+	mapped = strings.TrimSpace(mapped)
+	if mapped == "" {
+		return ""
+	}
+	return "/" + strings.ToLower(mapped)
 }
 
 func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOverrides, format string) error {

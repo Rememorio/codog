@@ -3333,6 +3333,11 @@ func TestDirectSlashCommandNameCanonicalizesAliases(t *testing.T) {
 	require.Equal(t, "bridge", directSlashCommandName("/rc"))
 	require.Equal(t, "terminal-setup", directSlashCommandName("/terminalSetup"))
 	require.Equal(t, "pr-comments", directSlashCommandName("/pr_comments"))
+
+	require.Equal(t, "/desktop", resumedSlashCanonicalName(directSlashCommandName("/app")))
+	require.Equal(t, "/bridge", resumedSlashCanonicalName(directSlashCommandName("/remote-control")))
+	require.Equal(t, "/terminal-setup", resumedSlashCanonicalName(directSlashCommandName("/terminalSetup")))
+	require.Equal(t, "/pr-comments", resumedSlashCanonicalName(directSlashCommandName("/pr_comments")))
 }
 
 func TestModelsCommandActionAliases(t *testing.T) {
