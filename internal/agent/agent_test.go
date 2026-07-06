@@ -21704,6 +21704,70 @@ func actionCommandsFromMCPReport(actions []mcpauthdiag.NextAction) []string {
 	return commands
 }
 
+func TestMCPCommandActionAliases(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command:  os.Args[0],
+		Args:     []string{"-test.run=TestAgentMCPHelperProcess"},
+		Env:      []string{"CODOG_AGENT_MCP_HELPER=1"},
+		Required: true,
+	}
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{"test": server}},
+		Out:    &out,
+		Err:    io.Discard,
+	}
+
+	require.NoError(t, app.MCP(context.Background(), []string{"ls", "--json"}))
+	var listReport mcpListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &listReport))
+	require.Equal(t, "mcp", listReport.Kind)
+	require.Equal(t, "list", listReport.Action)
+	require.Equal(t, "test", listReport.Servers[0].Name)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"inspect", "test", "--json"}))
+	var showReport mcpShowReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &showReport))
+	require.Equal(t, "mcp", showReport.Kind)
+	require.Equal(t, "show", showReport.Action)
+	require.True(t, showReport.Found)
+	require.NotNil(t, showReport.Server)
+	require.Equal(t, "test", showReport.Server.Name)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"tool", "test"}))
+	require.Contains(t, out.String(), `"name": "echo"`)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"invoke", "test", "echo", `{"text":"hi"}`}))
+	require.Contains(t, out.String(), `"text": "hi"`)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"template", "test"}))
+	require.Contains(t, out.String(), "codog://notes/{name}")
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"get-resource", "test", "codog://note"}))
+	require.Contains(t, out.String(), "note body")
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"get-prompt", "test", "review", `{"topic":"aliases"}`}))
+	require.Contains(t, out.String(), "Review hooks")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/mcp tool test", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), `"name": "echo"`)
+	out.Reset()
+
+	require.ErrorContains(t, app.MCP(context.Background(), []string{"tool", "missing", "--json"}), "server_not_found")
+	var errorReport mcpRemoteActionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &errorReport))
+	require.Equal(t, "tools", errorReport.Action)
+	require.Equal(t, "tool missing", errorReport.RequestedAction)
+	require.Equal(t, "codog mcp tools [SERVER]", errorReport.Usage.DirectCLI)
+}
+
 func TestMCPAuthRefreshCommand(t *testing.T) {
 	server := oauthRefreshTestServer(t)
 	defer server.Close()
@@ -22113,6 +22177,15 @@ func TestMCPDegradesOnMalformedConfigFile(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "degraded", report.Status)
+	require.NotNil(t, report.ConfigLoadError)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "mcp", "ls"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "list", report.Action)
 	require.Equal(t, "degraded", report.Status)
 	require.NotNil(t, report.ConfigLoadError)
 

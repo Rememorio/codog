@@ -1446,9 +1446,13 @@ func renderMCPWithConfigLoadError(out io.Writer, command string, rest []string, 
 		renderMCPUsageReport(out, format, buildMCPUsageReport(mcpHelpUnexpected(cleanArgs)))
 		return nil
 	}
+	requestedArgs := append([]string(nil), cleanArgs...)
+	if len(cleanArgs) > 0 && !strings.HasPrefix(cleanArgs[0], "-") {
+		cleanArgs[0] = normalizeMCPAction(cleanArgs[0])
+	}
 	if len(cleanArgs) == 0 || cleanArgs[0] == "list" {
 		if len(cleanArgs) > 1 {
-			return renderMCPUnsupportedAction(out, format, strings.Join(cleanArgs, " "), "list accepts no filter argument; use `codog mcp list`")
+			return renderMCPUnsupportedAction(out, format, strings.Join(requestedArgs, " "), "list accepts no filter argument; use `codog mcp list`")
 		}
 		renderMCPListReport(out, format, buildMCPListReport(nil, buildMCPValidation(nil), strings.TrimSpace(loadErr.Error()), buildCLIErrorReport(loadErr).ErrorKind))
 		return nil
@@ -45803,13 +45807,17 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		return err
 	}
 	args = cleanArgs
+	requestedArgs := append([]string(nil), args...)
 	if hasMCPHelpArg(args) {
 		renderMCPUsageReport(a.Out, format, buildMCPUsageReport(mcpHelpUnexpected(args)))
 		return nil
 	}
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		args[0] = normalizeMCPAction(args[0])
+	}
 	if len(args) == 0 || args[0] == "list" {
 		if len(args) > 1 {
-			return renderMCPUnsupportedAction(a.Out, format, strings.Join(args, " "), "list accepts no filter argument; use `codog mcp list`")
+			return renderMCPUnsupportedAction(a.Out, format, strings.Join(requestedArgs, " "), "list accepts no filter argument; use `codog mcp list`")
 		}
 		validation := buildMCPValidation(a.Config.MCPServers)
 		if len(a.Config.MCPServers) == 0 {
@@ -45833,8 +45841,8 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		return a.mcpRemove(args[1:], format)
 	}
 	if !mcpRemoteAction(args[0]) {
-		verb := strings.TrimSpace(args[0])
-		return renderMCPUnsupportedAction(a.Out, format, strings.Join(args, " "), fmt.Sprintf("`%s` is not a supported MCP sub-action; run `codog mcp help`.", verb))
+		verb := strings.TrimSpace(firstNonEmpty(firstArg(requestedArgs), args[0]))
+		return renderMCPUnsupportedAction(a.Out, format, strings.Join(requestedArgs, " "), fmt.Sprintf("`%s` is not a supported MCP sub-action; run `codog mcp help`.", verb))
 	}
 	if len(a.Config.MCPServers) == 0 {
 		return renderMCPRemoteActionError(a.Out, format, mcpRemoteActionErrorReport{
@@ -45843,7 +45851,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 			OK:              false,
 			Status:          "error",
 			ErrorKind:       "no_servers_configured",
-			RequestedAction: strings.Join(args, " "),
+			RequestedAction: strings.Join(requestedArgs, " "),
 			Message:         "No MCP servers are configured.",
 			Hint:            "Add one with `codog mcp add NAME COMMAND [ARG...]` or run `codog mcp list`.",
 			Usage:           mcpRemoteUsage(args[0]),
@@ -45870,7 +45878,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 				OK:               false,
 				Status:           "error",
 				ErrorKind:        "server_not_found",
-				RequestedAction:  strings.Join(args, " "),
+				RequestedAction:  strings.Join(requestedArgs, " "),
 				ServerName:       serverName,
 				AvailableServers: sortedMCPServerNames(a.Config.MCPServers),
 				Message:          fmt.Sprintf("MCP server %q is not configured.", serverName),
@@ -45896,7 +45904,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		return nil
 	}
 	if len(args) < 2 {
-		return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(args, " "), "server"))
+		return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(requestedArgs, " "), "server"))
 	}
 	serverName := args[1]
 	server, ok := a.Config.MCPServers[serverName]
@@ -45907,7 +45915,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 			OK:               false,
 			Status:           "error",
 			ErrorKind:        "server_not_found",
-			RequestedAction:  strings.Join(args, " "),
+			RequestedAction:  strings.Join(requestedArgs, " "),
 			ServerName:       serverName,
 			AvailableServers: sortedMCPServerNames(a.Config.MCPServers),
 			Message:          fmt.Sprintf("MCP server %q is not configured.", serverName),
@@ -45917,30 +45925,30 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	}
 	var payload any
 	switch args[0] {
-	case "tools", "list-tools":
+	case "tools":
 		payload = mcp.ListTools(ctx, serverName, server)
 	case "call":
 		if len(args) < 3 {
-			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(args, " "), "tool"))
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(requestedArgs, " "), "tool"))
 		}
 		if len(args) < 4 {
-			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(args, " "), "json"))
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(requestedArgs, " "), "json"))
 		}
 		payload = mcp.CallTool(ctx, serverName, server, args[2], json.RawMessage(args[3]))
 	case "resources":
 		payload = mcp.ListResources(ctx, serverName, server)
-	case "resource-templates", "resources-templates":
+	case "resource-templates":
 		payload = mcp.ListResourceTemplates(ctx, serverName, server)
-	case "read", "read-resource":
+	case "read":
 		if len(args) < 3 {
-			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(args, " "), "uri"))
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(requestedArgs, " "), "uri"))
 		}
 		payload = mcp.ReadResource(ctx, serverName, server, args[2])
 	case "prompts":
 		payload = mcp.ListPrompts(ctx, serverName, server)
-	case "prompt", "get-prompt":
+	case "prompt":
 		if len(args) < 3 {
-			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(args, " "), "prompt"))
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(requestedArgs, " "), "prompt"))
 		}
 		var arguments json.RawMessage
 		if len(args) > 3 {
@@ -45955,9 +45963,51 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	return nil
 }
 
+func firstArg(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
+}
+
+func normalizeMCPAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "list", "ls":
+		return "list"
+	case "serve":
+		return "serve"
+	case "self", "self-test", "doctor":
+		return "self"
+	case "show", "info", "describe", "inspect", "get":
+		return "show"
+	case "add":
+		return "add"
+	case "remove", "delete", "rm", "del":
+		return "remove"
+	case "tools", "tool", "list-tools":
+		return "tools"
+	case "auth", "oauth":
+		return "auth"
+	case "call", "invoke", "run":
+		return "call"
+	case "resources", "resource":
+		return "resources"
+	case "resource-templates", "resources-templates", "resource-template", "resources-template", "templates", "template":
+		return "resource-templates"
+	case "read", "read-resource", "get-resource":
+		return "read"
+	case "prompts", "list-prompts":
+		return "prompts"
+	case "prompt", "get-prompt", "render-prompt":
+		return "prompt"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
+}
+
 func mcpRemoteAction(action string) bool {
-	switch action {
-	case "tools", "list-tools", "auth", "call", "resources", "resource-templates", "resources-templates", "read", "read-resource", "prompts", "prompt", "get-prompt":
+	switch normalizeMCPAction(action) {
+	case "tools", "auth", "call", "resources", "resource-templates", "read", "prompts", "prompt":
 		return true
 	default:
 		return false
@@ -46005,7 +46055,7 @@ func parseMCPAuthArgs(args []string) (mcpAuthRequest, error) {
 }
 
 func mcpAggregateRemoteAction(action string) bool {
-	switch canonicalMCPAggregateAction(action) {
+	switch normalizeMCPAction(action) {
 	case "tools", "auth", "resources", "resource-templates", "prompts":
 		return true
 	default:
@@ -46014,14 +46064,7 @@ func mcpAggregateRemoteAction(action string) bool {
 }
 
 func canonicalMCPAggregateAction(action string) string {
-	switch strings.TrimSpace(action) {
-	case "list-tools":
-		return "tools"
-	case "resources-templates":
-		return "resource-templates"
-	default:
-		return strings.TrimSpace(action)
-	}
+	return normalizeMCPAction(action)
 }
 
 type mcpAggregateRemoteReport struct {
@@ -46133,8 +46176,8 @@ func countMCPJSONArrayField(raw json.RawMessage, field string) int {
 }
 
 func isMCPShowAction(action string) bool {
-	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "show", "info", "describe":
+	switch normalizeMCPAction(action) {
+	case "show":
 		return true
 	default:
 		return false
@@ -46296,10 +46339,10 @@ func mcpRemoteArgumentLabel(argument string) string {
 }
 
 func mcpRemoteUsage(action string) mcpUsageBlock {
-	action = strings.TrimSpace(action)
+	action = normalizeMCPAction(action)
 	direct := "codog mcp " + action + " SERVER"
 	switch action {
-	case "tools", "list-tools":
+	case "tools":
 		direct = "codog mcp tools [SERVER]"
 	case "auth":
 		direct = "codog mcp auth [--refresh|refresh] [SERVER]"
@@ -46307,13 +46350,13 @@ func mcpRemoteUsage(action string) mcpUsageBlock {
 		direct = "codog mcp call SERVER TOOL JSON"
 	case "resources":
 		direct = "codog mcp resources [SERVER]"
-	case "resource-templates", "resources-templates":
+	case "resource-templates":
 		direct = "codog mcp resource-templates [SERVER]"
-	case "read", "read-resource":
+	case "read":
 		direct = "codog mcp read SERVER URI"
 	case "prompts":
 		direct = "codog mcp prompts [SERVER]"
-	case "prompt", "get-prompt":
+	case "prompt":
 		direct = "codog mcp prompt SERVER NAME [JSON]"
 	}
 	return mcpUsageBlock{
@@ -46355,8 +46398,8 @@ func buildMCPUnsupportedActionReport(requestedAction string, hint string) mcpUns
 		RequestedAction: strings.TrimSpace(requestedAction),
 		Hint:            strings.TrimSpace(hint),
 		Usage: mcpUsageBlock{
-			SlashCommand: "/mcp [list|show SERVER|tools [SERVER]|auth [--refresh|refresh] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
-			DirectCLI:    "codog mcp [list|show SERVER|tools [SERVER]|auth [--refresh|refresh] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
+			SlashCommand: "/mcp [list|ls|show SERVER|tools [SERVER]|auth [--refresh|refresh] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
+			DirectCLI:    "codog mcp [list|ls|show SERVER|tools [SERVER]|auth [--refresh|refresh] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
 			Sources:      []string{".codog.json", ".codog.local.json", "user config"},
 		},
 	}
@@ -46389,7 +46432,7 @@ func buildMCPUsageReport(unexpected string) mcpUsageReport {
 		ok = false
 		value := "unknown_mcp_action"
 		errorKind = &value
-		hintValue := "Use: list, show SERVER, tools [SERVER], auth [--refresh|refresh] [SERVER], resources [SERVER], resource-templates [SERVER], prompts [SERVER], or help"
+		hintValue := "Use: list|ls, show SERVER, tools [SERVER], auth [--refresh|refresh] [SERVER], resources [SERVER], resource-templates [SERVER], prompts [SERVER], or help"
 		hint = &hintValue
 		unexpectedValue = &unexpected
 	}
@@ -46401,8 +46444,8 @@ func buildMCPUsageReport(unexpected string) mcpUsageReport {
 		ErrorKind: errorKind,
 		Hint:      hint,
 		Usage: mcpUsageBlock{
-			SlashCommand: "/mcp [list|show SERVER|tools [SERVER]|auth [--refresh|refresh] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
-			DirectCLI:    "codog mcp [list|show SERVER|tools [SERVER]|auth [--refresh|refresh] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
+			SlashCommand: "/mcp [list|ls|show SERVER|tools [SERVER]|auth [--refresh|refresh] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
+			DirectCLI:    "codog mcp [list|ls|show SERVER|tools [SERVER]|auth [--refresh|refresh] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
 			Sources:      []string{".codog.json", ".codog.local.json", "user config"},
 		},
 		Unexpected: unexpectedValue,
@@ -53666,8 +53709,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"mcp",
 			"mcp",
-			"codog mcp [list|serve|self|show|info|describe|add|remove|tools [SERVER]|auth [--refresh|refresh] [SERVER]|call|resources [SERVER]|resource-templates [SERVER]|read|prompts [SERVER]|prompt]",
-			"MCP\n\nUsage:\n  codog mcp list\n  codog mcp show|info|describe SERVER\n  codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--tool-call-timeout-ms N] [--required]\n  codog mcp add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required]\n  codog mcp tools|resources|resource-templates|prompts [SERVER]\n  codog mcp auth [--refresh|refresh] [SERVER]\n  codog mcp call SERVER TOOL JSON\n  codog mcp read SERVER URI\n  codog mcp prompt SERVER NAME [JSON]\n\nServes Codog tools over stdio MCP and manages configured stdio and HTTP MCP clients, tools, resources, prompts, and OAuth readiness. Discovery commands without SERVER aggregate all configured servers. `info` and `describe` are aliases for `show`.\n",
+			"codog mcp [list|ls|serve|self|show|info|describe|inspect|add|remove|tools [SERVER]|auth [--refresh|refresh] [SERVER]|call|invoke|resources [SERVER]|resource-templates [SERVER]|read|prompts [SERVER]|prompt]",
+			"MCP\n\nUsage:\n  codog mcp list|ls\n  codog mcp show|info|describe|inspect SERVER\n  codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--tool-call-timeout-ms N] [--required]\n  codog mcp add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required]\n  codog mcp tools|tool|resources|resource|resource-templates|templates|prompts [SERVER]\n  codog mcp auth|oauth [--refresh|refresh] [SERVER]\n  codog mcp call|invoke SERVER TOOL JSON\n  codog mcp read|read-resource SERVER URI\n  codog mcp prompt|get-prompt SERVER NAME [JSON]\n\nServes Codog tools over stdio MCP and manages configured stdio and HTTP MCP clients, tools, resources, prompts, and OAuth readiness. Discovery commands without SERVER aggregate all configured servers. Common singular forms and `info`, `describe`, and `inspect` are normalized to the canonical actions.\n",
 			[]string{"servers", "tools", "resources", "prompts", "result"},
 			[]string{"ok", "error"},
 			true,
