@@ -184,10 +184,33 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, policySafety.Output, `"signature_valid":true`)
 	require.Contains(t, policySafety.Output, `"download_verified":true`)
 	require.Contains(t, policySafety.Output, `"rolled_back":true`)
+
+	policyApproval := findScenario(t, report, "policy_approval_roundtrip")
+	require.True(t, policyApproval.OK)
+	require.Equal(t, "policy-safety", policyApproval.Category)
+	require.Equal(t, 7, policyApproval.ToolCalls)
+	require.Equal(t, 7, policyApproval.RequestCount)
+	require.Equal(t, []string{
+		"policy_evaluate",
+		"policy_evaluate",
+		"approval_token",
+		"approval_token",
+		"approval_token",
+		"approval_token",
+		"approval_token",
+	}, policyApproval.ToolUses)
+	require.Equal(t, "policy approval harness ok", policyApproval.FinalMessage)
+	require.Contains(t, policyApproval.Output, `"kind":"policy_approval"`)
+	require.Contains(t, policyApproval.Output, `"escalation_action":"escalate"`)
+	require.Contains(t, policyApproval.Output, `"delegated":true`)
+	require.Contains(t, policyApproval.Output, `"consumed":"approval_consumed"`)
+	require.Contains(t, policyApproval.Output, `"replay_error":"approval_already_consumed"`)
+	require.Contains(t, policyApproval.Output, `"last_audit_error":"approval_already_consumed"`)
+
 	policySafetyCategory := findCategory(t, report, "policy-safety")
 	require.True(t, policySafetyCategory.OK)
-	require.Equal(t, 1, policySafetyCategory.Total)
-	require.ElementsMatch(t, []string{"policy_update_sandbox_roundtrip"}, policySafetyCategory.Scenarios)
+	require.Equal(t, 2, policySafetyCategory.Total)
+	require.ElementsMatch(t, []string{"policy_update_sandbox_roundtrip", "policy_approval_roundtrip"}, policySafetyCategory.Scenarios)
 
 	notebook := findScenario(t, report, "notebook_read_edit_roundtrip")
 	require.True(t, notebook.OK)
@@ -722,6 +745,13 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Contains(t, policySafety.ParityRefs, "Enterprise policy")
 	require.Contains(t, policySafety.ParityRefs, "Signed updater")
 	require.Contains(t, policySafety.ParityRefs, "Sandbox capability reporting")
+
+	policyApproval := findManifestScenario(t, manifest, "policy_approval_roundtrip")
+	require.Equal(t, "policy-safety", policyApproval.Category)
+	require.Contains(t, policyApproval.ParityRefs, "Policy evaluation")
+	require.Contains(t, policyApproval.ParityRefs, "Approval tokens")
+	require.Contains(t, policyApproval.ParityRefs, "Delegation audit")
+	require.Contains(t, policyApproval.ParityRefs, "Replay denial")
 
 	notebook := findManifestScenario(t, manifest, "notebook_read_edit_roundtrip")
 	require.Equal(t, "notebook", notebook.Category)

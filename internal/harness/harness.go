@@ -195,6 +195,7 @@ var scenarioOrder = []string{
 	"bash_permission_prompt_denied",
 	"sandbox_bypass_status_roundtrip",
 	"policy_update_sandbox_roundtrip",
+	"policy_approval_roundtrip",
 	"notebook_read_edit_roundtrip",
 	"web_access_roundtrip",
 	"web_access_limits_roundtrip",
@@ -701,6 +702,7 @@ func Run(ctx context.Context) (Report, error) {
 		},
 		sandboxBypassStatusScenario(),
 		policyUpdateSandboxScenario(),
+		policyApprovalScenario(),
 		notebookReadEditScenario(),
 		webAccessScenario(),
 		webAccessLimitsScenario(),
@@ -1140,6 +1142,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "file tools", RequiredRefs: []string{"File tools", "Edit tool", "Grep chunk assembly", "Glob tool", "MultiEdit tool", "ApplyPatch tool"}},
 	{Capability: "bash and shell safety", RequiredRefs: []string{"Bash tool", "BashOutput tool", "KillBash tool", "Permission prompts", "Output truncation"}},
 	{Capability: "permissions and sandbox", RequiredRefs: []string{"Permission enforcement", "Workspace-write permissions", "Sandbox", "Permission safety"}},
+	{Capability: "policy and approval control plane", RequiredRefs: []string{"Policy evaluation", "Approval tokens", "Delegation audit", "Replay denial"}},
 	{Capability: "sessions and resume", RequiredRefs: []string{"Session JSONL", "Resume", "Session context management"}},
 	{Capability: "slash commands and custom workflows", RequiredRefs: []string{"Slash commands", "Skills", "Templates", "Project workflow surfaces"}},
 	{Capability: "hooks", RequiredRefs: []string{"Hooks", "PreToolUse", "PostToolUse hooks", "UserPromptSubmit", "Stop"}},
@@ -1461,6 +1464,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "policy-safety",
 		Description: "Evaluates enterprise policy, records an audit event, verifies a signed updater manifest, and resolves sandbox capability status.",
 		ParityRefs:  []string{"Enterprise policy", "Audit events", "Signed updater", "Sandbox capability reporting"},
+	},
+	"policy_approval_roundtrip": {
+		Category:    "policy-safety",
+		Description: "Evaluates lane policy actions and exercises approval-token grant, verification, consumption, replay denial, and ledger listing.",
+		ParityRefs:  []string{"Policy evaluation", "Approval tokens", "Delegation audit", "Replay denial", "Tool result roundtrip"},
 	},
 	"notebook_read_edit_roundtrip": {
 		Category:    "notebook",
@@ -3327,6 +3335,242 @@ func policyUpdateSandboxScenario() scenario {
 				FinalMessage: "policy update sandbox harness ok",
 				RequestCount: 5,
 				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+func policyApprovalScenario() scenario {
+	return scenario{
+		name: "policy_approval_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
+
+			staleOut, err := registry.Execute(ctx, "PolicyEvaluateTool", json.RawMessage(`{
+				"lane_id": "lane-policy",
+				"green_level": 3,
+				"green_contract_satisfied": true,
+				"review_status": "approved",
+				"diff_scope": "scoped",
+				"branch_status": "stale",
+				"branch_behind": 2,
+				"verification_blocked": true,
+				"completed": true
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var staleEval struct {
+				Kind    string `json:"kind"`
+				Actions []struct {
+					Kind             string   `json:"kind"`
+					RecoveryScenario string   `json:"recovery_scenario"`
+					Commands         []string `json:"commands"`
+				} `json:"actions"`
+				Events []struct {
+					RuleID string `json:"rule_id"`
+					Kind   string `json:"kind"`
+					Action string `json:"action"`
+				} `json:"events"`
+			}
+			if err := json.Unmarshal([]byte(staleOut), &staleEval); err != nil {
+				return localScenarioResult{}, err
+			}
+			if staleEval.Kind != "policy_evaluation" || len(staleEval.Actions) != 3 || staleEval.Actions[0].Kind != "merge_forward" || staleEval.Actions[0].RecoveryScenario != "stale_branch" || !slices.Contains(staleEval.Actions[0].Commands, "branch_freshness") || staleEval.Actions[1].Kind != "closeout_lane" || staleEval.Actions[2].Kind != "cleanup_session" {
+				return localScenarioResult{}, fmt.Errorf("unexpected stale policy evaluation: %s", staleOut)
+			}
+			if len(staleEval.Events) != 3 || staleEval.Events[0].RuleID != "stale-branch-merge-forward" || staleEval.Events[1].RuleID != "lane-completed-closeout" {
+				return localScenarioResult{}, fmt.Errorf("unexpected stale policy events: %s", staleOut)
+			}
+
+			escalateOut, err := registry.Execute(ctx, "policy_evaluate", json.RawMessage(`{
+				"lane_id": "lane-startup",
+				"blocker": "startup",
+				"retry_count": 1,
+				"retry_limit": 1
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var escalateEval struct {
+				Actions []struct {
+					Kind string `json:"kind"`
+				} `json:"actions"`
+				Events []struct {
+					Kind   string `json:"kind"`
+					Action string `json:"action"`
+				} `json:"events"`
+			}
+			if err := json.Unmarshal([]byte(escalateOut), &escalateEval); err != nil {
+				return localScenarioResult{}, err
+			}
+			if len(escalateEval.Actions) != 1 || escalateEval.Actions[0].Kind != "escalate" || len(escalateEval.Events) != 1 || escalateEval.Events[0].Kind != "escalate" {
+				return localScenarioResult{}, fmt.Errorf("unexpected escalation policy evaluation: %s", escalateOut)
+			}
+
+			scope := `"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"}`
+			grantOut, err := registry.Execute(ctx, "ApprovalTokenTool", json.RawMessage(`{
+				"action": "grant",
+				"token": "tok-main",
+				`+scope+`,
+				"approving_actor": "owner",
+				"approved_executor": "release-bot",
+				"max_uses": 1,
+				"delegation_chain": [{"actor":"owner","session_id":"session-owner","reason":"owner approval"}]
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var grant struct {
+				Kind   string `json:"kind"`
+				Action string `json:"action"`
+				Status string `json:"status"`
+				Grant  struct {
+					Token            string `json:"token"`
+					Status           string `json:"status"`
+					ApprovingActor   string `json:"approving_actor"`
+					ApprovedExecutor string `json:"approved_executor"`
+					MaxUses          int    `json:"max_uses"`
+				} `json:"grant"`
+			}
+			if err := json.Unmarshal([]byte(grantOut), &grant); err != nil {
+				return localScenarioResult{}, err
+			}
+			if grant.Kind != "approval_token" || grant.Action != "grant" || grant.Status != "ok" || grant.Grant.Token != "tok-main" || grant.Grant.Status != "approval_granted" || grant.Grant.ApprovingActor != "owner" || grant.Grant.ApprovedExecutor != "release-bot" || grant.Grant.MaxUses != 1 {
+				return localScenarioResult{}, fmt.Errorf("unexpected approval grant output: %s", grantOut)
+			}
+
+			verifyOut, err := registry.Execute(ctx, "approval_token", json.RawMessage(`{
+				"action": "verify",
+				"token": "tok-main",
+				`+scope+`,
+				"executing_actor": "release-bot"
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var verify struct {
+				Status string `json:"status"`
+				Audit  struct {
+					Kind               string `json:"kind"`
+					Token              string `json:"token"`
+					Status             string `json:"status"`
+					DelegatedExecution bool   `json:"delegated_execution"`
+					DelegationChain    []struct {
+						Actor string `json:"actor"`
+					} `json:"delegation_chain"`
+				} `json:"audit"`
+			}
+			if err := json.Unmarshal([]byte(verifyOut), &verify); err != nil {
+				return localScenarioResult{}, err
+			}
+			if verify.Status != "ok" || verify.Audit.Kind != "approval_token_audit" || verify.Audit.Token != "tok-main" || verify.Audit.Status != "approval_granted" || !verify.Audit.DelegatedExecution || len(verify.Audit.DelegationChain) != 2 || verify.Audit.DelegationChain[1].Actor != "release-bot" {
+				return localScenarioResult{}, fmt.Errorf("unexpected approval verify output: %s", verifyOut)
+			}
+
+			consumeOut, err := registry.Execute(ctx, "approval_token", json.RawMessage(`{
+				"action": "consume",
+				"token": "tok-main",
+				`+scope+`,
+				"executing_actor": "release-bot"
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var consume struct {
+				Status string `json:"status"`
+				Audit  struct {
+					Status string `json:"status"`
+					Uses   int    `json:"uses"`
+				} `json:"audit"`
+			}
+			if err := json.Unmarshal([]byte(consumeOut), &consume); err != nil {
+				return localScenarioResult{}, err
+			}
+			if consume.Status != "ok" || consume.Audit.Status != "approval_consumed" || consume.Audit.Uses != 1 {
+				return localScenarioResult{}, fmt.Errorf("unexpected approval consume output: %s", consumeOut)
+			}
+
+			replayOut, err := registry.Execute(ctx, "approval_token", json.RawMessage(`{
+				"action": "consume",
+				"token": "tok-main",
+				`+scope+`,
+				"executing_actor": "release-bot"
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var replay struct {
+				Status    string `json:"status"`
+				ErrorKind string `json:"error_kind"`
+			}
+			if err := json.Unmarshal([]byte(replayOut), &replay); err != nil {
+				return localScenarioResult{}, err
+			}
+			if replay.Status != "denied" || replay.ErrorKind != "approval_already_consumed" {
+				return localScenarioResult{}, fmt.Errorf("unexpected approval replay output: %s", replayOut)
+			}
+
+			listOut, err := registry.Execute(ctx, "approval_token", json.RawMessage(`{"action":"list"}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var list struct {
+				Status string `json:"status"`
+				Ledger struct {
+					Kind   string `json:"kind"`
+					Grants []struct {
+						Token              string `json:"token"`
+						Status             string `json:"status"`
+						Uses               int    `json:"uses"`
+						LastAuditErrorKind string `json:"last_audit_error_kind"`
+					} `json:"grants"`
+				} `json:"ledger"`
+			}
+			if err := json.Unmarshal([]byte(listOut), &list); err != nil {
+				return localScenarioResult{}, err
+			}
+			if list.Status != "ok" || list.Ledger.Kind != "approval_token_ledger" || len(list.Ledger.Grants) != 1 || list.Ledger.Grants[0].Token != "tok-main" || list.Ledger.Grants[0].Status != "approval_consumed" || list.Ledger.Grants[0].Uses != 1 || list.Ledger.Grants[0].LastAuditErrorKind != "approval_already_consumed" {
+				return localScenarioResult{}, fmt.Errorf("unexpected approval token ledger output: %s", listOut)
+			}
+
+			report := map[string]any{
+				"kind": "policy_approval",
+				"policy": map[string]any{
+					"stale_actions":     []string{staleEval.Actions[0].Kind, staleEval.Actions[1].Kind, staleEval.Actions[2].Kind},
+					"escalation_action": escalateEval.Actions[0].Kind,
+				},
+				"approval": map[string]any{
+					"token":                grant.Grant.Token,
+					"verified":             verify.Audit.Status,
+					"delegated":            verify.Audit.DelegatedExecution,
+					"consumed":             consume.Audit.Status,
+					"replay_error":         replay.ErrorKind,
+					"ledger_status":        list.Ledger.Grants[0].Status,
+					"last_audit_error":     list.Ledger.Grants[0].LastAuditErrorKind,
+					"delegation_hop_count": len(verify.Audit.DelegationChain),
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "policy approval harness ok",
+				RequestCount: 7,
+				MessageCount: 1,
+				ToolCalls:    7,
+				ToolUses: []string{
+					"policy_evaluate",
+					"policy_evaluate",
+					"approval_token",
+					"approval_token",
+					"approval_token",
+					"approval_token",
+					"approval_token",
+				},
 			}, nil
 		},
 	}
