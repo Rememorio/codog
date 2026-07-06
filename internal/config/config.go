@@ -1212,6 +1212,7 @@ type FlagOverrides struct {
 	AllowBroadCWD                  bool
 	AllowedTools                   []string
 	DisallowedTools                []string
+	AdditionalDirs                 []string
 	ToolNames                      []string
 	ToolNamesSet                   bool
 	NoSessionPersistence           bool
@@ -3107,6 +3108,9 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 	}
 	if len(overrides.DisallowedTools) > 0 {
 		cfg.PermissionRules.DeniedTools = append(cfg.PermissionRules.DeniedTools, overrides.DisallowedTools...)
+	}
+	if len(overrides.AdditionalDirs) > 0 {
+		cfg.AdditionalDirs = mergeStringLists(cfg.AdditionalDirs, overrides.AdditionalDirs)
 	}
 	if overrides.ToolNamesSet {
 		cfg.ToolNames = append([]string(nil), overrides.ToolNames...)

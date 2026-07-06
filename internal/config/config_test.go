@@ -2363,6 +2363,10 @@ func TestLoadAdditionalDirsConfigAndEnv(t *testing.T) {
 	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
 	require.Equal(t, []string{"one", "two"}, cfg.AdditionalDirs)
+
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath, AdditionalDirs: []string{"three", "two"}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"one", "two", "three"}, cfg.AdditionalDirs)
 }
 
 func TestLoadPermissionsAdditionalDirectoriesAlias(t *testing.T) {

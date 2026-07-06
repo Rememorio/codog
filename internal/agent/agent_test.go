@@ -19954,6 +19954,18 @@ func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
 	require.Equal(t, "repl", command)
 	require.Empty(t, rest)
 
+	overrides, command, rest, err = parseFlags([]string{"--add-dir", "../shared", "../common", "prompt", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"../shared", "../common"}, overrides.AdditionalDirs)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--add-dir=../shared,../common", "--add-dir", "../more", "repl"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"../shared", "../common", "../more"}, overrides.AdditionalDirs)
+	require.Equal(t, "repl", command)
+	require.Empty(t, rest)
+
 	overrides, command, rest, err = parseFlags([]string{"--prefill", "review this diff", "repl"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "review this diff", overrides.Prefill)

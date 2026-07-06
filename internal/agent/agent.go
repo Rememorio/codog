@@ -54368,6 +54368,7 @@ func (f optionalFloatFlag) String() string {
 
 func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides, string, []string, error) {
 	args = normalizeOptionalFromPRFlag(args)
+	args = normalizeVariadicAddDirFlag(args)
 	if missing, ok := missingToolFlagArgument(args); ok {
 		return base, "", nil, missing
 	}
@@ -54389,6 +54390,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	}
 	allowedTools := stringListFlag(base.AllowedTools)
 	disallowedTools := stringListFlag(base.DisallowedTools)
+	additionalDirs := stringListFlag(base.AdditionalDirs)
 	mcpConfigs := appendStringFlag(base.MCPConfigs)
 	toolNames := append([]string(nil), base.ToolNames...)
 	toolSelection := toolSelectionFlag{values: &toolNames, set: &base.ToolNamesSet}
@@ -54436,6 +54438,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.Var(&allowedTools, "allowedTools", "allow a tool or tool rule; repeat or comma-separate")
 	flags.Var(&disallowedTools, "disallowed-tools", "deny a tool; repeat or comma-separate")
 	flags.Var(&disallowedTools, "disallowedTools", "deny a tool; repeat or comma-separate")
+	flags.Var(&additionalDirs, "add-dir", "additional directory to allow tool access; repeat or comma-separate")
 	flags.Var(&toolSelection, "tools", "restrict tools exposed to the model; use default for all or empty string for none")
 	flags.Var(&mcpConfigs, "mcp-config", "load MCP servers from a JSON file or JSON object; repeat to merge")
 	flags.BoolVar(&base.StrictMCPConfig, "strict-mcp-config", base.StrictMCPConfig, "only use MCP servers from --mcp-config")
@@ -54453,6 +54456,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	base.JSONSchema = strings.TrimSpace(jsonSchema)
 	base.AllowedTools = []string(allowedTools)
 	base.DisallowedTools = []string(disallowedTools)
+	base.AdditionalDirs = []string(additionalDirs)
 	base.MCPConfigs = []string(mcpConfigs)
 	base.ToolNames = append([]string(nil), toolNames...)
 	if fetched, err := strconv.ParseInt(strings.TrimSpace(deepLinkLastFetch), 10, 64); err == nil && fetched > 0 {
@@ -54684,6 +54688,33 @@ func normalizeOptionalFromPRFlag(args []string) []string {
 	return normalized
 }
 
+func normalizeVariadicAddDirFlag(args []string) []string {
+	normalized := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg != "--add-dir" && arg != "-add-dir" {
+			normalized = append(normalized, arg)
+			continue
+		}
+		normalized = append(normalized, arg)
+		index++
+		if index >= len(args) || strings.HasPrefix(strings.TrimSpace(args[index]), "-") || looksLikeCommandName(args[index]) {
+			index--
+			continue
+		}
+		normalized = append(normalized, args[index])
+		for index+1 < len(args) {
+			next := strings.TrimSpace(args[index+1])
+			if next == "" || strings.HasPrefix(next, "-") || looksLikeCommandName(next) {
+				break
+			}
+			normalized = append(normalized, "--add-dir", args[index+1])
+			index++
+		}
+	}
+	return normalized
+}
+
 func looksLikeFromPRValue(value string) bool {
 	value = strings.TrimSpace(value)
 	if value == "" || strings.HasPrefix(value, "-") || looksLikeCommandName(value) {
@@ -54825,6 +54856,7 @@ func globalFlagConsumesNext(arg string) bool {
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
 		"--max-tokens", "-max-tokens", "--temperature", "-temperature",
 		"--tools", "-tools", "--mcp-config", "-mcp-config",
+		"--add-dir", "-add-dir",
 		"--attach", "-attach", "--attachment", "-attachment", "--file", "-file":
 		return true
 	default:
@@ -54858,7 +54890,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--add-dir", "-add-dir", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
@@ -56758,6 +56790,7 @@ Flags:
   --allowed-tools TOOL[,TOOL]
   --disallowed-tools TOOL[,TOOL]
   --tools TOOL[,TOOL]
+  --add-dir DIR[,DIR]
   --mcp-config PATH|JSON
   --strict-mcp-config
   --max-turns N
