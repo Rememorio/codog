@@ -222,6 +222,7 @@ var scenarioOrder = []string{
 	"context_view_roundtrip",
 	"output_style_lifecycle_roundtrip",
 	"diagnostics_status_roundtrip",
+	"statusline_cli_roundtrip",
 	"tui_prompt_completion_roundtrip",
 	"ask_user_question_roundtrip",
 	"runtime_output_tools_roundtrip",
@@ -767,6 +768,7 @@ func Run(ctx context.Context) (Report, error) {
 		contextViewScenario(),
 		outputStyleLifecycleScenario(),
 		diagnosticsStatusScenario(),
+		statuslineCLIScenario(),
 		tuiPromptCompletionScenario(),
 		askUserQuestionScenario(),
 		runtimeOutputToolsScenario(),
@@ -1187,6 +1189,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "runtime utility tools", RequiredRefs: []string{"Brief tool", "SendUserMessage tool", "StructuredOutput tool", "Sleep tool", "REPL tool"}},
 	{Capability: "setup and diagnostics", RequiredRefs: []string{"Doctor", "Status diagnostics", "Terminal setup"}},
 	{Capability: "context view and focus", RequiredRefs: []string{"Context view", "Focused paths", "Context signals"}},
+	{Capability: "statusline rendering", RequiredRefs: []string{"Statusline", "Statusline JSON", "Statusline text"}},
 }
 
 func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
@@ -1453,6 +1456,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "diagnostics",
 		Description: "Builds runtime status, doctor checks, and terminal setup reports from local configuration facts.",
 		ParityRefs:  []string{"Doctor", "Status diagnostics", "Terminal setup", "Setup diagnostics"},
+	},
+	"statusline_cli_roundtrip": {
+		Category:    "interactive-ui",
+		Description: "Runs the real statusline CLI in JSON and text modes with configured model, permissions, and fast-mode state.",
+		ParityRefs:  []string{"Statusline", "Statusline JSON", "Statusline text", "Interactive rendering"},
 	},
 	"tui_prompt_completion_roundtrip": {
 		Category:    "interactive-ui",
@@ -2754,6 +2762,105 @@ func diagnosticsStatusScenario() scenario {
 				Output:       string(data),
 				FinalMessage: "diagnostics status harness ok",
 				RequestCount: 3,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+func statuslineCLIScenario() scenario {
+	return scenario{
+		name: "statusline_cli_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, ".codog-home")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			configPath := filepath.Join(workspace, "codog-config.json")
+			configBody := map[string]any{
+				"config_home":     configHome,
+				"model":           "claude-statusline",
+				"permission_mode": "read-only",
+				"fast_mode":       true,
+			}
+			configData, err := json.Marshal(configBody)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			jsonOutput, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "statusline")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var statusline struct {
+				Kind           string `json:"kind"`
+				Line           string `json:"line"`
+				Status         string `json:"status"`
+				Source         string `json:"source"`
+				Workspace      string `json:"workspace"`
+				Model          string `json:"model"`
+				FastMode       bool   `json:"fast_mode"`
+				PermissionMode string `json:"permission_mode"`
+				SessionActive  bool   `json:"session_active"`
+				SessionCount   int    `json:"session_count"`
+				GitAvailable   bool   `json:"git_available"`
+				GitDirty       bool   `json:"git_dirty"`
+				PlanActive     bool   `json:"plan_active"`
+			}
+			if err := json.Unmarshal([]byte(jsonOutput), &statusline); err != nil {
+				return localScenarioResult{}, err
+			}
+			workspaceName := filepath.Base(workspace)
+			if statusline.Kind != "statusline" || statusline.Source != "codog" || statusline.Workspace != workspaceName {
+				return localScenarioResult{}, fmt.Errorf("unexpected statusline identity: %#v", statusline)
+			}
+			if statusline.Model != "claude-statusline" || !statusline.FastMode || statusline.PermissionMode != "read-only" {
+				return localScenarioResult{}, fmt.Errorf("unexpected statusline config fields: %#v", statusline)
+			}
+			if statusline.SessionActive || statusline.SessionCount != 0 || statusline.GitAvailable || statusline.GitDirty || statusline.PlanActive {
+				return localScenarioResult{}, fmt.Errorf("unexpected statusline runtime fields: %#v", statusline)
+			}
+			for _, expected := range []string{"codog", workspaceName, "no-git", "claude-statusline", "fast=on", "read-only", "sessions=0", "plan=off"} {
+				if !strings.Contains(statusline.Line, expected) {
+					return localScenarioResult{}, fmt.Errorf("statusline line missing %q: %s", expected, statusline.Line)
+				}
+			}
+
+			textOutput, err := runHarnessCodog(ctx, workspace, "--config", configPath, "statusline")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			textOutput = strings.TrimSpace(textOutput)
+			if textOutput != statusline.Line {
+				return localScenarioResult{}, fmt.Errorf("statusline text mismatch: json line %q text %q", statusline.Line, textOutput)
+			}
+
+			report := map[string]any{
+				"kind": "statusline_cli",
+				"statusline": map[string]any{
+					"status":          statusline.Status,
+					"source":          statusline.Source,
+					"workspace":       statusline.Workspace,
+					"model":           statusline.Model,
+					"fast_mode":       statusline.FastMode,
+					"permission_mode": statusline.PermissionMode,
+					"session_count":   statusline.SessionCount,
+					"git_available":   statusline.GitAvailable,
+					"text_matches":    textOutput == statusline.Line,
+					"line":            statusline.Line,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "statusline cli harness ok",
+				RequestCount: 2,
 				MessageCount: 1,
 			}, nil
 		},
