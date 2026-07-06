@@ -2766,6 +2766,8 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "hints.go"), []byte(hintSource), 0o644))
 	hierarchySource := "package demo\n\ntype WidgetBase struct{}\ntype WidgetChild struct{ WidgetBase }\ntype WidgetContract interface { Build() }\nfunc (WidgetChild) Build() {}\n"
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "hierarchy.go"), []byte(hierarchySource), 0o644))
+	brokenSource := "package demo\n\nfunc Broken() { MissingSymbol() }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "broken.go"), []byte(brokenSource), 0o644))
 	hintArgChar := strings.Index(strings.Split(hintSource, "\n")[3], `"codog"`)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "messy.go"), []byte("package demo\n\nfunc messy(){return}\n"), 0o644))
 	tool := LSPTool{Workspace: workspace}
@@ -3271,6 +3273,21 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, willSaveOut, `"action": "will-save"`)
 	require.Contains(t, willSaveOut, `"source": "static"`)
 	require.Contains(t, willSaveOut, `"edits": true`)
+
+	documentDiagnosticOut, err := tool.Execute(context.Background(), []byte(`{"action":"document_diagnostic","path":"broken.go"}`))
+	require.NoError(t, err)
+	require.Contains(t, documentDiagnosticOut, `"action": "document-diagnostic"`)
+	require.Contains(t, documentDiagnosticOut, `"source": "static"`)
+	require.Contains(t, documentDiagnosticOut, `"path": "broken.go"`)
+	require.Contains(t, documentDiagnosticOut, "MissingSymbol")
+	require.Contains(t, documentDiagnosticOut, `"total": 2`)
+
+	workspaceDiagnosticOut, err := tool.Execute(context.Background(), []byte(`{"action":"workspace_diagnostic"}`))
+	require.NoError(t, err)
+	require.Contains(t, workspaceDiagnosticOut, `"action": "workspace-diagnostic"`)
+	require.Contains(t, workspaceDiagnosticOut, `"source": "static"`)
+	require.Contains(t, workspaceDiagnosticOut, `"path": "broken.go"`)
+	require.Contains(t, workspaceDiagnosticOut, "MissingSymbol")
 
 	formatOut, err := tool.Execute(context.Background(), []byte(`{"action":"format","path":"messy.go"}`))
 	require.NoError(t, err)

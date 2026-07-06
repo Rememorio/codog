@@ -6287,6 +6287,31 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "format": result, "edits": result.Changed})), nil
+	case "document-diagnostic":
+		if strings.TrimSpace(payload.Path) == "" {
+			return "", errors.New("path is required for lsp document_diagnostic")
+		}
+		rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, payload.Path)
+		if err != nil {
+			return "", err
+		}
+		diagnostics, err := codeintel.GoDiagnostics(ctx, t.Workspace, []string{rel})
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "diagnostics": diagnostics, "total": len(diagnostics)})), nil
+	case "workspace-diagnostic":
+		patterns := []string{}
+		if strings.TrimSpace(payload.Path) != "" {
+			patterns = append(patterns, payload.Path)
+		} else if strings.TrimSpace(payload.Query) != "" {
+			patterns = append(patterns, payload.Query)
+		}
+		diagnostics, err := codeintel.GoDiagnostics(ctx, t.Workspace, patterns)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"diagnostics": diagnostics, "total": len(diagnostics)})), nil
 	case "diagnostics":
 		patterns := []string{}
 		if strings.TrimSpace(payload.Path) != "" {
@@ -6306,7 +6331,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 
 func lspActionRequiresServer(action string) bool {
 	switch action {
-	case "document-diagnostic", "workspace-diagnostic", "implementation", "code-action", "code-action-resolve", "inline-value", "execute-command":
+	case "implementation", "code-action", "code-action-resolve", "inline-value", "execute-command":
 		return true
 	default:
 		return false

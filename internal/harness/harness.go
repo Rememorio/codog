@@ -4743,6 +4743,26 @@ func lspStaticScenario() scenario {
 				}
 			}
 
+			documentDiagnosticOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"document_diagnostic","path":"pkg/broken.go"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "document-diagnostic"`, `"source": "static"`, `"path": "pkg/broken.go"`, `"total": 2`, "MissingSymbol"} {
+				if !strings.Contains(documentDiagnosticOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp document diagnostic output missing %s", expected)
+				}
+			}
+
+			workspaceDiagnosticOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"workspace_diagnostic"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "workspace-diagnostic"`, `"source": "static"`, `"path": "pkg/broken.go"`, "MissingSymbol"} {
+				if !strings.Contains(workspaceDiagnosticOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp workspace diagnostic output missing %s", expected)
+				}
+			}
+
 			diagnosticsOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"diagnostics"}`))
 			if err != nil {
 				return localScenarioResult{}, err
@@ -4770,16 +4790,16 @@ func lspStaticScenario() scenario {
 				return localScenarioResult{}, fmt.Errorf("lsp format unexpectedly modified file")
 			}
 
-			toolUses := make([]string, 40)
+			toolUses := make([]string, 42)
 			for i := range toolUses {
 				toolUses[i] = "lsp"
 			}
 			return localScenarioResult{
-				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, documentColorOut, colorPresentationOut, inlayHintOut, inlayHintResolveOut, signatureHelpOut, codeLensOut, codeLensResolveOut, semanticTokensOut, semanticTokensRangeOut, semanticTokensDeltaOut, prepareRenameOut, renameOut, callHierarchyOut, incomingCallsOut, outgoingCallsOut, typeHierarchyOut, typeHierarchySupertypesOut, typeHierarchySubtypesOut, referencesOut, hoverOut, completionOut, completionResolveOut, rangeFormatOut, onTypeFormatOut, willSaveOut, diagnosticsOut, formatOut}, "\n"),
+				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, documentColorOut, colorPresentationOut, inlayHintOut, inlayHintResolveOut, signatureHelpOut, codeLensOut, codeLensResolveOut, semanticTokensOut, semanticTokensRangeOut, semanticTokensDeltaOut, prepareRenameOut, renameOut, callHierarchyOut, incomingCallsOut, outgoingCallsOut, typeHierarchyOut, typeHierarchySupertypesOut, typeHierarchySubtypesOut, referencesOut, hoverOut, completionOut, completionResolveOut, rangeFormatOut, onTypeFormatOut, willSaveOut, documentDiagnosticOut, workspaceDiagnosticOut, diagnosticsOut, formatOut}, "\n"),
 				FinalMessage: "lsp static harness ok",
-				ToolCalls:    40,
+				ToolCalls:    42,
 				ToolUses:     toolUses,
-				RequestCount: 40,
+				RequestCount: 42,
 			}, nil
 		},
 	}
