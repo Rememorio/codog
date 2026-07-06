@@ -35020,7 +35020,7 @@ func (a *App) Models(args []string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_models_action",
 			Message:   fmt.Sprintf("unsupported models action %q", req.Action),
-			Hint:      "Usage: codog models [list|aliases|routes|search QUERY|show [MODEL]|current|help] [--output-format text|json].",
+			Hint:      "Usage: codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|help] [--output-format text|json].",
 		}, req.Format)
 	}
 }
@@ -35154,7 +35154,7 @@ func (a *App) ResumedModel(args []string) error {
 
 const (
 	modelUsage  = "codog model [MODEL] [--output-format text|json]"
-	modelsUsage = "codog models [list|aliases|routes|search QUERY|show [MODEL]|current|help] [--output-format text|json]"
+	modelsUsage = "codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|help] [--output-format text|json]"
 )
 
 func parseModelArgs(args []string) (modelRequest, error) {
@@ -35218,23 +35218,10 @@ func parseModelsArgs(args []string) (modelsRequest, error) {
 	if len(positionals) == 0 {
 		return req, nil
 	}
-	action := strings.ToLower(positionals[0])
-	switch action {
-	case "list", "ls":
-		req.Action = "list"
-	case "alias", "aliases":
-		req.Action = "aliases"
-	case "route", "routes":
-		req.Action = "routes"
-	case "show", "info", "describe", "resolve", "current":
-		req.Action = "show"
-	case "search", "find":
-		req.Action = "search"
-	default:
-		req.Action = action
-	}
+	rawAction := strings.ToLower(strings.TrimSpace(positionals[0]))
+	req.Action = normalizeModelsAction(rawAction)
 	if req.Action == "show" || req.Action == "search" {
-		if action == "current" {
+		if rawAction == "current" {
 			if len(positionals) > 1 {
 				return req, unexpectedExtraArgsError{
 					Command: "models current",
@@ -35255,6 +35242,25 @@ func parseModelsArgs(args []string) (modelsRequest, error) {
 		}
 	}
 	return req, nil
+}
+
+func normalizeModelsAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "list", "ls", "catalog", "inventory", "available":
+		return "list"
+	case "alias", "aliases", "shortcut", "shortcuts":
+		return "aliases"
+	case "route", "routes", "routing", "map", "maps", "mapping", "mappings":
+		return "routes"
+	case "show", "info", "describe", "resolve", "current", "get", "view", "inspect":
+		return "show"
+	case "search", "find", "lookup", "query":
+		return "search"
+	case "help":
+		return "help"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
 }
 
 func modelHelpRequested(args []string) bool {
@@ -53408,8 +53414,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec := localCommandHelpSpec(
 			"models",
 			"models",
-			"codog models [list|aliases|routes|search QUERY|show [MODEL]|current|help] [--output-format text|json]",
-			"Models\n\nUsage:\n  codog models [list|aliases|routes|search QUERY|show [MODEL]|current|help] [--output-format text|json]\n  codog model help [--output-format text|json]\n\nShows bounded local model-selection guidance, built-in aliases, routing rules, searchable model metadata, and local model diagnostics without making a provider request.\n",
+			"codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|help] [--output-format text|json]",
+			"Models\n\nUsage:\n  codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|help] [--output-format text|json]\n  codog model help [--output-format text|json]\n\nShows bounded local model-selection guidance, built-in aliases, routing rules, searchable model metadata, and local model diagnostics without making a provider request. Common discovery aliases such as `catalog`, `lookup`, `query`, `get`, and `describe` are normalized to canonical actions.\n",
 			[]string{"default_model", "aliases", "routes", "configured_model", "resolved_configured_model", "provider", "wire_model", "requires_provider_request"},
 			[]string{"ok", "error"},
 			false,
@@ -54071,7 +54077,7 @@ Usage:
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|health EVENT|run EVENT|watch-paths list|check] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
-  %s [flags] model [NAME] | models [list|aliases|routes|search QUERY|show [MODEL]|current|help] [--json|--output-format text|json]
+  %s [flags] model [NAME] | models [list|ls|aliases|routes|search|find QUERY|show|view [MODEL]|current|help] [--json|--output-format text|json]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] budget [status|set|reset] [--max-tokens N] [--max-turns N] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] max-tokens [N]

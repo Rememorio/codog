@@ -3224,6 +3224,73 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "inspect release", directUltraPlan.State.Plan)
 }
 
+func TestModelsCommandActionAliases(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "catalog", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var models modelsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &models))
+	require.Equal(t, "models", models.Kind)
+	require.Equal(t, "list", models.Action)
+	require.NotEmpty(t, models.Aliases)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "shortcuts", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var aliases modelAliasesInventoryReport
+	require.NoError(t, json.Unmarshal([]byte(out), &aliases))
+	require.Equal(t, "aliases", aliases.Action)
+	require.True(t, modelAliasExists(aliases.Aliases, "kimi", "kimi-k2.5", modelrouting.ProviderDashScope))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "routing", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var routes modelRoutesInventoryReport
+	require.NoError(t, json.Unmarshal([]byte(out), &routes))
+	require.Equal(t, "routes", routes.Action)
+	require.True(t, modelRouteExists(routes.Routes, "qwen/ or qwen-", modelrouting.ProviderDashScope))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "lookup", "kimi", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var search modelSearchReport
+	require.NoError(t, json.Unmarshal([]byte(out), &search))
+	require.Equal(t, "search", search.Action)
+	require.Equal(t, "kimi", search.Query)
+	require.NotEmpty(t, search.Models)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "view", "kimi", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var detail modelDetailReport
+	require.NoError(t, json.Unmarshal([]byte(out), &detail))
+	require.Equal(t, "show", detail.Action)
+	require.Equal(t, "kimi", detail.RequestedModel)
+	require.Equal(t, "kimi-k2.5", detail.ResolvedModel)
+
+	var slashOut bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome},
+		Out:    &slashOut,
+		Err:    io.Discard,
+	}
+	require.True(t, app.handleSlash(context.Background(), "/models get kimi --json", &session.Session{ID: "session"}))
+	require.NoError(t, json.Unmarshal(slashOut.Bytes(), &detail))
+	require.Equal(t, "show", detail.Action)
+	require.Equal(t, "kimi-k2.5", detail.ResolvedModel)
+}
+
 func TestDirectSlashSuggestsProjectCommands(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
