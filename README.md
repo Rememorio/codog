@@ -116,6 +116,18 @@ REPL, TUI, or bridge call:
 The session ledger is JSONL, so runs can be inspected, resumed, compacted, or
 exported without a database.
 
+## Code Intelligence
+
+Codog includes a Go-focused code-intelligence layer behind the `lsp` tool and
+the `/code-intel` slash command. It works without a separate language server for
+common repository queries: symbols, definitions, references, hover, completion,
+diagnostics, formatting previews, rename previews, semantic tokens, code lenses,
+inlay hints, inline values, code actions, call hierarchy, and type hierarchy.
+
+When a configured LSP server is available, Codog can route supported requests to
+that server. Without one, it falls back to deterministic static analysis built
+from the workspace's Go syntax tree and `go` tool diagnostics.
+
 ## Configuration
 
 Codog separates shared project defaults from personal settings and local
