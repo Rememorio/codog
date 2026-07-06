@@ -28773,7 +28773,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 	case "/config", "/settings":
 		return a.ConfigCommand(resumeSlashArgs("config", args, format))
 	case "/api":
-		return a.API(resumeSlashArgs("api", args, format))
+		return a.runResumedAPISlash(resumeSlashArgs("api", args, format), resumed, format)
 	case "/api-key":
 		return a.runResumedAPIKeySlash(resumeSlashArgs("api-key", args, format), format)
 	case "/providers":
@@ -29910,6 +29910,17 @@ func (a *App) runResumedMarketplaceSlash(args []string, format string) error {
 		}
 		return renderUnsupportedResumedSlashCommand(a.Out, command, format)
 	}
+}
+
+func (a *App) runResumedAPISlash(args []string, overrides config.FlagOverrides, format string) error {
+	req, err := parseAPIArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "serve" {
+		return a.API(args)
+	}
+	return a.startResumedServerTask("api", []string{"serve", req.Addr}, "api", "Remote API server started", overrides)
 }
 
 func (a *App) runResumedAPIKeySlash(args []string, format string) error {

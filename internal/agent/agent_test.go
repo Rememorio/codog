@@ -6056,6 +6056,20 @@ func risky(value any) {
 	require.NotContains(t, resumedMockLimitsStart.Task.Command, "mock-limits start")
 	require.Contains(t, resumedMockLimitsStart.Task.Command, "127.0.0.1:0")
 
+	out, err = runResumedJSON("/api", "start", "--addr", "127.0.0.1:0")
+	require.NoError(t, err)
+	var resumedAPIServe backgroundCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAPIServe))
+	require.Equal(t, "background", resumedAPIServe.Kind)
+	require.Equal(t, "run", resumedAPIServe.Action)
+	require.Equal(t, "ok", resumedAPIServe.Status)
+	require.Equal(t, "resume-slash", resumedAPIServe.SessionID)
+	require.NotNil(t, resumedAPIServe.Task)
+	require.Equal(t, "api", resumedAPIServe.Task.Kind)
+	require.Equal(t, "resume-slash", resumedAPIServe.Task.SessionID)
+	require.Contains(t, resumedAPIServe.Task.Command, "api serve 127.0.0.1:0")
+	require.NotContains(t, resumedAPIServe.Task.Command, "api start")
+
 	out, err = runResumedJSON("/acp", "serve")
 	require.NoError(t, err)
 	var resumedACPServe backgroundCommandReport
