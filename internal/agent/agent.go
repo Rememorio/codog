@@ -30209,7 +30209,7 @@ func directSlashCommandName(name string) string {
 	case "/checkpoint":
 		return "rewind"
 	case "/rc":
-		return "remote-control"
+		return "bridge"
 	}
 	spec, ok := slash.Lookup(name)
 	if !ok {

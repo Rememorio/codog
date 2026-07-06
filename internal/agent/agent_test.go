@@ -2916,6 +2916,15 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "status", terminalReport.Action)
 
 	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/rc", "status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var bridgeReport ideReport
+	require.NoError(t, json.Unmarshal([]byte(out), &bridgeReport))
+	require.Equal(t, "ide", bridgeReport.Kind)
+	require.Equal(t, "status", bridgeReport.Action)
+
+	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/settings", "paths"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
