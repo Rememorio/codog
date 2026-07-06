@@ -67,6 +67,14 @@ func TestPreviewWithCandidatesCompletesAndSubmits(t *testing.T) {
 	require.Empty(t, preview.Matches)
 }
 
+func TestPromptTextareaUsesPrefill(t *testing.T) {
+	ta := newPromptTextarea("review this diff")
+
+	require.Equal(t, "review this diff", ta.Value())
+	require.Equal(t, 16000, ta.CharLimit)
+	require.Equal(t, "Ask Codog to work on this repository...", ta.Placeholder)
+}
+
 func TestPreviewWithCandidatesRendersMultipleMatches(t *testing.T) {
 	preview := PreviewWithCandidates("/m", []string{"/model claude-test", "/memory list"}, 90, 20, true, false)
 

@@ -19927,6 +19927,18 @@ func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
 	require.Equal(t, "prompt", command)
 	require.Equal(t, []string{"hello"}, rest)
 
+	overrides, command, rest, err = parseFlags([]string{"--prefill", "review this diff", "repl"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "review this diff", overrides.Prefill)
+	require.Equal(t, "repl", command)
+	require.Empty(t, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--prefill=review this diff", "tui"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "review this diff", overrides.Prefill)
+	require.Equal(t, "tui", command)
+	require.Empty(t, rest)
+
 	_, _, _, err = parseFlags([]string{"--fork-session", "repl"}, config.FlagOverrides{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--fork-session requires")
@@ -19942,6 +19954,14 @@ func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
 	_, _, _, err = parseFlags([]string{"--resume", "source", "--resume-session-at", "msg-1", "repl"}, config.FlagOverrides{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "prompt mode")
+
+	_, _, _, err = parseFlags([]string{"--prefill", "queued prompt", "prompt", "hello"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "interactive")
+
+	_, _, _, err = parseFlags([]string{"--prefill", "queued prompt", "-p", "hello"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "interactive")
 }
 
 func TestOpenSessionForksResumedSession(t *testing.T) {

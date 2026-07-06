@@ -39,12 +39,11 @@ func Prompt() (Result, error) {
 }
 
 func PromptWithCandidates(candidates []string) (Result, error) {
-	ta := textarea.New()
-	ta.Placeholder = "Ask Codog to work on this repository..."
-	ta.Focus()
-	ta.SetWidth(80)
-	ta.SetHeight(8)
-	ta.CharLimit = 16000
+	return PromptWithCandidatesPrefill(candidates, "")
+}
+
+func PromptWithCandidatesPrefill(candidates []string, prefill string) (Result, error) {
+	ta := newPromptTextarea(prefill)
 	m := model{textarea: ta, candidates: candidates}
 	final, err := tea.NewProgram(m).Run()
 	if err != nil {
@@ -59,13 +58,7 @@ func PromptWithCandidates(candidates []string) (Result, error) {
 // PreviewWithCandidates renders the Bubble Tea prompt model after applying
 // optional input, window sizing, tab completion, and submission.
 func PreviewWithCandidates(input string, candidates []string, width int, height int, complete bool, submit bool) Preview {
-	ta := textarea.New()
-	ta.Placeholder = "Ask Codog to work on this repository..."
-	ta.Focus()
-	ta.SetWidth(80)
-	ta.SetHeight(8)
-	ta.CharLimit = 16000
-	ta.SetValue(input)
+	ta := newPromptTextarea(input)
 	m := model{textarea: ta, candidates: candidates}
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -89,6 +82,17 @@ func PreviewWithCandidates(input string, candidates []string, width int, height 
 		Submitted: m.result.Submitted,
 		Prompt:    m.result.Prompt,
 	}
+}
+
+func newPromptTextarea(input string) textarea.Model {
+	ta := textarea.New()
+	ta.Placeholder = "Ask Codog to work on this repository..."
+	ta.Focus()
+	ta.SetWidth(80)
+	ta.SetHeight(8)
+	ta.CharLimit = 16000
+	ta.SetValue(input)
+	return ta
 }
 
 func (m model) Init() tea.Cmd {

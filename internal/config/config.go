@@ -1196,6 +1196,7 @@ type FlagOverrides struct {
 	SessionName                    string
 	Resume                         string
 	ResumeSessionAt                string
+	Prefill                        string
 	Model                          string
 	BaseURL                        string
 	SystemPrompt                   string

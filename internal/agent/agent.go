@@ -464,7 +464,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "repl":
 		return app.REPL(ctx, overrides)
 	case "tui":
-		result, err := tui.PromptWithCandidates(app.slashCompletionCandidates(""))
+		result, err := tui.PromptWithCandidatesPrefill(app.slashCompletionCandidates(""), overrides.Prefill)
 		if err != nil {
 			return err
 		}
@@ -35644,7 +35644,7 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 		return err
 	} else if ok {
 		defer rl.Close()
-		return a.finishREPL(ctx, sess, a.replReadline(ctx, sess, rl))
+		return a.finishREPL(ctx, sess, a.replReadline(ctx, sess, rl, overrides.Prefill))
 	}
 	return a.finishREPL(ctx, sess, a.replScanner(ctx, sess))
 }
@@ -35696,9 +35696,16 @@ func (a *App) replScanner(ctx context.Context, sess *session.Session) error {
 	return scanner.Err()
 }
 
-func (a *App) replReadline(ctx context.Context, sess *session.Session, rl *readline.Instance) error {
+func (a *App) replReadline(ctx context.Context, sess *session.Session, rl *readline.Instance, prefill string) error {
 	for {
-		line, err := rl.Readline()
+		var line string
+		var err error
+		if strings.TrimSpace(prefill) != "" {
+			line, err = rl.ReadlineWithDefault(prefill)
+			prefill = ""
+		} else {
+			line, err = rl.Readline()
+		}
 		if errors.Is(err, readline.ErrInterrupt) {
 			return nil
 		}
@@ -54151,6 +54158,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.Resume, "resume", base.Resume, "resume session id or latest")
 	flags.StringVar(&base.Resume, "r", base.Resume, "alias for --resume")
 	flags.StringVar(&base.ResumeSessionAt, "resume-session-at", base.ResumeSessionAt, "resume up to an assistant message id")
+	flags.StringVar(&base.Prefill, "prefill", base.Prefill, "pre-fill the next interactive input")
 	flags.BoolVar(&continueMode, "continue", false, "resume the latest session")
 	flags.BoolVar(&continueMode, "c", false, "alias for --continue")
 	flags.BoolVar(&base.ForkSession, "fork-session", base.ForkSession, "fork the resumed session before continuing")
@@ -54228,6 +54236,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		}
 	}
 	if printMode || compactPromptMode {
+		if strings.TrimSpace(base.Prefill) != "" {
+			return base, "", nil, invalidFlagValueError{
+				Flag:    "--prefill",
+				Value:   "",
+				Message: "--prefill is only supported with interactive REPL or TUI mode",
+				Usage:   "codog --prefill TEXT [repl|tui]",
+			}
+		}
 		if strings.TrimSpace(base.ResumeSessionAt) != "" && len(rest) > 0 && rest[0] != "prompt" && isKnownNonPromptCommand(rest[0]) {
 			return base, "", nil, invalidFlagValueError{
 				Flag:    "--resume-session-at",
@@ -54307,6 +54323,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		return base, "", nil, nil
 	}
 	command, rest := rest[0], rest[1:]
+	if strings.TrimSpace(base.Prefill) != "" && !commandAcceptsPrefill(command) {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--prefill",
+			Value:   command,
+			Message: "--prefill is only supported with interactive REPL or TUI mode",
+			Usage:   "codog --prefill TEXT [repl|tui]",
+		}
+	}
 	if base.ResumeSessionAt != "" && !strings.EqualFold(command, "prompt") {
 		return base, "", nil, invalidFlagValueError{
 			Flag:    "--resume-session-at",
@@ -54485,7 +54509,7 @@ func globalFlagConsumesNext(arg string) bool {
 		"--system-prompt-file", "-system-prompt-file", "--append-system-prompt", "-append-system-prompt",
 		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
 		"--session-id", "-session-id", "--name", "-name", "--resume", "-resume", "-r",
-		"--resume-session-at", "-resume-session-at", "--output-format", "-output-format", "-o", "--o",
+		"--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--output-format", "-output-format", "-o", "--o",
 		"--input-format", "-input-format", "--json-schema", "-json-schema",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
 		"--max-tokens", "-max-tokens", "--temperature", "-temperature",
@@ -54523,7 +54547,16 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--resume-session-at", "-resume-session-at", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
+		return true
+	default:
+		return false
+	}
+}
+
+func commandAcceptsPrefill(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "", "repl", "tui":
 		return true
 	default:
 		return false
