@@ -508,7 +508,16 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			}
 			return renderMissingPrompt(app.Out, req.Format)
 		}
-		return app.promptWithOutputOptions(ctx, input, overrides, req.Format, req.Compact, turnOptions{Attachments: req.Attachments, ReplayUserMessages: streamReplayMessages, JSONSchema: req.JSONSchema})
+		includePartialMessages := req.IncludePartialMessages || overrides.IncludePartialMessages
+		if includePartialMessages && req.Format != "stream-json" {
+			return renderCLIError(app.Out, invalidFlagValueError{
+				Flag:    "--include-partial-messages",
+				Value:   req.Format,
+				Message: "--include-partial-messages requires --output-format=stream-json",
+				Usage:   "codog -p --output-format stream-json --include-partial-messages \"<prompt>\"",
+			}, req.Format)
+		}
+		return app.promptWithOutputOptions(ctx, input, overrides, req.Format, req.Compact, turnOptions{Attachments: req.Attachments, ReplayUserMessages: streamReplayMessages, JSONSchema: req.JSONSchema, IncludePartialMessages: includePartialMessages})
 	case "acp":
 		return wrapStructured(app.ACP(ctx, rest))
 	case "btw":
@@ -34340,7 +34349,7 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 	} else if format == "json" {
 		turnOut = &streamCapture
 	} else if format == "stream-json" {
-		writer := promptStreamJSONWriter{Out: a.Out}
+		writer := promptStreamJSONWriter{Out: a.Out, IncludeDeltas: opts.IncludePartialMessages}
 		if err := writer.Event("start", map[string]any{
 			"session_id": sess.ID,
 			"mode":       "prompt",
@@ -34839,12 +34848,16 @@ func isJSONPathIdentifier(value string) bool {
 }
 
 type promptStreamJSONWriter struct {
-	Out io.Writer
+	Out           io.Writer
+	IncludeDeltas bool
 }
 
 func (w promptStreamJSONWriter) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
+	}
+	if !w.IncludeDeltas {
+		return len(p), nil
 	}
 	if err := w.Event("assistant_delta", map[string]any{"delta": string(p)}); err != nil {
 		return 0, err
@@ -35044,24 +35057,26 @@ func (a *App) btwSideSession(source *session.Session) (*session.Session, error) 
 }
 
 type turnOptions struct {
-	Skill              *skills.Skill
-	Attachments        []string
-	AllowedTools       []string
-	ReplayUserMessages []promptStreamJSONReplayMessage
-	JSONSchema         string
-	Out                io.Writer
+	Skill                  *skills.Skill
+	Attachments            []string
+	AllowedTools           []string
+	ReplayUserMessages     []promptStreamJSONReplayMessage
+	IncludePartialMessages bool
+	JSONSchema             string
+	Out                    io.Writer
 }
 
 type promptCLIRequest struct {
-	Prompt             string
-	Format             string
-	InputFormat        string
-	ReplayUserMessages bool
-	JSONSchema         string
-	PromptProvided     bool
-	Compact            bool
-	UseStdin           bool
-	Attachments        []string
+	Prompt                 string
+	Format                 string
+	InputFormat            string
+	ReplayUserMessages     bool
+	IncludePartialMessages bool
+	JSONSchema             string
+	PromptProvided         bool
+	Compact                bool
+	UseStdin               bool
+	Attachments            []string
 }
 
 func parsePromptArgs(args []string) (promptCLIRequest, error) {
@@ -35096,6 +35111,8 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 			req.InputFormat = strings.TrimPrefix(arg, "--input-format=")
 		case arg == "--replay-user-messages":
 			req.ReplayUserMessages = true
+		case arg == "--include-partial-messages":
+			req.IncludePartialMessages = true
 		case arg == "--json-schema":
 			index++
 			if index >= len(args) {
@@ -35150,6 +35167,14 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 			Value:   "",
 			Message: "--replay-user-messages requires --input-format=stream-json and --output-format=stream-json",
 			Usage:   "codog -p --input-format stream-json --output-format stream-json --replay-user-messages",
+		}
+	}
+	if req.IncludePartialMessages && req.Format != "stream-json" {
+		return req, invalidFlagValueError{
+			Flag:    "--include-partial-messages",
+			Value:   req.Format,
+			Message: "--include-partial-messages requires --output-format=stream-json",
+			Usage:   "codog -p --output-format stream-json --include-partial-messages \"<prompt>\"",
 		}
 	}
 	if req.Compact && strings.TrimSpace(req.JSONSchema) != "" {
@@ -54426,6 +54451,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.BoolVar(&compactPromptMode, "compact", false, "run a compact one-shot prompt")
 	flags.BoolVar(&base.NoSessionPersistence, "no-session-persistence", base.NoSessionPersistence, "disable session persistence for prompt mode")
 	flags.BoolVar(&base.ReplayUserMessages, "replay-user-messages", base.ReplayUserMessages, "replay stream-json user messages to prompt output")
+	flags.BoolVar(&base.IncludePartialMessages, "include-partial-messages", base.IncludePartialMessages, "include assistant partial message chunks in stream-json prompt output")
 	flags.BoolVar(&jsonOutput, "json", false, "alias for --output-format json for local commands")
 	flags.StringVar(&outputFormat, "output-format", "", "text or json output for local commands")
 	flags.StringVar(&outputFormat, "o", "", "text or json output for local commands")
@@ -54548,6 +54574,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		if base.ReplayUserMessages {
 			rest = append(rest, "--replay-user-messages")
 		}
+		if base.IncludePartialMessages {
+			rest = append(rest, "--include-partial-messages")
+		}
 		if base.JSONSchema != "" {
 			rest = append(rest, "--json-schema", base.JSONSchema)
 		}
@@ -54584,6 +54613,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 				Value:   "",
 				Message: "--replay-user-messages is only supported with prompt mode",
 				Usage:   "codog -p --input-format stream-json --output-format stream-json --replay-user-messages",
+			}
+		}
+		if base.IncludePartialMessages {
+			return base, "", nil, invalidFlagValueError{
+				Flag:    "--include-partial-messages",
+				Value:   "",
+				Message: "--include-partial-messages is only supported with prompt mode",
+				Usage:   "codog -p --output-format stream-json --include-partial-messages",
 			}
 		}
 		if base.JSONSchema != "" {
@@ -54637,6 +54674,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 			Usage:   "codog -p --input-format stream-json --output-format stream-json --replay-user-messages",
 		}
 	}
+	if base.IncludePartialMessages && !strings.EqualFold(command, "prompt") {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--include-partial-messages",
+			Value:   command,
+			Message: "--include-partial-messages is only supported with prompt mode",
+			Usage:   "codog -p --output-format stream-json --include-partial-messages",
+		}
+	}
 	if base.JSONSchema != "" && !strings.EqualFold(command, "prompt") {
 		return base, "", nil, invalidFlagValueError{
 			Flag:    "--json-schema",
@@ -54664,6 +54709,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	}
 	if strings.EqualFold(command, "prompt") && base.ReplayUserMessages && !argsHaveReplayUserMessages(rest) {
 		rest = append(rest, "--replay-user-messages")
+	}
+	if strings.EqualFold(command, "prompt") && base.IncludePartialMessages && !argsHaveIncludePartialMessages(rest) {
+		rest = append(rest, "--include-partial-messages")
 	}
 	if strings.EqualFold(command, "prompt") && base.JSONSchema != "" && !argsHaveJSONSchema(rest) {
 		rest = append(rest, "--json-schema", base.JSONSchema)
@@ -55136,6 +55184,15 @@ func argsHaveJSONSchema(args []string) bool {
 func argsHaveReplayUserMessages(args []string) bool {
 	for _, arg := range args {
 		if arg == "--replay-user-messages" {
+			return true
+		}
+	}
+	return false
+}
+
+func argsHaveIncludePartialMessages(args []string) bool {
+	for _, arg := range args {
+		if arg == "--include-partial-messages" {
 			return true
 		}
 	}
@@ -56792,6 +56849,7 @@ Flags:
   --no-session-persistence
   --input-format text|stream-json
   --replay-user-messages
+  --include-partial-messages
   --json-schema SCHEMA
   --allowed-tools TOOL[,TOOL]
   --disallowed-tools TOOL[,TOOL]

@@ -341,6 +341,7 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, helpOutput, "--resume ID|latest | -r ID|latest")
 	require.Contains(t, helpOutput, "--fork-session")
 	require.Contains(t, helpOutput, "--fallback-model NAME")
+	require.Contains(t, helpOutput, "--include-partial-messages")
 	require.Contains(t, helpOutput, "<cc-url|cc+unix-url>")
 	resumeLine := requireResumeSafeHelpLine(t, helpOutput)
 	require.Contains(t, resumeLine, "/status")
@@ -365,6 +366,7 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, globalReport.Help, "--resume ID|latest | -r ID|latest")
 	require.Contains(t, globalReport.Help, "--fork-session")
 	require.Contains(t, globalReport.Help, "--fallback-model NAME")
+	require.Contains(t, globalReport.Help, "--include-partial-messages")
 	require.Contains(t, globalReport.Help, "<cc-url|cc+unix-url>")
 	require.Equal(t, resumeLine, requireResumeSafeHelpLine(t, globalReport.Help))
 	out.Reset()
@@ -10493,6 +10495,27 @@ func TestParseFlagsSupportsInputFormatForPrompt(t *testing.T) {
 	require.Contains(t, flagErr.Message, "prompt mode")
 }
 
+func TestParseFlagsSupportsIncludePartialMessagesForPrompt(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{"-p", "--output-format", "stream-json", "--include-partial-messages", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.True(t, overrides.IncludePartialMessages)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello", "--output-format", "stream-json", "--include-partial-messages"}, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--include-partial-messages", "prompt", "--output-format", "stream-json", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.True(t, overrides.IncludePartialMessages)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"--output-format", "stream-json", "hello", "--include-partial-messages"}, rest)
+
+	_, _, _, err = parseFlags([]string{"--include-partial-messages", "status"}, config.FlagOverrides{})
+	require.Error(t, err)
+	var flagErr invalidFlagValueError
+	require.ErrorAs(t, err, &flagErr)
+	require.Equal(t, "--include-partial-messages", flagErr.Flag)
+	require.Contains(t, flagErr.Message, "prompt mode")
+}
+
 func TestParseFlagsSupportsJSONSchemaForPrompt(t *testing.T) {
 	rawSchema := `{"type":"object"}`
 	overrides, command, rest, err := parseFlags([]string{"-p", "--json-schema", rawSchema, "--output-format", "json", "{}"}, config.FlagOverrides{})
@@ -10717,6 +10740,12 @@ func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
 	require.Equal(t, "stream-json", req.Format)
 	require.True(t, req.ReplayUserMessages)
 
+	req, err = parsePromptArgs([]string{"--output-format", "stream-json", "--include-partial-messages", "hello"})
+	require.NoError(t, err)
+	require.Equal(t, "stream-json", req.Format)
+	require.True(t, req.IncludePartialMessages)
+	require.Equal(t, "hello", req.Prompt)
+
 	rawSchema := `{"type":"object","required":["name"]}`
 	req, err = parsePromptArgs([]string{"--json-schema", rawSchema, "--output-format", "json", "return json"})
 	require.NoError(t, err)
@@ -10735,6 +10764,10 @@ func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
 	_, err = parsePromptArgs([]string{"--replay-user-messages", "--output-format", "stream-json"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "requires --input-format=stream-json")
+
+	_, err = parsePromptArgs([]string{"--include-partial-messages", "hello"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires --output-format=stream-json")
 
 	_, err = parsePromptArgs([]string{"--json-schema"})
 	require.Error(t, err)
@@ -10851,10 +10884,44 @@ func TestPromptUsesStreamJSONInputForModelRequest(t *testing.T) {
 	require.Equal(t, "user", request.Messages[len(request.Messages)-1].Role)
 	require.Contains(t, request.Messages[len(request.Messages)-1].Content[0].Text, "stream prompt body")
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	require.GreaterOrEqual(t, len(lines), 4)
+	require.GreaterOrEqual(t, len(lines), 3)
 	require.Contains(t, lines[1], `"type":"user"`)
 	require.Contains(t, lines[1], `"isReplay":true`)
 	require.Contains(t, lines[1], "stream prompt body")
+	require.NotContains(t, out.String(), `"type":"assistant_delta"`)
+	require.Contains(t, out.String(), `"type":"result"`)
+}
+
+func TestPromptStreamJSONIncludePartialMessages(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Text: "partial chunks"}.Handler())
+	defer server.Close()
+
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          t.TempDir(),
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			PermissionRules:     config.PermissionRules{},
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(t.TempDir(), workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.promptWithOutputOptions(context.Background(), "say hi", config.FlagOverrides{SessionID: "partial-session"}, "stream-json", false, turnOptions{IncludePartialMessages: true}))
+	require.Contains(t, out.String(), `"type":"assistant_delta"`)
+	require.Contains(t, out.String(), `"delta":"partial "`)
 	require.Contains(t, out.String(), `"type":"result"`)
 }
 
@@ -24398,13 +24465,11 @@ func TestPromptOutputFormats(t *testing.T) {
 
 	require.NoError(t, app.PromptWithOutput(context.Background(), "stream prompt", config.FlagOverrides{SessionID: "stream-session"}, "stream-json"))
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	require.GreaterOrEqual(t, len(lines), 3)
+	require.GreaterOrEqual(t, len(lines), 2)
+	require.NotContains(t, out.String(), `"type":"assistant_delta"`)
 	var firstEvent map[string]any
 	require.NoError(t, json.Unmarshal([]byte(lines[0]), &firstEvent))
 	require.Equal(t, "start", firstEvent["type"])
-	var deltaEvent map[string]any
-	require.NoError(t, json.Unmarshal([]byte(lines[1]), &deltaEvent))
-	require.Equal(t, "assistant_delta", deltaEvent["type"])
 	var resultEvent map[string]any
 	require.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &resultEvent))
 	require.Equal(t, "result", resultEvent["type"])
@@ -24519,7 +24584,8 @@ func TestPromptJSONSchemaOutputValidation(t *testing.T) {
 	require.ErrorAs(t, err, &exitErr)
 	require.True(t, exitErr.Silent)
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	require.GreaterOrEqual(t, len(lines), 3)
+	require.GreaterOrEqual(t, len(lines), 2)
+	require.NotContains(t, out.String(), `"type":"assistant_delta"`)
 	var lastEvent map[string]any
 	require.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &lastEvent))
 	require.Equal(t, "error", lastEvent["type"])

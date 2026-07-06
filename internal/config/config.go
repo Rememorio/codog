@@ -1219,6 +1219,7 @@ type FlagOverrides struct {
 	NoSessionPersistence           bool
 	InputFormat                    string
 	ReplayUserMessages             bool
+	IncludePartialMessages         bool
 	JSONSchema                     string
 	ForkSession                    bool
 	MCPConfigs                     []string
