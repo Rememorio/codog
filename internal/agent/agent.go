@@ -7028,6 +7028,12 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 	if err != nil {
 		return err
 	}
+	if len(args) > 0 {
+		normalizedAction := normalizeAgentsAction(args[0])
+		if normalizedAction != args[0] {
+			args = append([]string{normalizedAction}, args[1:]...)
+		}
+	}
 	if len(args) == 0 {
 		return a.listAgents(format, "")
 	}
@@ -7365,6 +7371,33 @@ func (a *App) Subagent(args []string, overrides config.FlagOverrides) error {
 		}, format)
 	}
 	return a.AgentsWithOverrides(agentsArgs, overrides)
+}
+
+func normalizeAgentsAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "list", "ls":
+		return "list"
+	case "show", "info", "describe", "details":
+		return "show"
+	case "create", "new", "add":
+		return "create"
+	case "runs", "tasks":
+		return "runs"
+	case "board", "lane-board", "lanes":
+		return "board"
+	case "status", "run-status":
+		return "status"
+	case "update", "message":
+		return "update"
+	case "output", "logs":
+		return "output"
+	case "run-remove", "run-rm":
+		return "run-remove"
+	case "worktree-remove", "worktree-rm":
+		return "worktree-remove"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
 }
 
 func normalizeSubagentArgs(args []string) ([]string, error) {
@@ -29800,10 +29833,10 @@ func (a *App) runResumedStashSlash(args []string, format string) error {
 func (a *App) runResumedAgentsSlash(args []string, overrides config.FlagOverrides, format string) error {
 	action := ""
 	if meaningful := routeMeaningfulArgs(args); len(meaningful) > 0 {
-		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
+		action = normalizeAgentsAction(meaningful[0])
 	}
 	switch action {
-	case "", "list", "show", "info", "describe", "create", "run", "worktrees", "runs", "tasks", "board", "lane-board", "lanes", "status", "run-status", "heartbeat", "stop", "update", "message", "output", "logs", "prune", "run-remove", "run-rm":
+	case "", "list", "show", "create", "run", "worktrees", "worktree-remove", "runs", "board", "status", "heartbeat", "stop", "update", "output", "prune", "run-remove":
 		return a.AgentsWithOverrides(args, overrides)
 	default:
 		command := "/agents"

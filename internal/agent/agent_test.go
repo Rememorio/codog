@@ -5410,7 +5410,7 @@ func risky(value any) {
 	require.Equal(t, "resume-slash", resumedHooksWatchPaths.SessionID)
 	require.Equal(t, []string{"main.go"}, resumedHooksWatchPaths.Paths)
 
-	out, err = runResumedJSON("/agents", "list")
+	out, err = runResumedJSON("/agents", "ls")
 	require.NoError(t, err)
 	var resumedAgents agentsListReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedAgents))
@@ -5433,6 +5433,23 @@ func risky(value any) {
 	require.Equal(t, "reviewer", resumedAgentCreate.Name)
 	require.Equal(t, "created", resumedAgentCreate.Result)
 	require.FileExists(t, filepath.Join(workspace, ".codog", "agents", "reviewer.json"))
+
+	if gitAvailable {
+		allocation, err := worktree.Allocate(workspace, "resume-agent")
+		require.NoError(t, err)
+		require.DirExists(t, allocation.Path)
+
+		out, err = runResumedJSON("/agents", "worktree-rm", allocation.ID)
+		require.NoError(t, err)
+		var resumedAgentWorktreeRemove struct {
+			Removed bool   `json:"removed"`
+			ID      string `json:"id"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedAgentWorktreeRemove))
+		require.True(t, resumedAgentWorktreeRemove.Removed)
+		require.Equal(t, allocation.ID, resumedAgentWorktreeRemove.ID)
+		require.NoDirExists(t, allocation.Path)
+	}
 
 	out, err = runResumedJSON("/subagent", "list")
 	require.NoError(t, err)
