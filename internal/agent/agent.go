@@ -54401,6 +54401,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.CWD, "C", base.CWD, "alias for --cwd")
 	flags.StringVar(&base.CWD, "directory", base.CWD, "alias for --cwd")
 	flags.StringVar(&base.Model, "model", base.Model, "model name")
+	flags.StringVar(&base.FallbackModel, "fallback-model", base.FallbackModel, "fallback model when the primary model is overloaded")
 	flags.StringVar(&base.BaseURL, "base-url", base.BaseURL, "Anthropic-compatible base URL")
 	flags.StringVar(&base.SystemPrompt, "system-prompt", base.SystemPrompt, "override the base system prompt")
 	flags.StringVar(&base.SystemPromptFile, "system-prompt-file", base.SystemPromptFile, "read the base system prompt from a file")
@@ -54809,6 +54810,8 @@ func duplicateTrackedGlobalFlagKey(arg string) (string, bool) {
 	switch arg {
 	case "--model", "-model":
 		return "--model", true
+	case "--fallback-model", "-fallback-model":
+		return "--fallback-model", true
 	case "--resume", "-resume", "-r":
 		return "--resume", true
 	case "--from-pr", "-from-pr":
@@ -54828,6 +54831,8 @@ func duplicateFlagUsage(flag string) string {
 	switch flag {
 	case "--model":
 		return "codog --model MODEL COMMAND"
+	case "--fallback-model":
+		return "codog --fallback-model MODEL COMMAND"
 	case "--output-format":
 		return "codog --output-format text|json COMMAND"
 	case "--permission-mode":
@@ -54846,7 +54851,7 @@ func duplicateFlagUsage(flag string) string {
 func globalFlagConsumesNext(arg string) bool {
 	switch arg {
 	case "--config", "-config", "--settings", "-settings", "--cwd", "-cwd", "-C", "--C", "--directory", "-directory",
-		"--model", "-model", "--base-url", "-base-url", "--system-prompt", "-system-prompt",
+		"--model", "-model", "--fallback-model", "-fallback-model", "--base-url", "-base-url", "--system-prompt", "-system-prompt",
 		"--system-prompt-file", "-system-prompt-file", "--append-system-prompt", "-append-system-prompt",
 		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
 		"--session-id", "-session-id", "--name", "-name", "--resume", "-resume", "-r",
@@ -54890,7 +54895,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--add-dir", "-add-dir", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--fallback-model", "-fallback-model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--add-dir", "-add-dir", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
@@ -56766,6 +56771,7 @@ Usage:
 
 Flags:
   --model NAME
+  --fallback-model NAME
   --cwd PATH | -C PATH | --directory PATH
   --base-url URL
   --system-prompt TEXT

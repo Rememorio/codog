@@ -650,6 +650,11 @@ func TestLoadProviderFallbacksConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "claude-primary", cfg.ProviderFallbacks.Primary)
 	require.Equal(t, []string{"claude-backup", "grok-mini"}, cfg.ProviderFallbacks.Fallbacks)
+
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath, Model: "sonnet", FallbackModel: "opus"})
+	require.NoError(t, err)
+	require.Equal(t, "sonnet", cfg.ProviderFallbacks.Primary)
+	require.Equal(t, []string{"opus"}, cfg.ProviderFallbacks.Fallbacks)
 }
 
 func TestLoadRulesImportConfig(t *testing.T) {

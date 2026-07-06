@@ -1202,6 +1202,7 @@ type FlagOverrides struct {
 	DeepLinkRepo                   string
 	DeepLinkLastFetchMS            int64
 	Model                          string
+	FallbackModel                  string
 	BaseURL                        string
 	SystemPrompt                   string
 	SystemPromptFile               string
@@ -3059,6 +3060,10 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 		cfg.Model = overrides.Model
 		cfg.ModelEnvVar = ""
 		applyRoutedProviderEnvFromCurrentEnvironment(cfg)
+	}
+	if overrides.FallbackModel != "" {
+		cfg.ProviderFallbacks.Primary = cfg.Model
+		cfg.ProviderFallbacks.Fallbacks = []string{overrides.FallbackModel}
 	}
 	if overrides.BaseURL != "" {
 		cfg.BaseURL = overrides.BaseURL
