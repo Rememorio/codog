@@ -93,6 +93,9 @@ type HookCommand struct {
 	Once           bool
 	Async          bool
 	AsyncRewake    bool
+	InvalidKind    string
+	InvalidField   string
+	InvalidReason  string
 }
 
 func (h *HookConfig) UnmarshalJSON(data []byte) error {
@@ -1651,13 +1654,14 @@ func parseHookCommandList(data json.RawMessage) ([]HookCommand, error) {
 func parseHookCommandListWithMatcher(data json.RawMessage, inheritedMatcher string) ([]HookCommand, error) {
 	var entries []json.RawMessage
 	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, err
+		return []HookCommand{invalidHookCommand(inheritedMatcher, "invalid_hooks_config", "hooks", "hook event must be an array: "+err.Error())}, nil
 	}
 	commands := []HookCommand{}
 	for _, entry := range entries {
 		next, err := parseHookEntry(entry, inheritedMatcher)
 		if err != nil {
-			return nil, err
+			commands = append(commands, invalidHookCommand(inheritedMatcher, "invalid_hooks_config", "entry", err.Error()))
+			continue
 		}
 		commands = append(commands, next...)
 	}
@@ -1679,12 +1683,16 @@ func parseHookEntry(data json.RawMessage, inheritedMatcher string) ([]HookComman
 		var parsed string
 		if err := json.Unmarshal(rawMatcher, &parsed); err == nil {
 			matcher = parsed
+		} else {
+			return nil, fmt.Errorf("matcher must be a string")
 		}
 	}
 	hook.Matcher = matcher
 	if rawType, ok := object["type"]; ok {
 		if value, ok := parseJSONString(rawType); ok {
 			hook.Type = strings.ToLower(strings.TrimSpace(value))
+		} else {
+			return nil, fmt.Errorf("type must be a string")
 		}
 	}
 	if hook.Type == "" {
@@ -1723,6 +1731,7 @@ func parseHookEntry(data json.RawMessage, inheritedMatcher string) ([]HookComman
 			hook.Command = command
 			return []HookCommand{hook}, nil
 		}
+		return nil, fmt.Errorf("command must be a string")
 	}
 	if rawURL, ok := object["url"]; ok {
 		hook.URL, _ = parseJSONString(rawURL)
@@ -1737,6 +1746,16 @@ func parseHookEntry(data json.RawMessage, inheritedMatcher string) ([]HookComman
 		return parseHookCommandListWithMatcher(rawHooks, matcher)
 	}
 	return []HookCommand{hook}, nil
+}
+
+func invalidHookCommand(matcher string, kind string, field string, reason string) HookCommand {
+	return HookCommand{
+		Matcher:       matcher,
+		Type:          "command",
+		InvalidKind:   strings.TrimSpace(kind),
+		InvalidField:  strings.TrimSpace(field),
+		InvalidReason: strings.TrimSpace(reason),
+	}
 }
 
 func hookCommandStrings(values []HookCommand) []string {
@@ -1765,7 +1784,10 @@ func compactHookCommands(values []HookCommand) []HookCommand {
 		value.If = strings.TrimSpace(value.If)
 		value.Shell = strings.TrimSpace(value.Shell)
 		value.StatusMessage = strings.TrimSpace(value.StatusMessage)
-		if HookCommandDisplay(value) != "" {
+		value.InvalidKind = strings.TrimSpace(value.InvalidKind)
+		value.InvalidField = strings.TrimSpace(value.InvalidField)
+		value.InvalidReason = strings.TrimSpace(value.InvalidReason)
+		if HookCommandDisplay(value) != "" || value.Type != "" || value.InvalidKind != "" || value.InvalidReason != "" {
 			out = append(out, value)
 		}
 	}

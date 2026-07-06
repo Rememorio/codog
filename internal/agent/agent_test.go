@@ -14576,6 +14576,38 @@ func TestRenderConfigInspectionSurfacesValidationMetadata(t *testing.T) {
 	require.Equal(t, "pre_tool_use", payload.HookValidation.InvalidHooks[0].Event)
 }
 
+func TestRenderConfigInspectionSurfacesParsedHookDiagnostics(t *testing.T) {
+	cfg := redactedConfig(config.Config{
+		Model:          "model-a",
+		PermissionMode: "workspace-write",
+		Hooks: config.HookConfig{
+			PreToolUseCommands: []config.HookCommand{
+				{Type: "command", Command: "echo ok"},
+				{Type: "command", InvalidKind: "invalid_hooks_config", InvalidField: "entry", InvalidReason: "matcher must be a string"},
+				{Matcher: "Write", Type: "command"},
+			},
+			PreToolUse: []string{"echo ok"},
+		},
+	})
+	var out bytes.Buffer
+
+	require.NoError(t, renderConfigInspection(&out, cfg, []string{"user.json"}, []string{"--output-format", "json", "show"}))
+
+	var payload struct {
+		Status         string                           `json:"status"`
+		HookValidation localstatus.HookValidationStatus `json:"hook_validation"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &payload))
+	require.Equal(t, "degraded", payload.Status)
+	require.Equal(t, 1, payload.HookValidation.ValidCount)
+	require.Equal(t, 2, payload.HookValidation.InvalidCount)
+	require.Equal(t, "invalid_hooks_config", payload.HookValidation.InvalidHooks[0].Kind)
+	require.Equal(t, "entry", payload.HookValidation.InvalidHooks[0].ErrorField)
+	require.Equal(t, "matcher must be a string", payload.HookValidation.InvalidHooks[0].Reason)
+	require.Equal(t, "missing_command", payload.HookValidation.InvalidHooks[1].Kind)
+	require.Equal(t, "Write", payload.HookValidation.InvalidHooks[1].Matcher)
+}
+
 func TestSettingsAliasRunsConfigInspection(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")

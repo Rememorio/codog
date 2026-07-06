@@ -26118,6 +26118,16 @@ func hookValidationGroups(cfg config.HookConfig) []hookValidationGroup {
 }
 
 func validateHookCommand(event string, index int, hook config.HookCommand) (localstatus.ValidationIssue, bool) {
+	if strings.TrimSpace(hook.InvalidKind) != "" || strings.TrimSpace(hook.InvalidReason) != "" {
+		return hookValidationIssue(
+			event,
+			index,
+			hook,
+			firstNonEmpty(strings.TrimSpace(hook.InvalidKind), "invalid_hooks_config"),
+			firstNonEmpty(strings.TrimSpace(hook.InvalidField), "entry"),
+			firstNonEmpty(strings.TrimSpace(hook.InvalidReason), "invalid hook configuration"),
+		), true
+	}
 	typ := strings.ToLower(strings.TrimSpace(hook.Type))
 	if typ == "" {
 		typ = "command"

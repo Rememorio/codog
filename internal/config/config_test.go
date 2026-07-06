@@ -1996,6 +1996,43 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []HookCommand{{Matcher: "Write", Type: "command", Command: "echo file-changed"}}, cfg.Hooks.FileChangedCommands)
 }
 
+func TestLoadHooksKeepsValidSiblingsBesideInvalidEntries(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"hooks": {
+			"PreToolUse": [
+				"echo valid-pre",
+				42,
+				{"matcher": 42, "command": "echo bad-matcher"},
+				{"matcher": "Read", "hooks": {"not": "an-array"}},
+				{"matcher": "Write", "hooks": [{"type": "command"}]}
+			],
+			"PostToolUse": "not-an-array"
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, []string{"echo valid-pre"}, cfg.Hooks.PreToolUse)
+	require.Empty(t, cfg.Hooks.PostToolUse)
+	require.Len(t, cfg.Hooks.PreToolUseCommands, 5)
+	require.Equal(t, HookCommand{Type: "command", Command: "echo valid-pre"}, cfg.Hooks.PreToolUseCommands[0])
+	require.Equal(t, "invalid_hooks_config", cfg.Hooks.PreToolUseCommands[1].InvalidKind)
+	require.Equal(t, "entry", cfg.Hooks.PreToolUseCommands[1].InvalidField)
+	require.Contains(t, cfg.Hooks.PreToolUseCommands[1].InvalidReason, "cannot unmarshal number")
+	require.Equal(t, "invalid_hooks_config", cfg.Hooks.PreToolUseCommands[2].InvalidKind)
+	require.Equal(t, "entry", cfg.Hooks.PreToolUseCommands[2].InvalidField)
+	require.Contains(t, cfg.Hooks.PreToolUseCommands[2].InvalidReason, "matcher must be a string")
+	require.Equal(t, "Read", cfg.Hooks.PreToolUseCommands[3].Matcher)
+	require.Equal(t, "hooks", cfg.Hooks.PreToolUseCommands[3].InvalidField)
+	require.Contains(t, cfg.Hooks.PreToolUseCommands[3].InvalidReason, "hook event must be an array")
+	require.Equal(t, HookCommand{Matcher: "Write", Type: "command"}, cfg.Hooks.PreToolUseCommands[4])
+	require.Len(t, cfg.Hooks.PostToolUseCommands, 1)
+	require.Equal(t, "hooks", cfg.Hooks.PostToolUseCommands[0].InvalidField)
+	require.Contains(t, cfg.Hooks.PostToolUseCommands[0].InvalidReason, "hook event must be an array")
+}
+
 func TestLoadProjectCompatibleHookSettings(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()
