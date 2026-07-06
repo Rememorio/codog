@@ -88,6 +88,14 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.Equal(t, "pkg/runner.go", refs[0].Path)
 	require.Contains(t, refs[0].Text, "type Runner")
 
+	highlights, err := DocumentHighlights(workspace, "Runner", "pkg/runner.go", 10)
+	require.NoError(t, err)
+	require.Len(t, highlights, 3)
+	require.Equal(t, "pkg/runner.go", highlights[0].Path)
+	require.Equal(t, LSPPosition{Line: 2, Character: 5}, highlights[0].Range.Start)
+	require.Equal(t, LSPPosition{Line: 2, Character: 11}, highlights[0].Range.End)
+	require.Equal(t, 1, highlights[0].Kind)
+
 	hover, err := HoverInfo(workspace, "Run", 1)
 	require.NoError(t, err)
 	require.True(t, hover.Found)

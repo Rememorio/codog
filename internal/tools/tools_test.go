@@ -2852,6 +2852,15 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, typeDefinitionOut, `"found": true`)
 	require.Contains(t, typeDefinitionOut, `"name": "Widget"`)
 
+	documentHighlightOut, err := tool.Execute(context.Background(), []byte(`{"action":"document_highlight","path":"demo.go","query":"Widget","limit":3}`))
+	require.NoError(t, err)
+	require.Contains(t, documentHighlightOut, `"action": "document-highlight"`)
+	require.Contains(t, documentHighlightOut, `"source": "static"`)
+	require.Contains(t, documentHighlightOut, `"query": "Widget"`)
+	require.Contains(t, documentHighlightOut, `"path": "demo.go"`)
+	require.Contains(t, documentHighlightOut, `"character": 5`)
+	require.Contains(t, documentHighlightOut, `"total": 3`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -2872,6 +2881,10 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, err.Error(), "config home is required")
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"workspace_symbol_resolve","query":"Widget","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"document_highlight","path":"demo.go","query":"Widget","use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 

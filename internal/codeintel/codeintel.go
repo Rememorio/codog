@@ -34,6 +34,14 @@ type Reference struct {
 	Text   string `json:"text"`
 }
 
+// DocumentHighlight describes one static symbol occurrence in a source file.
+type DocumentHighlight struct {
+	Path  string   `json:"path"`
+	Range LSPRange `json:"range"`
+	Kind  int      `json:"kind,omitempty"`
+	Text  string   `json:"text,omitempty"`
+}
+
 // Hover contains static hover context for a discovered symbol.
 type Hover struct {
 	Symbol  string   `json:"symbol"`
@@ -264,6 +272,68 @@ func References(workspace string, symbol string, limit int) ([]Reference, error)
 		return nil
 	})
 	return refs, err
+}
+
+// DocumentHighlights returns static ranges for textual symbol occurrences.
+func DocumentHighlights(workspace string, symbol string, relPath string, limit int) ([]DocumentHighlight, error) {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return nil, errors.New("symbol is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	relPath = filepath.ToSlash(strings.TrimSpace(relPath))
+	re, err := regexp.Compile(`\b` + regexp.QuoteMeta(symbol) + `\b`)
+	if err != nil {
+		return nil, err
+	}
+	var highlights []DocumentHighlight
+	err = filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if len(highlights) >= limit {
+			return filepath.SkipAll
+		}
+		if entry.IsDir() {
+			if ignoredDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(workspace, path)
+		rel = filepath.ToSlash(rel)
+		if relPath != "" && rel != relPath {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		lines := strings.Split(string(data), "\n")
+		for i, line := range lines {
+			for _, bounds := range re.FindAllStringIndex(line, -1) {
+				highlights = append(highlights, DocumentHighlight{
+					Path: rel,
+					Range: LSPRange{
+						Start: LSPPosition{Line: i, Character: bounds[0]},
+						End:   LSPPosition{Line: i, Character: bounds[1]},
+					},
+					Kind: 1,
+					Text: strings.TrimSpace(line),
+				})
+				if len(highlights) >= limit {
+					return filepath.SkipAll
+				}
+			}
+		}
+		return nil
+	})
+	return highlights, err
 }
 
 // HoverInfo returns static hover context around a symbol definition.
