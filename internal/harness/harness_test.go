@@ -39,7 +39,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	hooks := findCategory(t, report, "hooks")
 	require.Equal(t, 6, hooks.Total)
 	permissions := findCategory(t, report, "permissions")
-	require.Equal(t, 3, permissions.Total)
+	require.Equal(t, 4, permissions.Total)
 
 	readFile := findScenario(t, report, "read_file_roundtrip")
 	require.Equal(t, "file-tools", readFile.Category)
@@ -149,6 +149,20 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.True(t, bashDenied.OK)
 	require.Equal(t, 1, bashDenied.ToolCalls)
 	require.Contains(t, bashDenied.Output, "bash denied harness ok")
+
+	permissionScope := findScenario(t, report, "permission_scope_denial_roundtrip")
+	require.True(t, permissionScope.OK)
+	require.Equal(t, "permissions", permissionScope.Category)
+	require.Equal(t, 3, permissionScope.ToolCalls)
+	require.Equal(t, 2, permissionScope.ToolErrorCount)
+	require.Equal(t, []string{"testing_permission", "bash", "read_file"}, permissionScope.ToolUses)
+	require.Equal(t, "permission scope denial harness ok", permissionScope.FinalMessage)
+	require.Contains(t, permissionScope.Output, `"kind":"permission_scope_denial"`)
+	require.Contains(t, permissionScope.Output, `"reason":"bash_validation"`)
+	require.Contains(t, permissionScope.Output, `"decision_reason":"bash_validation"`)
+	require.Contains(t, permissionScope.Output, `"decision_allowed":false`)
+	require.Contains(t, permissionScope.Output, `"path resolves outside workspace scope"`)
+	require.Contains(t, permissionScope.Output, "path escapes workspace scope")
 
 	bashTruncation := findScenario(t, report, "bash_output_truncation_roundtrip")
 	require.True(t, bashTruncation.OK)
@@ -691,6 +705,13 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	powerShellStdout := findManifestScenario(t, manifest, "powershell_stdout_roundtrip")
 	require.Equal(t, "powershell", powerShellStdout.Category)
 	require.Contains(t, powerShellStdout.ParityRefs, "PowerShell tool")
+
+	permissionScope := findManifestScenario(t, manifest, "permission_scope_denial_roundtrip")
+	require.Equal(t, "permissions", permissionScope.Category)
+	require.Contains(t, permissionScope.ParityRefs, "Permission enforcement")
+	require.Contains(t, permissionScope.ParityRefs, "Workspace scope denial")
+	require.Contains(t, permissionScope.ParityRefs, "Tool validation")
+	require.Contains(t, permissionScope.ParityRefs, "File tool denial")
 
 	askUserQuestion := findManifestScenario(t, manifest, "ask_user_question_roundtrip")
 	require.Equal(t, "interactive-ui", askUserQuestion.Category)

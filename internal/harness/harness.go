@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -193,6 +194,7 @@ var scenarioOrder = []string{
 	"bash_output_truncation_roundtrip",
 	"bash_permission_prompt_approved",
 	"bash_permission_prompt_denied",
+	"permission_scope_denial_roundtrip",
 	"sandbox_bypass_status_roundtrip",
 	"policy_update_sandbox_roundtrip",
 	"policy_approval_roundtrip",
@@ -700,6 +702,7 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		permissionScopeDenialScenario(),
 		sandboxBypassStatusScenario(),
 		policyUpdateSandboxScenario(),
 		policyApprovalScenario(),
@@ -1141,7 +1144,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "one-shot prompt and streaming", RequiredRefs: []string{"Anthropic streaming", "Tool result roundtrip"}},
 	{Capability: "file tools", RequiredRefs: []string{"File tools", "Edit tool", "Grep chunk assembly", "Glob tool", "MultiEdit tool", "ApplyPatch tool"}},
 	{Capability: "bash and shell safety", RequiredRefs: []string{"Bash tool", "BashOutput tool", "KillBash tool", "Permission prompts", "Output truncation"}},
-	{Capability: "permissions and sandbox", RequiredRefs: []string{"Permission enforcement", "Workspace-write permissions", "Sandbox", "Permission safety"}},
+	{Capability: "permissions and sandbox", RequiredRefs: []string{"Permission enforcement", "Workspace-write permissions", "Sandbox", "Permission safety", "Workspace scope denial"}},
 	{Capability: "policy and approval control plane", RequiredRefs: []string{"Policy evaluation", "Approval tokens", "Delegation audit", "Replay denial"}},
 	{Capability: "sessions and resume", RequiredRefs: []string{"Session JSONL", "Resume", "Session context management"}},
 	{Capability: "slash commands and custom workflows", RequiredRefs: []string{"Slash commands", "Skills", "Templates", "Project workflow surfaces"}},
@@ -1389,6 +1392,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "permissions",
 		Description: "Exercises a bash escalation prompt that the user denies.",
 		ParityRefs:  []string{"Permission prompts", "Bash denial"},
+	},
+	"permission_scope_denial_roundtrip": {
+		Category:    "permissions",
+		Description: "Verifies workspace-scope path escapes are denied with structured permission decisions and file-tool errors.",
+		ParityRefs:  []string{"Permission enforcement", "Workspace scope denial", "Tool validation", "File tool denial"},
 	},
 	"plugin_tool_roundtrip": {
 		Category:    "plugin-paths",
@@ -3062,6 +3070,136 @@ func powerShellStdoutScenario() scenario {
 			return nil
 		},
 	}
+}
+
+func permissionScopeDenialScenario() scenario {
+	return scenario{
+		name: "permission_scope_denial_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			outside := filepath.Join(filepath.Dir(workspace), filepath.Base(workspace)+"-outside")
+			defer os.RemoveAll(outside)
+			if err := os.MkdirAll(outside, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			secretPath := filepath.Join(outside, "secret.txt")
+			if err := os.WriteFile(secretPath, []byte("secret\n"), 0o600); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			registry := tools.NewRegistry(workspace)
+			prompter := &tools.Prompter{Mode: tools.PermissionReadOnly, Workspace: workspace}
+			command := "cat " + harnessShellQuote(secretPath)
+			permissionOut, err := registry.Execute(ctx, "testing_permission", json.RawMessage(`{
+				"target_tool": "BashTool",
+				"input": {"command": `+strconv.Quote(command)+`}
+			}`), prompter)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var permissionCheck struct {
+				Kind               string `json:"kind"`
+				RequestedTool      string `json:"requested_tool"`
+				TargetTool         string `json:"target_tool"`
+				CanonicalTool      string `json:"canonical_tool"`
+				KnownTool          bool   `json:"known_tool"`
+				RequiredPermission string `json:"required_permission"`
+				Allowed            bool   `json:"allowed"`
+				WouldPrompt        bool   `json:"would_prompt"`
+				Reason             string `json:"reason"`
+				Message            string `json:"message"`
+				Decision           struct {
+					ToolName string `json:"tool_name"`
+					Allowed  bool   `json:"allowed"`
+					Reason   string `json:"reason"`
+					Message  string `json:"message"`
+				} `json:"decision"`
+			}
+			if err := json.Unmarshal([]byte(permissionOut), &permissionCheck); err != nil {
+				return localScenarioResult{}, err
+			}
+			if permissionCheck.Kind != "permission_check" ||
+				permissionCheck.RequestedTool != "BashTool" ||
+				permissionCheck.TargetTool != "bash" ||
+				permissionCheck.CanonicalTool != "bash" ||
+				!permissionCheck.KnownTool ||
+				permissionCheck.RequiredPermission != string(tools.PermissionDanger) ||
+				permissionCheck.Allowed ||
+				permissionCheck.WouldPrompt ||
+				permissionCheck.Reason != "bash_validation" ||
+				!strings.Contains(permissionCheck.Message, "path resolves outside workspace scope") ||
+				permissionCheck.Decision.ToolName != "bash" ||
+				permissionCheck.Decision.Allowed ||
+				permissionCheck.Decision.Reason != "bash_validation" ||
+				!strings.Contains(permissionCheck.Decision.Message, "path resolves outside workspace scope") {
+				return localScenarioResult{}, fmt.Errorf("unexpected permission check output: %s", permissionOut)
+			}
+
+			decisions := []tools.PermissionDecision{}
+			prompter.OnDecision = func(decision tools.PermissionDecision) {
+				decisions = append(decisions, decision)
+			}
+			bashOut, bashErr := registry.Execute(ctx, "bash", json.RawMessage(`{"command": `+strconv.Quote(command)+`}`), prompter)
+			if bashErr == nil {
+				return localScenarioResult{}, fmt.Errorf("expected scoped bash denial, got output: %s", bashOut)
+			}
+			if !strings.Contains(bashErr.Error(), "permission denied for tool bash by tool validation") ||
+				!strings.Contains(bashErr.Error(), "path resolves outside workspace scope") {
+				return localScenarioResult{}, fmt.Errorf("unexpected bash denial error: %w", bashErr)
+			}
+			if len(decisions) != 1 ||
+				decisions[0].ToolName != "bash" ||
+				decisions[0].Allowed ||
+				decisions[0].Reason != "bash_validation" ||
+				!strings.Contains(decisions[0].Message, "path resolves outside workspace scope") {
+				return localScenarioResult{}, fmt.Errorf("unexpected bash permission decisions: %#v", decisions)
+			}
+
+			readOut, readErr := registry.Execute(ctx, "read_file", json.RawMessage(`{"path": `+strconv.Quote(secretPath)+`}`), nil)
+			if readErr == nil {
+				return localScenarioResult{}, fmt.Errorf("expected scoped read_file denial, got output: %s", readOut)
+			}
+			if !strings.Contains(readErr.Error(), "path escapes workspace scope") {
+				return localScenarioResult{}, fmt.Errorf("unexpected read_file scope error: %w", readErr)
+			}
+
+			report := map[string]any{
+				"kind": "permission_scope_denial",
+				"bash": map[string]any{
+					"allowed":          permissionCheck.Allowed,
+					"reason":           permissionCheck.Reason,
+					"message":          permissionCheck.Message,
+					"decision_count":   len(decisions),
+					"runtime_denial":   bashErr.Error(),
+					"canonical_tool":   permissionCheck.CanonicalTool,
+					"requested_tool":   permissionCheck.RequestedTool,
+					"would_prompt":     permissionCheck.WouldPrompt,
+					"decision_allowed": decisions[0].Allowed,
+					"decision_reason":  decisions[0].Reason,
+				},
+				"file": map[string]any{
+					"denied": true,
+					"error":  readErr.Error(),
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:         string(data),
+				FinalMessage:   "permission scope denial harness ok",
+				RequestCount:   3,
+				MessageCount:   1,
+				ToolCalls:      3,
+				ToolUses:       []string{"testing_permission", "bash", "read_file"},
+				ToolErrorCount: 2,
+			}, nil
+		},
+	}
+}
+
+func harnessShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func sandboxBypassStatusScenario() scenario {
