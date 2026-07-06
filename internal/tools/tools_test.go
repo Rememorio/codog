@@ -2985,6 +2985,30 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, codeLensResolveOut, `"symbol": "Widget"`)
 	require.Contains(t, codeLensResolveOut, `"command": "codog.references"`)
 
+	semanticTokensOut, err := tool.Execute(context.Background(), []byte(`{"action":"semantic_tokens","path":"demo.go","limit":50}`))
+	require.NoError(t, err)
+	require.Contains(t, semanticTokensOut, `"action": "semantic-tokens"`)
+	require.Contains(t, semanticTokensOut, `"source": "static"`)
+	require.Contains(t, semanticTokensOut, `"legend": [`)
+	require.Contains(t, semanticTokensOut, `"text": "Widget"`)
+	require.Contains(t, semanticTokensOut, `"type": "type"`)
+	require.Contains(t, semanticTokensOut, `"text": "BuildWidget"`)
+	require.Contains(t, semanticTokensOut, `"type": "function"`)
+
+	semanticTokensRangeOut, err := tool.Execute(context.Background(), []byte(`{"action":"semantic_tokens_range","path":"demo.go","line":2,"limit":10}`))
+	require.NoError(t, err)
+	require.Contains(t, semanticTokensRangeOut, `"action": "semantic-tokens-range"`)
+	require.Contains(t, semanticTokensRangeOut, `"source": "static"`)
+	require.Contains(t, semanticTokensRangeOut, `"text": "Widget"`)
+	require.Contains(t, semanticTokensRangeOut, `"line": 2`)
+
+	semanticTokensDeltaOut, err := tool.Execute(context.Background(), []byte(`{"action":"semantic_tokens_delta","path":"demo.go","query":"previous-result","limit":50}`))
+	require.NoError(t, err)
+	require.Contains(t, semanticTokensDeltaOut, `"action": "semantic-tokens-delta"`)
+	require.Contains(t, semanticTokensDeltaOut, `"source": "static"`)
+	require.Contains(t, semanticTokensDeltaOut, `"previousResultId": "previous-result"`)
+	require.Contains(t, semanticTokensDeltaOut, `"edits": []`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -3063,6 +3087,18 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, err.Error(), "config home is required")
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"code_lens_resolve","path":"demo.go","line":2,"character":6,"use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"semantic_tokens","path":"demo.go","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"semantic_tokens_range","path":"demo.go","line":2,"use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"semantic_tokens_delta","path":"demo.go","query":"previous-result","use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 

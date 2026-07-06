@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	goformat "go/format"
 	"go/parser"
 	"go/printer"
+	"go/scanner"
 	"go/token"
 	"net/url"
 	"os"
@@ -158,6 +161,33 @@ type CodeLensCommand struct {
 	Title     string `json:"title"`
 	Command   string `json:"command"`
 	Arguments []any  `json:"arguments,omitempty"`
+}
+
+// SemanticTokens describes static semantic tokens for a document.
+type SemanticTokens struct {
+	Path     string          `json:"path"`
+	ResultID string          `json:"resultId,omitempty"`
+	Legend   []string        `json:"legend"`
+	Data     []int           `json:"data"`
+	Tokens   []SemanticToken `json:"tokens"`
+}
+
+// SemanticToken describes one decoded semantic token.
+type SemanticToken struct {
+	Path      string   `json:"path"`
+	Range     LSPRange `json:"range"`
+	Text      string   `json:"text"`
+	Type      string   `json:"type"`
+	TokenType int      `json:"tokenType"`
+}
+
+// SemanticTokensDelta describes a static semantic tokens delta response.
+type SemanticTokensDelta struct {
+	Path             string         `json:"path"`
+	PreviousResultID string         `json:"previousResultId,omitempty"`
+	ResultID         string         `json:"resultId"`
+	Edits            []any          `json:"edits"`
+	Tokens           SemanticTokens `json:"tokens"`
 }
 
 // Hover contains static hover context for a discovered symbol.
@@ -1264,6 +1294,207 @@ func CodeLensAtPosition(workspace string, relPath string, line int, character in
 		}
 	}
 	return CodeLens{}, false, nil
+}
+
+var semanticTokenLegend = []string{"namespace", "type", "function", "variable", "parameter", "keyword", "string", "number", "comment", "operator"}
+
+var semanticTokenTypeIndex = func() map[string]int {
+	out := map[string]int{}
+	for i, typ := range semanticTokenLegend {
+		out[typ] = i
+	}
+	return out
+}()
+
+// SemanticTokensForDocument returns static semantic tokens for one source
+// document.
+func SemanticTokensForDocument(workspace string, relPath string, limit int) (SemanticTokens, error) {
+	return semanticTokensForDocument(workspace, relPath, limit, -1)
+}
+
+// SemanticTokensForLine returns static semantic tokens for one document line.
+func SemanticTokensForLine(workspace string, relPath string, line int, limit int) (SemanticTokens, error) {
+	if line < 0 {
+		return SemanticTokens{}, errors.New("line must be non-negative")
+	}
+	return semanticTokensForDocument(workspace, relPath, limit, line)
+}
+
+// SemanticTokensDeltaForDocument returns a deterministic static delta response.
+func SemanticTokensDeltaForDocument(workspace string, relPath string, previousResultID string, limit int) (SemanticTokensDelta, error) {
+	tokens, err := SemanticTokensForDocument(workspace, relPath, limit)
+	if err != nil {
+		return SemanticTokensDelta{}, err
+	}
+	return SemanticTokensDelta{
+		Path:             tokens.Path,
+		PreviousResultID: strings.TrimSpace(previousResultID),
+		ResultID:         tokens.ResultID,
+		Edits:            []any{},
+		Tokens:           tokens,
+	}, nil
+}
+
+func semanticTokensForDocument(workspace string, relPath string, limit int, onlyLine int) (SemanticTokens, error) {
+	if strings.TrimSpace(relPath) == "" {
+		return SemanticTokens{}, errors.New("path is required")
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	path, rel, err := resolveWorkspaceFile(workspace, relPath)
+	if err != nil {
+		return SemanticTokens{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return SemanticTokens{}, err
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, data, parser.ParseComments)
+	if err != nil {
+		return SemanticTokens{}, err
+	}
+	classifier := semanticClassifierForFile(file)
+	var s scanner.Scanner
+	s.Init(fset.AddFile(path, -1, len(data)), data, nil, scanner.ScanComments)
+	tokens := []SemanticToken{}
+	for {
+		pos, tok, lit := s.Scan()
+		if tok == token.EOF {
+			break
+		}
+		typ, text := semanticTokenType(tok, lit, classifier)
+		if typ == "" || text == "" {
+			continue
+		}
+		position := fset.Position(pos)
+		if !position.IsValid() {
+			continue
+		}
+		line := position.Line - 1
+		if onlyLine >= 0 && line != onlyLine {
+			continue
+		}
+		tokens = append(tokens, SemanticToken{
+			Path: rel,
+			Range: LSPRange{
+				Start: LSPPosition{Line: line, Character: position.Column - 1},
+				End:   LSPPosition{Line: line, Character: position.Column - 1 + len(text)},
+			},
+			Text:      text,
+			Type:      typ,
+			TokenType: semanticTokenTypeIndex[typ],
+		})
+		if len(tokens) >= limit {
+			break
+		}
+	}
+	return SemanticTokens{
+		Path:     rel,
+		ResultID: semanticTokensResultID(data, onlyLine),
+		Legend:   append([]string(nil), semanticTokenLegend...),
+		Data:     encodeSemanticTokenData(tokens),
+		Tokens:   tokens,
+	}, nil
+}
+
+func semanticClassifierForFile(file *ast.File) map[string]string {
+	classifier := map[string]string{}
+	if file == nil {
+		return classifier
+	}
+	classifier[file.Name.Name] = "namespace"
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch n := node.(type) {
+		case *ast.TypeSpec:
+			classifier[n.Name.Name] = "type"
+		case *ast.FuncDecl:
+			classifier[n.Name.Name] = "function"
+			if n.Recv != nil {
+				for _, field := range n.Recv.List {
+					for _, name := range field.Names {
+						classifier[name.Name] = "parameter"
+					}
+				}
+			}
+			if n.Type != nil && n.Type.Params != nil {
+				for _, field := range n.Type.Params.List {
+					for _, name := range field.Names {
+						classifier[name.Name] = "parameter"
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			for _, name := range n.Names {
+				classifier[name.Name] = "variable"
+			}
+		case *ast.AssignStmt:
+			for _, expr := range n.Lhs {
+				if ident, ok := expr.(*ast.Ident); ok && n.Tok == token.DEFINE {
+					classifier[ident.Name] = "variable"
+				}
+			}
+		}
+		return true
+	})
+	return classifier
+}
+
+func semanticTokenType(tok token.Token, lit string, classifier map[string]string) (string, string) {
+	text := lit
+	if text == "" {
+		text = tok.String()
+	}
+	switch {
+	case tok.IsKeyword():
+		return "keyword", text
+	case tok == token.IDENT:
+		if typ := classifier[text]; typ != "" {
+			return typ, text
+		}
+		return "variable", text
+	case tok == token.STRING || tok == token.CHAR:
+		return "string", text
+	case tok == token.INT || tok == token.FLOAT || tok == token.IMAG:
+		return "number", text
+	case tok == token.COMMENT:
+		return "comment", text
+	case tok.IsOperator():
+		if text == "\n" || text == ";" {
+			return "", ""
+		}
+		return "operator", text
+	default:
+		return "", ""
+	}
+}
+
+func encodeSemanticTokenData(tokens []SemanticToken) []int {
+	data := make([]int, 0, len(tokens)*5)
+	prevLine := 0
+	prevChar := 0
+	for i, tok := range tokens {
+		line := tok.Range.Start.Line
+		character := tok.Range.Start.Character
+		deltaLine := line
+		deltaStart := character
+		if i > 0 {
+			deltaLine = line - prevLine
+			if deltaLine == 0 {
+				deltaStart = character - prevChar
+			}
+		}
+		data = append(data, deltaLine, deltaStart, tok.Range.End.Character-tok.Range.Start.Character, tok.TokenType, 0)
+		prevLine = line
+		prevChar = character
+	}
+	return data
+}
+
+func semanticTokensResultID(data []byte, line int) string {
+	sum := sha1.Sum(append(data, byte(line+1)))
+	return "static-" + hex.EncodeToString(sum[:8])
 }
 
 // HoverInfo returns static hover context around a symbol definition.

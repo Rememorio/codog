@@ -235,6 +235,43 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found)
 
+	semanticTokens, err := SemanticTokensForDocument(workspace, "pkg/runner.go", 100)
+	require.NoError(t, err)
+	require.Equal(t, "pkg/runner.go", semanticTokens.Path)
+	require.NotEmpty(t, semanticTokens.ResultID)
+	require.Contains(t, semanticTokens.Legend, "type")
+	require.Contains(t, semanticTokens.Legend, "function")
+	require.NotEmpty(t, semanticTokens.Data)
+	require.Zero(t, len(semanticTokens.Data)%5)
+	require.Contains(t, semanticTokens.Tokens, SemanticToken{
+		Path:      "pkg/runner.go",
+		Range:     LSPRange{Start: LSPPosition{Line: 2, Character: 5}, End: LSPPosition{Line: 2, Character: 11}},
+		Text:      "Runner",
+		Type:      "type",
+		TokenType: 1,
+	})
+	require.Contains(t, semanticTokens.Tokens, SemanticToken{
+		Path:      "pkg/runner.go",
+		Range:     LSPRange{Start: LSPPosition{Line: 4, Character: 5}, End: LSPPosition{Line: 4, Character: 8}},
+		Text:      "Run",
+		Type:      "function",
+		TokenType: 2,
+	})
+
+	lineTokens, err := SemanticTokensForLine(workspace, "pkg/runner.go", 2, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, lineTokens.Tokens)
+	for _, token := range lineTokens.Tokens {
+		require.Equal(t, 2, token.Range.Start.Line)
+	}
+
+	delta, err := SemanticTokensDeltaForDocument(workspace, "pkg/runner.go", semanticTokens.ResultID, 100)
+	require.NoError(t, err)
+	require.Equal(t, semanticTokens.ResultID, delta.PreviousResultID)
+	require.Equal(t, "pkg/runner.go", delta.Path)
+	require.Empty(t, delta.Edits)
+	require.Equal(t, semanticTokens.Data, delta.Tokens.Data)
+
 	hover, err := HoverInfo(workspace, "Run", 1)
 	require.NoError(t, err)
 	require.True(t, hover.Found)
