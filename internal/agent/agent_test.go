@@ -337,6 +337,7 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, helpOutput, "Usage:")
 	require.Contains(t, helpOutput, "prompt")
 	require.Contains(t, helpOutput, "--continue | -c")
+	require.Contains(t, helpOutput, "<cc-url|cc+unix-url>")
 	resumeLine := requireResumeSafeHelpLine(t, helpOutput)
 	require.Contains(t, resumeLine, "/status")
 	require.Contains(t, resumeLine, "/mcp")
@@ -357,6 +358,7 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "show", globalReport.Action)
 	require.Equal(t, "ok", globalReport.Status)
 	require.Contains(t, globalReport.Help, "--continue | -c")
+	require.Contains(t, globalReport.Help, "<cc-url|cc+unix-url>")
 	require.Equal(t, resumeLine, requireResumeSafeHelpLine(t, globalReport.Help))
 	out.Reset()
 
@@ -19684,6 +19686,53 @@ func TestRunCLIOpenHonorsGlobalOutputFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, `"kind": "open"`)
 	require.Contains(t, out, `"session_id": "cli-session"`)
+}
+
+func TestRunCLIDirectConnectURLRoutesToOpen(t *testing.T) {
+	prompts := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "Bearer open-secret", r.Header.Get("authorization"))
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/sessions":
+			require.Equal(t, http.MethodPost, r.Method)
+			_, _ = w.Write([]byte(`{"session_id":"cli-direct","work_dir":"/remote/work"}`))
+		case "/sessions/cli-direct/prompt":
+			require.Equal(t, http.MethodPost, r.Method)
+			var payload map[string]string
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			prompts = append(prompts, payload["prompt"])
+			_, _ = w.Write([]byte(`{"id":"task-direct","kind":"prompt","status":"running"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": t.TempDir()})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	ccURL := "cc://connect?url=" + url.QueryEscape(server.URL) + "&authToken=open-secret"
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", ccURL, "-p", "direct prompt"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "open"`)
+	require.Contains(t, out, `"session_id": "cli-direct"`)
+	require.Contains(t, out, `"prompt_submitted": true`)
+	require.NotContains(t, out, "open-secret")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "-p", "prefix prompt", ccURL, "--json", "--dangerously-skip-permissions"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "open"`)
+	require.Contains(t, out, `"session_id": "cli-direct"`)
+	require.Contains(t, out, `"prompt_submitted": true`)
+	require.NotContains(t, out, "open-secret")
+	require.Equal(t, []string{"direct prompt", "prefix prompt"}, prompts)
 }
 
 func TestSSHCommandReportsPlan(t *testing.T) {

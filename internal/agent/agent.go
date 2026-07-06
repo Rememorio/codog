@@ -140,6 +140,7 @@ type App struct {
 
 func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrides) error {
 	originalArgs := append([]string(nil), args...)
+	args = normalizeDirectConnectInvocation(args)
 	if len(args) > 0 {
 		switch args[0] {
 		case "--help", "-h":
@@ -2257,6 +2258,78 @@ type sshReport struct {
 	DeployCommand              []string `json:"deploy_command,omitempty"`
 	Executed                   bool     `json:"executed"`
 	Message                    string   `json:"message,omitempty"`
+}
+
+func normalizeDirectConnectInvocation(args []string) []string {
+	directURLIndex := -1
+	for index, arg := range args {
+		if isDirectConnectURLArg(arg) {
+			directURLIndex = index
+			break
+		}
+	}
+	if directURLIndex == -1 || hasCommandBeforeDirectConnectURL(args, directURLIndex) {
+		return args
+	}
+	directURL := args[directURLIndex]
+	prefix := []string{}
+	openArgs := []string{directURL}
+	for index := 0; index < len(args); index++ {
+		if index == directURLIndex {
+			continue
+		}
+		arg := args[index]
+		if arg == "--dangerously-skip-permissions" {
+			continue
+		}
+		if index < directURLIndex && strings.HasPrefix(arg, "-") && !isOpenPrintFlag(arg) {
+			prefix = append(prefix, arg)
+			if globalFlagTakesValue(arg) && !strings.Contains(arg, "=") && index+1 < directURLIndex {
+				index++
+				prefix = append(prefix, args[index])
+			}
+			continue
+		}
+		openArgs = append(openArgs, arg)
+	}
+	normalized := append([]string{}, prefix...)
+	normalized = append(normalized, "open")
+	normalized = append(normalized, openArgs...)
+	return normalized
+}
+
+func isDirectConnectURLArg(arg string) bool {
+	return strings.HasPrefix(arg, "cc://") || strings.HasPrefix(arg, "cc+unix://")
+}
+
+func isOpenPrintFlag(arg string) bool {
+	return arg == "-p" || arg == "--print" || strings.HasPrefix(arg, "-p=") || strings.HasPrefix(arg, "--print=")
+}
+
+func hasCommandBeforeDirectConnectURL(args []string, directURLIndex int) bool {
+	for index := 0; index < directURLIndex; index++ {
+		arg := args[index]
+		if arg == "--dangerously-skip-permissions" {
+			continue
+		}
+		if isOpenPrintFlag(arg) {
+			if (arg == "-p" || arg == "--print") && index+1 < directURLIndex && !strings.HasPrefix(args[index+1], "-") {
+				index++
+			}
+			continue
+		}
+		if globalFlagTakesValue(arg) {
+			if !strings.Contains(arg, "=") && index+1 < directURLIndex {
+				index++
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 const openUsage = "codog open <cc-url|http-url> [-p|--print [PROMPT]] [--output-format text|json|stream-json]"
@@ -55341,7 +55414,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"open",
 			"open",
 			openUsage,
-			"Open\n\nUsage:\n  codog open <cc-url|http-url> [-p|--print [PROMPT]] [--output-format text|json|stream-json]\n\nConnects to a Codog control server through a Claude Code-compatible direct-connect URL. `cc://HOST:PORT?authToken=TOKEN` maps to `http://HOST:PORT`; `cc://...?url=http://HOST:PORT` and plain HTTP(S) URLs are also accepted. With `-p PROMPT`, Codog creates a remote session and submits the prompt through `/sessions/{id}/prompt`.\n",
+			"Open\n\nUsage:\n  codog open <cc-url|http-url> [-p|--print [PROMPT]] [--output-format text|json|stream-json]\n  codog <cc-url|cc+unix-url> [-p|--print [PROMPT]] [--output-format text|json|stream-json]\n\nConnects to a Codog control server through a Claude Code-compatible direct-connect URL. `cc://HOST:PORT?authToken=TOKEN` maps to `http://HOST:PORT`; `cc://...?url=http://HOST:PORT` and plain HTTP(S) URLs are also accepted. A `cc://` or `cc+unix://` URL passed directly on the command line is routed to `open`; with `-p PROMPT`, Codog creates a remote session and submits the prompt through `/sessions/{id}/prompt`.\n",
 			[]string{"kind", "status", "server_url", "session_id", "auth_token_configured", "prompt_submitted", "prompt_task"},
 			[]string{"connected", "error"},
 			false,
@@ -56023,6 +56096,7 @@ Usage:
   %s [flags] api [routes|status|serve] [ADDR|--addr ADDR] [--json|--output-format text|json]
   %s server [--host HOST] [--port PORT] [--auth-token TOKEN] [--unix PATH] [--workspace DIR] [--idle-timeout MS] [--max-sessions N] [--json|--output-format text|json]
   %s open <cc-url|http-url> [-p|--print [PROMPT]] [--json|--output-format text|json|stream-json]
+  %s <cc-url|cc+unix-url> [-p|--print [PROMPT]] [--json|--output-format text|json|stream-json]
   %s [flags] api-key [status|set KEY|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] language [status|show|LANGUAGE|set|use LANGUAGE|clear|off] [--target user|project|local] [--json|--output-format text|json]
