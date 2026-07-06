@@ -4194,7 +4194,13 @@ func risky(value any) {
 	require.Equal(t, "output_style", resumedOutputStyle.Kind)
 	require.Equal(t, "list", resumedOutputStyle.Action)
 
-	out, err = runResumedJSON("/output-style", "set", "concise")
+	out, err = runResumedJSON("/output-style", "ls")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOutputStyle))
+	require.Equal(t, "output_style", resumedOutputStyle.Kind)
+	require.Equal(t, "list", resumedOutputStyle.Action)
+
+	out, err = runResumedJSON("/output-style", "enable", "concise")
 	require.NoError(t, err)
 	var resumedOutputStyleSet outputstyle.Report
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedOutputStyleSet))
@@ -4203,6 +4209,13 @@ func risky(value any) {
 	require.Equal(t, "concise", resumedOutputStyleSet.Active)
 	require.NotNil(t, resumedOutputStyleSet.Style)
 	require.Equal(t, "concise", resumedOutputStyleSet.Style.Name)
+
+	out, err = runResumedJSON("/output-style", "disable")
+	require.NoError(t, err)
+	var resumedOutputStyleClear outputstyle.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOutputStyleClear))
+	require.Equal(t, "output_style", resumedOutputStyleClear.Kind)
+	require.Equal(t, "clear", resumedOutputStyleClear.Action)
 
 	out, err = runResumedJSON("/theme")
 	require.NoError(t, err)
@@ -17313,19 +17326,27 @@ func TestOutputStyleCommandAndSlashInjectsSystemPrompt(t *testing.T) {
 	require.Contains(t, out.String(), "concise")
 	out.Reset()
 
-	require.NoError(t, app.OutputStyle([]string{"set", "brief", "--json"}))
+	require.NoError(t, app.OutputStyle([]string{"status", "--json"}))
+	var listReport outputstyle.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &listReport))
+	require.Equal(t, "output_style", listReport.Kind)
+	require.Equal(t, "list", listReport.Action)
+	require.NotEmpty(t, listReport.Styles)
+	out.Reset()
+
+	require.NoError(t, app.OutputStyle([]string{"use", "brief", "--json"}))
 	require.Contains(t, out.String(), `"active": "brief"`)
 	require.FileExists(t, outputstyle.StatePath(workspace))
 	require.Contains(t, app.systemPrompt(), `<output_style name="brief" source="user">`)
 	require.Contains(t, app.systemPrompt(), "Answer in one compact paragraph.")
 	out.Reset()
 
-	require.True(t, app.handleSlash(context.Background(), "/output-style show brief", &session.Session{ID: "session"}))
+	require.True(t, app.handleSlash(context.Background(), "/output-style view brief", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Body")
 	require.Contains(t, out.String(), "Answer in one compact paragraph.")
 	out.Reset()
 
-	require.True(t, app.handleSlash(context.Background(), "/output-style clear", &session.Session{ID: "session"}))
+	require.True(t, app.handleSlash(context.Background(), "/output-style off", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Output Style")
 	require.NotContains(t, app.systemPrompt(), "<output_style")
 	require.Empty(t, errOut.String())

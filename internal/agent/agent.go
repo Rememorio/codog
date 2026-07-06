@@ -14179,7 +14179,7 @@ type outputStyleRequest struct {
 	Format string
 }
 
-const outputStyleUsage = "codog output-style [list|show|set|clear] [NAME] [--output-format text|json]"
+const outputStyleUsage = "codog output-style [list|ls|status|show|view|set|use|clear|off] [NAME] [--output-format text|json]"
 
 func (a *App) OutputStyle(args []string) error {
 	req, err := parseOutputStyleArgs(args)
@@ -14249,7 +14249,9 @@ func parseOutputStyleArgs(args []string) (outputStyleRequest, error) {
 	if len(rest) == 0 {
 		return req, nil
 	}
-	switch rest[0] {
+	rawAction := strings.ToLower(strings.TrimSpace(rest[0]))
+	action := normalizeOutputStyleAction(rawAction)
+	switch action {
 	case "list":
 		if len(rest) > 1 {
 			return outputStyleRequest{}, unexpectedExtraArgsError{
@@ -14262,24 +14264,24 @@ func parseOutputStyleArgs(args []string) (outputStyleRequest, error) {
 	case "show", "set":
 		if len(rest) < 2 {
 			return outputStyleRequest{}, requiredArgumentError{
-				Command:  "output-style " + rest[0],
+				Command:  "output-style " + action,
 				Argument: "NAME",
 				Usage:    outputStyleUsage,
 			}
 		}
 		if len(rest) > 2 {
 			return outputStyleRequest{}, unexpectedExtraArgsError{
-				Command: "output-style " + rest[0],
+				Command: "output-style " + action,
 				Args:    rest[2:],
 				Usage:   outputStyleUsage,
 			}
 		}
-		req.Action = rest[0]
+		req.Action = action
 		req.Name = rest[1]
-	case "clear", "reset":
+	case "clear":
 		if len(rest) > 1 {
 			return outputStyleRequest{}, unexpectedExtraArgsError{
-				Command: "output-style " + rest[0],
+				Command: "output-style " + action,
 				Args:    rest[1:],
 				Usage:   outputStyleUsage,
 			}
@@ -14297,6 +14299,21 @@ func parseOutputStyleArgs(args []string) (outputStyleRequest, error) {
 		req.Name = rest[0]
 	}
 	return req, nil
+}
+
+func normalizeOutputStyleAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "list", "ls", "status", "current":
+		return "list"
+	case "show", "info", "describe", "get", "view", "cat":
+		return "show"
+	case "set", "use", "select", "enable", "on":
+		return "set"
+	case "clear", "reset", "unset", "disable", "off":
+		return "clear"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
 }
 
 var availableThemes = []string{"default", "dark", "light", "ansi", "no-color"}
@@ -54104,7 +54121,7 @@ Usage:
   %s [flags] commands [list|ls|sources|roots|show|view|run|render|exec]
   %s [flags] templates [list|ls|show|view|apply|render|run]
   %s [flags] hooks [list|health EVENT|run EVENT|watch-paths list|check] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
-  %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
+  %s [flags] output-style [list|ls|status|show|view|set|use|clear|off] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME] | models [list|ls|aliases|routes|search|find QUERY|show|view [MODEL]|current|help] [--json|--output-format text|json]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] budget [status|set|reset] [--max-tokens N] [--max-turns N] [--target user|project|local] [--json|--output-format text|json]
