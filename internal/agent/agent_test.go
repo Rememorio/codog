@@ -10057,6 +10057,21 @@ func TestParseFlagsSupportsNoSessionPersistenceForPrompt(t *testing.T) {
 	require.Contains(t, flagErr.Message, "prompt mode")
 }
 
+func TestParseFlagsSupportsInputFormatForPrompt(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{"-p", "--input-format", "stream-json", "--output-format", "stream-json"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "stream-json", overrides.InputFormat)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"--output-format", "stream-json", "--input-format", "stream-json"}, rest)
+
+	_, _, _, err = parseFlags([]string{"--input-format", "stream-json", "status"}, config.FlagOverrides{})
+	require.Error(t, err)
+	var flagErr invalidFlagValueError
+	require.ErrorAs(t, err, &flagErr)
+	require.Equal(t, "--input-format", flagErr.Flag)
+	require.Contains(t, flagErr.Message, "prompt mode")
+}
+
 func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{"--output-format", "json", "status"}, config.FlagOverrides{})
 	require.NoError(t, err)
@@ -10218,6 +10233,86 @@ func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "Describe", req.Prompt)
 	require.Equal(t, []string{"notes.txt", "image.png", "report.pdf"}, req.Attachments)
+
+	req, err = parsePromptArgs([]string{"--input-format", "stream-json", "--output-format", "stream-json"})
+	require.NoError(t, err)
+	require.Equal(t, "stream-json", req.InputFormat)
+	require.Equal(t, "stream-json", req.Format)
+
+	_, err = parsePromptArgs([]string{"--input-format", "stream-json"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires --output-format=stream-json")
+
+	_, err = parsePromptArgs([]string{"--input-format", "xml", "--output-format", "stream-json"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown prompt input format")
+}
+
+func TestReadPromptStreamJSONInputExtractsSDKUserMessages(t *testing.T) {
+	input := strings.Join([]string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"user","message":{"role":"user","content":"first prompt"},"parent_tool_use_id":null}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"second prompt"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}}]},"parent_tool_use_id":null}`,
+		`{"type":"user","message":{"role":"user","content":"synthetic"},"parent_tool_use_id":null,"isSynthetic":true}`,
+		`{"type":"user","message":{"role":"user","content":"replay"},"parent_tool_use_id":null,"isReplay":true}`,
+		`{"type":"user","message":{"role":"user","content":"tool result"},"parent_tool_use_id":"tool-1"}`,
+	}, "\n")
+
+	prompt, err := readPromptStreamJSONInput(strings.NewReader(input))
+	require.NoError(t, err)
+	require.Equal(t, "first prompt\n\nsecond prompt", prompt)
+
+	_, err = readPromptStreamJSONInput(strings.NewReader("{bad json}\n"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "line 1")
+}
+
+func TestPromptUsesStreamJSONInputForModelRequest(t *testing.T) {
+	var requestBody json.RawMessage
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "done",
+		OnRequest: func(body json.RawMessage) {
+			requestBody = append([]byte(nil), body...)
+		},
+	}.Handler())
+	defer server.Close()
+
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          t.TempDir(),
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			PermissionRules:     config.PermissionRules{},
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(t.TempDir(), workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	streamInput := `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"stream prompt body"}]},"parent_tool_use_id":null}` + "\n"
+	prompt, err := readPromptStreamJSONInput(strings.NewReader(streamInput))
+	require.NoError(t, err)
+	require.NoError(t, app.PromptWithOutput(context.Background(), prompt, config.FlagOverrides{SessionID: "stream-input-session"}, "stream-json"))
+
+	var request struct {
+		Messages []anthropic.Message `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(requestBody, &request))
+	require.NotEmpty(t, request.Messages)
+	require.Equal(t, "user", request.Messages[len(request.Messages)-1].Role)
+	require.Contains(t, request.Messages[len(request.Messages)-1].Content[0].Text, "stream prompt body")
+	require.Contains(t, out.String(), `"type":"result"`)
 }
 
 func TestMergePromptWithStdin(t *testing.T) {

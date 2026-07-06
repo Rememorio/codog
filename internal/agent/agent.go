@@ -467,7 +467,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIError(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		input := req.Prompt
-		if !req.PromptProvided {
+		if req.InputFormat == "stream-json" {
+			streamInput, err := readPromptStreamJSONInput(app.In)
+			if err != nil {
+				return renderCLIError(app.Out, err, req.Format)
+			}
+			input = mergePromptWithStdin(input, streamInput)
+		} else if !req.PromptProvided {
 			data, err := readPromptInput(app.In)
 			if err != nil {
 				return err
@@ -32764,6 +32770,7 @@ type turnOptions struct {
 type promptCLIRequest struct {
 	Prompt         string
 	Format         string
+	InputFormat    string
 	PromptProvided bool
 	Compact        bool
 	UseStdin       bool
@@ -32771,7 +32778,7 @@ type promptCLIRequest struct {
 }
 
 func parsePromptArgs(args []string) (promptCLIRequest, error) {
-	req := promptCLIRequest{Format: "text"}
+	req := promptCLIRequest{Format: "text", InputFormat: "text"}
 	parts := []string{}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -32792,6 +32799,14 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--input-format":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "prompt", Flag: "--input-format", Usage: "codog -p --input-format text|stream-json --output-format stream-json"}
+			}
+			req.InputFormat = args[index]
+		case strings.HasPrefix(arg, "--input-format="):
+			req.InputFormat = strings.TrimPrefix(arg, "--input-format=")
 		case arg == "--compact":
 			req.Compact = true
 		case arg == "--stdin" || arg == "--prompt-stdin":
@@ -32819,7 +32834,39 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 		return req, err
 	}
 	req.Format = normalized
+	inputFormat, err := normalizePromptInputFormat(req.InputFormat)
+	if err != nil {
+		return req, err
+	}
+	req.InputFormat = inputFormat
+	if req.InputFormat == "stream-json" && req.Format != "stream-json" {
+		return req, invalidFlagValueError{
+			Flag:    "--input-format",
+			Value:   req.InputFormat,
+			Message: "--input-format=stream-json requires --output-format=stream-json",
+			Usage:   "codog -p --input-format stream-json --output-format stream-json",
+		}
+	}
 	return req, nil
+}
+
+func normalizePromptInputFormat(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "text", nil
+	}
+	lower := strings.ToLower(value)
+	switch lower {
+	case "text", "stream-json":
+		return lower, nil
+	default:
+		return "", invalidFlagValueError{
+			Flag:    "--input-format",
+			Value:   value,
+			Message: fmt.Sprintf("unknown prompt input format %q; expected text or stream-json", value),
+			Usage:   "codog -p --input-format text|stream-json",
+		}
+	}
 }
 
 func parseAttachSlashArgs(args []string) (string, []string, error) {
@@ -32870,6 +32917,89 @@ func readPromptInputState(in io.Reader) (string, bool, error) {
 		return "", nonTerminal, err
 	}
 	return string(data), nonTerminal, nil
+}
+
+func readPromptStreamJSONInput(in io.Reader) (string, error) {
+	if in == nil {
+		return "", nil
+	}
+	scanner := bufio.NewScanner(in)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	parts := []string{}
+	lineNumber := 0
+	for scanner.Scan() {
+		lineNumber++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		text, ok, err := promptTextFromSDKUserMessageLine([]byte(line))
+		if err != nil {
+			return "", fmt.Errorf("invalid stream-json input line %d: %w", lineNumber, err)
+		}
+		if ok && strings.TrimSpace(text) != "" {
+			parts = append(parts, strings.TrimSpace(text))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return strings.Join(parts, "\n\n"), nil
+}
+
+func promptTextFromSDKUserMessageLine(line []byte) (string, bool, error) {
+	var msg struct {
+		Type            string          `json:"type"`
+		Message         json.RawMessage `json:"message"`
+		ParentToolUseID *string         `json:"parent_tool_use_id"`
+		IsSynthetic     bool            `json:"isSynthetic"`
+		IsReplay        bool            `json:"isReplay"`
+	}
+	if err := json.Unmarshal(line, &msg); err != nil {
+		return "", false, err
+	}
+	if msg.Type != "user" || msg.ParentToolUseID != nil || msg.IsSynthetic || msg.IsReplay {
+		return "", false, nil
+	}
+	var message struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(msg.Message, &message); err != nil {
+		return "", false, err
+	}
+	if message.Role != "" && message.Role != "user" {
+		return "", false, nil
+	}
+	text, ok, err := promptTextFromSDKContent(message.Content)
+	if err != nil || !ok {
+		return "", ok, err
+	}
+	return text, true, nil
+}
+
+func promptTextFromSDKContent(content json.RawMessage) (string, bool, error) {
+	var text string
+	if err := json.Unmarshal(content, &text); err == nil {
+		return text, true, nil
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(content, &blocks); err != nil {
+		return "", false, err
+	}
+	parts := []string{}
+	for _, block := range blocks {
+		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
+			parts = append(parts, strings.TrimSpace(block.Text))
+		}
+	}
+	if len(parts) == 0 {
+		return "", false, nil
+	}
+	return strings.Join(parts, "\n\n"), true, nil
 }
 
 func mergePromptWithStdin(prompt string, stdin string) string {
@@ -51378,6 +51508,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	compactPromptMode := false
 	jsonOutput := false
 	outputFormat := ""
+	inputFormat := strings.TrimSpace(base.InputFormat)
 	allowedTools := stringListFlag(base.AllowedTools)
 	disallowedTools := stringListFlag(base.DisallowedTools)
 	toolNames := append([]string(nil), base.ToolNames...)
@@ -51402,6 +51533,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.BoolVar(&jsonOutput, "json", false, "alias for --output-format json for local commands")
 	flags.StringVar(&outputFormat, "output-format", "", "text or json output for local commands")
 	flags.StringVar(&outputFormat, "o", "", "text or json output for local commands")
+	flags.StringVar(&inputFormat, "input-format", inputFormat, "text or stream-json input for prompt mode")
 	flags.StringVar(&base.PermissionMode, "permission-mode", base.PermissionMode, "read-only, workspace-write, danger-full-access, prompt, allow")
 	flags.BoolVar(&base.SkipPermissions, "dangerously-skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
 	flags.BoolVar(&base.SkipPermissions, "skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
@@ -51421,6 +51553,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		return base, "", nil, err
 	}
 	base.OutputFormatSource, base.OutputFormatRaw, base.OutputFormatOverridden = globalOutputFormatProvenance(outputFormat, jsonOutput)
+	base.InputFormat = strings.TrimSpace(inputFormat)
 	base.AllowedTools = []string(allowedTools)
 	base.DisallowedTools = []string(disallowedTools)
 	base.ToolNames = append([]string(nil), toolNames...)
@@ -51450,6 +51583,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		if compactPromptMode {
 			rest = append(rest, "--compact")
 		}
+		if base.InputFormat != "" {
+			rest = append(rest, "--input-format", base.InputFormat)
+		}
 		return base, "prompt", rest, nil
 	}
 	if len(rest) == 0 {
@@ -51461,6 +51597,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 				Usage:   "codog -p --no-session-persistence \"<prompt>\"",
 			}
 		}
+		if base.InputFormat != "" {
+			return base, "", nil, invalidFlagValueError{
+				Flag:    "--input-format",
+				Value:   base.InputFormat,
+				Message: "--input-format is only supported with prompt mode",
+				Usage:   "codog -p --input-format text|stream-json \"<prompt>\"",
+			}
+		}
 		return base, "", nil, nil
 	}
 	command, rest := rest[0], rest[1:]
@@ -51470,6 +51614,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 			Value:   command,
 			Message: "--no-session-persistence is only supported with prompt mode",
 			Usage:   "codog -p --no-session-persistence \"<prompt>\"",
+		}
+	}
+	if base.InputFormat != "" && !strings.EqualFold(command, "prompt") {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--input-format",
+			Value:   command,
+			Message: "--input-format is only supported with prompt mode",
+			Usage:   "codog -p --input-format text|stream-json \"<prompt>\"",
 		}
 	}
 	outputFormat = resolveGlobalOutputFormat(outputFormat, jsonOutput)
@@ -51486,6 +51638,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		outputFormat = normalized
 	}
 	rest = injectGlobalOutputFormat(command, rest, outputFormat)
+	if strings.EqualFold(command, "prompt") && base.InputFormat != "" && !argsHaveInputFormat(rest) {
+		rest = append(rest, "--input-format", base.InputFormat)
+	}
 	return base, command, rest, nil
 }
 
@@ -51593,6 +51748,7 @@ func globalFlagConsumesNext(arg string) bool {
 		"--system-prompt-file", "-system-prompt-file", "--append-system-prompt", "-append-system-prompt",
 		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
 		"--resume", "-resume", "--output-format", "-output-format", "-o", "--o",
+		"--input-format", "-input-format",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
 		"--max-tokens", "-max-tokens", "--temperature", "-temperature",
 		"--tools", "-tools",
@@ -51629,7 +51785,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--resume", "--output-format", "-o", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--resume", "--output-format", "-o", "--input-format", "-input-format", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
@@ -51834,6 +51990,15 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 func argsHaveOutputFormat(args []string) bool {
 	for _, arg := range args {
 		if arg == "--json" || arg == "--output-format" || arg == "-o" || strings.HasPrefix(arg, "--output-format=") {
+			return true
+		}
+	}
+	return false
+}
+
+func argsHaveInputFormat(args []string) bool {
+	for _, arg := range args {
+		if arg == "--input-format" || strings.HasPrefix(arg, "--input-format=") {
 			return true
 		}
 	}
@@ -52160,8 +52325,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return providerCommandHelpSpec(
 			"prompt",
 			"prompt",
-			`codog [flags] prompt [--stdin] [--attach PATH] "MESSAGE" [--json|--output-format text|json|stream-json]`,
-			"Prompt\n\nUsage:\n  codog [flags] prompt [--stdin] [--attach PATH] \"MESSAGE\" [--json|--output-format text|json|stream-json]\n  codog -p \"MESSAGE\"\n\nRuns one provider-backed agent turn, streams assistant text by default, executes approved tools, and persists the turn to a JSONL session. Pass --stdin to append piped input to the prompt, and --attach to include local text, image, or PDF files in the model request.\n",
+			`codog [flags] prompt [--stdin] [--attach PATH] [--input-format text|stream-json] "MESSAGE" [--json|--output-format text|json|stream-json]`,
+			"Prompt\n\nUsage:\n  codog [flags] prompt [--stdin] [--attach PATH] [--input-format text|stream-json] \"MESSAGE\" [--json|--output-format text|json|stream-json]\n  codog -p \"MESSAGE\"\n\nRuns one provider-backed agent turn, streams assistant text by default, executes approved tools, and persists the turn to a JSONL session. Pass --stdin to append piped input to the prompt, --input-format stream-json to read Claude SDK user-message NDJSON, and --attach to include local text, image, or PDF files in the model request.\n",
 			[]string{"session_id", "message", "tool_calls", "usage", "cost"},
 			[]string{"ok", "error"},
 		), true
@@ -53226,7 +53391,7 @@ func helpText(exe string) string {
 	help := `%s is a Go-native coding agent CLI.
 
 Usage:
-  %s [flags] prompt [--stdin] [--attach PATH] "explain this repo" [--json|--output-format text|json|stream-json] | -p "explain this repo"
+  %s [flags] prompt [--stdin] [--attach PATH] [--input-format text|stream-json] "explain this repo" [--json|--output-format text|json|stream-json] | -p "explain this repo"
   %s [flags] btw "quick side question" [--session ID|--resume ID]
   %s version [--json|--output-format text|json]
   %s config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--json|--output-format text|json]
@@ -53406,6 +53571,7 @@ Flags:
   --skip-permissions
   --allow-broad-cwd
   --no-session-persistence
+  --input-format text|stream-json
   --allowed-tools TOOL[,TOOL]
   --disallowed-tools TOOL[,TOOL]
   --tools TOOL[,TOOL]

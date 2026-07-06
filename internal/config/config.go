@@ -1102,6 +1102,7 @@ type FlagOverrides struct {
 	ToolNames                      []string
 	ToolNamesSet                   bool
 	NoSessionPersistence           bool
+	InputFormat                    string
 	OutputFormatSource             string
 	OutputFormatRaw                string
 	OutputFormatOverridden         bool
