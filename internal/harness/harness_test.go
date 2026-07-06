@@ -381,6 +381,29 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 0, pluginLifecycle.ToolCalls)
 	require.Contains(t, pluginLifecycle.Output, "plugin lifecycle harness ok")
 
+	taskLifecycle := findScenario(t, report, "task_lifecycle_roundtrip")
+	require.True(t, taskLifecycle.OK)
+	require.Equal(t, "background-agents", taskLifecycle.Category)
+	require.Equal(t, 9, taskLifecycle.ToolCalls)
+	require.Equal(t, 9, taskLifecycle.RequestCount)
+	require.Equal(t, []string{
+		"task_create",
+		"task_status",
+		"task_output",
+		"task_update",
+		"task_get",
+		"task_list",
+		"task_create",
+		"task_output",
+		"task_stop",
+	}, taskLifecycle.ToolUses)
+	require.Equal(t, "task lifecycle harness ok", taskLifecycle.FinalMessage)
+	require.Contains(t, taskLifecycle.Output, `"kind":"task_lifecycle"`)
+	require.Contains(t, taskLifecycle.Output, `"stdout":"task-output"`)
+	require.Contains(t, taskLifecycle.Output, `"message":"review logs"`)
+	require.Contains(t, taskLifecycle.Output, `"listed_total":1`)
+	require.Contains(t, taskLifecycle.Output, `"status":"stopped"`)
+
 	backgroundAgent := findScenario(t, report, "background_agent_run_roundtrip")
 	require.True(t, backgroundAgent.OK)
 	require.Equal(t, "background-agents", backgroundAgent.Category)
@@ -396,8 +419,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, backgroundAgent.Output, `"failed_exit_code":7`)
 	backgroundAgents := findCategory(t, report, "background-agents")
 	require.True(t, backgroundAgents.OK)
-	require.Equal(t, 1, backgroundAgents.Total)
-	require.ElementsMatch(t, []string{"background_agent_run_roundtrip"}, backgroundAgents.Scenarios)
+	require.Equal(t, 2, backgroundAgents.Total)
+	require.ElementsMatch(t, []string{"task_lifecycle_roundtrip", "background_agent_run_roundtrip"}, backgroundAgents.Scenarios)
 
 	remoteTrigger := findScenario(t, report, "remote_trigger_roundtrip")
 	require.True(t, remoteTrigger.OK)
@@ -651,6 +674,12 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Contains(t, backgroundAgent.ParityRefs, "Background tasks")
 	require.Contains(t, backgroundAgent.ParityRefs, "Agent runs")
 	require.Contains(t, backgroundAgent.ParityRefs, "Supervisor restarts")
+
+	taskLifecycle := findManifestScenario(t, manifest, "task_lifecycle_roundtrip")
+	require.Equal(t, "background-agents", taskLifecycle.Category)
+	require.Contains(t, taskLifecycle.ParityRefs, "Task create")
+	require.Contains(t, taskLifecycle.ParityRefs, "Task output")
+	require.Contains(t, taskLifecycle.ParityRefs, "Task stop")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {

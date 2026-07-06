@@ -214,6 +214,7 @@ var scenarioOrder = []string{
 	"session_resume_jsonl_roundtrip",
 	"resume_slash_command_roundtrip",
 	"plugin_lifecycle_roundtrip",
+	"task_lifecycle_roundtrip",
 	"background_agent_run_roundtrip",
 	"remote_trigger_roundtrip",
 	"remote_api_listener_roundtrip",
@@ -747,6 +748,7 @@ func Run(ctx context.Context) (Report, error) {
 		sessionResumeJSONLRoundtripScenario(),
 		resumeSlashCommandScenario(),
 		pluginLifecycleScenario(),
+		taskLifecycleScenario(),
 		backgroundAgentRunScenario(),
 		remoteTriggerScenario(),
 		remoteAPIListenerScenario(),
@@ -1492,6 +1494,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "plugin-paths",
 		Description: "Exercises plugin lifecycle metadata loading without invoking a tool.",
 		ParityRefs:  []string{"Plugin lifecycle", "Plugin manifest loading"},
+	},
+	"task_lifecycle_roundtrip": {
+		Category:    "background-agents",
+		Description: "Creates, reads, updates, lists, and stops background tasks through the tool registry.",
+		ParityRefs:  []string{"Background tasks", "Task create", "Task status", "Task output", "Task updates", "Task stop"},
 	},
 	"background_agent_run_roundtrip": {
 		Category:    "background-agents",
@@ -4061,6 +4068,217 @@ func pluginLifecycleScenario() scenario {
 				}
 			}
 			return nil
+		},
+	}
+}
+
+func taskLifecycleScenario() scenario {
+	return scenario{
+		name: "task_lifecycle_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
+
+			createOut, err := registry.Execute(ctx, "TaskCreateTool", json.RawMessage(`{
+				"command": "printf task-output",
+				"kind": "parity",
+				"session_id": "session-task"
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var created struct {
+				TaskID string          `json:"task_id"`
+				Kind   string          `json:"kind"`
+				Task   background.Task `json:"task"`
+			}
+			if err := json.Unmarshal([]byte(createOut), &created); err != nil {
+				return localScenarioResult{}, err
+			}
+			if created.TaskID == "" || created.Task.ID != created.TaskID || created.Kind != "parity" {
+				return localScenarioResult{}, fmt.Errorf("unexpected task create output: %s", createOut)
+			}
+
+			statusOut, err := registry.Execute(ctx, "task_status", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, created.TaskID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var status struct {
+				TaskID string `json:"task_id"`
+				Kind   string `json:"kind"`
+			}
+			if err := json.Unmarshal([]byte(statusOut), &status); err != nil {
+				return localScenarioResult{}, err
+			}
+			if status.TaskID != created.TaskID || status.Kind != "parity" {
+				return localScenarioResult{}, fmt.Errorf("unexpected task status output: %s", statusOut)
+			}
+
+			outputOut, err := registry.Execute(ctx, "TaskOutputTool", json.RawMessage(fmt.Sprintf(`{
+				"task_id": %q,
+				"block": true,
+				"timeout_ms": 2000
+			}`, created.TaskID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var output struct {
+				TaskID        string `json:"task_id"`
+				Status        string `json:"status"`
+				Stdout        string `json:"stdout"`
+				HasOutput     bool   `json:"has_output"`
+				RawOutputPath string `json:"rawOutputPath"`
+			}
+			if err := json.Unmarshal([]byte(outputOut), &output); err != nil {
+				return localScenarioResult{}, err
+			}
+			if output.TaskID != created.TaskID || !output.HasOutput || output.Stdout != "task-output" {
+				return localScenarioResult{}, fmt.Errorf("unexpected task output: %s", outputOut)
+			}
+			if _, err := os.Stat(output.RawOutputPath); err != nil {
+				return localScenarioResult{}, fmt.Errorf("task raw output path missing: %w", err)
+			}
+
+			updateOut, err := registry.Execute(ctx, "task_update", json.RawMessage(fmt.Sprintf(`{
+				"task_id": %q,
+				"message": "review logs"
+			}`, created.TaskID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var updated struct {
+				TaskID       string `json:"task_id"`
+				MessageCount int    `json:"message_count"`
+				LastMessage  string `json:"last_message"`
+			}
+			if err := json.Unmarshal([]byte(updateOut), &updated); err != nil {
+				return localScenarioResult{}, err
+			}
+			if updated.TaskID != created.TaskID || updated.MessageCount != 1 || updated.LastMessage != "review logs" {
+				return localScenarioResult{}, fmt.Errorf("unexpected task update output: %s", updateOut)
+			}
+
+			getOut, err := registry.Execute(ctx, "task_get", json.RawMessage(fmt.Sprintf(`{"id":%q}`, created.TaskID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var fetched struct {
+				TaskID string `json:"task_id"`
+				Task   struct {
+					Messages []background.TaskMessage `json:"messages"`
+				} `json:"task"`
+			}
+			if err := json.Unmarshal([]byte(getOut), &fetched); err != nil {
+				return localScenarioResult{}, err
+			}
+			if fetched.TaskID != created.TaskID || len(fetched.Task.Messages) != 1 || fetched.Task.Messages[0].Message != "review logs" {
+				return localScenarioResult{}, fmt.Errorf("unexpected task get output: %s", getOut)
+			}
+
+			listOut, err := registry.Execute(ctx, "task_list", json.RawMessage(`{"session_id":"session-task","kind":"parity"}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var listed struct {
+				Total int `json:"total"`
+				Tasks []struct {
+					TaskID string `json:"task_id"`
+				} `json:"tasks"`
+			}
+			if err := json.Unmarshal([]byte(listOut), &listed); err != nil {
+				return localScenarioResult{}, err
+			}
+			if listed.Total != 1 || len(listed.Tasks) != 1 || listed.Tasks[0].TaskID != created.TaskID {
+				return localScenarioResult{}, fmt.Errorf("unexpected task list output: %s", listOut)
+			}
+
+			stopCreateOut, err := registry.Execute(ctx, "task_create", json.RawMessage(`{
+				"command": "printf task-stop-ready; sleep 5",
+				"kind": "parity",
+				"session_id": "session-task"
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var stopCreated struct {
+				TaskID string `json:"task_id"`
+			}
+			if err := json.Unmarshal([]byte(stopCreateOut), &stopCreated); err != nil {
+				return localScenarioResult{}, err
+			}
+			if stopCreated.TaskID == "" {
+				return localScenarioResult{}, fmt.Errorf("unexpected stoppable task output: %s", stopCreateOut)
+			}
+			defer func() {
+				_, _ = registry.Execute(ctx, "task_stop", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, stopCreated.TaskID)), nil)
+			}()
+
+			stopReadyOut, err := registry.Execute(ctx, "task_output", json.RawMessage(fmt.Sprintf(`{
+				"task_id": %q,
+				"block": true,
+				"timeout_ms": 2000
+			}`, stopCreated.TaskID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(stopReadyOut, "task-stop-ready") {
+				return localScenarioResult{}, fmt.Errorf("stoppable task did not produce readiness output: %s", stopReadyOut)
+			}
+			stopOut, err := registry.Execute(ctx, "TaskStopTool", json.RawMessage(fmt.Sprintf(`{"shell_id":%q}`, stopCreated.TaskID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var stopped struct {
+				TaskID      string `json:"task_id"`
+				Status      string `json:"status"`
+				Message     string `json:"message"`
+				Interrupted bool   `json:"interrupted"`
+			}
+			if err := json.Unmarshal([]byte(stopOut), &stopped); err != nil {
+				return localScenarioResult{}, err
+			}
+			if stopped.TaskID != stopCreated.TaskID || stopped.Status != "stopped" || stopped.Message != "Task stopped" {
+				return localScenarioResult{}, fmt.Errorf("unexpected task stop output: %s", stopOut)
+			}
+
+			report := map[string]any{
+				"kind": "task_lifecycle",
+				"task": map[string]any{
+					"id":           created.TaskID,
+					"status":       output.Status,
+					"stdout":       output.Stdout,
+					"message":      updated.LastMessage,
+					"listed_total": listed.Total,
+					"raw_output":   filepath.Base(output.RawOutputPath),
+				},
+				"stopped": map[string]any{
+					"id":          stopped.TaskID,
+					"status":      stopped.Status,
+					"interrupted": stopped.Interrupted,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "task lifecycle harness ok",
+				RequestCount: 9,
+				MessageCount: 1,
+				ToolCalls:    9,
+				ToolUses: []string{
+					"task_create",
+					"task_status",
+					"task_output",
+					"task_update",
+					"task_get",
+					"task_list",
+					"task_create",
+					"task_output",
+					"task_stop",
+				},
+			}, nil
 		},
 	}
 }
