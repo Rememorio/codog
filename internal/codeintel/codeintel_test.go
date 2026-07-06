@@ -241,7 +241,8 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	}
 	configHome := t.TempDir()
 	workspace := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n\nfunc main(){ }\n"), 0o644))
+	source := "package main\n\nfunc main(){ }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte(source), 0o644))
 	store := NewLSPStore(configHome, workspace)
 	command := "CODOG_FAKE_LSP=1 " + shellCommand([]string{os.Args[0], "-test.run", "TestFakeLSPServer"})
 	require.NoError(t, store.save(LSPServer{Language: "go", Command: command, Workspace: workspace, StartedAt: time.Now()}))
@@ -663,6 +664,27 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "demo.run", executedCommand.Command)
 	require.Len(t, executedCommand.Arguments, 2)
 	require.Equal(t, "main.go", executedCommand.Arguments[0])
+	require.Equal(t, 1, result.FileEdits)
+	require.Equal(t, 1, result.TextEdits)
+	require.True(t, result.Changed)
+	require.False(t, result.Applied)
+	require.Len(t, result.Edits, 1)
+	require.Contains(t, result.Edits[0].Content, "func ExecutePreview()")
+	data, err := os.ReadFile(filepath.Join(workspace, "main.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "func main()")
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "execute_command", Query: "demo.apply", Apply: true})
+	require.NoError(t, err)
+	require.Equal(t, "execute-command", result.Action)
+	require.Equal(t, 1, result.FileEdits)
+	require.Equal(t, 1, result.TextEdits)
+	require.True(t, result.Changed)
+	require.True(t, result.Applied)
+	data, err = os.ReadFile(filepath.Join(workspace, "main.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "func ExecutePreview()")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte(source), 0o644))
 
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "rename", Path: "main.go", Line: 2, Character: 5, NewName: "Start"})
 	require.NoError(t, err)
@@ -674,7 +696,7 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Len(t, result.Edits, 1)
 	require.Equal(t, "main.go", result.Edits[0].Path)
 	require.Contains(t, result.Edits[0].Content, "func Start()")
-	data, err := os.ReadFile(filepath.Join(workspace, "main.go"))
+	data, err = os.ReadFile(filepath.Join(workspace, "main.go"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "func main()")
 
@@ -1073,6 +1095,7 @@ func TestFakeLSPServer(t *testing.T) {
 	defer os.Exit(0)
 	reader := bufio.NewReader(os.Stdin)
 	currentURI := ""
+	rootURI := ""
 	for {
 		raw, err := readLSPMessage(reader)
 		if err != nil {
@@ -1111,6 +1134,11 @@ func TestFakeLSPServer(t *testing.T) {
 		}
 		switch msg.Method {
 		case "initialize":
+			var params struct {
+				RootURI string `json:"rootUri"`
+			}
+			_ = decodeLSPParams(msg.Params, &params)
+			rootURI = strings.TrimRight(params.RootURI, "/")
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"capabilities": map[string]any{}})})
 		case "textDocument/diagnostic":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
@@ -1310,6 +1338,24 @@ func TestFakeLSPServer(t *testing.T) {
 				Arguments []any  `json:"arguments"`
 			}
 			_ = decodeLSPParams(msg.Params, &params)
+			if currentURI == "" && rootURI != "" {
+				currentURI = rootURI + "/main.go"
+			}
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: "apply-execute", Method: "workspace/applyEdit", Params: map[string]any{
+				"label": "execute preview",
+				"edit": map[string]any{
+					"changes": map[string]any{
+						currentURI: []map[string]any{{
+							"range": map[string]any{
+								"start": map[string]any{"line": 2, "character": 0},
+								"end":   map[string]any{"line": 2, "character": 13},
+							},
+							"newText": "func ExecutePreview() {}",
+						}},
+					},
+				},
+			}})
+			_, _ = readLSPMessage(reader)
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
 				"status":    "ok",
 				"command":   params.Command,

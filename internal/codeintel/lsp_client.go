@@ -61,10 +61,15 @@ type LSPFileEdit struct {
 }
 
 type lspClient struct {
-	stdin         io.Writer
-	stdout        *bufio.Reader
-	nextID        int
-	notifications []lspRPCMessage
+	stdin               io.Writer
+	stdout              *bufio.Reader
+	workspace           string
+	applyWorkspaceEdits bool
+	nextID              int
+	notifications       []lspRPCMessage
+	workspaceEdits      []LSPFileEdit
+	workspaceTextEdits  int
+	workspaceApplied    bool
 }
 
 type lspRPCMessage struct {
@@ -650,7 +655,7 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 	if err := cmd.Start(); err != nil {
 		return LSPQueryResult{}, err
 	}
-	client := &lspClient{stdin: stdin, stdout: bufio.NewReader(stdout)}
+	client := &lspClient{stdin: stdin, stdout: bufio.NewReader(stdout), workspace: workspace, applyWorkspaceEdits: request.Apply}
 	wait := func() error {
 		err := cmd.Wait()
 		if err != nil && strings.TrimSpace(stderr.String()) != "" {
@@ -886,6 +891,7 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 		Path:     rel,
 		Result:   decoded,
 	}
+	mergeLSPClientWorkspaceEdits(client, &result)
 	if isLSPFormattingAction(action) && len(raw) > 0 && string(raw) != "null" {
 		var edits []lspTextEdit
 		if err := json.Unmarshal(raw, &edits); err != nil {
@@ -947,6 +953,22 @@ func isLSPFormattingAction(action string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func mergeLSPClientWorkspaceEdits(client *lspClient, result *LSPQueryResult) {
+	if len(client.workspaceEdits) == 0 {
+		return
+	}
+	result.Edits = append(result.Edits, client.workspaceEdits...)
+	result.FileEdits = len(result.Edits)
+	result.TextEdits += client.workspaceTextEdits
+	result.Applied = result.Applied || client.workspaceApplied
+	for _, edit := range client.workspaceEdits {
+		if edit.Changed {
+			result.Changed = true
+			return
+		}
 	}
 }
 
@@ -1406,6 +1428,12 @@ func (c *lspClient) request(method string, params any) (json.RawMessage, error) 
 		}
 		if !sameLSPID(msg.ID, id) {
 			if msg.Method != "" {
+				if msg.ID != nil {
+					if err := c.handleServerRequest(msg); err != nil {
+						return nil, err
+					}
+					continue
+				}
 				c.notifications = append(c.notifications, msg)
 			}
 			continue
@@ -1415,6 +1443,60 @@ func (c *lspClient) request(method string, params any) (json.RawMessage, error) 
 		}
 		return msg.Result, nil
 	}
+}
+
+func (c *lspClient) handleServerRequest(msg lspRPCMessage) error {
+	switch msg.Method {
+	case "workspace/applyEdit":
+		return c.handleWorkspaceApplyEdit(msg)
+	default:
+		return writeLSPMessage(c.stdin, lspRPCMessage{
+			JSONRPC: "2.0",
+			ID:      msg.ID,
+			Error:   &lspRPCError{Code: -32601, Message: fmt.Sprintf("unsupported server request %q", msg.Method)},
+		})
+	}
+}
+
+func (c *lspClient) handleWorkspaceApplyEdit(msg lspRPCMessage) error {
+	var params struct {
+		Label string           `json:"label"`
+		Edit  lspWorkspaceEdit `json:"edit"`
+	}
+	if err := decodeLSPParams(msg.Params, &params); err != nil {
+		return c.writeApplyEditResponse(msg.ID, false, err.Error())
+	}
+	fileEdits, textEdits, err := summarizeLSPWorkspaceEdit(c.workspace, params.Edit)
+	if err != nil {
+		return c.writeApplyEditResponse(msg.ID, false, err.Error())
+	}
+	if strings.TrimSpace(params.Label) != "" {
+		for index := range fileEdits {
+			fileEdits[index].ActionTitle = params.Label
+		}
+	}
+	c.workspaceEdits = append(c.workspaceEdits, fileEdits...)
+	c.workspaceTextEdits += textEdits
+	if !c.applyWorkspaceEdits {
+		return c.writeApplyEditResponse(msg.ID, false, "apply flag is false")
+	}
+	if err := applyLSPFileEdits(fileEdits); err != nil {
+		return c.writeApplyEditResponse(msg.ID, false, err.Error())
+	}
+	c.workspaceApplied = c.workspaceApplied || textEdits > 0
+	return c.writeApplyEditResponse(msg.ID, true, "")
+}
+
+func (c *lspClient) writeApplyEditResponse(id any, applied bool, failureReason string) error {
+	result := map[string]any{"applied": applied}
+	if strings.TrimSpace(failureReason) != "" {
+		result["failureReason"] = failureReason
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	return writeLSPMessage(c.stdin, lspRPCMessage{JSONRPC: "2.0", ID: id, Result: data})
 }
 
 func (c *lspClient) notify(method string, params any) error {

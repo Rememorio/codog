@@ -511,6 +511,7 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"method":"workspace/executeCommand"`)
 	require.Contains(t, out.String(), `"command":"bridge.run"`)
 	require.Contains(t, out.String(), `"arguments":["main.go",{"line":2}]`)
+	require.Contains(t, out.String(), `func bridgeExecutePreview()`)
 	require.Contains(t, out.String(), `"action":"document-diagnostic"`)
 	require.Contains(t, out.String(), `"method":"textDocument/diagnostic"`)
 	require.Contains(t, out.String(), `"message":"bridge pulled document diagnostic"`)
@@ -558,6 +559,7 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 	}
 	reader := bufio.NewReader(os.Stdin)
 	currentURI := ""
+	rootURI := ""
 	for {
 		raw, err := readBridgeTestLSPMessage(reader)
 		if err != nil {
@@ -574,6 +576,14 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 		}
 		switch msg.Method {
 		case "initialize":
+			var params struct {
+				RootURI string `json:"rootUri"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			rootURI = strings.TrimRight(params.RootURI, "/")
+			if currentURI == "" && rootURI != "" {
+				currentURI = rootURI + "/main.go"
+			}
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"capabilities": map[string]any{}}})
 		case "textDocument/diagnostic":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
@@ -941,6 +951,21 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 				Arguments []any  `json:"arguments"`
 			}
 			_ = json.Unmarshal(msg.Params, &params)
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": "bridge-apply-execute", "method": "workspace/applyEdit", "params": map[string]any{
+				"label": "bridge execute preview",
+				"edit": map[string]any{
+					"changes": map[string]any{
+						currentURI: []map[string]any{{
+							"range": map[string]any{
+								"start": map[string]any{"line": 2, "character": 0},
+								"end":   map[string]any{"line": 2, "character": 14},
+							},
+							"newText": "func bridgeExecutePreview() {}",
+						}},
+					},
+				},
+			}})
+			_, _ = readBridgeTestLSPMessage(reader)
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
 				"status":    "ok",
 				"command":   params.Command,

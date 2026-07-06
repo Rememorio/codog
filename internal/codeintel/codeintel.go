@@ -478,6 +478,9 @@ func resolveWorkspaceFile(workspace string, requested string) (string, string, e
 	if err != nil {
 		return "", "", err
 	}
+	if resolvedCandidate, err := filepath.EvalSymlinks(candidate); err == nil {
+		candidate = resolvedCandidate
+	}
 	rel, err := filepath.Rel(root, candidate)
 	if err != nil {
 		return "", "", err
