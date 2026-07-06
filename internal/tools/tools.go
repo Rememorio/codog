@@ -6114,6 +6114,32 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "semantic_tokens_delta": delta, "total": len(delta.Tokens.Tokens)})), nil
+	case "prepare-rename":
+		if strings.TrimSpace(payload.Path) == "" {
+			return "", errors.New("path is required for lsp prepare_rename")
+		}
+		rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, payload.Path)
+		if err != nil {
+			return "", err
+		}
+		prepared, err := codeintel.PrepareRenameAtPosition(t.Workspace, rel, payload.Line, payload.Character)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "prepared": prepared, "found": prepared.Found})), nil
+	case "rename":
+		if strings.TrimSpace(payload.NewName) == "" {
+			return "", errors.New("new_name is required for lsp rename")
+		}
+		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
+		if err != nil {
+			return "", err
+		}
+		renamed, err := codeintel.RenameSymbol(t.Workspace, query, payload.NewName, payload.Limit)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "rename": renamed, "text_edits": renamed.TextEdits, "file_edits": renamed.FileEdits})), nil
 	case "hover":
 		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
 		if err != nil {
@@ -6166,7 +6192,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 
 func lspActionRequiresServer(action string) bool {
 	switch action {
-	case "document-diagnostic", "workspace-diagnostic", "implementation", "rename", "prepare-rename", "code-action", "code-action-resolve", "prepare-call-hierarchy", "call-hierarchy-incoming", "call-hierarchy-outgoing", "prepare-type-hierarchy", "type-hierarchy-supertypes", "type-hierarchy-subtypes", "completion-item-resolve", "inline-value", "execute-command", "range-format", "on-type-format", "will-save":
+	case "document-diagnostic", "workspace-diagnostic", "implementation", "code-action", "code-action-resolve", "prepare-call-hierarchy", "call-hierarchy-incoming", "call-hierarchy-outgoing", "prepare-type-hierarchy", "type-hierarchy-supertypes", "type-hierarchy-subtypes", "completion-item-resolve", "inline-value", "execute-command", "range-format", "on-type-format", "will-save":
 		return true
 	default:
 		return false

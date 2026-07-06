@@ -272,6 +272,27 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.Empty(t, delta.Edits)
 	require.Equal(t, semanticTokens.Data, delta.Tokens.Data)
 
+	preparedRename, err := PrepareRenameAtPosition(workspace, "pkg/runner.go", 2, 6)
+	require.NoError(t, err)
+	require.True(t, preparedRename.Found)
+	require.Equal(t, "Runner", preparedRename.Symbol)
+	require.Equal(t, "Runner", preparedRename.Placeholder)
+	require.Equal(t, LSPRange{Start: LSPPosition{Line: 2, Character: 5}, End: LSPPosition{Line: 2, Character: 11}}, preparedRename.Range)
+
+	rename, err := RenameSymbol(workspace, "Runner", "RunnerRenamed", 100)
+	require.NoError(t, err)
+	require.True(t, rename.Found)
+	require.Equal(t, "Runner", rename.Symbol)
+	require.Equal(t, "RunnerRenamed", rename.NewName)
+	require.GreaterOrEqual(t, rename.TextEdits, 3)
+	require.GreaterOrEqual(t, rename.FileEdits, 1)
+	require.Equal(t, "pkg/runner.go", rename.Edits[0].Path)
+	require.Contains(t, rename.Edits[0].Content, "type RunnerRenamed struct{}")
+
+	_, err = RenameSymbol(workspace, "Runner", "1bad", 100)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "valid Go identifier")
+
 	hover, err := HoverInfo(workspace, "Run", 1)
 	require.NoError(t, err)
 	require.True(t, hover.Found)

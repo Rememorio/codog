@@ -3009,6 +3009,24 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, semanticTokensDeltaOut, `"previousResultId": "previous-result"`)
 	require.Contains(t, semanticTokensDeltaOut, `"edits": []`)
 
+	prepareRenameOut, err := tool.Execute(context.Background(), []byte(`{"action":"prepare_rename","path":"demo.go","line":2,"character":6}`))
+	require.NoError(t, err)
+	require.Contains(t, prepareRenameOut, `"action": "prepare-rename"`)
+	require.Contains(t, prepareRenameOut, `"source": "static"`)
+	require.Contains(t, prepareRenameOut, `"found": true`)
+	require.Contains(t, prepareRenameOut, `"symbol": "Widget"`)
+	require.Contains(t, prepareRenameOut, `"placeholder": "Widget"`)
+
+	renameOut, err := tool.Execute(context.Background(), []byte(`{"action":"rename","query":"Widget","new_name":"Gadget","limit":20}`))
+	require.NoError(t, err)
+	require.Contains(t, renameOut, `"action": "rename"`)
+	require.Contains(t, renameOut, `"source": "static"`)
+	require.Contains(t, renameOut, `"query": "Widget"`)
+	require.Contains(t, renameOut, `"newName": "Gadget"`)
+	require.Contains(t, renameOut, `"text_edits": 3`)
+	require.Contains(t, renameOut, `"file_edits": 1`)
+	require.Contains(t, renameOut, `type Gadget struct{}`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -3099,6 +3117,14 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, err.Error(), "config home is required")
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"semantic_tokens_delta","path":"demo.go","query":"previous-result","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"prepare_rename","path":"demo.go","line":2,"character":6,"use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"rename","query":"Widget","new_name":"Gadget","use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 

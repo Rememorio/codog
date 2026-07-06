@@ -190,6 +190,40 @@ type SemanticTokensDelta struct {
 	Tokens           SemanticTokens `json:"tokens"`
 }
 
+// RenamePrepareResult describes whether a symbol can be renamed.
+type RenamePrepareResult struct {
+	Path        string   `json:"path,omitempty"`
+	Symbol      string   `json:"symbol,omitempty"`
+	Found       bool     `json:"found"`
+	Placeholder string   `json:"placeholder,omitempty"`
+	Range       LSPRange `json:"range,omitempty"`
+}
+
+// RenameResult previews a static workspace rename.
+type RenameResult struct {
+	Symbol    string           `json:"symbol"`
+	NewName   string           `json:"newName"`
+	Found     bool             `json:"found"`
+	TextEdits int              `json:"textEdits"`
+	FileEdits int              `json:"fileEdits"`
+	Edits     []RenameFileEdit `json:"edits,omitempty"`
+}
+
+// RenameFileEdit previews all rename edits for one file.
+type RenameFileEdit struct {
+	Path      string           `json:"path"`
+	TextEdits int              `json:"textEdits"`
+	Changed   bool             `json:"changed"`
+	Content   string           `json:"content,omitempty"`
+	Edits     []RenameTextEdit `json:"edits,omitempty"`
+}
+
+// RenameTextEdit describes one static rename text edit.
+type RenameTextEdit struct {
+	Range   LSPRange `json:"range"`
+	NewText string   `json:"newText"`
+}
+
 // Hover contains static hover context for a discovered symbol.
 type Hover struct {
 	Symbol  string   `json:"symbol"`
@@ -1495,6 +1529,170 @@ func encodeSemanticTokenData(tokens []SemanticToken) []int {
 func semanticTokensResultID(data []byte, line int) string {
 	sum := sha1.Sum(append(data, byte(line+1)))
 	return "static-" + hex.EncodeToString(sum[:8])
+}
+
+// PrepareRenameAtPosition returns the rename range for a symbol at a document
+// position.
+func PrepareRenameAtPosition(workspace string, relPath string, line int, character int) (RenamePrepareResult, error) {
+	if strings.TrimSpace(relPath) == "" {
+		return RenamePrepareResult{}, errors.New("path is required")
+	}
+	if line < 0 || character < 0 {
+		return RenamePrepareResult{}, errors.New("line and character must be non-negative")
+	}
+	path, rel, err := resolveWorkspaceFile(workspace, relPath)
+	if err != nil {
+		return RenamePrepareResult{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return RenamePrepareResult{}, err
+	}
+	symbol, rng, ok := identifierAtLineCharacter(data, line, character)
+	if !ok {
+		return RenamePrepareResult{Path: rel, Found: false}, nil
+	}
+	if _, found, err := Definition(workspace, symbol); err != nil {
+		return RenamePrepareResult{}, err
+	} else if !found {
+		return RenamePrepareResult{Path: rel, Symbol: symbol, Found: false, Range: rng}, nil
+	}
+	return RenamePrepareResult{Path: rel, Symbol: symbol, Found: true, Placeholder: symbol, Range: rng}, nil
+}
+
+// RenameSymbol returns a static workspace rename preview for a Go identifier.
+func RenameSymbol(workspace string, symbol string, newName string, limit int) (RenameResult, error) {
+	symbol = strings.TrimSpace(symbol)
+	newName = strings.TrimSpace(newName)
+	if symbol == "" {
+		return RenameResult{}, errors.New("symbol is required")
+	}
+	if !isGoIdentifier(newName) {
+		return RenameResult{}, errors.New("new_name must be a valid Go identifier")
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	if _, found, err := Definition(workspace, symbol); err != nil {
+		return RenameResult{}, err
+	} else if !found {
+		return RenameResult{Symbol: symbol, NewName: newName, Found: false}, nil
+	}
+	re, err := regexp.Compile(`\b` + regexp.QuoteMeta(symbol) + `\b`)
+	if err != nil {
+		return RenameResult{}, err
+	}
+	result := RenameResult{Symbol: symbol, NewName: newName, Found: true}
+	err = filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if result.TextEdits >= limit {
+			return filepath.SkipAll
+		}
+		if entry.IsDir() {
+			if ignoredDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		content := string(data)
+		lines := strings.Split(content, "\n")
+		fileEdit := RenameFileEdit{}
+		for lineNo, lineText := range lines {
+			for _, bounds := range re.FindAllStringIndex(lineText, -1) {
+				if result.TextEdits >= limit {
+					break
+				}
+				fileEdit.Edits = append(fileEdit.Edits, RenameTextEdit{
+					Range: LSPRange{
+						Start: LSPPosition{Line: lineNo, Character: bounds[0]},
+						End:   LSPPosition{Line: lineNo, Character: bounds[1]},
+					},
+					NewText: newName,
+				})
+				result.TextEdits++
+			}
+		}
+		if len(fileEdit.Edits) == 0 {
+			return nil
+		}
+		rel, _ := filepath.Rel(workspace, path)
+		fileEdit.Path = filepath.ToSlash(rel)
+		fileEdit.TextEdits = len(fileEdit.Edits)
+		fileEdit.Changed = true
+		fileEdit.Content = re.ReplaceAllString(content, newName)
+		result.Edits = append(result.Edits, fileEdit)
+		result.FileEdits++
+		return nil
+	})
+	if err != nil {
+		return RenameResult{}, err
+	}
+	return result, nil
+}
+
+func identifierAtLineCharacter(data []byte, line int, character int) (string, LSPRange, bool) {
+	lines := strings.Split(string(data), "\n")
+	if line < 0 || line >= len(lines) {
+		return "", LSPRange{}, false
+	}
+	text := lines[line]
+	if character < 0 || character > len(text) {
+		return "", LSPRange{}, false
+	}
+	start := character
+	if start == len(text) && start > 0 {
+		start--
+	}
+	for start > 0 && isGoIdentifierByte(text[start-1]) {
+		start--
+	}
+	end := character
+	for end < len(text) && isGoIdentifierByte(text[end]) {
+		end++
+	}
+	if end <= start {
+		return "", LSPRange{}, false
+	}
+	symbol := text[start:end]
+	if !isGoIdentifier(symbol) {
+		return "", LSPRange{}, false
+	}
+	return symbol, LSPRange{
+		Start: LSPPosition{Line: line, Character: start},
+		End:   LSPPosition{Line: line, Character: end},
+	}, true
+}
+
+func isGoIdentifier(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if i == 0 {
+			if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_') {
+				return false
+			}
+			continue
+		}
+		if !isGoIdentifierByte(c) {
+			return false
+		}
+	}
+	return true
+}
+
+func isGoIdentifierByte(c byte) bool {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'
 }
 
 // HoverInfo returns static hover context around a symbol definition.
