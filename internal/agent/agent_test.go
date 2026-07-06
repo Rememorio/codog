@@ -19446,6 +19446,103 @@ func TestAPIServeStartsControlListener(t *testing.T) {
 	require.NoError(t, <-errCh)
 }
 
+func TestServerCommandStartsControlListener(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	out := newNotifyBuffer()
+	errOut := newNotifyBuffer()
+	app := &App{
+		Config:   config.Config{ConfigHome: configHome},
+		Sessions: session.NewWorkspaceStore(configHome, t.TempDir()),
+		Out:      out,
+		Err:      errOut,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- app.Server(ctx, []string{
+			"--host", "127.0.0.1",
+			"--port", "0",
+			"--auth-token", "server-secret-token",
+			"--workspace", workspace,
+			"--idle-timeout", "1200",
+			"--max-sessions", "2",
+			"--json",
+		})
+	}()
+	t.Cleanup(cancel)
+
+	select {
+	case <-out.writes:
+	case <-time.After(3 * time.Second):
+		require.Fail(t, "server did not write a startup report")
+	}
+	var report serverReport
+	require.NoError(t, json.Unmarshal([]byte(out.String()), &report))
+	require.Equal(t, "server", report.Kind)
+	require.Equal(t, "serve", report.Action)
+	require.Equal(t, "serving", report.Status)
+	require.Equal(t, "tcp", report.Network)
+	require.Equal(t, workspace, report.Workspace)
+	require.Equal(t, "server-secret-token", report.AuthToken)
+	require.True(t, report.AuthTokenConfigured)
+	require.Equal(t, 1200, report.IdleTimeoutMS)
+	require.Equal(t, 2, report.MaxSessions)
+	require.False(t, report.MaxSessionsEnforced)
+	require.Equal(t, len(control.RouteSpecs()), report.RouteCount)
+	require.Contains(t, report.Routes, "/health")
+
+	require.Eventually(t, func() bool {
+		resp, err := http.Get(report.HealthURL)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 3*time.Second, 25*time.Millisecond)
+
+	resp, err := http.Get(strings.TrimRight(report.HTTPURL, "/") + "/state")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(report.HTTPURL, "/")+"/state", nil)
+	require.NoError(t, err)
+	req.Header.Set("authorization", "Bearer server-secret-token")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+	require.Contains(t, errOut.String(), "codog server listening on "+report.HTTPURL)
+
+	cancel()
+	require.NoError(t, <-errCh)
+}
+
+func TestServerArgsGenerateAuthTokenAndValidateOptions(t *testing.T) {
+	req, err := parseServerArgs([]string{"--json"})
+	require.NoError(t, err)
+	require.Equal(t, "0.0.0.0", req.Host)
+	require.Equal(t, "0", req.Port)
+	require.Equal(t, 600000, req.IdleTimeoutMS)
+	require.Equal(t, 32, req.MaxSessions)
+	require.Equal(t, "json", req.Format)
+
+	token, err := generateServerAuthToken()
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(token, "sk-ant-cc-"))
+	require.Greater(t, len(token), len("sk-ant-cc-"))
+
+	_, err = parseServerArgs([]string{"--port", "bad"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "port must be an integer")
+
+	_, err = parseServerArgs([]string{"--idle-timeout", "-1"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-negative integer")
+}
+
 func TestRunCLIRoutesWebSetupAlias(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

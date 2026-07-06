@@ -573,6 +573,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	case "server":
+		if err := app.Server(ctx, rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "api-key":
 		if err := app.APIKey(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -1862,6 +1867,320 @@ func (a *App) serveAPI(ctx context.Context, req apiRequest, addr string) error {
 	}
 	fmt.Fprintf(a.Err, "codog api listening on %s\n", remoteURL)
 	return a.serveControlListener(ctx, listener, actualAddr)
+}
+
+type serverRequest struct {
+	Host          string
+	Port          string
+	AuthToken     string
+	Unix          string
+	Workspace     string
+	IdleTimeoutMS int
+	MaxSessions   int
+	Format        string
+}
+
+type serverReport struct {
+	Kind                string   `json:"kind"`
+	Action              string   `json:"action"`
+	Status              string   `json:"status"`
+	Workspace           string   `json:"workspace,omitempty"`
+	Network             string   `json:"network"`
+	Addr                string   `json:"addr"`
+	HTTPURL             string   `json:"http_url"`
+	HealthURL           string   `json:"health_url,omitempty"`
+	AuthTokenConfigured bool     `json:"auth_token_configured"`
+	AuthToken           string   `json:"auth_token,omitempty"`
+	IdleTimeoutMS       int      `json:"idle_timeout_ms"`
+	MaxSessions         int      `json:"max_sessions"`
+	MaxSessionsEnforced bool     `json:"max_sessions_enforced"`
+	RouteCount          int      `json:"route_count"`
+	Routes              []string `json:"routes,omitempty"`
+	Messages            []string `json:"messages,omitempty"`
+}
+
+const serverUsage = "codog server [--host HOST] [--port PORT] [--auth-token TOKEN] [--unix PATH] [--workspace DIR] [--idle-timeout MS] [--max-sessions N] [--output-format text|json]"
+
+func (a *App) Server(ctx context.Context, args []string) error {
+	req, err := parseServerArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Workspace != "" {
+		if err := a.useServerWorkspace(req.Workspace); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(req.AuthToken) == "" {
+		token, err := generateServerAuthToken()
+		if err != nil {
+			return err
+		}
+		req.AuthToken = token
+	}
+	a.Config.Future.RemoteEnabled = true
+	a.Config.Future.RemoteAuthToken = req.AuthToken
+	if req.IdleTimeoutMS > 0 {
+		a.Config.Future.RemoteLeaseSeconds = int(math.Ceil(float64(req.IdleTimeoutMS) / 1000))
+	}
+	if strings.TrimSpace(req.Unix) != "" {
+		return a.serveUnixServer(ctx, req)
+	}
+	return a.serveTCPServer(ctx, req)
+}
+
+func parseServerArgs(args []string) (serverRequest, error) {
+	req := serverRequest{
+		Host:          "0.0.0.0",
+		Port:          "0",
+		IdleTimeoutMS: 600000,
+		MaxSessions:   32,
+		Format:        "text",
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--host":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
+			}
+			req.Host = args[index]
+		case strings.HasPrefix(arg, "--host="):
+			req.Host = strings.TrimPrefix(arg, "--host=")
+		case arg == "--port":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
+			}
+			req.Port = args[index]
+		case strings.HasPrefix(arg, "--port="):
+			req.Port = strings.TrimPrefix(arg, "--port=")
+		case arg == "--auth-token":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
+			}
+			req.AuthToken = strings.TrimSpace(args[index])
+		case strings.HasPrefix(arg, "--auth-token="):
+			req.AuthToken = strings.TrimSpace(strings.TrimPrefix(arg, "--auth-token="))
+		case arg == "--unix":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
+			}
+			req.Unix = args[index]
+		case strings.HasPrefix(arg, "--unix="):
+			req.Unix = strings.TrimPrefix(arg, "--unix=")
+		case arg == "--workspace":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
+			}
+			req.Workspace = args[index]
+		case strings.HasPrefix(arg, "--workspace="):
+			req.Workspace = strings.TrimPrefix(arg, "--workspace=")
+		case arg == "--idle-timeout":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
+			}
+			value, err := parseNonNegativeServerInt("--idle-timeout", args[index])
+			if err != nil {
+				return req, err
+			}
+			req.IdleTimeoutMS = value
+		case strings.HasPrefix(arg, "--idle-timeout="):
+			value, err := parseNonNegativeServerInt("--idle-timeout", strings.TrimPrefix(arg, "--idle-timeout="))
+			if err != nil {
+				return req, err
+			}
+			req.IdleTimeoutMS = value
+		case arg == "--max-sessions":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
+			}
+			value, err := parseNonNegativeServerInt("--max-sessions", args[index])
+			if err != nil {
+				return req, err
+			}
+			req.MaxSessions = value
+		case strings.HasPrefix(arg, "--max-sessions="):
+			value, err := parseNonNegativeServerInt("--max-sessions", strings.TrimPrefix(arg, "--max-sessions="))
+			if err != nil {
+				return req, err
+			}
+			req.MaxSessions = value
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "server", Option: arg, Usage: serverUsage}
+			}
+			return req, unexpectedExtraArgsError{Command: "server", Args: []string{arg}, Usage: serverUsage}
+		}
+	}
+	if strings.TrimSpace(req.Host) == "" {
+		return req, invalidFlagValueError{Flag: "--host", Value: req.Host, Message: "host must not be empty"}
+	}
+	if strings.TrimSpace(req.Port) == "" {
+		return req, invalidFlagValueError{Flag: "--port", Value: req.Port, Message: "port must not be empty"}
+	}
+	if _, err := strconv.Atoi(req.Port); err != nil {
+		return req, invalidFlagValueError{Flag: "--port", Value: req.Port, Message: "port must be an integer"}
+	}
+	if strings.TrimSpace(req.Unix) != "" && (req.Host != "0.0.0.0" || req.Port != "0") {
+		return req, invalidFlagValueError{Flag: "--unix", Value: req.Unix, Message: "--unix cannot be combined with --host or --port"}
+	}
+	normalizedFormat, err := normalizeOutputFormat("server", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalizedFormat
+	return req, nil
+}
+
+func parseNonNegativeServerInt(flag string, value string) (int, error) {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || parsed < 0 {
+		return 0, invalidFlagValueError{Flag: flag, Value: value, Message: strings.TrimPrefix(flag, "--") + " must be a non-negative integer"}
+	}
+	return parsed, nil
+}
+
+func (a *App) useServerWorkspace(workspace string) error {
+	resolved, err := filepath.Abs(workspace)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("workspace %q is not a directory", workspace)
+	}
+	a.Workspace = resolved
+	a.Sessions = session.NewWorkspaceStore(a.Config.ConfigHome, resolved)
+	return nil
+}
+
+func (a *App) serveTCPServer(ctx context.Context, req serverRequest) error {
+	addr := net.JoinHostPort(req.Host, req.Port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	actualAddr := listener.Addr().String()
+	_, remoteURL, err := normalizeRemoteHandoffAddr(actualAddr)
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+	report := a.buildServerReport(req, "tcp", actualAddr, remoteURL)
+	if err := renderServerReport(a.Out, report, req.Format); err != nil {
+		_ = listener.Close()
+		return err
+	}
+	if a.Err != nil {
+		fmt.Fprintf(a.Err, "codog server listening on %s\n", remoteURL)
+	}
+	return a.serveControlListener(ctx, listener, actualAddr)
+}
+
+func (a *App) serveUnixServer(ctx context.Context, req serverRequest) error {
+	socketPath := a.resolveOutputPath(req.Unix)
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
+		return err
+	}
+	_ = os.Remove(socketPath)
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(socketPath)
+	remoteURL := "unix:" + socketPath
+	report := a.buildServerReport(req, "unix", socketPath, remoteURL)
+	if err := renderServerReport(a.Out, report, req.Format); err != nil {
+		_ = listener.Close()
+		return err
+	}
+	if a.Err != nil {
+		fmt.Fprintf(a.Err, "codog server listening on %s\n", remoteURL)
+	}
+	return a.serveControlListener(ctx, listener, socketPath)
+}
+
+func (a *App) buildServerReport(req serverRequest, network, addr, httpURL string) serverReport {
+	routes := control.RouteSpecs()
+	routePaths := make([]string, 0, len(routes))
+	for _, route := range routes {
+		routePaths = append(routePaths, route.Path)
+	}
+	report := serverReport{
+		Kind:                "server",
+		Action:              "serve",
+		Status:              "serving",
+		Workspace:           a.Workspace,
+		Network:             network,
+		Addr:                addr,
+		HTTPURL:             httpURL,
+		AuthTokenConfigured: strings.TrimSpace(req.AuthToken) != "",
+		AuthToken:           req.AuthToken,
+		IdleTimeoutMS:       req.IdleTimeoutMS,
+		MaxSessions:         req.MaxSessions,
+		RouteCount:          len(routes),
+		Routes:              routePaths,
+	}
+	if strings.HasPrefix(httpURL, "http://") || strings.HasPrefix(httpURL, "https://") {
+		report.HealthURL = strings.TrimRight(httpURL, "/") + "/health"
+	}
+	if req.MaxSessions > 0 {
+		report.Messages = append(report.Messages, "max_sessions is accepted for Claude Code CLI compatibility; Codog's control API does not enforce a per-server session cap yet.")
+	}
+	return report
+}
+
+func renderServerReport(out io.Writer, report serverReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Server")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Workspace        %s\n", report.Workspace)
+	fmt.Fprintf(out, "  Network          %s\n", report.Network)
+	fmt.Fprintf(out, "  Address          %s\n", report.Addr)
+	fmt.Fprintf(out, "  URL              %s\n", report.HTTPURL)
+	if report.HealthURL != "" {
+		fmt.Fprintf(out, "  Health URL       %s\n", report.HealthURL)
+	}
+	fmt.Fprintf(out, "  Auth token       %s\n", report.AuthToken)
+	fmt.Fprintf(out, "  Idle timeout     %d ms\n", report.IdleTimeoutMS)
+	fmt.Fprintf(out, "  Max sessions     %d\n", report.MaxSessions)
+	fmt.Fprintf(out, "  Routes           %d\n", report.RouteCount)
+	for _, message := range report.Messages {
+		fmt.Fprintf(out, "  Note             %s\n", message)
+	}
+	return nil
+}
+
+func generateServerAuthToken() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return "sk-ant-cc-" + base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
 func (a *App) serveControlListener(ctx context.Context, listener net.Listener, addr string) error {
@@ -28099,6 +28418,7 @@ func builtInCommandNames() []string {
 		"security-review",
 		"self-test",
 		"session",
+		"server",
 		"settings",
 		"setup",
 		"setup-token",
@@ -53454,7 +53774,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "pr_comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-control", "remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "sandbox-toggle",
-		"search", "security-review", "self-test", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "state", "status", "statusline",
+		"search", "security-review", "self-test", "server", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "state", "status", "statusline",
 		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "terminalsetup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"teleport", "ultraplan", "ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "unpin", "upgrade", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
@@ -54267,6 +54587,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"disabled", "enabled_without_auth", "ready", "serving"},
 			false,
 		), true
+	case "server":
+		return localCommandHelpSpec(
+			"server",
+			"server",
+			serverUsage,
+			"Server\n\nUsage:\n  codog server [--host HOST] [--port PORT] [--auth-token TOKEN] [--unix PATH] [--workspace DIR] [--idle-timeout MS] [--max-sessions N] [--output-format text|json]\n\nStarts the local Codog control API through a Claude Code-compatible entrypoint. The server exposes sessions, workspace files, terminal/background tasks, agents, MCP, code intelligence, notebook, and editor bridge routes. When --auth-token is omitted Codog generates a bearer token and prints it in the startup banner.\n",
+			[]string{"kind", "status", "workspace", "network", "addr", "http_url", "auth_token", "idle_timeout_ms", "max_sessions", "route_count"},
+			[]string{"serving", "error"},
+			false,
+		), true
 	case "model":
 		return localCommandHelpSpec(
 			"model",
@@ -54932,6 +55262,7 @@ Usage:
   %s config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--json|--output-format text|json]
   %s reset [status|SECTION|all --confirm] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] api [routes|status|serve] [ADDR|--addr ADDR] [--json|--output-format text|json]
+  %s server [--host HOST] [--port PORT] [--auth-token TOKEN] [--unix PATH] [--workspace DIR] [--idle-timeout MS] [--max-sessions N] [--json|--output-format text|json]
   %s [flags] api-key [status|set KEY|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] language [status|show|LANGUAGE|set|use LANGUAGE|clear|off] [--target user|project|local] [--json|--output-format text|json]
