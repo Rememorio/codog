@@ -11076,6 +11076,10 @@ func TestPromptVerboseEnrichesStructuredOutput(t *testing.T) {
 	var report promptReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "verbose chunks", report.Response)
+	require.Equal(t, "actual", report.Usage.Source)
+	require.Equal(t, 10, report.Usage.InputTokens)
+	require.Equal(t, 5, report.Usage.OutputTokens)
+	require.Greater(t, report.CostUSD, 0.0)
 	require.Len(t, report.Messages, 2)
 	require.Equal(t, "user", report.Messages[0].Role)
 	require.Equal(t, "assistant", report.Messages[1].Role)
@@ -24628,6 +24632,10 @@ func TestPromptOutputFormats(t *testing.T) {
 	require.Equal(t, "completed", report.Status)
 	require.Equal(t, "json-session", report.SessionID)
 	require.Equal(t, "done", report.Response)
+	require.Equal(t, "actual", report.Usage.Source)
+	require.Equal(t, 10, report.Usage.InputTokens)
+	require.Equal(t, 5, report.Usage.OutputTokens)
+	require.Greater(t, report.CostUSD, 0.0)
 	out.Reset()
 
 	require.NoError(t, app.PromptWithOutput(context.Background(), "ephemeral prompt", config.FlagOverrides{SessionID: "ephemeral-session", NoSessionPersistence: true}, "json"))

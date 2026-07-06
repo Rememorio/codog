@@ -34525,7 +34525,7 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 		}
 	}
 	if format == "json" || format == "stream-json" {
-		report := promptOutputReportWithOptions(sess, streamCapture.String(), endReason, opts.Verbose)
+		report := promptOutputReportWithOptions(a.Sessions, sess, a.Config.Model, streamCapture.String(), endReason, opts.Verbose)
 		if format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
 			fmt.Fprintln(a.Out, string(data))
@@ -34560,6 +34560,8 @@ type promptReport struct {
 	SessionID    string              `json:"session_id"`
 	MessageCount int                 `json:"message_count"`
 	Response     string              `json:"response"`
+	Usage        usage.Summary       `json:"usage"`
+	CostUSD      float64             `json:"cost_usd"`
 	Messages     []anthropic.Message `json:"messages,omitempty"`
 }
 
@@ -34578,10 +34580,10 @@ type promptCompactUsage struct {
 }
 
 func promptOutputReport(sess *session.Session, streamed string, status string) promptReport {
-	return promptOutputReportWithOptions(sess, streamed, status, false)
+	return promptOutputReportWithOptions(nil, sess, "", streamed, status, false)
 }
 
-func promptOutputReportWithOptions(sess *session.Session, streamed string, status string, verbose bool) promptReport {
+func promptOutputReportWithOptions(store *session.Store, sess *session.Session, model string, streamed string, status string, verbose bool) promptReport {
 	response := strings.TrimSpace(streamed)
 	if response == "" && sess != nil {
 		response = strings.TrimSpace(lastAssistantText(sess.Messages))
@@ -34589,13 +34591,16 @@ func promptOutputReportWithOptions(sess *session.Session, streamed string, statu
 	messageCount := 0
 	sessionID := ""
 	messages := []anthropic.Message(nil)
+	sessionMessages := []anthropic.Message(nil)
 	if sess != nil {
 		messageCount = len(sess.Messages)
 		sessionID = sess.ID
+		sessionMessages = sess.Messages
 		if verbose {
 			messages = append([]anthropic.Message(nil), sess.Messages...)
 		}
 	}
+	summary := promptOutputUsageSummary(store, sessionID, model, sessionMessages)
 	return promptReport{
 		Kind:         "prompt",
 		Action:       "run",
@@ -34603,8 +34608,26 @@ func promptOutputReportWithOptions(sess *session.Session, streamed string, statu
 		SessionID:    sessionID,
 		MessageCount: messageCount,
 		Response:     response,
+		Usage:        summary,
+		CostUSD:      summary.EstimatedUSD,
 		Messages:     messages,
 	}
+}
+
+func promptOutputUsageSummary(store *session.Store, sessionID string, model string, messages []anthropic.Message) usage.Summary {
+	if store != nil && strings.TrimSpace(sessionID) != "" {
+		entries, err := store.Usage(sessionID)
+		if err == nil {
+			actual := make([]anthropic.Usage, 0, len(entries))
+			for _, entry := range entries {
+				actual = append(actual, entry.Usage)
+			}
+			if summary, ok := usage.ActualSummary(actual, model); ok {
+				return summary
+			}
+		}
+	}
+	return usage.Estimate(messages, model)
 }
 
 func promptCompactOutputReport(store *session.Store, sess *session.Session, model string, priorMessageCount int) promptCompactReport {
