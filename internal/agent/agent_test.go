@@ -1345,6 +1345,8 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	toolSnapshot := filepath.Join(t.TempDir(), "tools.json")
 	require.NoError(t, os.WriteFile(toolSnapshot, []byte(`[
 		{"name":"BashTool","source_hint":"tools/BashTool/BashTool.tsx"},
+		{"name":"bashSecurity","source_hint":"tools/BashTool/bashSecurity.ts"},
+		{"name":"constants","source_hint":"tools/REPLTool/constants.ts"},
 		{"name":"FileReadTool","source_hint":"tools/FileReadTool/FileReadTool.tsx"},
 		{"name":"MissingReferenceTool","source_hint":"tools/MissingReferenceTool/index.ts"}
 	]`), 0o644))
@@ -1361,8 +1363,12 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, 1, audit.Commands.MissingCount)
 	require.Equal(t, "missing-reference-command", audit.Commands.Missing[0].Name)
 	require.NotNil(t, audit.Tools)
-	require.Equal(t, 3, audit.Tools.ReferenceCount)
+	require.Equal(t, 5, audit.Tools.ReferenceCount)
 	require.Equal(t, 2, audit.Tools.CoveredCount)
+	require.Equal(t, 2, audit.Tools.GroupCoveredCount)
+	require.Contains(t, audit.Tools.GroupCovered, referenceAuditMatch{Name: "bashSecurity", SourceHint: "tools/BashTool/bashSecurity.ts", Matched: "bash"})
+	require.Contains(t, audit.Tools.GroupCovered, referenceAuditMatch{Name: "constants", SourceHint: "tools/REPLTool/constants.ts", Matched: "repl"})
+	require.Equal(t, 1, audit.Tools.UncoveredCount)
 	require.Equal(t, 1, audit.Tools.MissingCount)
 	require.Equal(t, "MissingReferenceTool", audit.Tools.Missing[0].Name)
 	require.Equal(t, []referenceAuditGroup{{Source: "tools/MissingReferenceTool", Count: 1}}, audit.Tools.MissingGroups)
@@ -1371,7 +1377,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.NoError(t, app.Capabilities([]string{"audit", "--commands-snapshot", commandSnapshot}))
 	require.Contains(t, out.String(), "Reference Parity Audit")
 	require.Contains(t, out.String(), "Commands")
-	require.Contains(t, out.String(), "Missing groups")
+	require.Contains(t, out.String(), "Uncovered groups")
 	require.Contains(t, out.String(), "missing-reference-command")
 }
 

@@ -26020,14 +26020,17 @@ type referenceParityAuditReport struct {
 }
 
 type referenceSurfaceAudit struct {
-	Kind           string                 `json:"kind"`
-	SnapshotPath   string                 `json:"snapshot_path"`
-	ReferenceCount int                    `json:"reference_count"`
-	CoveredCount   int                    `json:"covered_count"`
-	MissingCount   int                    `json:"missing_count"`
-	MissingGroups  []referenceAuditGroup  `json:"missing_groups,omitempty"`
-	Covered        []referenceAuditMatch  `json:"covered,omitempty"`
-	Missing        []referenceSnapshotRef `json:"missing,omitempty"`
+	Kind              string                 `json:"kind"`
+	SnapshotPath      string                 `json:"snapshot_path"`
+	ReferenceCount    int                    `json:"reference_count"`
+	CoveredCount      int                    `json:"covered_count"`
+	GroupCoveredCount int                    `json:"group_covered_count"`
+	UncoveredCount    int                    `json:"uncovered_count"`
+	MissingCount      int                    `json:"missing_count"`
+	MissingGroups     []referenceAuditGroup  `json:"missing_groups,omitempty"`
+	Covered           []referenceAuditMatch  `json:"covered,omitempty"`
+	GroupCovered      []referenceAuditMatch  `json:"group_covered,omitempty"`
+	Missing           []referenceSnapshotRef `json:"missing,omitempty"`
 }
 
 type referenceAuditGroup struct {
@@ -26276,7 +26279,7 @@ func (a *App) referenceParityAuditReport(req capabilitiesRequest) (referencePari
 		}
 		report.Tools = &audit
 	}
-	if (report.Commands != nil && report.Commands.MissingCount > 0) || (report.Tools != nil && report.Tools.MissingCount > 0) {
+	if (report.Commands != nil && report.Commands.UncoveredCount > 0) || (report.Tools != nil && report.Tools.UncoveredCount > 0) {
 		report.Status = "gap"
 	}
 	return report, nil
@@ -26292,9 +26295,39 @@ func auditReferenceSurface(path string, kind string, available map[string]string
 		SnapshotPath:   path,
 		ReferenceCount: len(entries),
 	}
+	coveredGroups := map[string]string{}
+	sourceFallbacks := referenceSourceFallbackMatches(available)
 	for _, entry := range entries {
 		if matched, ok := available[normalizeReferenceName(entry.Name)]; ok {
 			audit.Covered = append(audit.Covered, referenceAuditMatch{
+				Name:       entry.Name,
+				SourceHint: entry.SourceHint,
+				Matched:    matched,
+			})
+			group := referenceSourceGroup(entry.SourceHint)
+			if group != "" && group != "unknown" {
+				coveredGroups[group] = matched
+			}
+			continue
+		}
+		if matched, ok := referenceSourceFallbackMatch(entry.SourceHint, sourceFallbacks); ok {
+			coveredGroups[referenceSourceGroup(entry.SourceHint)] = matched
+			audit.GroupCovered = append(audit.GroupCovered, referenceAuditMatch{
+				Name:       entry.Name,
+				SourceHint: entry.SourceHint,
+				Matched:    matched,
+			})
+		}
+	}
+	for _, entry := range entries {
+		if _, ok := available[normalizeReferenceName(entry.Name)]; ok {
+			continue
+		}
+		if _, ok := referenceSourceFallbackMatch(entry.SourceHint, sourceFallbacks); ok {
+			continue
+		}
+		if matched, ok := coveredGroups[referenceSourceGroup(entry.SourceHint)]; ok {
+			audit.GroupCovered = append(audit.GroupCovered, referenceAuditMatch{
 				Name:       entry.Name,
 				SourceHint: entry.SourceHint,
 				Matched:    matched,
@@ -26304,7 +26337,9 @@ func auditReferenceSurface(path string, kind string, available map[string]string
 		audit.Missing = append(audit.Missing, entry)
 	}
 	audit.CoveredCount = len(audit.Covered)
-	audit.MissingCount = len(audit.Missing)
+	audit.GroupCoveredCount = len(audit.GroupCovered)
+	audit.UncoveredCount = len(audit.Missing)
+	audit.MissingCount = audit.UncoveredCount
 	audit.MissingGroups = referenceMissingGroups(audit.Missing)
 	return audit, nil
 }
@@ -26368,6 +26403,35 @@ func normalizeReferenceName(name string) string {
 		}
 	}
 	return builder.String()
+}
+
+func referenceSourceFallbackMatches(available map[string]string) map[string]string {
+	fallbacks := map[string]string{
+		"tools/REPLTool":                       "REPLTool",
+		"tools/SleepTool":                      "SleepTool",
+		"tools/shared/gitOperationTracking.ts": "GitStatusTool",
+		"tools/shared/spawnMultiAgent.ts":      "TeamCreateTool",
+		"tools/utils.ts":                       "ToolSearchTool",
+	}
+	out := map[string]string{}
+	for source, alias := range fallbacks {
+		if matched, ok := available[normalizeReferenceName(alias)]; ok {
+			out[source] = matched
+		}
+	}
+	return out
+}
+
+func referenceSourceKey(sourceHint string) string {
+	return strings.Trim(strings.TrimSpace(sourceHint), "/")
+}
+
+func referenceSourceFallbackMatch(sourceHint string, fallbacks map[string]string) (string, bool) {
+	if matched, ok := fallbacks[referenceSourceKey(sourceHint)]; ok {
+		return matched, true
+	}
+	matched, ok := fallbacks[referenceSourceGroup(sourceHint)]
+	return matched, ok
 }
 
 func referenceMissingGroups(entries []referenceSnapshotRef) []referenceAuditGroup {
@@ -26656,19 +26720,19 @@ func renderReferenceParityAuditText(out io.Writer, report referenceParityAuditRe
 }
 
 func renderReferenceSurfaceAuditText(out io.Writer, audit referenceSurfaceAudit) {
-	fmt.Fprintf(out, "  %s          %d/%d covered\n", titleCaseASCII(audit.Kind), audit.CoveredCount, audit.ReferenceCount)
-	if audit.MissingCount == 0 {
+	fmt.Fprintf(out, "  %s          %d/%d exact, %d group-covered\n", titleCaseASCII(audit.Kind), audit.CoveredCount, audit.ReferenceCount, audit.GroupCoveredCount)
+	if audit.UncoveredCount == 0 {
 		return
 	}
-	fmt.Fprintf(out, "    Missing        %d\n", audit.MissingCount)
+	fmt.Fprintf(out, "    Uncovered      %d\n", audit.UncoveredCount)
 	if len(audit.MissingGroups) > 0 {
-		fmt.Fprintln(out, "    Missing groups")
+		fmt.Fprintln(out, "    Uncovered groups")
 		limit := min(len(audit.MissingGroups), 5)
 		for _, group := range audit.MissingGroups[:limit] {
 			fmt.Fprintf(out, "      - %s: %d\n", group.Source, group.Count)
 		}
 	}
-	limit := min(audit.MissingCount, 10)
+	limit := min(audit.UncoveredCount, 10)
 	for _, item := range audit.Missing[:limit] {
 		fmt.Fprintf(out, "      - %s", item.Name)
 		if item.SourceHint != "" {
@@ -26676,8 +26740,8 @@ func renderReferenceSurfaceAuditText(out io.Writer, audit referenceSurfaceAudit)
 		}
 		fmt.Fprintln(out)
 	}
-	if audit.MissingCount > limit {
-		fmt.Fprintf(out, "      ... %d more\n", audit.MissingCount-limit)
+	if audit.UncoveredCount > limit {
+		fmt.Fprintf(out, "      ... %d more\n", audit.UncoveredCount-limit)
 	}
 }
 
