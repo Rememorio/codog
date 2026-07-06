@@ -2766,6 +2766,7 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, actionSchema["enum"], "workspace_diagnostic")
 	require.Contains(t, actionSchema["enum"], "prepare_rename")
 	require.Contains(t, actionSchema["enum"], "code_action")
+	require.Contains(t, actionSchema["enum"], "code_action_resolve")
 	require.Contains(t, actionSchema["enum"], "code_lens")
 	require.Contains(t, actionSchema["enum"], "code_lens_resolve")
 	require.Contains(t, actionSchema["enum"], "prepare_call_hierarchy")

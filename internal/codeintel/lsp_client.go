@@ -239,6 +239,14 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return code actions and quick fixes for a document position.",
 	},
 	{
+		Name:             "code-action-resolve",
+		Method:           "codeAction/resolve",
+		Aliases:          []string{"code_action_resolve", "codeActionResolve", "resolve_code_action", "resolveCodeAction"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Resolve a code action selected from code actions at a document position.",
+	},
+	{
 		Name:             "code-lens",
 		Method:           "textDocument/codeLens",
 		Aliases:          []string{"code_lens", "codeLens", "lenses"},
@@ -674,6 +682,24 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 			Result:   decoded,
 		}, nil
 	}
+	if action == "code-action-resolve" {
+		title := request.CodeActionTitle
+		if strings.TrimSpace(title) == "" {
+			title = request.Query
+		}
+		decoded, err := runLSPCodeActionResolveQuery(client, uri, request.Line, request.Character, title)
+		if err != nil {
+			return LSPQueryResult{}, err
+		}
+		return LSPQueryResult{
+			Kind:     "lsp_query",
+			Language: language,
+			Action:   action,
+			Method:   "codeAction/resolve",
+			Path:     rel,
+			Result:   decoded,
+		}, nil
+	}
 	if action == "completion-item-resolve" {
 		decoded, err := runLSPCompletionItemResolveQuery(client, uri, request.Line, request.Character, request.Query)
 		if err != nil {
@@ -986,6 +1012,64 @@ func runLSPCodeLensResolveQuery(client *lspClient, uri string, line int, charact
 		resolved = selected
 	}
 	return map[string]any{"lenses": lenses, "selected": selected, "resolved": resolved}, nil
+}
+
+func runLSPCodeActionResolveQuery(client *lspClient, uri string, line int, character int, title string) (any, error) {
+	position := map[string]any{"line": max(0, line), "character": max(0, character)}
+	textDocument := map[string]any{"uri": uri}
+	raw, err := client.request("textDocument/codeAction", map[string]any{
+		"textDocument": textDocument,
+		"range":        map[string]any{"start": position, "end": position},
+		"context":      map[string]any{"diagnostics": []any{}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	var actions []map[string]any
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &actions); err != nil {
+			return nil, err
+		}
+	}
+	if len(actions) == 0 {
+		return map[string]any{"actions": actions, "resolved": nil}, nil
+	}
+	selected := selectLSPActionByTitle(actions, title)
+	raw, err = client.request("codeAction/resolve", selected)
+	if err != nil {
+		return nil, err
+	}
+	var resolved any
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &resolved); err != nil {
+			return nil, err
+		}
+	}
+	if resolved == nil {
+		resolved = selected
+	}
+	return map[string]any{"actions": actions, "selected": selected, "resolved": resolved}, nil
+}
+
+func selectLSPActionByTitle(actions []map[string]any, title string) map[string]any {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return actions[0]
+	}
+	for _, action := range actions {
+		value, _ := action["title"].(string)
+		if strings.EqualFold(value, title) {
+			return action
+		}
+	}
+	lowerTitle := strings.ToLower(title)
+	for _, action := range actions {
+		value, _ := action["title"].(string)
+		if strings.Contains(strings.ToLower(value), lowerTitle) {
+			return action
+		}
+	}
+	return actions[0]
 }
 
 func runLSPCompletionItemResolveQuery(client *lspClient, uri string, line int, character int, query string) (any, error) {

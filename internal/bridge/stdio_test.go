@@ -393,9 +393,10 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":31,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol","query":"Build"}}`,
 		`{"jsonrpc":"2.0","id":32,"method":"lsp/query","params":{"language":"go","action":"document_diagnostic","path":"main.go"}}`,
 		`{"jsonrpc":"2.0","id":33,"method":"lsp/query","params":{"language":"go","action":"workspace_diagnostic"}}`,
-		`{"jsonrpc":"2.0","id":34,"method":"lsp/status","params":{"language":"go"}}`,
-		`{"jsonrpc":"2.0","id":35,"method":"lsp/list"}`,
-		`{"jsonrpc":"2.0","id":36,"method":"lsp/stop","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":34,"method":"lsp/query","params":{"language":"go","action":"code_action_resolve","path":"main.go","line":2,"character":5,"query":"Bridge lazy fix"}}`,
+		`{"jsonrpc":"2.0","id":35,"method":"lsp/status","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":36,"method":"lsp/list"}`,
+		`{"jsonrpc":"2.0","id":37,"method":"lsp/stop","params":{"language":"go"}}`,
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
@@ -500,6 +501,9 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"action":"workspace-diagnostic"`)
 	require.Contains(t, out.String(), `"method":"workspace/diagnostic"`)
 	require.Contains(t, out.String(), `"message":"bridge pulled workspace diagnostic"`)
+	require.Contains(t, out.String(), `"action":"code-action-resolve"`)
+	require.Contains(t, out.String(), `"method":"codeAction/resolve"`)
+	require.Contains(t, out.String(), `"title":"Bridge lazy fix"`)
 	require.Contains(t, out.String(), `"kind":"lsp_status"`)
 	require.Contains(t, out.String(), `"kind":"lsp_list"`)
 	require.Contains(t, out.String(), `"kind":"lsp_stop"`)
@@ -634,21 +638,39 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 				},
 			}})
 		case "textDocument/codeAction":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"title": "Bridge fake fix",
-				"kind":  "quickfix",
-				"edit": map[string]any{
-					"changes": map[string]any{
-						currentURI: []map[string]any{{
-							"range": map[string]any{
-								"start": map[string]any{"line": 2, "character": 5},
-								"end":   map[string]any{"line": 2, "character": 10},
-							},
-							"newText": "Launch",
-						}},
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{
+				{
+					"title": "Bridge fake fix",
+					"kind":  "quickfix",
+					"edit": map[string]any{
+						"changes": map[string]any{
+							currentURI: []map[string]any{{
+								"range": map[string]any{
+									"start": map[string]any{"line": 2, "character": 5},
+									"end":   map[string]any{"line": 2, "character": 10},
+								},
+								"newText": "Launch",
+							}},
+						},
 					},
 				},
-			}}})
+				{"title": "Bridge lazy fix", "kind": "quickfix", "data": map[string]any{"id": "bridge-lazy-fix"}},
+			}})
+		case "codeAction/resolve":
+			var action map[string]any
+			_ = json.Unmarshal(msg.Params, &action)
+			action["edit"] = map[string]any{
+				"changes": map[string]any{
+					currentURI: []map[string]any{{
+						"range": map[string]any{
+							"start": map[string]any{"line": 2, "character": 5},
+							"end":   map[string]any{"line": 2, "character": 10},
+						},
+						"newText": "BridgeLazy",
+					}},
+				},
+			}
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": action})
 		case "textDocument/prepareCallHierarchy":
 			if currentURI == "" {
 				currentURI = "file:///workspace/main.go"

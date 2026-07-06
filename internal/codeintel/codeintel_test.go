@@ -613,7 +613,7 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	encoded, err := json.Marshal(result.Result)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(encoded, &codeActions))
-	require.Len(t, codeActions, 1)
+	require.Len(t, codeActions, 2)
 	require.Equal(t, "Apply fake fix", codeActions[0].Title)
 	require.Equal(t, "quickfix", codeActions[0].Kind)
 	require.Equal(t, 1, result.FileEdits)
@@ -627,6 +627,26 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	data, err = os.ReadFile(filepath.Join(workspace, "main.go"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "func Start()")
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "code_action_resolve", Path: "main.go", Line: 2, Character: 5, Query: "Apply lazy fix"})
+	require.NoError(t, err)
+	require.Equal(t, "code-action-resolve", result.Action)
+	require.Equal(t, "codeAction/resolve", result.Method)
+	var resolvedCodeAction struct {
+		Selected struct {
+			Title string `json:"title"`
+		} `json:"selected"`
+		Resolved struct {
+			Title string `json:"title"`
+			Edit  any    `json:"edit"`
+		} `json:"resolved"`
+	}
+	encodedResolvedCodeAction, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedResolvedCodeAction, &resolvedCodeAction))
+	require.Equal(t, "Apply lazy fix", resolvedCodeAction.Selected.Title)
+	require.Equal(t, "Apply lazy fix", resolvedCodeAction.Resolved.Title)
+	require.NotNil(t, resolvedCodeAction.Resolved.Edit)
 
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "code_action", Path: "main.go", Line: 2, Character: 5, CodeActionTitle: "Apply fake fix", Apply: true})
 	require.NoError(t, err)
@@ -828,6 +848,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"codeAction":                "code-action",
 		"quickfix":                  "code-action",
 		"quick-fix":                 "code-action",
+		"code_action_resolve":       "code-action-resolve",
+		"codeActionResolve":         "code-action-resolve",
+		"resolve_code_action":       "code-action-resolve",
 		"code_lens":                 "code-lens",
 		"codeLens":                  "code-lens",
 		"code_lens_resolve":         "code-lens-resolve",
@@ -1163,21 +1186,39 @@ func TestFakeLSPServer(t *testing.T) {
 				"placeholder": "Start",
 			})})
 		case "textDocument/codeAction":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"title": "Apply fake fix",
-				"kind":  "quickfix",
-				"edit": map[string]any{
-					"changes": map[string]any{
-						currentURI: []map[string]any{{
-							"range": map[string]any{
-								"start": map[string]any{"line": 2, "character": 5},
-								"end":   map[string]any{"line": 2, "character": 10},
-							},
-							"newText": "Launch",
-						}},
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{
+				{
+					"title": "Apply fake fix",
+					"kind":  "quickfix",
+					"edit": map[string]any{
+						"changes": map[string]any{
+							currentURI: []map[string]any{{
+								"range": map[string]any{
+									"start": map[string]any{"line": 2, "character": 5},
+									"end":   map[string]any{"line": 2, "character": 10},
+								},
+								"newText": "Launch",
+							}},
+						},
 					},
 				},
-			}})})
+				{"title": "Apply lazy fix", "kind": "quickfix", "data": map[string]any{"id": "lazy-fix"}},
+			})})
+		case "codeAction/resolve":
+			var action map[string]any
+			_ = decodeLSPParams(msg.Params, &action)
+			action["edit"] = map[string]any{
+				"changes": map[string]any{
+					currentURI: []map[string]any{{
+						"range": map[string]any{
+							"start": map[string]any{"line": 2, "character": 5},
+							"end":   map[string]any{"line": 2, "character": 10},
+						},
+						"newText": "Lazy",
+					}},
+				},
+			}
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(action)})
 		case "textDocument/prepareCallHierarchy":
 			if currentURI == "" {
 				currentURI = "file:///workspace/main.go"
