@@ -1869,7 +1869,7 @@ func (a *App) serveControlListener(ctx context.Context, listener net.Listener, a
 	}
 }
 
-const apiUsage = "codog api [routes|status|serve] [ADDR|--addr ADDR] [--output-format text|json]"
+const apiUsage = "codog api [routes|list|show|status|serve|listen|start] [ADDR|--addr ADDR] [--output-format text|json]"
 
 func parseAPIArgs(args []string) (apiRequest, error) {
 	req := apiRequest{Action: "routes", Format: "text", Addr: "127.0.0.1:8791"}
@@ -53788,8 +53788,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"mock-limits",
 			"mock-limits",
-			"codog mock-limits [serve|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--output-format text|json]",
-			"Mock Limits\n\nUsage:\n  codog mock-limits [serve|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--output-format text|json]\n\nShows or starts an Anthropic-compatible local mock server that returns HTTP 429 for the first N requests and then streams a normal response. Use it to test provider retry and backoff behavior with `codog rate-limit` settings.\n",
+			"codog mock-limits [show|status|plan|serve|server|start|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--output-format text|json]",
+			"Mock Limits\n\nUsage:\n  codog mock-limits [show|status|plan|serve|server|start|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--output-format text|json]\n\nShows or starts an Anthropic-compatible local mock server that returns HTTP 429 for the first N requests and then streams a normal response. `status` and `plan` are aliases for `show`; `server` and `start` are aliases for `serve`. Use it to test provider retry and backoff behavior with `codog rate-limit` settings.\n",
 			[]string{"addr", "base_url", "failures", "retry_after_ms", "endpoint"},
 			[]string{"ready", "serving", "error"},
 			false,

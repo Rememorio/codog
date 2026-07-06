@@ -294,6 +294,13 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, api.Usage, "listen")
 	require.Contains(t, api.Usage, "start")
 
+	mockLimits, ok := Lookup("/mock-limits")
+	require.True(t, ok)
+	require.True(t, mockLimits.ResumeSupported)
+	require.Contains(t, mockLimits.Usage, "status")
+	require.Contains(t, mockLimits.Usage, "server")
+	require.Contains(t, mockLimits.Usage, "start")
+
 	skill, ok := Lookup("/skill")
 	require.True(t, ok)
 	require.True(t, skill.ResumeSupported)

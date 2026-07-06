@@ -98,7 +98,7 @@ func Specs() []Spec {
 		{Name: "/rate-limit", Usage: "/rate-limit [status|set|reset]", Description: "Show or change provider retry and backoff settings."},
 		{Name: "/rate-limit-options", Usage: "/rate-limit-options", Description: "Show provider retry and backoff settings."},
 		{Name: "/ant-trace", Usage: "/ant-trace [--no-request]", Description: "Diagnose the configured provider and optional streaming request."},
-		{Name: "/mock-limits", Usage: "/mock-limits [serve|ADDR]", Description: "Show or start a local provider rate-limit mock server."},
+		{Name: "/mock-limits", Usage: "/mock-limits [show|status|plan|serve|server|start|ADDR]", Description: "Show or start a local provider rate-limit mock server."},
 		{Name: "/mock-parity", Usage: "/mock-parity [run|check|manifest]", Description: "Run or inspect the deterministic mock provider parity harness."},
 		{Name: "/parity", Usage: "/parity [run|check|manifest]", Description: "Alias for /mock-parity."},
 		{Name: "/self-test", Usage: "/self-test [run|check|manifest]", Description: "Run Codog's local deterministic self-test harness."},

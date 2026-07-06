@@ -384,6 +384,15 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Help, "serve|listen|start")
 
 	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"mock-limits", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "mock-limits", report.Topic)
+	require.Contains(t, report.Usage, "status")
+	require.Contains(t, report.Usage, "server")
+	require.Contains(t, report.Usage, "start")
+	require.Contains(t, report.Help, "aliases for `serve`")
+
+	out.Reset()
 	require.NoError(t, renderHelpCommand(&out, []string{"status", "--output-format", "json"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "status", report.Topic)
