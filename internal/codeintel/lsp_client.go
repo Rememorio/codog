@@ -242,6 +242,14 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return links and link targets discovered in a document.",
 	},
 	{
+		Name:             "inlay-hint",
+		Method:           "textDocument/inlayHint",
+		Aliases:          []string{"inlay_hint", "inlayHint", "hints", "inlay-hints", "inlay_hints"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return inlay hints around a document position.",
+	},
+	{
 		Name:             "signature-help",
 		Method:           "textDocument/signatureHelp",
 		Aliases:          []string{"signature_help", "signatureHelp", "signature", "signatures"},
@@ -632,6 +640,11 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		return "textDocument/foldingRange", map[string]any{"textDocument": textDocument}, nil
 	case "document-link":
 		return "textDocument/documentLink", map[string]any{"textDocument": textDocument}, nil
+	case "inlay-hint":
+		line = max(0, line)
+		start := map[string]any{"line": line, "character": 0}
+		end := map[string]any{"line": line, "character": max(0, character)}
+		return "textDocument/inlayHint", map[string]any{"textDocument": textDocument, "range": map[string]any{"start": start, "end": end}}, nil
 	case "signature-help":
 		return "textDocument/signatureHelp", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "symbols":

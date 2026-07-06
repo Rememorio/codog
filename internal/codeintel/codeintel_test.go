@@ -339,6 +339,23 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "https://example.test/docs", documentLinks[0].Target)
 	require.Equal(t, LSPPosition{Line: 2, Character: 0}, documentLinks[0].Range.Start)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "inlay_hint", Path: "main.go", Line: 2, Character: 12})
+	require.NoError(t, err)
+	require.Equal(t, "inlay-hint", result.Action)
+	require.Equal(t, "textDocument/inlayHint", result.Method)
+	var inlayHints []struct {
+		Label    any         `json:"label"`
+		Kind     int         `json:"kind"`
+		Position LSPPosition `json:"position"`
+	}
+	encodedHints, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedHints, &inlayHints))
+	require.Len(t, inlayHints, 1)
+	require.Equal(t, ": int", inlayHints[0].Label)
+	require.Equal(t, 1, inlayHints[0].Kind)
+	require.Equal(t, LSPPosition{Line: 2, Character: 10}, inlayHints[0].Position)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "rename", Path: "main.go", Line: 2, Character: 5, NewName: "Start"})
 	require.NoError(t, err)
 	require.Equal(t, "rename", result.Action)
@@ -472,6 +489,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"document_link":       "document-link",
 		"documentLink":        "document-link",
 		"document-links":      "document-link",
+		"inlay_hint":          "inlay-hint",
+		"inlayHint":           "inlay-hint",
+		"inlay-hints":         "inlay-hint",
 		"signature_help":      "signature-help",
 		"signatureHelp":       "signature-help",
 		"signature":           "signature-help",
@@ -577,6 +597,12 @@ func TestFakeLSPServer(t *testing.T) {
 					"end":   map[string]any{"line": 2, "character": 12},
 				},
 				"target": "https://example.test/docs",
+			}})})
+		case "textDocument/inlayHint":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"position": map[string]any{"line": 2, "character": 10},
+				"label":    ": int",
+				"kind":     1,
 			}})})
 		case "textDocument/signatureHelp":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
