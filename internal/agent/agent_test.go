@@ -10028,12 +10028,16 @@ func TestMarketplaceValidateCommand(t *testing.T) {
 func TestParseFlagsSupportsSystemPromptOverrides(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{
 		"--system-prompt", "base",
+		"--system-prompt-file", "base.txt",
 		"--append-system-prompt", "extra",
+		"--append-system-prompt-file", "extra.txt",
 		"prompt", "hello",
 	}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "base", overrides.SystemPrompt)
+	require.Equal(t, "base.txt", overrides.SystemPromptFile)
 	require.Equal(t, "extra", overrides.AppendPrompt)
+	require.Equal(t, "extra.txt", overrides.AppendPromptFile)
 	require.Equal(t, "prompt", command)
 	require.Equal(t, []string{"hello"}, rest)
 }

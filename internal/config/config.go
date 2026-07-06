@@ -1091,7 +1091,9 @@ type FlagOverrides struct {
 	Model                          string
 	BaseURL                        string
 	SystemPrompt                   string
+	SystemPromptFile               string
 	AppendPrompt                   string
+	AppendPromptFile               string
 	PermissionMode                 string
 	SkipPermissions                bool
 	AllowBroadCWD                  bool
@@ -1126,7 +1128,9 @@ func Load(overrides FlagOverrides) (Config, error) {
 	}
 
 	applyEnv(&cfg)
-	applyFlags(&cfg, overrides)
+	if err := applyFlags(&cfg, overrides); err != nil {
+		return Config{}, err
+	}
 	if err := applyAPIKeyHelper(&cfg); err != nil {
 		return Config{}, err
 	}
@@ -1161,7 +1165,9 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 		}
 	}
 	applyEnv(&cfg)
-	applyFlags(&cfg, overrides)
+	if err := applyFlags(&cfg, overrides); err != nil {
+		return Config{}, paths, err
+	}
 	if err := applyAPIKeyHelper(&cfg); err != nil {
 		return Config{}, paths, err
 	}
@@ -1190,7 +1196,9 @@ func Default(overrides FlagOverrides) (Config, error) {
 		return Config{}, err
 	}
 	applyEnv(&cfg)
-	applyFlags(&cfg, overrides)
+	if err := applyFlags(&cfg, overrides); err != nil {
+		return Config{}, err
+	}
 	if err := applyAPIKeyHelper(&cfg); err != nil {
 		return Config{}, err
 	}
@@ -2852,7 +2860,7 @@ func applyRoutedProviderEnvFromCurrentEnvironment(cfg *Config) {
 	applyRoutedProviderEnv(cfg, genericBaseURLSet, genericCredentialSet, lookup)
 }
 
-func applyFlags(cfg *Config, overrides FlagOverrides) {
+func applyFlags(cfg *Config, overrides FlagOverrides) error {
 	if overrides.Model != "" {
 		cfg.Model = overrides.Model
 		cfg.ModelEnvVar = ""
@@ -2861,11 +2869,31 @@ func applyFlags(cfg *Config, overrides FlagOverrides) {
 	if overrides.BaseURL != "" {
 		cfg.BaseURL = overrides.BaseURL
 	}
+	if overrides.SystemPrompt != "" && overrides.SystemPromptFile != "" {
+		return errors.New("cannot use both --system-prompt and --system-prompt-file")
+	}
+	if overrides.AppendPrompt != "" && overrides.AppendPromptFile != "" {
+		return errors.New("cannot use both --append-system-prompt and --append-system-prompt-file")
+	}
 	if overrides.SystemPrompt != "" {
 		cfg.SystemPrompt = overrides.SystemPrompt
 	}
+	if overrides.SystemPromptFile != "" {
+		value, err := readPromptOverrideFile(overrides.SystemPromptFile, "system prompt")
+		if err != nil {
+			return err
+		}
+		cfg.SystemPrompt = value
+	}
 	if overrides.AppendPrompt != "" {
 		cfg.AppendSystemPrompt = joinPromptAppend(cfg.AppendSystemPrompt, overrides.AppendPrompt)
+	}
+	if overrides.AppendPromptFile != "" {
+		value, err := readPromptOverrideFile(overrides.AppendPromptFile, "append system prompt")
+		if err != nil {
+			return err
+		}
+		cfg.AppendSystemPrompt = joinPromptAppend(cfg.AppendSystemPrompt, value)
 	}
 	if overrides.PermissionMode != "" {
 		cfg.PermissionMode = overrides.PermissionMode
@@ -2901,6 +2929,26 @@ func applyFlags(cfg *Config, overrides FlagOverrides) {
 		value := *overrides.Temperature
 		cfg.Temperature = &value
 	}
+	return nil
+}
+
+func readPromptOverrideFile(path string, label string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("%s file path is required", label)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		abs, absErr := filepath.Abs(path)
+		if absErr == nil {
+			path = abs
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("%s file not found: %s", label, path)
+		}
+		return "", fmt.Errorf("read %s file %s: %w", label, path, err)
+	}
+	return string(data), nil
 }
 
 func lookupFirstEnv(lookup func(string) string, names ...string) (string, string) {

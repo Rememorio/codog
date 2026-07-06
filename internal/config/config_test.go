@@ -384,6 +384,51 @@ func TestLoadClaudeAllowedToolsAliases(t *testing.T) {
 	require.Equal(t, []string{"Write", "Bash(rm *)"}, cfg.PermissionRules.DeniedTools)
 }
 
+func TestLoadAppliesSystemPromptFiles(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	basePath := filepath.Join(dir, "system.txt")
+	appendPath := filepath.Join(dir, "append.txt")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"system_prompt":"config base","append_system_prompt":"config append"}`), 0o644))
+	require.NoError(t, os.WriteFile(basePath, []byte("file base\n"), 0o644))
+	require.NoError(t, os.WriteFile(appendPath, []byte("file append\n"), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{
+		ConfigPath:       configPath,
+		SystemPromptFile: basePath,
+		AppendPromptFile: appendPath,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "file base\n", cfg.SystemPrompt)
+	require.Equal(t, "config append\n\nfile append", cfg.AppendSystemPrompt)
+}
+
+func TestLoadRejectsConflictingSystemPromptFlags(t *testing.T) {
+	_, _, err := LoadForInspection(FlagOverrides{
+		SystemPrompt:     "base",
+		SystemPromptFile: "base.txt",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot use both --system-prompt and --system-prompt-file")
+
+	_, _, err = LoadForInspection(FlagOverrides{
+		AppendPrompt:     "extra",
+		AppendPromptFile: "extra.txt",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot use both --append-system-prompt and --append-system-prompt-file")
+}
+
+func TestLoadReportsMissingSystemPromptFile(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.txt")
+	_, _, err := LoadForInspection(FlagOverrides{SystemPromptFile: missing})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "system prompt file not found")
+	require.Contains(t, err.Error(), missing)
+}
+
 func TestLoadLaterPermissionDefaultModeClearsPlanMode(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()

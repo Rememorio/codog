@@ -51379,7 +51379,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.Model, "model", base.Model, "model name")
 	flags.StringVar(&base.BaseURL, "base-url", base.BaseURL, "Anthropic-compatible base URL")
 	flags.StringVar(&base.SystemPrompt, "system-prompt", base.SystemPrompt, "override the base system prompt")
+	flags.StringVar(&base.SystemPromptFile, "system-prompt-file", base.SystemPromptFile, "read the base system prompt from a file")
 	flags.StringVar(&base.AppendPrompt, "append-system-prompt", base.AppendPrompt, "append text to the system prompt")
+	flags.StringVar(&base.AppendPromptFile, "append-system-prompt-file", base.AppendPromptFile, "read appended system prompt text from a file")
 	flags.StringVar(&base.SessionID, "session", base.SessionID, "session id")
 	flags.StringVar(&base.Resume, "resume", base.Resume, "resume session id or latest")
 	flags.BoolVar(&printMode, "p", false, "run a one-shot prompt")
@@ -51560,7 +51562,8 @@ func globalFlagConsumesNext(arg string) bool {
 	switch arg {
 	case "--config", "-config", "--cwd", "-cwd", "-C", "--C", "--directory", "-directory",
 		"--model", "-model", "--base-url", "-base-url", "--system-prompt", "-system-prompt",
-		"--append-system-prompt", "-append-system-prompt", "--session", "-session",
+		"--system-prompt-file", "-system-prompt-file", "--append-system-prompt", "-append-system-prompt",
+		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
 		"--resume", "-resume", "--output-format", "-output-format", "-o", "--o",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
 		"--max-tokens", "-max-tokens", "--temperature", "-temperature",
@@ -51598,7 +51601,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--append-system-prompt", "--session", "--resume", "--output-format", "-o", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--resume", "--output-format", "-o", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
@@ -53365,7 +53368,9 @@ Flags:
   --cwd PATH | -C PATH | --directory PATH
   --base-url URL
   --system-prompt TEXT
+  --system-prompt-file PATH
   --append-system-prompt TEXT
+  --append-system-prompt-file PATH
   --session ID
   --resume ID|latest
   --permission-mode read-only|workspace-write|danger-full-access|prompt|allow
