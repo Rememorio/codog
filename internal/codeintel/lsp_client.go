@@ -421,6 +421,22 @@ var lspActionInfos = []LSPActionInfo{
 		RequiresDocument: true,
 		Description:      "Return formatted document text using LSP text edits.",
 	},
+	{
+		Name:             "range-format",
+		Method:           "textDocument/rangeFormatting",
+		Aliases:          []string{"range_format", "rangeFormatting", "format_range", "range-formatting"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return formatted text edits for a document range ending at the requested position.",
+	},
+	{
+		Name:             "on-type-format",
+		Method:           "textDocument/onTypeFormatting",
+		Aliases:          []string{"on_type_format", "onTypeFormatting", "format_on_type", "on-type-formatting"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return formatting edits triggered by typing a character at a document position.",
+	},
 }
 
 // SupportedLSPActions returns supported LSP actions and aliases.
@@ -729,7 +745,7 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 		Path:     rel,
 		Result:   decoded,
 	}
-	if action == "format" && len(raw) > 0 && string(raw) != "null" {
+	if isLSPFormattingAction(action) && len(raw) > 0 && string(raw) != "null" {
 		var edits []lspTextEdit
 		if err := json.Unmarshal(raw, &edits); err != nil {
 			return LSPQueryResult{}, err
@@ -782,6 +798,15 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 		}
 	}
 	return result, nil
+}
+
+func isLSPFormattingAction(action string) bool {
+	switch action {
+	case "format", "range-format", "on-type-format":
+		return true
+	default:
+		return false
+	}
 }
 
 type hierarchyQuerySpec struct {
@@ -1084,9 +1109,29 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		return "textDocument/documentSymbol", map[string]any{"textDocument": textDocument}, nil
 	case "format":
 		return "textDocument/formatting", map[string]any{"textDocument": textDocument, "options": map[string]any{"tabSize": 4, "insertSpaces": false}}, nil
+	case "range-format":
+		line = max(0, line)
+		start := map[string]any{"line": line, "character": 0}
+		end := map[string]any{"line": line, "character": max(0, character)}
+		return "textDocument/rangeFormatting", map[string]any{"textDocument": textDocument, "range": map[string]any{"start": start, "end": end}, "options": map[string]any{"tabSize": 4, "insertSpaces": false}}, nil
+	case "on-type-format":
+		ch := firstLSPTriggerCharacter(query)
+		return "textDocument/onTypeFormatting", map[string]any{"textDocument": textDocument, "position": position, "ch": ch, "options": map[string]any{"tabSize": 4, "insertSpaces": false}}, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported lsp action %q", action)
 	}
+}
+
+func firstLSPTriggerCharacter(query string) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return "}"
+	}
+	r, _ := utf8.DecodeRuneInString(query)
+	if r == utf8.RuneError {
+		return "}"
+	}
+	return string(r)
 }
 
 func readLSPMessage(reader *bufio.Reader) (json.RawMessage, error) {

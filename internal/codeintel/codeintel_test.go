@@ -263,6 +263,22 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.True(t, result.Changed)
 	require.Contains(t, result.Content, "func main() {}")
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "range_format", Path: "main.go", Line: 2, Character: 14})
+	require.NoError(t, err)
+	require.Equal(t, "range-format", result.Action)
+	require.Equal(t, "textDocument/rangeFormatting", result.Method)
+	require.Equal(t, 1, result.TextEdits)
+	require.True(t, result.Changed)
+	require.Contains(t, result.Content, "func rangeFormatted()")
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "on_type_format", Path: "main.go", Line: 2, Character: 14, Query: "}"})
+	require.NoError(t, err)
+	require.Equal(t, "on-type-format", result.Action)
+	require.Equal(t, "textDocument/onTypeFormatting", result.Method)
+	require.Equal(t, 1, result.TextEdits)
+	require.True(t, result.Changed)
+	require.Contains(t, result.Content, "func onTypeFormatted()")
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "implementation", Path: "main.go", Line: 2, Character: 5})
 	require.NoError(t, err)
 	require.Equal(t, "implementation", result.Action)
@@ -851,6 +867,12 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"document-formatting":       "format",
 		"documentFormatting":        "format",
 		"formatting":                "format",
+		"range_format":              "range-format",
+		"rangeFormatting":           "range-format",
+		"format_range":              "range-format",
+		"on_type_format":            "on-type-format",
+		"onTypeFormatting":          "on-type-format",
+		"format_on_type":            "on-type-format",
 	}
 	for input, expected := range cases {
 		actual, err := NormalizeLSPAction(input)
@@ -1216,6 +1238,22 @@ func TestFakeLSPServer(t *testing.T) {
 					"end":   map[string]any{"line": 2, "character": 14},
 				},
 				"newText": "func main() {}\n",
+			}})})
+		case "textDocument/rangeFormatting":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 0},
+					"end":   map[string]any{"line": 2, "character": 14},
+				},
+				"newText": "func rangeFormatted() {}\n",
+			}})})
+		case "textDocument/onTypeFormatting":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 0},
+					"end":   map[string]any{"line": 2, "character": 14},
+				},
+				"newText": "func onTypeFormatted() {}\n",
 			}})})
 		case "shutdown":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(nil)})
