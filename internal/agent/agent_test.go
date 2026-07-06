@@ -7667,6 +7667,31 @@ func risky(value any) {
 	require.Contains(t, err.Error(), "commit")
 }
 
+func TestResumedDebugToolCallAllowedFollowsRegistry(t *testing.T) {
+	registry := tools.NewRegistry(t.TempDir())
+	app := &App{Tools: registry}
+	ctx := context.Background()
+
+	for _, info := range registry.Infos() {
+		allowed, err := app.resumedDebugToolCallAllowed(ctx, info.Name)
+		require.NoError(t, err)
+		require.Truef(t, allowed, "registered tool %q should be accepted by resumed debug-tool-call", info.Name)
+	}
+
+	for alias, canonical := range tools.ClaudeToolAliases() {
+		if !registry.Has(canonical) {
+			continue
+		}
+		allowed, err := app.resumedDebugToolCallAllowed(ctx, alias)
+		require.NoError(t, err)
+		require.Truef(t, allowed, "alias %q for %q should be accepted by resumed debug-tool-call", alias, canonical)
+	}
+
+	allowed, err := app.resumedDebugToolCallAllowed(ctx, "missing_debug_tool")
+	require.NoError(t, err)
+	require.False(t, allowed)
+}
+
 func TestResumeMCPToolHelperProcess(t *testing.T) {
 	if os.Getenv("CODOG_RESUME_MCP_HELPER") != "1" {
 		return

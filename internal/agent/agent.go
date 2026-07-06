@@ -29206,7 +29206,11 @@ func (a *App) runResumedDebugToolCallSlash(ctx context.Context, args []string, o
 	if err != nil {
 		return err
 	}
-	if !resumedDebugToolCallAllowed(req.Tool) {
+	allowed, err := a.resumedDebugToolCallAllowed(ctx, req.Tool)
+	if err != nil {
+		return err
+	}
+	if !allowed {
 		toolName := strings.TrimSpace(tools.CanonicalToolName(req.Tool))
 		if toolName == "" {
 			toolName = req.Tool
@@ -29216,95 +29220,20 @@ func (a *App) runResumedDebugToolCallSlash(ctx context.Context, args []string, o
 	return a.DebugToolCall(ctx, args, overrides)
 }
 
-func resumedDebugToolCallAllowed(name string) bool {
-	switch tools.CanonicalToolName(strings.TrimSpace(name)) {
-	case "read_file",
-		"write_file",
-		"edit_file",
-		"multi_edit",
-		"apply_patch",
-		"bash",
-		"bash_output",
-		"kill_bash",
-		"powershell",
-		"agent",
-		"todo_read",
-		"todo_write",
-		"web_fetch",
-		"web_search",
-		"structured_output",
-		"tool_search",
-		"sleep",
-		"repl",
-		"retrieve_context",
-		"policy_evaluate",
-		"testing_permission",
-		"ask_user_question",
-		"config",
-		"approval_token",
-		"mcp",
-		"mcp_auth",
-		"list_mcp_resources",
-		"read_mcp_resource",
-		"list_mcp_resource_templates",
-		"list_mcp_prompts",
-		"get_mcp_prompt",
-		"branch_freshness",
-		"enter_plan_mode",
-		"exit_plan_mode",
-		"cron_create",
-		"cron_delete",
-		"cron_list",
-		"recovery_recipe",
-		"recovery_attempt",
-		"recovery_status",
-		"remote_trigger",
-		"enter_worktree",
-		"exit_worktree",
-		"brief",
-		"send_user_message",
-		"skill",
-		"team_create",
-		"team_list",
-		"team_get",
-		"team_delete",
-		"task_create",
-		"run_task_packet",
-		"task_list",
-		"task_status",
-		"task_get",
-		"task_update",
-		"task_heartbeat",
-		"task_lane_board",
-		"task_supervise",
-		"task_stop",
-		"task_output",
-		"worker_create",
-		"worker_list",
-		"worker_get",
-		"worker_observe",
-		"worker_await_ready",
-		"worker_resolve_trust",
-		"worker_send_prompt",
-		"worker_restart",
-		"worker_observe_completion",
-		"worker_startup_timeout",
-		"worker_terminate",
-		"grep",
-		"glob",
-		"ls",
-		"notebook_read",
-		"notebook_edit",
-		"lsp",
-		"git_status",
-		"git_diff",
-		"git_log",
-		"git_show",
-		"git_blame":
-		return true
-	default:
-		return false
+func (a *App) resumedDebugToolCallAllowed(ctx context.Context, name string) (bool, error) {
+	if a.Tools == nil {
+		return false, nil
 	}
+	if a.Tools.Has(name) {
+		return true, nil
+	}
+	if a.mcpToolsLoaded || len(a.Config.MCPServers) == 0 {
+		return false, nil
+	}
+	if err := a.RegisterMCPTools(ctx); err != nil {
+		return false, err
+	}
+	return a.Tools.Has(name), nil
 }
 
 func (a *App) runResumedHooksSlash(ctx context.Context, args []string, format string) error {
