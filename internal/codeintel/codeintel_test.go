@@ -646,6 +646,21 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "demo", resolvedWorkspaceSymbol.Resolved.Container)
 	require.NotNil(t, resolvedWorkspaceSymbol.Resolved.Location)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "execute_command", Query: "demo.run"})
+	require.NoError(t, err)
+	require.Equal(t, "execute-command", result.Action)
+	require.Equal(t, "workspace/executeCommand", result.Method)
+	require.Empty(t, result.Path)
+	var executedCommand struct {
+		Status  string `json:"status"`
+		Command string `json:"command"`
+	}
+	encodedExecutedCommand, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedExecutedCommand, &executedCommand))
+	require.Equal(t, "ok", executedCommand.Status)
+	require.Equal(t, "demo.run", executedCommand.Command)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "rename", Path: "main.go", Line: 2, Character: 5, NewName: "Start"})
 	require.NoError(t, err)
 	require.Equal(t, "rename", result.Action)
@@ -1013,6 +1028,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"workspace_symbol_resolve":  "workspace-symbol-resolve",
 		"workspaceSymbolResolve":    "workspace-symbol-resolve",
 		"resolve_workspace_symbol":  "workspace-symbol-resolve",
+		"execute_command":           "execute-command",
+		"executeCommand":            "execute-command",
+		"workspace_execute_command": "execute-command",
 		"signature_help":            "signature-help",
 		"signatureHelp":             "signature-help",
 		"signature":                 "signature-help",
@@ -1283,6 +1301,15 @@ func TestFakeLSPServer(t *testing.T) {
 			_ = decodeLSPParams(msg.Params, &symbol)
 			symbol["containerName"] = "demo"
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(symbol)})
+		case "workspace/executeCommand":
+			var params struct {
+				Command string `json:"command"`
+			}
+			_ = decodeLSPParams(msg.Params, &params)
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+				"status":  "ok",
+				"command": params.Command,
+			})})
 		case "textDocument/signatureHelp":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
 				"activeSignature": 0,

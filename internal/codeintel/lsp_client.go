@@ -453,6 +453,12 @@ var lspActionInfos = []LSPActionInfo{
 		Description: "Resolve a workspace symbol selected from a workspace-wide language-server query.",
 	},
 	{
+		Name:        "execute-command",
+		Method:      "workspace/executeCommand",
+		Aliases:     []string{"execute_command", "executeCommand", "workspace_execute_command", "workspaceExecuteCommand"},
+		Description: "Execute a workspace command exposed by the language server.",
+	},
+	{
 		Name:             "signature-help",
 		Method:           "textDocument/signatureHelp",
 		Aliases:          []string{"signature_help", "signatureHelp", "signature", "signatures"},
@@ -1548,6 +1554,12 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		return "textDocument/semanticTokens/full/delta", map[string]any{"textDocument": textDocument, "previousResultId": previousResultID}, nil
 	case "workspace-symbol":
 		return "workspace/symbol", map[string]any{"query": strings.TrimSpace(query)}, nil
+	case "execute-command":
+		command := strings.TrimSpace(query)
+		if command == "" {
+			return "", nil, errors.New("query is required for lsp execute-command")
+		}
+		return "workspace/executeCommand", map[string]any{"command": command, "arguments": []any{}}, nil
 	case "signature-help":
 		return "textDocument/signatureHelp", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "symbols":
