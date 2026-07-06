@@ -22,6 +22,7 @@ const (
 	FieldStringOrStringArray FieldType = "string_or_string_array"
 	FieldStringArrayOrMap    FieldType = "string_array_or_map"
 	FieldStringMap           FieldType = "string_map"
+	FieldRulesImport         FieldType = "rules_import"
 )
 
 type Diagnostic struct {
@@ -116,6 +117,7 @@ var topLevelFields = []fieldSpec{
 	{"rate_limit", FieldObject},
 	{"apiTimeout", FieldObject},
 	{"providerFallbacks", FieldObject},
+	{"rulesImport", FieldRulesImport},
 	{"compatibility", FieldObject},
 	{"editor_bridge", FieldObject},
 	{"enterprise", FieldObject},
@@ -800,6 +802,12 @@ func matchesFieldType(expected FieldType, value any) bool {
 			return true
 		}
 		return matchesFieldType(FieldStringMap, value)
+	case FieldRulesImport:
+		if value, ok := value.(string); ok {
+			value = strings.ToLower(strings.TrimSpace(value))
+			return value == "auto" || value == "none"
+		}
+		return matchesFieldType(FieldStringArray, value)
 	default:
 		return true
 	}
@@ -825,6 +833,8 @@ func (t FieldType) label() string {
 		return "a string or an array of strings"
 	case FieldStringArrayOrMap:
 		return "an array of strings or an object with string values"
+	case FieldRulesImport:
+		return `"auto", "none", or an array of framework names`
 	default:
 		return "a valid value"
 	}

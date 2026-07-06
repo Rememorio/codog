@@ -31,6 +31,53 @@ var CandidateNames = []string{
 	filepath.Join(".codog", "instructions.md"),
 }
 
+var clawRuleDirs = []string{
+	filepath.Join(".claw", "rules"),
+	filepath.Join(".claw", "rules.local"),
+}
+
+type frameworkRule struct {
+	Framework string
+	Path      string
+	IsDir     bool
+}
+
+var frameworkRules = []frameworkRule{
+	{Framework: "cursor", Path: ".cursorrules"},
+	{Framework: "cursor", Path: filepath.Join(".cursor", "rules"), IsDir: true},
+	{Framework: "copilot", Path: filepath.Join(".github", "copilot-instructions.md")},
+	{Framework: "windsurf", Path: ".windsurfrules"},
+	{Framework: "windsurf", Path: ".windsurfrules", IsDir: true},
+	{Framework: "plandex", Path: filepath.Join(".plandex", "instructions.md")},
+	{Framework: "crush", Path: filepath.Join(".crush", "CLAUDE.md")},
+	{Framework: "crush", Path: filepath.Join(".crush", "rules"), IsDir: true},
+}
+
+// RulesImportOptions controls external AI coding rule imports.
+type RulesImportOptions struct {
+	Mode       string
+	Frameworks []string
+}
+
+func (o RulesImportOptions) ShouldImport(framework string) bool {
+	framework = strings.ToLower(strings.TrimSpace(framework))
+	switch strings.ToLower(strings.TrimSpace(o.Mode)) {
+	case "", "auto":
+		return true
+	case "none":
+		return false
+	case "list":
+		for _, candidate := range o.Frameworks {
+			if strings.EqualFold(strings.TrimSpace(candidate), framework) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 // File is a loaded project-memory instruction file.
 type File struct {
 	Path       string    `json:"path"`
@@ -190,6 +237,12 @@ type ResetReport struct {
 
 // Discover loads project-memory files between the workspace and its boundary.
 func Discover(workspace string) ([]File, error) {
+	return DiscoverWithRulesImport(workspace, RulesImportOptions{})
+}
+
+// DiscoverWithRulesImport loads project-memory files and optional external
+// framework rule files between the workspace and its boundary.
+func DiscoverWithRulesImport(workspace string, rulesImport RulesImportOptions) ([]File, error) {
 	workspace = strings.TrimSpace(workspace)
 	if workspace == "" {
 		return nil, nil
@@ -203,13 +256,19 @@ func Discover(workspace string) ([]File, error) {
 	if root, ok := gitRoot(absWorkspace); ok && isWithin(absWorkspace, root) {
 		boundary = root
 	}
-	return discoverBetween(absWorkspace, boundary)
+	return discoverBetweenWithRulesImport(absWorkspace, boundary, rulesImport)
 }
 
 // Show returns a selected memory file, requiring a target when multiple files
 // are available.
 func Show(workspace string, target string) (ShowReport, error) {
-	files, err := Discover(workspace)
+	return ShowWithRulesImport(workspace, target, RulesImportOptions{})
+}
+
+// ShowWithRulesImport returns a selected memory file using the provided rule
+// import policy.
+func ShowWithRulesImport(workspace string, target string, rulesImport RulesImportOptions) (ShowReport, error) {
+	files, err := DiscoverWithRulesImport(workspace, rulesImport)
 	if err != nil {
 		return ShowReport{}, err
 	}
@@ -500,11 +559,17 @@ func ResolvePath(workspace string, target string) (string, error) {
 
 // BuildReport discovers and summarizes project-memory files for a workspace.
 func BuildReport(workspace string) (Report, error) {
+	return BuildReportWithRulesImport(workspace, RulesImportOptions{})
+}
+
+// BuildReportWithRulesImport discovers and summarizes project-memory files
+// using the provided external rule import policy.
+func BuildReportWithRulesImport(workspace string, rulesImport RulesImportOptions) (Report, error) {
 	absWorkspace, err := absWorkspacePath(workspace)
 	if err != nil {
 		return Report{}, err
 	}
-	files, err := Discover(absWorkspace)
+	files, err := DiscoverWithRulesImport(absWorkspace, rulesImport)
 	if err != nil {
 		return Report{}, err
 	}
@@ -520,6 +585,12 @@ func BuildReport(workspace string) (Report, error) {
 
 // Search finds lines in project memory that match the query terms.
 func Search(workspace string, query string, limit int) (SearchReport, error) {
+	return SearchWithRulesImport(workspace, query, limit, RulesImportOptions{})
+}
+
+// SearchWithRulesImport finds lines in project memory using the provided
+// external rule import policy.
+func SearchWithRulesImport(workspace string, query string, limit int, rulesImport RulesImportOptions) (SearchReport, error) {
 	absWorkspace, err := absWorkspacePath(workspace)
 	if err != nil {
 		return SearchReport{}, err
@@ -531,7 +602,7 @@ func Search(workspace string, query string, limit int) (SearchReport, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	files, err := Discover(absWorkspace)
+	files, err := DiscoverWithRulesImport(absWorkspace, rulesImport)
 	if err != nil {
 		return SearchReport{}, err
 	}
@@ -758,7 +829,29 @@ func sourceForName(name string) string {
 		return "agents_md"
 	case ".codog/instructions.md":
 		return "codog_instructions"
+	case ".cursorrules", ".cursor/rules":
+		return "cursor_rules"
+	case ".github/copilot-instructions.md":
+		return "copilot_rules"
+	case ".windsurfrules":
+		return "windsurf_rules"
+	case ".plandex/instructions.md":
+		return "plandex_rules"
+	case ".crush/CLAUDE.md":
+		return "crush_rules"
 	default:
+		if strings.HasPrefix(filepath.ToSlash(name), ".cursor/rules/") {
+			return "cursor_rules"
+		}
+		if strings.HasPrefix(filepath.ToSlash(name), ".windsurfrules/") {
+			return "windsurf_rules"
+		}
+		if strings.HasPrefix(filepath.ToSlash(name), ".crush/rules/") {
+			return "crush_rules"
+		}
+		if strings.HasPrefix(filepath.ToSlash(name), ".claw/rules/") || strings.HasPrefix(filepath.ToSlash(name), ".claw/rules.local/") {
+			return "claw_rules"
+		}
 		return "project_memory"
 	}
 }
@@ -875,6 +968,10 @@ func Render(files []File) string {
 }
 
 func discoverBetween(workspace string, boundary string) ([]File, error) {
+	return discoverBetweenWithRulesImport(workspace, boundary, RulesImportOptions{})
+}
+
+func discoverBetweenWithRulesImport(workspace string, boundary string, rulesImport RulesImportOptions) ([]File, error) {
 	dirs := dirsFromBoundary(workspace, boundary)
 	seen := map[string]struct{}{}
 	var files []File
@@ -900,8 +997,106 @@ func discoverBetween(workspace string, boundary string) ([]File, error) {
 				seen[key] = struct{}{}
 			}
 		}
+		for _, name := range clawRuleDirs {
+			next, err := readRuleDir(dir, name, seen)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, next...)
+		}
+		for _, rule := range frameworkRules {
+			if !rulesImport.ShouldImport(rule.Framework) {
+				continue
+			}
+			if rule.IsDir {
+				next, err := readRuleDir(dir, rule.Path, seen)
+				if err != nil {
+					return nil, err
+				}
+				files = append(files, next...)
+				continue
+			}
+			path, ok, err := resolveCandidatePath(dir, rule.Path)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+			key := canonicalPath(path)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			file, ok, err := readCandidate(path, dir, rule.Path)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				files = append(files, file)
+				seen[key] = struct{}{}
+			}
+		}
 	}
 	return files, nil
+}
+
+func readRuleDir(scope string, name string, seen map[string]struct{}) ([]File, error) {
+	dir, ok, err := resolveCandidatePath(scope, name)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !isSupportedRuleFile(entry.Name()) {
+			continue
+		}
+		names = append(names, entry.Name())
+	}
+	sort.Strings(names)
+	files := make([]File, 0, len(names))
+	for _, entryName := range names {
+		path := filepath.Join(dir, entryName)
+		key := canonicalPath(path)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		displayName := filepath.Join(name, entryName)
+		file, ok, err := readCandidate(path, scope, displayName)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			files = append(files, file)
+			seen[key] = struct{}{}
+		}
+	}
+	return files, nil
+}
+
+func isSupportedRuleFile(name string) bool {
+	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(name), ".")) {
+	case "md", "txt", "mdc":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveCandidatePath(dir string, name string) (string, bool, error) {

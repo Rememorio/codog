@@ -81,6 +81,47 @@ func TestDiscoverSupportsExpandedMemoryNames(t *testing.T) {
 	require.Contains(t, strings.TrimSpace(files[3].Body), ".claw/CLAUDE.md")
 }
 
+func TestDiscoverImportsFrameworkRules(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".cursor", "rules"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".claw", "rules"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".cursorrules"), []byte("cursor root"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".cursor", "rules", "style.mdc"), []byte("cursor rule dir"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".github", "copilot-instructions.md"), []byte("copilot rule"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".claw", "rules", "team.md"), []byte("claw rule"), 0o644))
+
+	files, err := DiscoverWithRulesImport(root, RulesImportOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		".claw/rules/team.md",
+		".cursorrules",
+		".cursor/rules/style.mdc",
+		".github/copilot-instructions.md",
+	}, memoryNames(files))
+
+	metadata := MetadataFor(root, files)
+	require.Equal(t, "claw_rules", metadata[0].Source)
+	require.Equal(t, "cursor_rules", metadata[1].Source)
+	require.Equal(t, "cursor_rules", metadata[2].Source)
+	require.Equal(t, "copilot_rules", metadata[3].Source)
+}
+
+func TestDiscoverRulesImportListAndNone(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".cursorrules"), []byte("cursor rule"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".github", "copilot-instructions.md"), []byte("copilot rule"), 0o644))
+
+	files, err := DiscoverWithRulesImport(root, RulesImportOptions{Mode: "list", Frameworks: []string{"copilot"}})
+	require.NoError(t, err)
+	require.Equal(t, []string{".github/copilot-instructions.md"}, memoryNames(files))
+
+	files, err = DiscoverWithRulesImport(root, RulesImportOptions{Mode: "none"})
+	require.NoError(t, err)
+	require.Empty(t, files)
+}
+
 func TestDiscoverMatchesMemoryNamesCaseInsensitively(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".ClAuDe"), 0o755))

@@ -23660,6 +23660,33 @@ func TestSystemPromptIncludesProjectMemory(t *testing.T) {
 	require.Contains(t, prompt, "Prefer Claude-compatible workflows.")
 }
 
+func TestSystemPromptRespectsRulesImportConfig(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".github"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".cursorrules"), []byte("Cursor-only rule."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".github", "copilot-instructions.md"), []byte("Copilot-only rule."), 0o644))
+
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+	}
+	prompt := app.systemPrompt()
+	require.Contains(t, prompt, "Cursor-only rule.")
+	require.Contains(t, prompt, "Copilot-only rule.")
+
+	none := config.RulesImportConfig{Mode: "none"}
+	app.Config.RulesImport = &none
+	prompt = app.systemPrompt()
+	require.NotContains(t, prompt, "Cursor-only rule.")
+	require.NotContains(t, prompt, "Copilot-only rule.")
+
+	copilotOnly := config.RulesImportConfig{Mode: "list", Frameworks: []string{"copilot"}}
+	app.Config.RulesImport = &copilotOnly
+	prompt = app.systemPrompt()
+	require.NotContains(t, prompt, "Cursor-only rule.")
+	require.Contains(t, prompt, "Copilot-only rule.")
+}
+
 func TestSystemPromptIncludesDateAndGitSnapshot(t *testing.T) {
 	workspace := t.TempDir()
 	runGit(t, workspace, "init", "-b", "main")

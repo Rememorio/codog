@@ -261,6 +261,102 @@ type ProviderFallbackConfig struct {
 	Fallbacks []string `json:"fallbacks,omitempty"`
 }
 
+// RulesImportConfig controls which external AI coding rule files are imported
+// into project memory.
+type RulesImportConfig struct {
+	Mode       string
+	Frameworks []string
+}
+
+func (r *RulesImportConfig) UnmarshalJSON(data []byte) error {
+	var mode string
+	if err := json.Unmarshal(data, &mode); err == nil {
+		mode = strings.ToLower(strings.TrimSpace(mode))
+		switch mode {
+		case "", "auto":
+			*r = RulesImportConfig{Mode: "auto"}
+			return nil
+		case "none":
+			*r = RulesImportConfig{Mode: "none"}
+			return nil
+		default:
+			return fmt.Errorf("invalid_rules_import: expected %q, %q, or an array of framework names", "auto", "none")
+		}
+	}
+	var frameworks []string
+	if err := json.Unmarshal(data, &frameworks); err == nil {
+		cleaned := make([]string, 0, len(frameworks))
+		for _, framework := range frameworks {
+			framework = strings.ToLower(strings.TrimSpace(framework))
+			if framework == "" {
+				continue
+			}
+			cleaned = append(cleaned, framework)
+		}
+		*r = RulesImportConfig{Mode: "list", Frameworks: mergeStringLists(nil, cleaned)}
+		return nil
+	}
+	return fmt.Errorf("invalid_rules_import: expected %q, %q, or an array of framework names", "auto", "none")
+}
+
+func (r RulesImportConfig) MarshalJSON() ([]byte, error) {
+	switch strings.ToLower(strings.TrimSpace(r.Mode)) {
+	case "", "auto":
+		return json.Marshal("auto")
+	case "none":
+		return json.Marshal("none")
+	case "list":
+		return json.Marshal(r.Frameworks)
+	default:
+		return json.Marshal(r.Mode)
+	}
+}
+
+// ShouldImport reports whether framework rules should be imported.
+func (r RulesImportConfig) ShouldImport(framework string) bool {
+	framework = strings.ToLower(strings.TrimSpace(framework))
+	switch strings.ToLower(strings.TrimSpace(r.Mode)) {
+	case "", "auto":
+		return true
+	case "none":
+		return false
+	case "list":
+		for _, candidate := range r.Frameworks {
+			if strings.EqualFold(strings.TrimSpace(candidate), framework) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func (r RulesImportConfig) IsZero() bool {
+	return strings.TrimSpace(r.Mode) == "" && len(r.Frameworks) == 0
+}
+
+func (r RulesImportConfig) normalized() RulesImportConfig {
+	mode := strings.ToLower(strings.TrimSpace(r.Mode))
+	switch mode {
+	case "", "auto":
+		return RulesImportConfig{Mode: "auto"}
+	case "none":
+		return RulesImportConfig{Mode: "none"}
+	case "list":
+		frameworks := make([]string, 0, len(r.Frameworks))
+		for _, framework := range r.Frameworks {
+			framework = strings.ToLower(strings.TrimSpace(framework))
+			if framework != "" {
+				frameworks = append(frameworks, framework)
+			}
+		}
+		return RulesImportConfig{Mode: "list", Frameworks: mergeStringLists(nil, frameworks)}
+	default:
+		return RulesImportConfig{Mode: mode}
+	}
+}
+
 type PrivacyConfig struct {
 	TelemetryEnabled     *bool `json:"telemetry_enabled,omitempty"`
 	CrashReportsEnabled  *bool `json:"crash_reports_enabled,omitempty"`
@@ -953,6 +1049,7 @@ type Config struct {
 	RateLimit                  RateLimitConfig            `json:"rate_limit,omitempty"`
 	APITimeout                 APITimeoutConfig           `json:"apiTimeout,omitempty"`
 	ProviderFallbacks          ProviderFallbackConfig     `json:"providerFallbacks,omitempty"`
+	RulesImport                *RulesImportConfig         `json:"rulesImport,omitempty"`
 	Env                        map[string]string          `json:"env,omitempty"`
 	TrustedRoots               []string                   `json:"trustedRoots,omitempty"`
 	RAGBaseURL                 string                     `json:"rag_base_url,omitempty"`
@@ -1255,6 +1352,14 @@ func (c Config) EffectiveDisableAllHooks() bool {
 // EffectiveAllowManagedHooksOnly reports whether unmanaged hooks are ignored.
 func (c Config) EffectiveAllowManagedHooksOnly() bool {
 	return c.AllowManagedHooksOnly != nil && *c.AllowManagedHooksOnly
+}
+
+// EffectiveRulesImport returns the normalized external rule import policy.
+func (c Config) EffectiveRulesImport() RulesImportConfig {
+	if c.RulesImport == nil {
+		return RulesImportConfig{Mode: "auto"}
+	}
+	return c.RulesImport.normalized()
 }
 
 func defaultConfig() (Config, error) {
@@ -2056,6 +2161,10 @@ func merge(dst *Config, src Config) {
 	}
 	if providerFallbackConfigSet(src.ProviderFallbacks) {
 		mergeProviderFallbackConfig(&dst.ProviderFallbacks, src.ProviderFallbacks)
+	}
+	if src.RulesImport != nil {
+		next := src.RulesImport.normalized()
+		dst.RulesImport = &next
 	}
 	if len(src.Env) != 0 {
 		if dst.Env == nil {

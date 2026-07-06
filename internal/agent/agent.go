@@ -321,7 +321,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if err != nil {
 			return err
 		}
-		return renderMemoryCommand(os.Stdout, workspace, rest)
+		rulesImport := memory.RulesImportOptions{}
+		if cfg, err := config.Load(baseOverrides); err == nil {
+			rulesImport = memoryRulesImportOptionsFromConfig(cfg)
+		}
+		return renderMemoryCommand(os.Stdout, workspace, rulesImport, rest)
 	}
 	if command == "enterprise" && len(rest) > 0 && rest[0] == "verify" {
 		if err := enterpriseVerify(os.Stdout, rest); err != nil {
@@ -12294,7 +12298,19 @@ func (a *App) State(args []string) error {
 }
 
 func (a *App) Memory(args []string) error {
-	return renderMemoryCommand(a.Out, a.Workspace, args)
+	return renderMemoryCommand(a.Out, a.Workspace, a.memoryRulesImportOptions(), args)
+}
+
+func (a *App) memoryRulesImportOptions() memory.RulesImportOptions {
+	return memoryRulesImportOptionsFromConfig(a.Config)
+}
+
+func memoryRulesImportOptionsFromConfig(cfg config.Config) memory.RulesImportOptions {
+	rules := cfg.EffectiveRulesImport()
+	return memory.RulesImportOptions{
+		Mode:       rules.Mode,
+		Frameworks: append([]string(nil), rules.Frameworks...),
+	}
 }
 
 type projectReport struct {
@@ -12375,7 +12391,7 @@ func (a *App) buildProjectReport() projectReport {
 	if path := filepath.Join(workspace, ".codog"); dirExists(path) {
 		report.CodogDir = path
 	}
-	if files, err := memory.Discover(workspace); err == nil {
+	if files, err := memory.DiscoverWithRulesImport(workspace, a.memoryRulesImportOptions()); err == nil {
 		report.MemoryFiles = memory.Summaries(files)
 	}
 	return report
@@ -23050,14 +23066,14 @@ type memoryRequest struct {
 	Rest    []string
 }
 
-func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
+func renderMemoryCommand(out io.Writer, workspace string, rulesImport memory.RulesImportOptions, args []string) error {
 	req, err := parseMemoryArgs(args)
 	if err != nil {
 		return renderMemoryError(out, req.Action, err, req.Format)
 	}
 	switch req.Action {
 	case "list":
-		report, err := memory.BuildReport(workspace)
+		report, err := memory.BuildReportWithRulesImport(workspace, rulesImport)
 		if err != nil {
 			return renderMemoryError(out, req.Action, err, req.Format)
 		}
@@ -23068,7 +23084,7 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 		}
 		memory.RenderReport(out, report)
 	case "show":
-		report, err := memory.Show(workspace, strings.Join(req.Rest, " "))
+		report, err := memory.ShowWithRulesImport(workspace, strings.Join(req.Rest, " "), rulesImport)
 		if err != nil {
 			return renderMemoryError(out, req.Action, err, req.Format)
 		}
@@ -23107,7 +23123,7 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 		if len(req.Rest) == 0 {
 			return renderMissingActionArgument(out, "memory", "search", "query", "memory search requires a query", "Usage: codog memory search QUERY [--limit N] [--json|--output-format text|json].", req.Format)
 		}
-		report, err := memory.Search(workspace, strings.Join(req.Rest, " "), req.Limit)
+		report, err := memory.SearchWithRulesImport(workspace, strings.Join(req.Rest, " "), req.Limit, rulesImport)
 		if err != nil {
 			return renderMemoryError(out, req.Action, err, req.Format)
 		}
@@ -23518,7 +23534,7 @@ func (a *App) buildBootstrapPlanReport(ctx context.Context) bootstrapPlanReport 
 
 	memoryStatus := "ready"
 	memoryEvidence := map[string]any{}
-	if files, err := memory.Discover(a.Workspace); err != nil {
+	if files, err := memory.DiscoverWithRulesImport(a.Workspace, a.memoryRulesImportOptions()); err != nil {
 		memoryStatus = "warn"
 		memoryEvidence["error"] = err.Error()
 	} else {
@@ -24279,7 +24295,7 @@ func (a *App) prefetchConfigProbe() (prefetchTaskResult, error) {
 }
 
 func (a *App) prefetchMemoryScan() (prefetchTaskResult, error) {
-	files, err := memory.Discover(a.Workspace)
+	files, err := memory.DiscoverWithRulesImport(a.Workspace, a.memoryRulesImportOptions())
 	if err != nil {
 		return prefetchTaskResult{}, err
 	}
@@ -25870,7 +25886,7 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 			toolNames = append(toolNames, def.Name)
 		}
 	}
-	memoryStatuses := buildMemoryFileStatuses(a.Workspace)
+	memoryStatuses := buildMemoryFileStatuses(a.Workspace, a.memoryRulesImportOptions())
 	gitRaw, gitErr := gitops.Status(a.Workspace)
 	gitError := ""
 	if gitErr != nil {
@@ -25994,8 +26010,8 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 	})
 }
 
-func buildMemoryFileStatuses(workspace string) []localstatus.MemoryFileStatus {
-	memoryFiles, err := memory.Discover(workspace)
+func buildMemoryFileStatuses(workspace string, rulesImport memory.RulesImportOptions) []localstatus.MemoryFileStatus {
+	memoryFiles, err := memory.DiscoverWithRulesImport(workspace, rulesImport)
 	if err != nil {
 		return nil
 	}
@@ -31154,7 +31170,7 @@ func (a *App) Doctor(args []string) error {
 			sessionCount = len(sessions)
 		}
 	}
-	memoryStatuses := buildMemoryFileStatuses(a.Workspace)
+	memoryStatuses := buildMemoryFileStatuses(a.Workspace, a.memoryRulesImportOptions())
 	mcpValidation := buildMCPValidation(a.Config.MCPServers)
 	hookValidation := buildHookValidation(a.Config.Hooks)
 	mcpStatuses := mcp.PreflightAll(context.Background(), a.Config.MCPServers)
@@ -51364,7 +51380,7 @@ func (a *App) runInstructionsLoadedHooks(ctx context.Context, sessionID string, 
 	if len(runner.Config.InstructionsLoaded) == 0 && len(runner.Config.InstructionsLoadedCommands) == 0 {
 		return nil
 	}
-	files, err := memory.Discover(a.Workspace)
+	files, err := memory.DiscoverWithRulesImport(a.Workspace, a.memoryRulesImportOptions())
 	if err != nil {
 		return err
 	}
@@ -51999,7 +52015,7 @@ func (a *App) systemPromptForInput(input string) string {
 			builder.WriteString(rendered)
 		}
 	}
-	if files, err := memory.Discover(a.Workspace); err == nil {
+	if files, err := memory.DiscoverWithRulesImport(a.Workspace, a.memoryRulesImportOptions()); err == nil {
 		if rendered := memory.Render(files); rendered != "" {
 			builder.WriteString("\n\n")
 			builder.WriteString(rendered)

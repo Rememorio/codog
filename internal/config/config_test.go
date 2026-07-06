@@ -652,6 +652,36 @@ func TestLoadProviderFallbacksConfig(t *testing.T) {
 	require.Equal(t, []string{"claude-backup", "grok-mini"}, cfg.ProviderFallbacks.Fallbacks)
 }
 
+func TestLoadRulesImportConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"rulesImport":["cursor","copilot","cursor"]}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	rules := cfg.EffectiveRulesImport()
+	require.Equal(t, "list", rules.Mode)
+	require.Equal(t, []string{"cursor", "copilot"}, rules.Frameworks)
+	require.True(t, rules.ShouldImport("cursor"))
+	require.True(t, rules.ShouldImport("copilot"))
+	require.False(t, rules.ShouldImport("windsurf"))
+
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"rulesImport":"none"}`), 0o644))
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, "none", cfg.EffectiveRulesImport().Mode)
+	require.False(t, cfg.EffectiveRulesImport().ShouldImport("cursor"))
+}
+
+func TestLoadRejectsInvalidRulesImportConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"rulesImport":42}`), 0o644))
+
+	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_rules_import")
+}
+
 func TestLoadMergesTopLevelEnvByConfigPrecedence(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()

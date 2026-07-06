@@ -141,6 +141,29 @@ func TestValidateBytesAcceptsCompatibilitySection(t *testing.T) {
 	require.Empty(t, result.Warnings)
 }
 
+func TestValidateBytesAcceptsRulesImport(t *testing.T) {
+	for _, body := range []string{
+		`{"rulesImport":"auto"}`,
+		`{"rulesImport":"none"}`,
+		`{"rulesImport":["cursor","copilot"]}`,
+	} {
+		result := ValidateBytes([]byte(body), "config.json")
+		require.Equal(t, "ok", result.Status, body)
+		require.Empty(t, result.Errors, body)
+		require.Empty(t, result.Warnings, body)
+	}
+}
+
+func TestValidateBytesReportsInvalidRulesImport(t *testing.T) {
+	result := ValidateBytes([]byte(`{"rulesImport":42}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "rulesImport", result.Errors[0].Field)
+	require.Equal(t, "wrong_type", result.Errors[0].Kind)
+	require.Contains(t, result.Errors[0].Expected, "auto")
+}
+
 func TestValidateBytesAcceptsBackgroundSection(t *testing.T) {
 	result := ValidateBytes([]byte(`{"background":{"statePath":".codog/worker-state.json"}}`), "config.json")
 
