@@ -199,6 +199,7 @@ var scenarioOrder = []string{
 	"web_access_roundtrip",
 	"web_access_limits_roundtrip",
 	"git_workspace_roundtrip",
+	"worktree_lifecycle_roundtrip",
 	"plan_todo_roundtrip",
 	"todo_completion_verification_roundtrip",
 	"lsp_static_roundtrip",
@@ -699,6 +700,7 @@ func Run(ctx context.Context) (Report, error) {
 		webAccessScenario(),
 		webAccessLimitsScenario(),
 		gitWorkspaceScenario(),
+		worktreeLifecycleScenario(),
 		planTodoScenario(),
 		todoCompletionVerificationScenario(),
 		lspStaticScenario(),
@@ -1137,6 +1139,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "IDE bridge and remote control", RequiredRefs: []string{"IDE bridge", "ACP/Zed", "Remote sessions", "Control API listener"}},
 	{Capability: "multi-agent and background tasks", RequiredRefs: []string{"Background tasks", "Agent runs", "Lane board", "Supervisor restarts"}},
 	{Capability: "notebook and code intelligence", RequiredRefs: []string{"Notebook read", "Notebook edit", "LSP tool", "Code intelligence"}},
+	{Capability: "git and worktree management", RequiredRefs: []string{"Git tools", "Branch freshness", "Worktree allocation", "Worktree cleanup"}},
 	{Capability: "OAuth and account lifecycle", RequiredRefs: []string{"OAuth refresh", "Token redaction", "MCP auth"}},
 	{Capability: "enterprise policy and updater", RequiredRefs: []string{"Enterprise policy", "Audit events", "Signed updater"}},
 	{Capability: "plugins and marketplace", RequiredRefs: []string{"Plugin tools", "Plugin lifecycle", "Plugin manifest loading", "External plugin lifecycle"}},
@@ -1464,6 +1467,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "git-workspace",
 		Description: "Exercises git status, diff, log, show, blame, and stale-branch freshness checks against a local repository.",
 		ParityRefs:  []string{"Git tools", "Branch freshness", "Workspace state"},
+	},
+	"worktree_lifecycle_roundtrip": {
+		Category:    "git-workspace",
+		Description: "Allocates and removes a managed git worktree through the tool registry.",
+		ParityRefs:  []string{"Git tools", "Worktree allocation", "Worktree cleanup", "Workspace state"},
 	},
 	"plan_todo_roundtrip": {
 		Category:    "planning",
@@ -3602,6 +3610,106 @@ func gitWorkspaceScenario() scenario {
 				ToolCalls:    6,
 				ToolUses:     []string{"git_status", "git_diff", "git_log", "git_show", "git_blame", "branch_freshness"},
 				RequestCount: 6,
+			}, nil
+		},
+	}
+}
+
+func worktreeLifecycleScenario() scenario {
+	return scenario{
+		name: "worktree_lifecycle_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			if err := runHarnessGit(workspace, "init", "-q", "-b", "main"); err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, args := range [][]string{
+				{"config", "user.email", "codog@example.test"},
+				{"config", "user.name", "Codog Test"},
+			} {
+				if err := runHarnessGit(workspace, args...); err != nil {
+					return localScenarioResult{}, err
+				}
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("worktree parity\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, args := range [][]string{
+				{"add", "README.md"},
+				{"commit", "-q", "-m", "init worktree parity"},
+			} {
+				if err := runHarnessGit(workspace, args...); err != nil {
+					return localScenarioResult{}, err
+				}
+			}
+
+			registry := tools.NewRegistry(workspace)
+			enterOut, err := registry.Execute(ctx, "EnterWorktreeTool", json.RawMessage(`{"name":"reviewer"}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var entered struct {
+				Kind       string `json:"kind"`
+				Operation  string `json:"operation"`
+				Allocation struct {
+					ID   string `json:"id"`
+					Path string `json:"path"`
+					Ref  string `json:"ref"`
+				} `json:"allocation"`
+			}
+			if err := json.Unmarshal([]byte(enterOut), &entered); err != nil {
+				return localScenarioResult{}, err
+			}
+			if entered.Kind != "worktree" || entered.Operation != "enter" || entered.Allocation.ID == "" || entered.Allocation.Path == "" || entered.Allocation.Ref == "" {
+				return localScenarioResult{}, fmt.Errorf("unexpected enter worktree output: %s", enterOut)
+			}
+			removed := false
+			defer func() {
+				if !removed {
+					_, _ = registry.Execute(ctx, "ExitWorktreeTool", json.RawMessage(fmt.Sprintf(`{"id":%q}`, entered.Allocation.ID)), nil)
+				}
+			}()
+			checkoutReadme := filepath.Join(entered.Allocation.Path, "README.md")
+			data, err := os.ReadFile(checkoutReadme)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if string(data) != "worktree parity\n" {
+				return localScenarioResult{}, fmt.Errorf("unexpected checkout README content: %q", string(data))
+			}
+			metadataPath := filepath.Join(workspace, ".codog", "worktrees", "metadata", entered.Allocation.ID+".json")
+			if _, err := os.Stat(metadataPath); err != nil {
+				return localScenarioResult{}, fmt.Errorf("missing worktree metadata: %w", err)
+			}
+
+			exitOut, err := registry.Execute(ctx, "exit_worktree", json.RawMessage(fmt.Sprintf(`{"id":%q}`, entered.Allocation.ID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var exited struct {
+				Kind      string `json:"kind"`
+				Operation string `json:"operation"`
+				ID        string `json:"id"`
+				Removed   bool   `json:"removed"`
+			}
+			if err := json.Unmarshal([]byte(exitOut), &exited); err != nil {
+				return localScenarioResult{}, err
+			}
+			if exited.Kind != "worktree" || exited.Operation != "exit" || exited.ID != entered.Allocation.ID || !exited.Removed {
+				return localScenarioResult{}, fmt.Errorf("unexpected exit worktree output: %s", exitOut)
+			}
+			removed = true
+			if _, err := os.Stat(entered.Allocation.Path); !os.IsNotExist(err) {
+				return localScenarioResult{}, fmt.Errorf("worktree path still exists or stat failed: %v", err)
+			}
+			if _, err := os.Stat(metadataPath); !os.IsNotExist(err) {
+				return localScenarioResult{}, fmt.Errorf("worktree metadata still exists or stat failed: %v", err)
+			}
+			return localScenarioResult{
+				Output:       strings.Join([]string{enterOut, exitOut, "worktree lifecycle harness ok"}, "\n"),
+				FinalMessage: "worktree lifecycle harness ok",
+				ToolCalls:    2,
+				ToolUses:     []string{"enter_worktree", "exit_worktree"},
+				RequestCount: 2,
 			}, nil
 		},
 	}

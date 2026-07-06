@@ -238,10 +238,19 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, gitWorkspace.Output, "initial notes")
 	require.Contains(t, gitWorkspace.Output, `"status": "stale"`)
 	require.Contains(t, gitWorkspace.Output, `"verification_blocked": true`)
+
+	worktreeLifecycle := findScenario(t, report, "worktree_lifecycle_roundtrip")
+	require.True(t, worktreeLifecycle.OK)
+	require.Equal(t, "git-workspace", worktreeLifecycle.Category)
+	require.Equal(t, 2, worktreeLifecycle.ToolCalls)
+	require.Equal(t, []string{"enter_worktree", "exit_worktree"}, worktreeLifecycle.ToolUses)
+	require.Contains(t, worktreeLifecycle.Output, `"operation": "enter"`)
+	require.Contains(t, worktreeLifecycle.Output, `"operation": "exit"`)
+	require.Contains(t, worktreeLifecycle.Output, "worktree lifecycle harness ok")
 	gitWorkspaceCategory := findCategory(t, report, "git-workspace")
 	require.True(t, gitWorkspaceCategory.OK)
-	require.Equal(t, 1, gitWorkspaceCategory.Total)
-	require.ElementsMatch(t, []string{"git_workspace_roundtrip"}, gitWorkspaceCategory.Scenarios)
+	require.Equal(t, 2, gitWorkspaceCategory.Total)
+	require.ElementsMatch(t, []string{"git_workspace_roundtrip", "worktree_lifecycle_roundtrip"}, gitWorkspaceCategory.Scenarios)
 
 	planTodo := findScenario(t, report, "plan_todo_roundtrip")
 	require.True(t, planTodo.OK)
@@ -608,6 +617,11 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	gitWorkspace := findManifestScenario(t, manifest, "git_workspace_roundtrip")
 	require.Equal(t, "git-workspace", gitWorkspace.Category)
 	require.Contains(t, gitWorkspace.ParityRefs, "Branch freshness")
+
+	worktreeLifecycle := findManifestScenario(t, manifest, "worktree_lifecycle_roundtrip")
+	require.Equal(t, "git-workspace", worktreeLifecycle.Category)
+	require.Contains(t, worktreeLifecycle.ParityRefs, "Worktree allocation")
+	require.Contains(t, worktreeLifecycle.ParityRefs, "Worktree cleanup")
 
 	planTodo := findManifestScenario(t, manifest, "plan_todo_roundtrip")
 	require.Equal(t, "planning", planTodo.Category)
