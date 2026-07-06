@@ -356,6 +356,24 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, 1, inlayHints[0].Kind)
 	require.Equal(t, LSPPosition{Line: 2, Character: 10}, inlayHints[0].Position)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "linked_editing_range", Path: "main.go", Line: 2, Character: 5})
+	require.NoError(t, err)
+	require.Equal(t, "linked-editing-range", result.Action)
+	require.Equal(t, "textDocument/linkedEditingRange", result.Method)
+	var linkedEditing struct {
+		WordPattern string `json:"wordPattern"`
+		Ranges      []struct {
+			Start LSPPosition `json:"start"`
+			End   LSPPosition `json:"end"`
+		} `json:"ranges"`
+	}
+	encodedLinked, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedLinked, &linkedEditing))
+	require.Equal(t, "[A-Za-z_]+", linkedEditing.WordPattern)
+	require.Len(t, linkedEditing.Ranges, 2)
+	require.Equal(t, LSPPosition{Line: 2, Character: 5}, linkedEditing.Ranges[0].Start)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "rename", Path: "main.go", Line: 2, Character: 5, NewName: "Start"})
 	require.NoError(t, err)
 	require.Equal(t, "rename", result.Action)
@@ -454,53 +472,56 @@ func TestApplyLSPTextEdits(t *testing.T) {
 
 func TestNormalizeLSPActionAliases(t *testing.T) {
 	cases := map[string]string{
-		"goto_definition":     "definition",
-		"goto-definition":     "definition",
-		"gotoDefinition":      "definition",
-		"goto_declaration":    "declaration",
-		"gotoDeclaration":     "declaration",
-		"goto_implementation": "implementation",
-		"gotoImplementation":  "implementation",
-		"type_definition":     "type-definition",
-		"typeDefinition":      "type-definition",
-		"gotoTypeDefinition":  "type-definition",
-		"find_references":     "references",
-		"find-references":     "references",
-		"findReferences":      "references",
-		"rename_symbol":       "rename",
-		"renameSymbol":        "rename",
-		"symbol-rename":       "rename",
-		"prepare_rename":      "prepare-rename",
-		"prepareRename":       "prepare-rename",
-		"rename-prepare":      "prepare-rename",
-		"code_action":         "code-action",
-		"codeAction":          "code-action",
-		"quickfix":            "code-action",
-		"quick-fix":           "code-action",
-		"completions":         "completion",
-		"document_highlight":  "document-highlight",
-		"documentHighlight":   "document-highlight",
-		"selection_range":     "selection-range",
-		"selectionRange":      "selection-range",
-		"expand_selection":    "selection-range",
-		"folding_range":       "folding-range",
-		"foldingRange":        "folding-range",
-		"folds":               "folding-range",
-		"document_link":       "document-link",
-		"documentLink":        "document-link",
-		"document-links":      "document-link",
-		"inlay_hint":          "inlay-hint",
-		"inlayHint":           "inlay-hint",
-		"inlay-hints":         "inlay-hint",
-		"signature_help":      "signature-help",
-		"signatureHelp":       "signature-help",
-		"signature":           "signature-help",
-		"document_symbols":    "symbols",
-		"document-symbols":    "symbols",
-		"documentSymbols":     "symbols",
-		"document-formatting": "format",
-		"documentFormatting":  "format",
-		"formatting":          "format",
+		"goto_definition":      "definition",
+		"goto-definition":      "definition",
+		"gotoDefinition":       "definition",
+		"goto_declaration":     "declaration",
+		"gotoDeclaration":      "declaration",
+		"goto_implementation":  "implementation",
+		"gotoImplementation":   "implementation",
+		"type_definition":      "type-definition",
+		"typeDefinition":       "type-definition",
+		"gotoTypeDefinition":   "type-definition",
+		"find_references":      "references",
+		"find-references":      "references",
+		"findReferences":       "references",
+		"rename_symbol":        "rename",
+		"renameSymbol":         "rename",
+		"symbol-rename":        "rename",
+		"prepare_rename":       "prepare-rename",
+		"prepareRename":        "prepare-rename",
+		"rename-prepare":       "prepare-rename",
+		"code_action":          "code-action",
+		"codeAction":           "code-action",
+		"quickfix":             "code-action",
+		"quick-fix":            "code-action",
+		"completions":          "completion",
+		"document_highlight":   "document-highlight",
+		"documentHighlight":    "document-highlight",
+		"selection_range":      "selection-range",
+		"selectionRange":       "selection-range",
+		"expand_selection":     "selection-range",
+		"folding_range":        "folding-range",
+		"foldingRange":         "folding-range",
+		"folds":                "folding-range",
+		"document_link":        "document-link",
+		"documentLink":         "document-link",
+		"document-links":       "document-link",
+		"inlay_hint":           "inlay-hint",
+		"inlayHint":            "inlay-hint",
+		"inlay-hints":          "inlay-hint",
+		"linked_editing_range": "linked-editing-range",
+		"linkedEditingRange":   "linked-editing-range",
+		"linked-editing":       "linked-editing-range",
+		"signature_help":       "signature-help",
+		"signatureHelp":        "signature-help",
+		"signature":            "signature-help",
+		"document_symbols":     "symbols",
+		"document-symbols":     "symbols",
+		"documentSymbols":      "symbols",
+		"document-formatting":  "format",
+		"documentFormatting":   "format",
+		"formatting":           "format",
 	}
 	for input, expected := range cases {
 		actual, err := NormalizeLSPAction(input)
@@ -604,6 +625,14 @@ func TestFakeLSPServer(t *testing.T) {
 				"label":    ": int",
 				"kind":     1,
 			}})})
+		case "textDocument/linkedEditingRange":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+				"ranges": []map[string]any{
+					{"start": map[string]any{"line": 2, "character": 5}, "end": map[string]any{"line": 2, "character": 10}},
+					{"start": map[string]any{"line": 4, "character": 5}, "end": map[string]any{"line": 4, "character": 10}},
+				},
+				"wordPattern": "[A-Za-z_]+",
+			})})
 		case "textDocument/signatureHelp":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
 				"activeSignature": 0,

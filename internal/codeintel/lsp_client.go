@@ -250,6 +250,14 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return inlay hints around a document position.",
 	},
 	{
+		Name:             "linked-editing-range",
+		Method:           "textDocument/linkedEditingRange",
+		Aliases:          []string{"linked_editing_range", "linkedEditingRange", "linked-editing", "linked_editing"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return ranges that should be edited together at a document position.",
+	},
+	{
 		Name:             "signature-help",
 		Method:           "textDocument/signatureHelp",
 		Aliases:          []string{"signature_help", "signatureHelp", "signature", "signatures"},
@@ -645,6 +653,8 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		start := map[string]any{"line": line, "character": 0}
 		end := map[string]any{"line": line, "character": max(0, character)}
 		return "textDocument/inlayHint", map[string]any{"textDocument": textDocument, "range": map[string]any{"start": start, "end": end}}, nil
+	case "linked-editing-range":
+		return "textDocument/linkedEditingRange", map[string]any{"textDocument": textDocument, "position": position}, nil
 	case "signature-help":
 		return "textDocument/signatureHelp", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "symbols":
