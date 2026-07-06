@@ -42537,6 +42537,21 @@ func (a *App) SessionsCommand(args []string) error {
 			return nil
 		}
 		renderSessionForkText(a.Out, report)
+	case "switch":
+		req, err := parseSessionSwitchArgs("codog sessions switch", args[1:], "json")
+		if err != nil {
+			return err
+		}
+		report, err := a.switchSessionWithReport("", req.ID)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderSessionSwitchText(a.Out, report)
 	case "rename":
 		req, err := parseSessionRenameArgs("codog sessions rename", args[1:], "", "json")
 		if err != nil {
@@ -42620,7 +42635,7 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_sessions_action",
 			Message:   fmt.Sprintf("unsupported sessions action %q", action),
-			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions prune`, or `codog sessions delete ID`.",
+			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions switch ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions prune`, or `codog sessions delete ID`.",
 		}, format)
 	}
 	return renderCLIError(out, err, format)
@@ -53790,8 +53805,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return commandHelpSpec{
 			Topic:                   "session",
 			Command:                 "session",
-			Usage:                   "codog sessions [list|show|exists|export|import|fork|rename|prune|delete] [ARGS...]",
-			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|export|import|fork|rename|prune|delete] [ARGS...]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n  codog sessions prune [--empty|--keep N] [--confirm] [--session ID|--resume ID] [--output-format text|json]\n\nInspects, imports, exports, and mutates saved session metadata. Help is local and does not open a session.\n",
+			Usage:                   "codog sessions [list|show|exists|export|import|fork|switch|rename|prune|delete] [ARGS...]",
+			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|export|import|fork|switch|rename|prune|delete] [ARGS...]\n  codog sessions switch ID [--output-format text|json]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n  codog sessions prune [--empty|--keep N] [--confirm] [--session ID|--resume ID] [--output-format text|json]\n\nInspects, imports, exports, and mutates saved session metadata. `switch` is local and returns continue commands for the selected session instead of opening an interactive REPL.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,

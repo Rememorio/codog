@@ -11191,6 +11191,26 @@ func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 	require.NotEmpty(t, existsReport.Path)
 	out.Reset()
 
+	require.NoError(t, app.SessionsCommand([]string{"switch", "source"}))
+	var switchReport sessionSwitchReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &switchReport))
+	require.Equal(t, "session_switch", switchReport.Kind)
+	require.Equal(t, "switch", switchReport.Action)
+	require.Equal(t, "ok", switchReport.Status)
+	require.Empty(t, switchReport.PreviousSessionID)
+	require.Equal(t, "source", switchReport.RequestedSession)
+	require.Equal(t, "source", switchReport.SessionID)
+	require.Equal(t, 1, switchReport.MessageCount)
+	require.NotEmpty(t, switchReport.Path)
+	require.Contains(t, switchReport.ContinueCommands[0], "--resume 'source' repl")
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"switch", "source", "--output-format", "text"}))
+	require.Contains(t, out.String(), "Session switched")
+	require.Contains(t, out.String(), "Session          source")
+	require.Contains(t, out.String(), "--resume 'source' repl")
+	out.Reset()
+
 	require.NoError(t, app.SessionsCommand([]string{"fork", "source", "branch"}))
 	var forkReport sessionForkReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &forkReport))
