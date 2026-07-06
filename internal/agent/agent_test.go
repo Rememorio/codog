@@ -8931,7 +8931,7 @@ func TestACPServeExposesLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"lsp/start","params":{"language":"go","command":` + strconv.Quote(fakeCommand) + `}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"lsp/query","params":{"language":"go","action":"hover","path":"main.go","line":2,"character":5}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"lsp/query","params":{"language":"go","action":"diagnostics","file_path":"main.go","timeout_ms":1000}}`,
-		`{"jsonrpc":"2.0","id":4,"method":"lsp/query","params":{"language":"go","action":"rename","path":"main.go","line":2,"character":5,"new_name":"Start"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"lsp/query","params":{"language":"go","action":"rename","path":"main.go","line":2,"character":5,"new_name":"Start","apply":true}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"lsp/status","params":{"language":"go"}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"lsp/list","params":{}}`,
 		`{"jsonrpc":"2.0","id":7,"method":"lsp/stop","params":{"language":"go"}}`,
@@ -8971,8 +8971,12 @@ func TestACPServeExposesLSPLifecycleAndQuery(t *testing.T) {
 	require.Equal(t, "textDocument/rename", rename["method"])
 	require.EqualValues(t, 1, rename["file_edits"])
 	require.EqualValues(t, 1, rename["text_edits"])
+	require.Equal(t, true, rename["applied"])
 	renameEdits := rename["edits"].([]any)
 	require.Contains(t, renameEdits[0].(map[string]any)["content"], "func Start()")
+	data, err := os.ReadFile(filepath.Join(workspace, "main.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "func Start()")
 	status := responses[4]["result"].(map[string]any)
 	require.Equal(t, "lsp_status", status["kind"])
 	statusServer := status["server"].(map[string]any)

@@ -26,6 +26,7 @@ type LSPQueryRequest struct {
 	Line      int    `json:"line,omitempty"`
 	Character int    `json:"character,omitempty"`
 	NewName   string `json:"new_name,omitempty"`
+	Apply     bool   `json:"apply,omitempty"`
 }
 
 // LSPQueryResult is the normalized result of an LSP JSON-RPC request.
@@ -41,12 +42,14 @@ type LSPQueryResult struct {
 	FileEdits   int             `json:"file_edits,omitempty"`
 	Edits       []LSPFileEdit   `json:"edits,omitempty"`
 	Changed     bool            `json:"changed,omitempty"`
+	Applied     bool            `json:"applied,omitempty"`
 	Content     string          `json:"content,omitempty"`
 }
 
 // LSPFileEdit previews the text edits a language server returned for one file.
 type LSPFileEdit struct {
 	Path      string `json:"path"`
+	AbsPath   string `json:"-"`
 	TextEdits int    `json:"text_edits"`
 	Changed   bool   `json:"changed"`
 	Content   string `json:"content,omitempty"`
@@ -441,6 +444,12 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 		result.TextEdits = textEdits
 		result.Edits = fileEdits
 		result.Changed = textEdits > 0
+		if request.Apply && result.Changed {
+			if err := applyLSPFileEdits(fileEdits); err != nil {
+				return LSPQueryResult{}, err
+			}
+			result.Applied = true
+		}
 	}
 	return result, nil
 }
@@ -648,12 +657,33 @@ func summarizeLSPWorkspaceEdit(workspace string, edit lspWorkspaceEdit) ([]LSPFi
 		totalTextEdits += len(textEdits)
 		out = append(out, LSPFileEdit{
 			Path:      rel,
+			AbsPath:   abs,
 			TextEdits: len(textEdits),
 			Changed:   content != string(data),
 			Content:   content,
 		})
 	}
 	return out, totalTextEdits, nil
+}
+
+func applyLSPFileEdits(edits []LSPFileEdit) error {
+	for _, edit := range edits {
+		if !edit.Changed {
+			continue
+		}
+		if strings.TrimSpace(edit.AbsPath) == "" {
+			return fmt.Errorf("cannot apply lsp edit for %s without an absolute path", edit.Path)
+		}
+		info, statErr := os.Stat(edit.AbsPath)
+		mode := os.FileMode(0o644)
+		if statErr == nil {
+			mode = info.Mode()
+		}
+		if err := os.WriteFile(edit.AbsPath, []byte(edit.Content), mode); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func collectLSPWorkspaceEdits(edit lspWorkspaceEdit) map[string][]lspTextEdit {

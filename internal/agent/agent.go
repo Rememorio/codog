@@ -23800,6 +23800,7 @@ func (a *App) serveACP(ctx context.Context) error {
 				Line:      req.Line,
 				Character: req.Character,
 				NewName:   req.NewName,
+				Apply:     req.Apply || req.Write,
 			})
 		},
 		BackgroundList: func(_ context.Context, req acpserver.BackgroundListRequest) (any, error) {
@@ -34328,8 +34329,21 @@ func (a *App) CodeIntelLSP(args []string) error {
 		}
 		payload = status
 	case "query", "request":
+		write := false
+		cleanArgs := []string{}
+		for _, arg := range args {
+			switch arg {
+			case "--write", "--apply":
+				write = true
+			case "--preview", "--dry-run":
+				write = false
+			default:
+				cleanArgs = append(cleanArgs, arg)
+			}
+		}
+		args = cleanArgs
 		if len(args) < 4 {
-			return errors.New("usage: codog code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER [NEW_NAME]]")
+			return errors.New("usage: codog code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER [NEW_NAME]] [--write|--apply]")
 		}
 		line := 0
 		character := 0
@@ -34357,6 +34371,7 @@ func (a *App) CodeIntelLSP(args []string) error {
 			Line:      line,
 			Character: character,
 			NewName:   newName,
+			Apply:     write,
 		})
 		if err != nil {
 			return err

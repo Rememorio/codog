@@ -337,6 +337,8 @@ type LSPQueryRequest struct {
 	Line      int    `json:"line,omitempty"`
 	Character int    `json:"character,omitempty"`
 	NewName   string `json:"new_name,omitempty"`
+	Apply     bool   `json:"apply,omitempty"`
+	Write     bool   `json:"write,omitempty"`
 	TimeoutMS int    `json:"timeout_ms,omitempty"`
 }
 

@@ -926,6 +926,8 @@ func (s Server) lspQuery(params json.RawMessage) (any, error) {
 		Line      int    `json:"line"`
 		Character int    `json:"character"`
 		NewName   string `json:"new_name"`
+		Apply     bool   `json:"apply"`
+		Write     bool   `json:"write"`
 		TimeoutMS int    `json:"timeout_ms"`
 	}
 	if err := json.Unmarshal(params, &payload); err != nil {
@@ -956,6 +958,7 @@ func (s Server) lspQuery(params json.RawMessage) (any, error) {
 		Line:      payload.Line,
 		Character: payload.Character,
 		NewName:   payload.NewName,
+		Apply:     payload.Apply || payload.Write,
 	})
 }
 

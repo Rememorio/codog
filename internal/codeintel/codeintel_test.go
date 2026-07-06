@@ -291,6 +291,18 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Len(t, result.Edits, 1)
 	require.Equal(t, "main.go", result.Edits[0].Path)
 	require.Contains(t, result.Edits[0].Content, "func Start()")
+	data, err := os.ReadFile(filepath.Join(workspace, "main.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "func main()")
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "rename", Path: "main.go", Line: 2, Character: 5, NewName: "Start", Apply: true})
+	require.NoError(t, err)
+	require.Equal(t, "rename", result.Action)
+	require.True(t, result.Applied)
+	require.True(t, result.Changed)
+	data, err = os.ReadFile(filepath.Join(workspace, "main.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "func Start()")
 
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "diagnostics", Path: "main.go"})
 	require.NoError(t, err)
