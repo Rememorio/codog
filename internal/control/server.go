@@ -34,6 +34,7 @@ type Server struct {
 	ConfigHome  string
 	Workspace   string
 	AuthToken   string
+	MaxSessions int
 	Hooks       config.HookConfig
 	MCPServers  map[string]config.MCPServerConfig
 	LeaseTTL    time.Duration
@@ -363,6 +364,10 @@ func (s Server) sessions(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, sessions)
 	case http.MethodPost:
+		if err := s.enforceSessionLimit(); err != nil {
+			writeError(w, err, http.StatusTooManyRequests)
+			return
+		}
 		sess, err := s.Sessions.Open("")
 		if err != nil {
 			writeError(w, err, http.StatusInternalServerError)
@@ -372,6 +377,20 @@ func (s Server) sessions(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func (s Server) enforceSessionLimit() error {
+	if s.MaxSessions <= 0 {
+		return nil
+	}
+	sessions, err := s.Sessions.List()
+	if err != nil {
+		return err
+	}
+	if len(sessions) >= s.MaxSessions {
+		return fmt.Errorf("max_sessions limit reached: %d", s.MaxSessions)
+	}
+	return nil
 }
 
 func (s Server) sessionByID(w http.ResponseWriter, r *http.Request) {

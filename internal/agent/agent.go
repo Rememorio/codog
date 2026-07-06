@@ -1752,6 +1752,10 @@ func (a *App) Remote(args []string) error {
 }
 
 func (a *App) remoteControlServer(addr string) control.Server {
+	return a.remoteControlServerWithMaxSessions(addr, 0)
+}
+
+func (a *App) remoteControlServerWithMaxSessions(addr string, maxSessions int) control.Server {
 	executable, _ := os.Executable()
 	runtimeReport := remoteruntime.InspectEnv(remoteruntime.Env(), remoteProxyPortFromAddr(addr))
 	remoteEnv := []string(nil)
@@ -1763,6 +1767,7 @@ func (a *App) remoteControlServer(addr string) control.Server {
 		ConfigHome:  a.Config.ConfigHome,
 		Workspace:   a.Workspace,
 		AuthToken:   a.Config.Future.RemoteAuthToken,
+		MaxSessions: maxSessions,
 		Hooks:       a.Config.Hooks,
 		MCPServers:  a.Config.MCPServers,
 		LeaseTTL:    time.Duration(a.Config.Future.RemoteLeaseSeconds) * time.Second,
@@ -2104,7 +2109,7 @@ func (a *App) serveTCPServer(ctx context.Context, req serverRequest) error {
 	if a.Err != nil {
 		fmt.Fprintf(a.Err, "codog server listening on %s\n", remoteURL)
 	}
-	return a.serveControlListener(ctx, listener, actualAddr)
+	return a.serveControlListenerWithMaxSessions(ctx, listener, actualAddr, req.MaxSessions)
 }
 
 func (a *App) serveUnixServer(ctx context.Context, req serverRequest) error {
@@ -2127,7 +2132,7 @@ func (a *App) serveUnixServer(ctx context.Context, req serverRequest) error {
 	if a.Err != nil {
 		fmt.Fprintf(a.Err, "codog server listening on %s\n", remoteURL)
 	}
-	return a.serveControlListener(ctx, listener, socketPath)
+	return a.serveControlListenerWithMaxSessions(ctx, listener, socketPath, req.MaxSessions)
 }
 
 func (a *App) buildServerReport(req serverRequest, network, addr, httpURL string) serverReport {
@@ -2148,14 +2153,12 @@ func (a *App) buildServerReport(req serverRequest, network, addr, httpURL string
 		AuthToken:           req.AuthToken,
 		IdleTimeoutMS:       req.IdleTimeoutMS,
 		MaxSessions:         req.MaxSessions,
+		MaxSessionsEnforced: req.MaxSessions > 0,
 		RouteCount:          len(routes),
 		Routes:              routePaths,
 	}
 	if strings.HasPrefix(httpURL, "http://") || strings.HasPrefix(httpURL, "https://") {
 		report.HealthURL = strings.TrimRight(httpURL, "/") + "/health"
-	}
-	if req.MaxSessions > 0 {
-		report.Messages = append(report.Messages, "max_sessions is accepted for Claude Code CLI compatibility; Codog's control API does not enforce a per-server session cap yet.")
 	}
 	return report
 }
@@ -2655,10 +2658,14 @@ func renderOpenReport(out io.Writer, report openReport, format string) error {
 }
 
 func (a *App) serveControlListener(ctx context.Context, listener net.Listener, addr string) error {
+	return a.serveControlListenerWithMaxSessions(ctx, listener, addr, 0)
+}
+
+func (a *App) serveControlListenerWithMaxSessions(ctx context.Context, listener net.Listener, addr string, maxSessions int) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	server := &http.Server{Handler: a.remoteControlServer(addr).Handler()}
+	server := &http.Server{Handler: a.remoteControlServerWithMaxSessions(addr, maxSessions).Handler()}
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Serve(listener)
@@ -55066,7 +55073,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"server",
 			serverUsage,
 			"Server\n\nUsage:\n  codog server [--host HOST] [--port PORT] [--auth-token TOKEN] [--unix PATH] [--workspace DIR] [--idle-timeout MS] [--max-sessions N] [--output-format text|json]\n\nStarts the local Codog control API through a Claude Code-compatible entrypoint. The server exposes sessions, workspace files, terminal/background tasks, agents, MCP, code intelligence, notebook, and editor bridge routes. When --auth-token is omitted Codog generates a bearer token and prints it in the startup banner.\n",
-			[]string{"kind", "status", "workspace", "network", "addr", "http_url", "auth_token", "idle_timeout_ms", "max_sessions", "route_count"},
+			[]string{"kind", "status", "workspace", "network", "addr", "http_url", "auth_token", "idle_timeout_ms", "max_sessions", "max_sessions_enforced", "route_count"},
 			[]string{"serving", "error"},
 			false,
 		), true

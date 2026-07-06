@@ -19490,7 +19490,7 @@ func TestServerCommandStartsControlListener(t *testing.T) {
 	require.True(t, report.AuthTokenConfigured)
 	require.Equal(t, 1200, report.IdleTimeoutMS)
 	require.Equal(t, 2, report.MaxSessions)
-	require.False(t, report.MaxSessionsEnforced)
+	require.True(t, report.MaxSessionsEnforced)
 	require.Equal(t, len(control.RouteSpecs()), report.RouteCount)
 	require.Contains(t, report.Routes, "/health")
 
@@ -19514,6 +19514,23 @@ func TestServerCommandStartsControlListener(t *testing.T) {
 	resp, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	for index := 0; index < 2; index++ {
+		req, err = http.NewRequest(http.MethodPost, strings.TrimRight(report.HTTPURL, "/")+"/sessions", nil)
+		require.NoError(t, err)
+		req.Header.Set("authorization", "Bearer server-secret-token")
+		resp, err = http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	}
+	req, err = http.NewRequest(http.MethodPost, strings.TrimRight(report.HTTPURL, "/")+"/sessions", nil)
+	require.NoError(t, err)
+	req.Header.Set("authorization", "Bearer server-secret-token")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 	require.Contains(t, errOut.String(), "codog server listening on "+report.HTTPURL)
 

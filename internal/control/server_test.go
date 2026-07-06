@@ -98,6 +98,35 @@ func TestControlAuth(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
+func TestControlSessionLimit(t *testing.T) {
+	server := httptest.NewServer(Server{
+		Sessions:    &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")},
+		MaxSessions: 1,
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/sessions", "application/json", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp, err = http.Post(server.URL+"/sessions", "application/json", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	var report map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&report))
+	require.Contains(t, report["error"], "max_sessions limit reached: 1")
+
+	resp, err = http.Get(server.URL + "/sessions")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var sessions []session.Session
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&sessions))
+	require.Len(t, sessions, 1)
+}
+
 func TestControlHooksHealth(t *testing.T) {
 	root := t.TempDir()
 	marker := filepath.Join(root, "hook-ran")
