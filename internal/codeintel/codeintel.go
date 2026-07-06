@@ -241,6 +241,16 @@ type CallHierarchyCall struct {
 	FromRanges []LSPRange        `json:"fromRanges"`
 }
 
+// TypeHierarchyItem describes a static type hierarchy node.
+type TypeHierarchyItem struct {
+	Name           string   `json:"name"`
+	Kind           string   `json:"kind"`
+	Path           string   `json:"path"`
+	Range          LSPRange `json:"range"`
+	SelectionRange LSPRange `json:"selectionRange"`
+	Detail         string   `json:"detail,omitempty"`
+}
+
 // Hover contains static hover context for a discovered symbol.
 type Hover struct {
 	Symbol  string   `json:"symbol"`
@@ -1840,6 +1850,91 @@ func OutgoingCalls(workspace string, symbol string, limit int) ([]CallHierarchyC
 	return calls, nil
 }
 
+// PrepareTypeHierarchy returns the static type hierarchy item for a symbol or
+// document position.
+func PrepareTypeHierarchy(workspace string, symbol string, relPath string, line int, character int) ([]TypeHierarchyItem, error) {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		if strings.TrimSpace(relPath) == "" {
+			return nil, errors.New("symbol or path position is required")
+		}
+		path, _, err := resolveWorkspaceFile(workspace, relPath)
+		if err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		var ok bool
+		symbol, _, ok = identifierAtLineCharacter(data, line, character)
+		if !ok {
+			return []TypeHierarchyItem{}, nil
+		}
+	}
+	types, err := typeHierarchyItems(workspace)
+	if err != nil {
+		return nil, err
+	}
+	if info, ok := types[symbol]; ok && info.Item.Name != "" {
+		return []TypeHierarchyItem{info.Item}, nil
+	}
+	return []TypeHierarchyItem{}, nil
+}
+
+// TypeHierarchySupertypes returns static supertypes for a Go type. Struct
+// embedding and embedded interfaces are treated as hierarchy parents.
+func TypeHierarchySupertypes(workspace string, symbol string, limit int) ([]TypeHierarchyItem, error) {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return nil, errors.New("symbol is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	types, err := typeHierarchyItems(workspace)
+	if err != nil {
+		return nil, err
+	}
+	info, ok := types[symbol]
+	if !ok {
+		return []TypeHierarchyItem{}, nil
+	}
+	return hierarchyItemsForNames(types, info.Embedded, limit), nil
+}
+
+// TypeHierarchySubtypes returns static subtypes for a Go type. Structs that
+// embed the target type and types that satisfy a target interface's method set
+// are reported as children.
+func TypeHierarchySubtypes(workspace string, symbol string, limit int) ([]TypeHierarchyItem, error) {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return nil, errors.New("symbol is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	types, err := typeHierarchyItems(workspace)
+	if err != nil {
+		return nil, err
+	}
+	target, ok := types[symbol]
+	if !ok {
+		return []TypeHierarchyItem{}, nil
+	}
+	names := make([]string, 0, len(types))
+	for name, info := range types {
+		if name == symbol || info.Item.Name == "" {
+			continue
+		}
+		if containsString(info.Embedded, symbol) || (target.Interface && hasAllMethods(info.Methods, target.Methods)) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return hierarchyItemsForNames(types, names, limit), nil
+}
+
 func callHierarchyItems(workspace string) (map[string]CallHierarchyItem, error) {
 	items := map[string]CallHierarchyItem{}
 	err := walkFunctionDecls(workspace, func(fset *token.FileSet, rel string, _ string, fn *ast.FuncDecl) error {
@@ -1900,6 +1995,215 @@ func callHierarchyItems(workspace string) (map[string]CallHierarchyItem, error) 
 		return nil
 	})
 	return items, err
+}
+
+type staticTypeInfo struct {
+	Item      TypeHierarchyItem
+	Embedded  []string
+	Methods   map[string]bool
+	Interface bool
+}
+
+func typeHierarchyItems(workspace string) (map[string]staticTypeInfo, error) {
+	types := map[string]staticTypeInfo{}
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if ignoredDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(workspace, path)
+		rel = filepath.ToSlash(rel)
+		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if err != nil {
+			return err
+		}
+		for _, decl := range file.Decls {
+			switch node := decl.(type) {
+			case *ast.GenDecl:
+				for _, spec := range node.Specs {
+					typ, ok := spec.(*ast.TypeSpec)
+					if !ok || typ.Name == nil {
+						continue
+					}
+					info := ensureStaticTypeInfo(types, typ.Name.Name)
+					info.Item = TypeHierarchyItem{
+						Name:           typ.Name.Name,
+						Kind:           typeHierarchyKind(typ.Type),
+						Path:           rel,
+						Range:          nodeRange(fset, typ),
+						SelectionRange: nodeRange(fset, typ.Name),
+						Detail:         exprLabel(fset, typ.Type),
+					}
+					info.Interface = false
+					info.Embedded = nil
+					switch typ := typ.Type.(type) {
+					case *ast.StructType:
+						info.Embedded = embeddedStructTypes(typ)
+					case *ast.InterfaceType:
+						info.Interface = true
+						info.Embedded = embeddedInterfaceTypes(typ)
+						for _, method := range interfaceMethods(typ) {
+							info.Methods[method] = true
+						}
+					}
+					types[info.Item.Name] = info
+				}
+			case *ast.FuncDecl:
+				if node.Recv == nil || node.Name == nil || len(node.Recv.List) == 0 {
+					continue
+				}
+				recv := receiverTypeName(node.Recv.List[0].Type)
+				if recv == "" {
+					continue
+				}
+				info := ensureStaticTypeInfo(types, recv)
+				info.Methods[node.Name.Name] = true
+				types[recv] = info
+			}
+		}
+		return nil
+	})
+	return types, err
+}
+
+func ensureStaticTypeInfo(types map[string]staticTypeInfo, name string) staticTypeInfo {
+	info := types[name]
+	if info.Methods == nil {
+		info.Methods = map[string]bool{}
+	}
+	return info
+}
+
+func typeHierarchyKind(expr ast.Expr) string {
+	switch expr.(type) {
+	case *ast.StructType:
+		return "struct"
+	case *ast.InterfaceType:
+		return "interface"
+	default:
+		return "type"
+	}
+}
+
+func embeddedStructTypes(typ *ast.StructType) []string {
+	if typ == nil || typ.Fields == nil {
+		return nil
+	}
+	embedded := []string{}
+	for _, field := range typ.Fields.List {
+		if len(field.Names) != 0 {
+			continue
+		}
+		if name := embeddedTypeName(field.Type); name != "" && !containsString(embedded, name) {
+			embedded = append(embedded, name)
+		}
+	}
+	sort.Strings(embedded)
+	return embedded
+}
+
+func embeddedInterfaceTypes(typ *ast.InterfaceType) []string {
+	if typ == nil || typ.Methods == nil {
+		return nil
+	}
+	embedded := []string{}
+	for _, field := range typ.Methods.List {
+		if len(field.Names) != 0 {
+			continue
+		}
+		if name := embeddedTypeName(field.Type); name != "" && !containsString(embedded, name) {
+			embedded = append(embedded, name)
+		}
+	}
+	sort.Strings(embedded)
+	return embedded
+}
+
+func interfaceMethods(typ *ast.InterfaceType) []string {
+	if typ == nil || typ.Methods == nil {
+		return nil
+	}
+	methods := []string{}
+	for _, field := range typ.Methods.List {
+		for _, name := range field.Names {
+			if name != nil && !containsString(methods, name.Name) {
+				methods = append(methods, name.Name)
+			}
+		}
+	}
+	sort.Strings(methods)
+	return methods
+}
+
+func hierarchyItemsForNames(types map[string]staticTypeInfo, names []string, limit int) []TypeHierarchyItem {
+	items := []TypeHierarchyItem{}
+	seen := map[string]bool{}
+	for _, name := range names {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		info, ok := types[name]
+		if !ok || info.Item.Name == "" {
+			continue
+		}
+		items = append(items, info.Item)
+		if len(items) >= limit {
+			break
+		}
+	}
+	return items
+}
+
+func embeddedTypeName(expr ast.Expr) string {
+	switch expr := expr.(type) {
+	case *ast.Ident:
+		return expr.Name
+	case *ast.SelectorExpr:
+		return expr.Sel.Name
+	case *ast.StarExpr:
+		return embeddedTypeName(expr.X)
+	case *ast.IndexExpr:
+		return embeddedTypeName(expr.X)
+	case *ast.IndexListExpr:
+		return embeddedTypeName(expr.X)
+	default:
+		return ""
+	}
+}
+
+func receiverTypeName(expr ast.Expr) string {
+	return embeddedTypeName(expr)
+}
+
+func hasAllMethods(methods map[string]bool, required map[string]bool) bool {
+	if len(required) == 0 {
+		return false
+	}
+	for method := range required {
+		if !methods[method] {
+			return false
+		}
+	}
+	return true
+}
+
+func containsString(values []string, value string) bool {
+	for _, item := range values {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 func callRangesInBody(fset *token.FileSet, body *ast.BlockStmt, target string, limit int) []LSPRange {

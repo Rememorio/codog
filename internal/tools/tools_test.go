@@ -2764,6 +2764,8 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "colors.go"), []byte(colorSource), 0o644))
 	hintSource := "package demo\n\nfunc Build(name string, count int) int { return count }\nfunc UseBuild() { _ = Build(\"codog\", 2) }\n"
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "hints.go"), []byte(hintSource), 0o644))
+	hierarchySource := "package demo\n\ntype WidgetBase struct{}\ntype WidgetChild struct{ WidgetBase }\ntype WidgetContract interface { Build() }\nfunc (WidgetChild) Build() {}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "hierarchy.go"), []byte(hierarchySource), 0o644))
 	hintArgChar := strings.Index(strings.Split(hintSource, "\n")[3], `"codog"`)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "messy.go"), []byte("package demo\n\nfunc messy(){return}\n"), 0o644))
 	tool := LSPTool{Workspace: workspace}
@@ -3052,6 +3054,36 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, outgoingCallsOut, `"name": "Build"`)
 	require.Contains(t, outgoingCallsOut, `"total": 1`)
 
+	typeHierarchyOut, err := tool.Execute(context.Background(), []byte(`{"action":"prepare_type_hierarchy","query":"WidgetBase"}`))
+	require.NoError(t, err)
+	require.Contains(t, typeHierarchyOut, `"action": "prepare-type-hierarchy"`)
+	require.Contains(t, typeHierarchyOut, `"source": "static"`)
+	require.Contains(t, typeHierarchyOut, `"name": "WidgetBase"`)
+	require.Contains(t, typeHierarchyOut, `"kind": "struct"`)
+	require.Contains(t, typeHierarchyOut, `"total": 1`)
+
+	supertypesOut, err := tool.Execute(context.Background(), []byte(`{"action":"supertypes","query":"WidgetChild","limit":5}`))
+	require.NoError(t, err)
+	require.Contains(t, supertypesOut, `"action": "type-hierarchy-supertypes"`)
+	require.Contains(t, supertypesOut, `"source": "static"`)
+	require.Contains(t, supertypesOut, `"query": "WidgetChild"`)
+	require.Contains(t, supertypesOut, `"name": "WidgetBase"`)
+	require.Contains(t, supertypesOut, `"total": 1`)
+
+	subtypesOut, err := tool.Execute(context.Background(), []byte(`{"action":"subtypes","query":"WidgetBase","limit":5}`))
+	require.NoError(t, err)
+	require.Contains(t, subtypesOut, `"action": "type-hierarchy-subtypes"`)
+	require.Contains(t, subtypesOut, `"source": "static"`)
+	require.Contains(t, subtypesOut, `"query": "WidgetBase"`)
+	require.Contains(t, subtypesOut, `"name": "WidgetChild"`)
+	require.Contains(t, subtypesOut, `"total": 1`)
+
+	interfaceSubtypesOut, err := tool.Execute(context.Background(), []byte(`{"action":"subtypes","query":"WidgetContract","limit":5}`))
+	require.NoError(t, err)
+	require.Contains(t, interfaceSubtypesOut, `"action": "type-hierarchy-subtypes"`)
+	require.Contains(t, interfaceSubtypesOut, `"query": "WidgetContract"`)
+	require.Contains(t, interfaceSubtypesOut, `"name": "WidgetChild"`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -3162,6 +3194,18 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, err.Error(), "config home is required")
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"outgoing_calls","query":"UseBuild","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"prepare_type_hierarchy","query":"WidgetBase","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"supertypes","query":"WidgetChild","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"subtypes","query":"WidgetBase","use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 

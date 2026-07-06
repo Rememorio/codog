@@ -177,6 +177,18 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 
 	hintSource := "package pkg\n\nfunc Build(name string, count int) int { return count }\nfunc UseBuild() { _ = Build(\"codog\", 2) }\n"
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "hints.go"), []byte(hintSource), 0o644))
+	hierarchySource := strings.Join([]string{
+		"package pkg",
+		"",
+		"type RunnerBase struct{}",
+		"type RunnerChild struct{ RunnerBase }",
+		"type RunnerContract interface {",
+		"\tExecute()",
+		"}",
+		"func (RunnerChild) Execute() {}",
+		"",
+	}, "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "hierarchy.go"), []byte(hierarchySource), 0o644))
 	hints, err := InlayHints(workspace, "pkg/hints.go", 10)
 	require.NoError(t, err)
 	require.Len(t, hints, 2)
@@ -313,6 +325,31 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.Equal(t, "UseBuild", outgoing[0].From.Name)
 	require.Equal(t, "Build", outgoing[0].To.Name)
 	require.NotEmpty(t, outgoing[0].FromRanges)
+
+	typeItems, err := PrepareTypeHierarchy(workspace, "RunnerBase", "", 0, 0)
+	require.NoError(t, err)
+	require.Len(t, typeItems, 1)
+	require.Equal(t, "RunnerBase", typeItems[0].Name)
+	require.Equal(t, "struct", typeItems[0].Kind)
+	require.Equal(t, "pkg/hierarchy.go", typeItems[0].Path)
+
+	supertypes, err := TypeHierarchySupertypes(workspace, "RunnerChild", 10)
+	require.NoError(t, err)
+	require.Len(t, supertypes, 1)
+	require.Equal(t, "RunnerBase", supertypes[0].Name)
+
+	subtypes, err := TypeHierarchySubtypes(workspace, "RunnerBase", 10)
+	require.NoError(t, err)
+	require.Len(t, subtypes, 1)
+	require.Equal(t, "RunnerChild", subtypes[0].Name)
+
+	implementations, err := TypeHierarchySubtypes(workspace, "RunnerContract", 10)
+	require.NoError(t, err)
+	implementationNames := make([]string, 0, len(implementations))
+	for _, item := range implementations {
+		implementationNames = append(implementationNames, item.Name)
+	}
+	require.Contains(t, implementationNames, "RunnerChild")
 
 	hover, err := HoverInfo(workspace, "Run", 1)
 	require.NoError(t, err)

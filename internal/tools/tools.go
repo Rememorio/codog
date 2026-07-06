@@ -6166,6 +6166,32 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "calls": calls, "total": len(calls)})), nil
+	case "prepare-type-hierarchy":
+		items, err := codeintel.PrepareTypeHierarchy(t.Workspace, payload.Query, payload.Path, payload.Line, payload.Character)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": strings.TrimSpace(payload.Query), "items": items, "total": len(items)})), nil
+	case "type-hierarchy-supertypes":
+		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
+		if err != nil {
+			return "", err
+		}
+		items, err := codeintel.TypeHierarchySupertypes(t.Workspace, query, payload.Limit)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "items": items, "total": len(items)})), nil
+	case "type-hierarchy-subtypes":
+		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
+		if err != nil {
+			return "", err
+		}
+		items, err := codeintel.TypeHierarchySubtypes(t.Workspace, query, payload.Limit)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "items": items, "total": len(items)})), nil
 	case "hover":
 		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
 		if err != nil {
@@ -6218,7 +6244,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 
 func lspActionRequiresServer(action string) bool {
 	switch action {
-	case "document-diagnostic", "workspace-diagnostic", "implementation", "code-action", "code-action-resolve", "prepare-type-hierarchy", "type-hierarchy-supertypes", "type-hierarchy-subtypes", "completion-item-resolve", "inline-value", "execute-command", "range-format", "on-type-format", "will-save":
+	case "document-diagnostic", "workspace-diagnostic", "implementation", "code-action", "code-action-resolve", "completion-item-resolve", "inline-value", "execute-command", "range-format", "on-type-format", "will-save":
 		return true
 	default:
 		return false

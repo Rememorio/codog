@@ -1515,8 +1515,8 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 	},
 	"lsp_static_roundtrip": {
 		Category:    "code-intelligence",
-		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, selection ranges, monikers, linked editing ranges, document links, document colors, inlay hints, signature help, code lenses, semantic tokens, rename previews, call hierarchy, references, hover, completions, diagnostics, and formatting.",
-		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Document links", "Document colors", "Inlay hints", "Signature help", "Code lenses", "Semantic tokens", "Rename previews", "Call hierarchy", "Diagnostics"},
+		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, selection ranges, monikers, linked editing ranges, document links, document colors, inlay hints, signature help, code lenses, semantic tokens, rename previews, call hierarchy, type hierarchy, references, hover, completions, diagnostics, and formatting.",
+		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Document links", "Document colors", "Inlay hints", "Signature help", "Code lenses", "Semantic tokens", "Rename previews", "Call hierarchy", "Type hierarchy", "Diagnostics"},
 	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
@@ -4356,6 +4356,10 @@ func lspStaticScenario() scenario {
 			if err := os.WriteFile(filepath.Join(pkgDir, "hints.go"), []byte(hintSource), 0o644); err != nil {
 				return localScenarioResult{}, err
 			}
+			hierarchySource := "package pkg\n\ntype TypeBase struct{}\ntype TypeChild struct{ TypeBase }\ntype TypeContract interface { Build() }\nfunc (TypeChild) Build() {}\n"
+			if err := os.WriteFile(filepath.Join(pkgDir, "hierarchy.go"), []byte(hierarchySource), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
 			hintArgChar := strings.Index(strings.Split(hintSource, "\n")[3], `"codog"`)
 			tool := tools.LSPTool{Workspace: workspace}
 
@@ -4639,6 +4643,36 @@ func lspStaticScenario() scenario {
 				}
 			}
 
+			typeHierarchyOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"prepare_type_hierarchy","query":"TypeBase"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "prepare-type-hierarchy"`, `"source": "static"`, `"name": "TypeBase"`, `"kind": "struct"`, `"total": 1`} {
+				if !strings.Contains(typeHierarchyOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp prepare type hierarchy output missing %s", expected)
+				}
+			}
+
+			typeHierarchySupertypesOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"supertypes","query":"TypeChild","limit":5}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "type-hierarchy-supertypes"`, `"source": "static"`, `"query": "TypeChild"`, `"name": "TypeBase"`, `"total": 1`} {
+				if !strings.Contains(typeHierarchySupertypesOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp type hierarchy supertypes output missing %s", expected)
+				}
+			}
+
+			typeHierarchySubtypesOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"subtypes","query":"TypeBase","limit":5}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "type-hierarchy-subtypes"`, `"source": "static"`, `"query": "TypeBase"`, `"name": "TypeChild"`, `"total": 1`} {
+				if !strings.Contains(typeHierarchySubtypesOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp type hierarchy subtypes output missing %s", expected)
+				}
+			}
+
 			referencesOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"references","query":"Runner","limit":10}`))
 			if err != nil {
 				return localScenarioResult{}, err
@@ -4696,12 +4730,16 @@ func lspStaticScenario() scenario {
 				return localScenarioResult{}, fmt.Errorf("lsp format unexpectedly modified file")
 			}
 
+			toolUses := make([]string, 36)
+			for i := range toolUses {
+				toolUses[i] = "lsp"
+			}
 			return localScenarioResult{
-				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, documentColorOut, colorPresentationOut, inlayHintOut, inlayHintResolveOut, signatureHelpOut, codeLensOut, codeLensResolveOut, semanticTokensOut, semanticTokensRangeOut, semanticTokensDeltaOut, prepareRenameOut, renameOut, callHierarchyOut, incomingCallsOut, outgoingCallsOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
+				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, documentColorOut, colorPresentationOut, inlayHintOut, inlayHintResolveOut, signatureHelpOut, codeLensOut, codeLensResolveOut, semanticTokensOut, semanticTokensRangeOut, semanticTokensDeltaOut, prepareRenameOut, renameOut, callHierarchyOut, incomingCallsOut, outgoingCallsOut, typeHierarchyOut, typeHierarchySupertypesOut, typeHierarchySubtypesOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
 				FinalMessage: "lsp static harness ok",
-				ToolCalls:    33,
-				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
-				RequestCount: 33,
+				ToolCalls:    36,
+				ToolUses:     toolUses,
+				RequestCount: 36,
 			}, nil
 		},
 	}

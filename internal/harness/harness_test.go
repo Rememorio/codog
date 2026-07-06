@@ -316,8 +316,12 @@ func TestRunUsesMockProvider(t *testing.T) {
 	lspStatic := findScenario(t, report, "lsp_static_roundtrip")
 	require.True(t, lspStatic.OK)
 	require.Equal(t, "code-intelligence", lspStatic.Category)
-	require.Equal(t, 33, lspStatic.ToolCalls)
-	require.Equal(t, []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp"}, lspStatic.ToolUses)
+	require.Equal(t, 36, lspStatic.ToolCalls)
+	expectedLSPToolUses := make([]string, 36)
+	for i := range expectedLSPToolUses {
+		expectedLSPToolUses[i] = "lsp"
+	}
+	require.Equal(t, expectedLSPToolUses, lspStatic.ToolUses)
 	require.Contains(t, lspStatic.Output, `"action": "symbols"`)
 	require.Contains(t, lspStatic.Output, `"action": "workspace-symbol"`)
 	require.Contains(t, lspStatic.Output, `"action": "workspace-symbol-resolve"`)
@@ -345,6 +349,9 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, lspStatic.Output, `"action": "prepare-call-hierarchy"`)
 	require.Contains(t, lspStatic.Output, `"action": "call-hierarchy-incoming"`)
 	require.Contains(t, lspStatic.Output, `"action": "call-hierarchy-outgoing"`)
+	require.Contains(t, lspStatic.Output, `"action": "prepare-type-hierarchy"`)
+	require.Contains(t, lspStatic.Output, `"action": "type-hierarchy-supertypes"`)
+	require.Contains(t, lspStatic.Output, `"action": "type-hierarchy-subtypes"`)
 	require.Contains(t, lspStatic.Output, `"name": "RunFast"`)
 	require.Contains(t, lspStatic.Output, `"action": "references"`)
 	require.Contains(t, lspStatic.Output, `"action": "diagnostics"`)
