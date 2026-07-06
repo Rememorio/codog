@@ -2899,6 +2899,23 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "status", statusReport["kind"])
 
 	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/STATUS"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &statusReport))
+	require.Equal(t, "status", statusReport["kind"])
+
+	terminalProfilePath := filepath.Join(t.TempDir(), ".zshrc")
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/TERMINALSETUP", "status", "--shell", "zsh", "--path", terminalProfilePath}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var terminalReport terminalsetup.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &terminalReport))
+	require.Equal(t, "terminal_setup", terminalReport.Kind)
+	require.Equal(t, "status", terminalReport.Action)
+
+	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/settings", "paths"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
