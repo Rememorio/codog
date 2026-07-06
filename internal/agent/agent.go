@@ -45882,6 +45882,7 @@ type bookmarksRequest struct {
 	Ref          string
 	SessionID    string
 	MessageIndex int
+	PRRef        string
 	Note         string
 	All          bool
 }
@@ -45976,7 +45977,7 @@ func (a *App) Bookmarks(args []string, overrides config.FlagOverrides) error {
 
 func parseBookmarksArgs(args []string, overrides config.FlagOverrides) (bookmarksRequest, error) {
 	req := bookmarksRequest{Action: "list", Format: "text", SessionID: "latest", MessageIndex: -1}
-	const usage = "codog bookmarks [list|add|show|delete|clear] [NAME|ID] [--session ID] [--message N|last] [--json|--output-format text|json]"
+	const usage = "codog bookmarks [list|add|show|delete|clear] [NAME|ID] [--session ID] [--message N|last] [--pr PR] [--json|--output-format text|json]"
 	if strings.TrimSpace(overrides.Resume) != "" {
 		req.SessionID = overrides.Resume
 	}
@@ -46033,6 +46034,16 @@ func parseBookmarksArgs(args []string, overrides config.FlagOverrides) (bookmark
 				return req, err
 			}
 			req.MessageIndex = messageIndex
+		case arg == "--pr" || arg == "--pull-request":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "bookmarks", Flag: arg, Usage: usage}
+			}
+			req.PRRef = args[index]
+		case strings.HasPrefix(arg, "--pr="):
+			req.PRRef = strings.TrimPrefix(arg, "--pr=")
+		case strings.HasPrefix(arg, "--pull-request="):
+			req.PRRef = strings.TrimPrefix(arg, "--pull-request=")
 		case arg == "--note":
 			index++
 			if index >= len(args) || isOutputFormatFlag(args[index]) {
@@ -46132,6 +46143,81 @@ func parseBookmarkMessageIndex(value string, option string, usage string) (int, 
 	return index - 1, nil
 }
 
+type pullRequestReference struct {
+	Repo   string
+	Number int
+	URL    string
+}
+
+func parsePullRequestReference(value string) (pullRequestReference, error) {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return pullRequestReference{}, nil
+	}
+	if number, ok := parsePullRequestNumber(raw); ok {
+		return pullRequestReference{Number: number}, nil
+	}
+	if strings.HasPrefix(raw, "#") {
+		if number, ok := parsePullRequestNumber(strings.TrimPrefix(raw, "#")); ok {
+			return pullRequestReference{Number: number}, nil
+		}
+	}
+	if repo, numberText, ok := strings.Cut(raw, "#"); ok {
+		number, valid := parsePullRequestNumber(numberText)
+		if valid && validRepoSlug(repo) {
+			return pullRequestReference{Repo: strings.Trim(repo, "/"), Number: number}, nil
+		}
+	}
+	urlText := raw
+	if strings.HasPrefix(urlText, "github.com/") {
+		urlText = "https://" + urlText
+	}
+	if parsed, err := url.Parse(urlText); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		ref, ok := pullRequestReferenceFromPath(parsed.Path)
+		if ok {
+			if parsed.Scheme == "" {
+				ref.URL = raw
+			} else {
+				ref.URL = parsed.String()
+			}
+			return ref, nil
+		}
+	}
+	if ref, ok := pullRequestReferenceFromPath(raw); ok {
+		return ref, nil
+	}
+	return pullRequestReference{}, fmt.Errorf("invalid pull request reference %q", value)
+}
+
+func pullRequestReferenceFromPath(path string) (pullRequestReference, bool) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) < 4 || !strings.EqualFold(parts[2], "pull") {
+		return pullRequestReference{}, false
+	}
+	number, ok := parsePullRequestNumber(parts[3])
+	if !ok {
+		return pullRequestReference{}, false
+	}
+	repo := strings.Join(parts[:2], "/")
+	if !validRepoSlug(repo) {
+		return pullRequestReference{}, false
+	}
+	return pullRequestReference{Repo: repo, Number: number}, true
+}
+
+func parsePullRequestNumber(value string) (int, bool) {
+	number, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || number <= 0 {
+		return 0, false
+	}
+	return number, true
+}
+
+func validRepoSlug(value string) bool {
+	parts := strings.Split(strings.Trim(value, "/"), "/")
+	return len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != ""
+}
+
 func (a *App) buildBookmark(req bookmarksRequest) (bookmarks.Bookmark, error) {
 	sessionID := strings.TrimSpace(req.SessionID)
 	messageIndex := req.MessageIndex
@@ -46152,11 +46238,18 @@ func (a *App) buildBookmark(req bookmarksRequest) (bookmarks.Bookmark, error) {
 			bookmarkMessageIndex = &messageIndex
 		}
 	}
+	pr, err := parsePullRequestReference(req.PRRef)
+	if err != nil {
+		return bookmarks.Bookmark{}, err
+	}
 	return bookmarks.Bookmark{
 		Name:         req.Name,
 		Workspace:    a.Workspace,
 		SessionID:    sessionID,
 		MessageIndex: bookmarkMessageIndex,
+		PRRepo:       pr.Repo,
+		PRNumber:     pr.Number,
+		PRURL:        pr.URL,
 		Note:         req.Note,
 	}, nil
 }
@@ -46205,10 +46298,23 @@ func renderBookmarkLine(out io.Writer, bookmark bookmarks.Bookmark) {
 	if bookmark.MessageIndex != nil {
 		fmt.Fprintf(out, "  message=%d", *bookmark.MessageIndex+1)
 	}
+	if bookmark.PRNumber > 0 {
+		fmt.Fprintf(out, "  pr=%s", formatBookmarkPR(bookmark))
+	}
 	if bookmark.Note != "" {
 		fmt.Fprintf(out, "  note=%s", bookmark.Note)
 	}
 	fmt.Fprintln(out)
+}
+
+func formatBookmarkPR(bookmark bookmarks.Bookmark) string {
+	if bookmark.PRNumber <= 0 {
+		return ""
+	}
+	if strings.TrimSpace(bookmark.PRRepo) != "" {
+		return fmt.Sprintf("%s#%d", strings.TrimSpace(bookmark.PRRepo), bookmark.PRNumber)
+	}
+	return fmt.Sprintf("#%d", bookmark.PRNumber)
 }
 
 func (a *App) ClearCommand(args []string) error {
@@ -52342,11 +52448,26 @@ func joinInts(values []int) string {
 func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, error) {
 	id := overrides.SessionID
 	resuming := strings.TrimSpace(overrides.Resume) != ""
+	if strings.TrimSpace(overrides.FromPR) != "" {
+		if strings.TrimSpace(overrides.Resume) != "" {
+			return nil, errors.New("--from-pr cannot be combined with --resume or --continue")
+		}
+		if strings.TrimSpace(overrides.SessionID) != "" && !overrides.ForkSession {
+			return nil, errors.New("--session-id can only be used with --from-pr when --fork-session is also specified")
+		}
+		resolved, err := a.resolveFromPRSession(overrides.FromPR)
+		if err != nil {
+			return nil, err
+		}
+		overrides.Resume = resolved
+		id = resolved
+		resuming = true
+	}
 	var sess *session.Session
 	var err error
 	if overrides.ForkSession {
 		if strings.TrimSpace(overrides.Resume) == "" {
-			return nil, errors.New("--fork-session requires --resume or --continue")
+			return nil, errors.New("--fork-session requires --resume, --continue, or --from-pr")
 		}
 		id = overrides.Resume
 		if id == "true" {
@@ -52388,6 +52509,49 @@ func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, err
 		}
 	}
 	return a.applyResumeSessionAt(sess, overrides.ResumeSessionAt)
+}
+
+func (a *App) resolveFromPRSession(ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", errors.New("--from-pr requires a pull request reference or a linked bookmark")
+	}
+	items, err := bookmarks.NewStore(a.Config.ConfigHome).List(bookmarks.ListOptions{Workspace: a.Workspace})
+	if err != nil {
+		return "", err
+	}
+	if strings.EqualFold(ref, "true") {
+		for _, bookmark := range items {
+			if bookmark.PRNumber > 0 && strings.TrimSpace(bookmark.SessionID) != "" {
+				return bookmark.SessionID, nil
+			}
+		}
+		return "", fmt.Errorf("no pull request bookmark found in workspace %s", a.Workspace)
+	}
+	query, err := parsePullRequestReference(ref)
+	if err != nil {
+		return "", err
+	}
+	matches := []bookmarks.Bookmark{}
+	for _, bookmark := range items {
+		if strings.TrimSpace(bookmark.SessionID) == "" || bookmark.PRNumber <= 0 {
+			continue
+		}
+		if bookmark.PRNumber != query.Number {
+			continue
+		}
+		if query.Repo != "" && !strings.EqualFold(strings.TrimSpace(bookmark.PRRepo), query.Repo) {
+			continue
+		}
+		matches = append(matches, bookmark)
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("no session bookmark linked to pull request %s", ref)
+	}
+	if len(matches) > 1 && query.Repo == "" {
+		return "", fmt.Errorf("pull request %s matches multiple bookmarks; use OWNER/REPO#%d or a pull request URL", ref, query.Number)
+	}
+	return matches[0].SessionID, nil
 }
 
 func (a *App) applyResumeSessionAt(sess *session.Session, messageID string) (*session.Session, error) {
@@ -54203,6 +54367,7 @@ func (f optionalFloatFlag) String() string {
 }
 
 func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides, string, []string, error) {
+	args = normalizeOptionalFromPRFlag(args)
 	if missing, ok := missingToolFlagArgument(args); ok {
 		return base, "", nil, missing
 	}
@@ -54244,6 +54409,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.SessionName, "name", base.SessionName, "display name for the current session")
 	flags.StringVar(&base.Resume, "resume", base.Resume, "resume session id or latest")
 	flags.StringVar(&base.Resume, "r", base.Resume, "alias for --resume")
+	flags.StringVar(&base.FromPR, "from-pr", base.FromPR, "resume a session linked to a pull request")
 	flags.StringVar(&base.ResumeSessionAt, "resume-session-at", base.ResumeSessionAt, "resume up to an assistant message id")
 	flags.StringVar(&base.Prefill, "prefill", base.Prefill, "pre-fill the next interactive input")
 	flags.BoolVar(&base.DeepLinkOrigin, "deep-link-origin", base.DeepLinkOrigin, "signal launch from a deep link")
@@ -54297,27 +54463,35 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	if continueMode && strings.TrimSpace(base.Resume) == "" {
 		base.Resume = "latest"
 	}
-	if base.ForkSession && strings.TrimSpace(base.Resume) == "" {
+	if strings.TrimSpace(base.FromPR) != "" && strings.TrimSpace(base.Resume) != "" {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--from-pr",
+			Value:   base.FromPR,
+			Message: "--from-pr cannot be combined with --resume or --continue",
+			Usage:   "codog --from-pr OWNER/REPO#123 [repl|prompt TEXT]",
+		}
+	}
+	if base.ForkSession && strings.TrimSpace(base.Resume) == "" && strings.TrimSpace(base.FromPR) == "" {
 		return base, "", nil, invalidFlagValueError{
 			Flag:    "--fork-session",
 			Value:   "",
-			Message: "--fork-session requires --resume or --continue",
+			Message: "--fork-session requires --resume, --continue, or --from-pr",
 			Usage:   "codog --resume ID --fork-session [repl|prompt TEXT]",
 		}
 	}
-	if strings.TrimSpace(base.Resume) != "" && strings.TrimSpace(base.SessionID) != "" && !base.ForkSession {
+	if (strings.TrimSpace(base.Resume) != "" || strings.TrimSpace(base.FromPR) != "") && strings.TrimSpace(base.SessionID) != "" && !base.ForkSession {
 		return base, "", nil, invalidFlagValueError{
 			Flag:    "--session-id",
 			Value:   base.SessionID,
-			Message: "--session-id can only be used with --resume or --continue when --fork-session is also specified",
+			Message: "--session-id can only be used with --resume, --continue, or --from-pr when --fork-session is also specified",
 			Usage:   "codog --resume ID --fork-session --session-id NEW_ID [repl|prompt TEXT]",
 		}
 	}
-	if strings.TrimSpace(base.ResumeSessionAt) != "" && strings.TrimSpace(base.Resume) == "" {
+	if strings.TrimSpace(base.ResumeSessionAt) != "" && strings.TrimSpace(base.Resume) == "" && strings.TrimSpace(base.FromPR) == "" {
 		return base, "", nil, invalidFlagValueError{
 			Flag:    "--resume-session-at",
 			Value:   base.ResumeSessionAt,
-			Message: "--resume-session-at requires --resume or --continue",
+			Message: "--resume-session-at requires --resume, --continue, or --from-pr",
 			Usage:   "codog --resume ID --resume-session-at MESSAGE_ID prompt TEXT",
 		}
 	}
@@ -54492,6 +54666,43 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	return base, command, rest, nil
 }
 
+func normalizeOptionalFromPRFlag(args []string) []string {
+	normalized := make([]string, 0, len(args)+1)
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg != "--from-pr" && arg != "-from-pr" {
+			normalized = append(normalized, arg)
+			continue
+		}
+		if index+1 >= len(args) || !looksLikeFromPRValue(args[index+1]) {
+			normalized = append(normalized, arg+"=true")
+			continue
+		}
+		normalized = append(normalized, arg, args[index+1])
+		index++
+	}
+	return normalized
+}
+
+func looksLikeFromPRValue(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "-") || looksLikeCommandName(value) {
+		return false
+	}
+	if _, ok := parsePullRequestNumber(value); ok {
+		return true
+	}
+	if strings.HasPrefix(value, "#") {
+		_, ok := parsePullRequestNumber(strings.TrimPrefix(value, "#"))
+		return ok
+	}
+	if strings.Contains(value, "/pull/") || strings.Contains(value, "#") || strings.HasPrefix(value, "github.com/") ||
+		strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+		return true
+	}
+	return false
+}
+
 func rejectDuplicateScalarGlobalFlags(args []string) error {
 	seen := map[string][]string{}
 	order := []string{}
@@ -54569,6 +54780,8 @@ func duplicateTrackedGlobalFlagKey(arg string) (string, bool) {
 		return "--model", true
 	case "--resume", "-resume", "-r":
 		return "--resume", true
+	case "--from-pr", "-from-pr":
+		return "--from-pr", true
 	case "--resume-session-at", "-resume-session-at":
 		return "--resume-session-at", true
 	case "--output-format", "-output-format", "-o", "--o", "--json", "-json":
@@ -54590,6 +54803,8 @@ func duplicateFlagUsage(flag string) string {
 		return "codog [--permission-mode MODE | --skip-permissions] COMMAND"
 	case "--resume":
 		return "codog --resume ID|latest COMMAND"
+	case "--from-pr":
+		return "codog --from-pr OWNER/REPO#123 COMMAND"
 	case "--resume-session-at":
 		return "codog --resume ID --resume-session-at MESSAGE_ID prompt TEXT"
 	default:
@@ -54604,7 +54819,7 @@ func globalFlagConsumesNext(arg string) bool {
 		"--system-prompt-file", "-system-prompt-file", "--append-system-prompt", "-append-system-prompt",
 		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
 		"--session-id", "-session-id", "--name", "-name", "--resume", "-resume", "-r",
-		"--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo",
+		"--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo",
 		"--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-output-format", "-o", "--o",
 		"--input-format", "-input-format", "--json-schema", "-json-schema",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
@@ -54643,7 +54858,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false

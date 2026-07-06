@@ -21,6 +21,9 @@ type Bookmark struct {
 	Workspace    string    `json:"workspace,omitempty"`
 	SessionID    string    `json:"session_id,omitempty"`
 	MessageIndex *int      `json:"message_index,omitempty"`
+	PRRepo       string    `json:"pr_repo,omitempty"`
+	PRNumber     int       `json:"pr_number,omitempty"`
+	PRURL        string    `json:"pr_url,omitempty"`
 	Note         string    `json:"note,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -86,6 +89,8 @@ func (s Store) Add(bookmark Bookmark) (Bookmark, error) {
 	bookmark.Name = name
 	bookmark.Workspace = strings.TrimSpace(bookmark.Workspace)
 	bookmark.SessionID = strings.TrimSpace(bookmark.SessionID)
+	bookmark.PRRepo = strings.TrimSpace(bookmark.PRRepo)
+	bookmark.PRURL = strings.TrimSpace(bookmark.PRURL)
 	bookmark.Note = strings.TrimSpace(bookmark.Note)
 	bookmark.CreatedAt = now
 	bookmark.UpdatedAt = now

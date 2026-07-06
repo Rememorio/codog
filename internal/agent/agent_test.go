@@ -32,6 +32,7 @@ import (
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/autofixpr"
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/bookmarks"
 	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/commandrun"
@@ -19927,6 +19928,32 @@ func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
 	require.Equal(t, "prompt", command)
 	require.Equal(t, []string{"hello"}, rest)
 
+	overrides, command, rest, err = parseFlags([]string{"--from-pr", "42", "repl"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "42", overrides.FromPR)
+	require.Equal(t, "repl", command)
+	require.Empty(t, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--from-pr", "repl"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "true", overrides.FromPR)
+	require.Equal(t, "repl", command)
+	require.Empty(t, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--from-pr=https://github.com/acme/widgets/pull/42", "prompt", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "https://github.com/acme/widgets/pull/42", overrides.FromPR)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--from-pr", "acme/widgets#42", "--fork-session", "--session-id", "forked-pr", "repl"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "acme/widgets#42", overrides.FromPR)
+	require.Equal(t, "forked-pr", overrides.SessionID)
+	require.True(t, overrides.ForkSession)
+	require.Equal(t, "repl", command)
+	require.Empty(t, rest)
+
 	overrides, command, rest, err = parseFlags([]string{"--prefill", "review this diff", "repl"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "review this diff", overrides.Prefill)
@@ -19965,6 +19992,14 @@ func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--resume-session-at requires")
 
+	_, _, _, err = parseFlags([]string{"--from-pr", "42", "--resume", "source", "repl"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot be combined")
+
+	_, _, _, err = parseFlags([]string{"--from-pr", "42", "--session-id", "custom", "repl"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--session-id can only be used")
+
 	_, _, _, err = parseFlags([]string{"--resume", "source", "--resume-session-at", "msg-1", "repl"}, config.FlagOverrides{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "prompt mode")
@@ -19976,6 +20011,63 @@ func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
 	_, _, _, err = parseFlags([]string{"--prefill", "queued prompt", "-p", "hello"}, config.FlagOverrides{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "interactive")
+}
+
+func TestParsePullRequestReference(t *testing.T) {
+	cases := []struct {
+		input  string
+		repo   string
+		number int
+		url    string
+	}{
+		{input: "42", number: 42},
+		{input: "#42", number: 42},
+		{input: "acme/widgets#42", repo: "acme/widgets", number: 42},
+		{input: "acme/widgets/pull/42", repo: "acme/widgets", number: 42},
+		{input: "github.com/acme/widgets/pull/42", repo: "acme/widgets", number: 42, url: "https://github.com/acme/widgets/pull/42"},
+		{input: "https://github.com/acme/widgets/pull/42", repo: "acme/widgets", number: 42, url: "https://github.com/acme/widgets/pull/42"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			ref, err := parsePullRequestReference(tc.input)
+			require.NoError(t, err)
+			require.Equal(t, tc.repo, ref.Repo)
+			require.Equal(t, tc.number, ref.Number)
+			require.Equal(t, tc.url, ref.URL)
+		})
+	}
+
+	_, err := parsePullRequestReference("not-a-pr")
+	require.Error(t, err)
+}
+
+func TestBookmarksCommandLinksPullRequest(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello")))
+
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       &out,
+	}
+	require.NoError(t, app.Bookmarks([]string{"add", "fix login", "--session", "source", "--pr", "https://github.com/acme/widgets/pull/42", "--json"}, config.FlagOverrides{}))
+
+	var report bookmarksReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.NotNil(t, report.Bookmark)
+	require.Equal(t, "acme/widgets", report.Bookmark.PRRepo)
+	require.Equal(t, 42, report.Bookmark.PRNumber)
+	require.Equal(t, "https://github.com/acme/widgets/pull/42", report.Bookmark.PRURL)
+
+	listed, err := bookmarks.NewStore(configHome).List(bookmarks.ListOptions{Workspace: workspace})
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	require.Equal(t, "source", listed[0].SessionID)
+	require.Equal(t, 42, listed[0].PRNumber)
 }
 
 func TestBuildDeepLinkBanner(t *testing.T) {
@@ -20027,6 +20119,87 @@ func TestOpenSessionForksResumedSession(t *testing.T) {
 	_, err = app.openSession(config.FlagOverrides{ForkSession: true})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--fork-session requires")
+}
+
+func TestOpenSessionResolvesFromPRBookmark(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "from pr")))
+	require.NoError(t, store.Append("other", anthropic.TextMessage("user", "other pr")))
+	require.NoError(t, store.Append("newest", anthropic.TextMessage("user", "newest pr")))
+
+	bookmarkStore := bookmarks.Store{
+		ConfigHome: configHome,
+		Now: func() time.Time {
+			return time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+		},
+		NewID: func() (string, error) { return "bm-source", nil },
+	}
+	_, err := bookmarkStore.Add(bookmarks.Bookmark{
+		Name:      "source-pr",
+		Workspace: workspace,
+		SessionID: "source",
+		PRRepo:    "acme/widgets",
+		PRNumber:  42,
+		PRURL:     "https://github.com/acme/widgets/pull/42",
+	})
+	require.NoError(t, err)
+	bookmarkStore.Now = func() time.Time {
+		return time.Date(2026, 7, 6, 12, 1, 0, 0, time.UTC)
+	}
+	bookmarkStore.NewID = func() (string, error) { return "bm-other", nil }
+	_, err = bookmarkStore.Add(bookmarks.Bookmark{
+		Name:      "other-pr",
+		Workspace: workspace,
+		SessionID: "other",
+		PRRepo:    "other/repo",
+		PRNumber:  42,
+	})
+	require.NoError(t, err)
+	bookmarkStore.Now = func() time.Time {
+		return time.Date(2026, 7, 6, 12, 2, 0, 0, time.UTC)
+	}
+	bookmarkStore.NewID = func() (string, error) { return "bm-newest", nil }
+	_, err = bookmarkStore.Add(bookmarks.Bookmark{
+		Name:      "newest-pr",
+		Workspace: workspace,
+		SessionID: "newest",
+		PRRepo:    "acme/newest",
+		PRNumber:  77,
+	})
+	require.NoError(t, err)
+
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  store,
+		Workspace: workspace,
+	}
+	resumed, err := app.openSession(config.FlagOverrides{FromPR: "https://github.com/acme/widgets/pull/42"})
+	require.NoError(t, err)
+	require.Equal(t, "source", resumed.ID)
+	require.Equal(t, "from pr", resumed.Messages[0].Content[0].Text)
+
+	bare, err := app.openSession(config.FlagOverrides{FromPR: "true"})
+	require.NoError(t, err)
+	require.Equal(t, "newest", bare.ID)
+
+	forked, err := app.openSession(config.FlagOverrides{FromPR: "acme/widgets#42", ForkSession: true, SessionID: "forked-pr"})
+	require.NoError(t, err)
+	require.Equal(t, "forked-pr", forked.ID)
+	require.Equal(t, "source", forked.Metadata.ParentSessionID)
+
+	_, err = app.openSession(config.FlagOverrides{FromPR: "42"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "matches multiple bookmarks")
+
+	_, err = app.openSession(config.FlagOverrides{FromPR: "acme/widgets#999"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no session bookmark linked")
+
+	_, err = app.openSession(config.FlagOverrides{FromPR: "42", Resume: "source"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot be combined")
 }
 
 func TestOpenSessionResumesAtAssistantMessageID(t *testing.T) {

@@ -22,13 +22,25 @@ func TestStoreAddListGetDeleteAndClear(t *testing.T) {
 	}
 
 	messageIndex := 2
-	first, err := store.Add(Bookmark{Name: "start", Workspace: "/repo/a", SessionID: "session-a", MessageIndex: &messageIndex, Note: "entry point"})
+	first, err := store.Add(Bookmark{
+		Name:         "start",
+		Workspace:    "/repo/a",
+		SessionID:    "session-a",
+		MessageIndex: &messageIndex,
+		PRRepo:       " acme/widgets ",
+		PRNumber:     42,
+		PRURL:        " https://github.com/acme/widgets/pull/42 ",
+		Note:         "entry point",
+	})
 	require.NoError(t, err)
 	require.Equal(t, "bm-test-1", first.ID)
 	require.Equal(t, "start", first.Name)
 	require.Equal(t, "session-a", first.SessionID)
 	require.NotNil(t, first.MessageIndex)
 	require.Equal(t, 2, *first.MessageIndex)
+	require.Equal(t, "acme/widgets", first.PRRepo)
+	require.Equal(t, 42, first.PRNumber)
+	require.Equal(t, "https://github.com/acme/widgets/pull/42", first.PRURL)
 	require.False(t, first.CreatedAt.IsZero())
 	require.FileExists(t, filepath.Join(store.ConfigHome, "bookmarks.json"))
 

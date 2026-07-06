@@ -1195,6 +1195,7 @@ type FlagOverrides struct {
 	SessionID                      string
 	SessionName                    string
 	Resume                         string
+	FromPR                         string
 	ResumeSessionAt                string
 	Prefill                        string
 	DeepLinkOrigin                 bool
