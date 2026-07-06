@@ -5767,7 +5767,7 @@ func (LSPTool) Definition() anthropic.ToolDefinition {
 			"properties": map[string]any{
 				"action": map[string]any{
 					"type": "string",
-					"enum": []string{"symbols", "document_symbols", "references", "find_references", "diagnostics", "definition", "goto_definition", "declaration", "goto_declaration", "implementation", "goto_implementation", "type_definition", "goto_type_definition", "rename", "rename_symbol", "prepare_rename", "code_action", "quickfix", "hover", "completion", "completions", "document_highlight", "selection_range", "folding_range", "document_link", "inlay_hint", "linked_editing_range", "semantic_tokens", "semantic_tokens_full", "semantic_tokens_range", "signature_help", "format", "formatting"},
+					"enum": []string{"symbols", "document_symbols", "workspace_symbol", "workspace_symbols", "references", "find_references", "diagnostics", "definition", "goto_definition", "declaration", "goto_declaration", "implementation", "goto_implementation", "type_definition", "goto_type_definition", "rename", "rename_symbol", "prepare_rename", "code_action", "quickfix", "hover", "completion", "completions", "document_highlight", "selection_range", "folding_range", "document_link", "inlay_hint", "linked_editing_range", "semantic_tokens", "semantic_tokens_full", "semantic_tokens_range", "signature_help", "format", "formatting"},
 				},
 				"path":      map[string]any{"type": "string"},
 				"line":      map[string]any{"type": "integer", "minimum": 0},
@@ -5812,7 +5812,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 	}
 	var fallback any
 	if payload.UseServer || strings.TrimSpace(payload.Language) != "" {
-		result, err := t.executeServerLSP(ctx, action, payload.Language, payload.Path, payload.Line, payload.Character, payload.NewName)
+		result, err := t.executeServerLSP(ctx, action, payload.Language, payload.Path, payload.Query, payload.Line, payload.Character, payload.NewName)
 		if err == nil {
 			return pretty(map[string]any{"action": action, "source": "lsp", "lsp": result}), nil
 		}
@@ -5921,7 +5921,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 
 func lspActionRequiresServer(action string) bool {
 	switch action {
-	case "declaration", "implementation", "type-definition", "rename", "prepare-rename", "code-action", "document-highlight", "selection-range", "folding-range", "document-link", "inlay-hint", "linked-editing-range", "semantic-tokens", "semantic-tokens-range", "signature-help":
+	case "declaration", "implementation", "type-definition", "rename", "prepare-rename", "code-action", "document-highlight", "selection-range", "folding-range", "document-link", "inlay-hint", "linked-editing-range", "semantic-tokens", "semantic-tokens-range", "workspace-symbol", "signature-help":
 		return true
 	default:
 		return false
@@ -5950,20 +5950,28 @@ func (t LSPTool) lspQuery(query string, path string, line int, character int) (s
 	return symbolAtPosition(t.Workspace, t.AdditionalDirs, path, line, character)
 }
 
-func (t LSPTool) executeServerLSP(ctx context.Context, action string, language string, path string, line int, character int, newName string) (codeintel.LSPQueryResult, error) {
+func (t LSPTool) executeServerLSP(ctx context.Context, action string, language string, path string, query string, line int, character int, newName string) (codeintel.LSPQueryResult, error) {
 	if strings.TrimSpace(t.ConfigHome) == "" {
 		return codeintel.LSPQueryResult{}, errors.New("config home is required for lsp server queries")
 	}
-	if strings.TrimSpace(path) == "" {
+	requiresDocument, err := codeintel.LSPActionRequiresDocument(action)
+	if err != nil {
+		return codeintel.LSPQueryResult{}, err
+	}
+	if requiresDocument && strings.TrimSpace(path) == "" {
 		return codeintel.LSPQueryResult{}, errors.New("path is required for lsp server queries")
 	}
 	language = strings.TrimSpace(language)
 	if language == "" {
+		if strings.TrimSpace(path) == "" {
+			return codeintel.LSPQueryResult{}, errors.New("language is required for pathless lsp server queries")
+		}
 		language = codeintel.InferLanguageID(path)
 	}
 	return codeintel.NewLSPStore(t.ConfigHome, t.Workspace).Query(ctx, language, codeintel.LSPQueryRequest{
 		Action:    action,
 		Path:      path,
+		Query:     query,
 		Line:      line,
 		Character: character,
 		NewName:   newName,

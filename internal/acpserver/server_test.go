@@ -492,11 +492,13 @@ func TestServeHandlesLSPRequests(t *testing.T) {
 		`{"jsonrpc":"2.0","id":3,"method":"lsp/list","params":{}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"lsp/start","params":{"language":"go","command":"gopls -remote=auto"}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"lsp/query","params":{"language":"go","action":"hover","path":"main.go","line":2,"character":5,"timeout_ms":1000}}`,
-		`{"jsonrpc":"2.0","id":6,"method":"lsp/status","params":{"language":"go"}}`,
-		`{"jsonrpc":"2.0","id":7,"method":"lsp/stop","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol","query":"Widget","timeout_ms":1000}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"lsp/status","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"lsp/stop","params":{"language":"go"}}`,
 		"",
 	}, "\n")
 	var out bytes.Buffer
+	queryCalls := 0
 
 	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
 		LSPActions: func(context.Context) (any, error) {
@@ -514,11 +516,21 @@ func TestServeHandlesLSPRequests(t *testing.T) {
 			return map[string]any{"kind": "lsp_start", "status": "ok"}, nil
 		},
 		LSPQuery: func(_ context.Context, req LSPQueryRequest) (any, error) {
+			queryCalls++
 			require.Equal(t, "go", req.Language)
-			require.Equal(t, "hover", req.Action)
-			require.Equal(t, "main.go", req.Path)
-			require.Equal(t, 2, req.Line)
-			require.Equal(t, 5, req.Character)
+			switch queryCalls {
+			case 1:
+				require.Equal(t, "hover", req.Action)
+				require.Equal(t, "main.go", req.Path)
+				require.Equal(t, 2, req.Line)
+				require.Equal(t, 5, req.Character)
+			case 2:
+				require.Equal(t, "workspace_symbol", req.Action)
+				require.Empty(t, req.Path)
+				require.Equal(t, "Widget", req.Query)
+			default:
+				t.Fatalf("unexpected lsp query call %d", queryCalls)
+			}
 			require.Equal(t, 1000, req.TimeoutMS)
 			return map[string]any{"kind": "lsp_query", "action": req.Action}, nil
 		},
@@ -534,15 +546,16 @@ func TestServeHandlesLSPRequests(t *testing.T) {
 	require.NoError(t, err)
 
 	responses := decodeACPResponses(t, out.String())
-	require.Len(t, responses, 7)
+	require.Len(t, responses, 8)
 	require.Equal(t, "lsp_actions", responses[0]["result"].(map[string]any)["kind"])
 	require.Equal(t, "lsp_discover", responses[1]["result"].(map[string]any)["kind"])
 	require.Equal(t, "lsp_list", responses[2]["result"].(map[string]any)["kind"])
 	require.Empty(t, responses[2]["result"].(map[string]any)["servers"].([]any))
 	require.Equal(t, "lsp_start", responses[3]["result"].(map[string]any)["kind"])
 	require.Equal(t, "lsp_query", responses[4]["result"].(map[string]any)["kind"])
-	require.Equal(t, "lsp_status", responses[5]["result"].(map[string]any)["kind"])
-	require.Equal(t, "lsp_stop", responses[6]["result"].(map[string]any)["kind"])
+	require.Equal(t, "lsp_query", responses[5]["result"].(map[string]any)["kind"])
+	require.Equal(t, "lsp_status", responses[6]["result"].(map[string]any)["kind"])
+	require.Equal(t, "lsp_stop", responses[7]["result"].(map[string]any)["kind"])
 }
 
 func TestServeHandlesBackgroundRequests(t *testing.T) {

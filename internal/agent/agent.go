@@ -23797,6 +23797,7 @@ func (a *App) serveACP(ctx context.Context) error {
 			return store.Query(ctx, req.Language, codeintel.LSPQueryRequest{
 				Action:          req.Action,
 				Path:            firstNonEmpty(req.Path, req.FilePath),
+				Query:           req.Query,
 				Line:            req.Line,
 				Character:       req.Character,
 				NewName:         req.NewName,

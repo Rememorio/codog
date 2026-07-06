@@ -923,6 +923,7 @@ func (s Server) lspQuery(params json.RawMessage) (any, error) {
 		Action          string `json:"action"`
 		Path            string `json:"path"`
 		FilePath        string `json:"file_path"`
+		Query           string `json:"query"`
 		Line            int    `json:"line"`
 		Character       int    `json:"character"`
 		NewName         string `json:"new_name"`
@@ -956,6 +957,7 @@ func (s Server) lspQuery(params json.RawMessage) (any, error) {
 	return store.Query(ctx, payload.Language, codeintel.LSPQueryRequest{
 		Action:          payload.Action,
 		Path:            firstNonEmpty(payload.Path, payload.FilePath),
+		Query:           payload.Query,
 		Line:            payload.Line,
 		Character:       payload.Character,
 		NewName:         payload.NewName,

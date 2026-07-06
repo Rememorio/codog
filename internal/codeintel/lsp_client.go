@@ -23,6 +23,7 @@ import (
 type LSPQueryRequest struct {
 	Action          string `json:"action"`
 	Path            string `json:"path"`
+	Query           string `json:"query,omitempty"`
 	Line            int    `json:"line,omitempty"`
 	Character       int    `json:"character,omitempty"`
 	NewName         string `json:"new_name,omitempty"`
@@ -273,6 +274,12 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return semantic tokens for a document range ending at the requested position.",
 	},
 	{
+		Name:        "workspace-symbol",
+		Method:      "workspace/symbol",
+		Aliases:     []string{"workspace_symbol", "workspace_symbols", "workspaceSymbol", "workspaceSymbols", "symbol_search", "symbol-search"},
+		Description: "Return symbols matching a workspace-wide language-server query.",
+	},
+	{
 		Name:             "signature-help",
 		Method:           "textDocument/signatureHelp",
 		Aliases:          []string{"signature_help", "signatureHelp", "signature", "signatures"},
@@ -320,6 +327,28 @@ func NormalizeLSPAction(action string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("unknown lsp action %q; supported actions: %s", action, strings.Join(supportedLSPActionNames(), ", "))
+}
+
+// LSPActionRequiresDocument reports whether an action must open a document.
+func LSPActionRequiresDocument(action string) (bool, error) {
+	info, err := lookupLSPActionInfo(action)
+	if err != nil {
+		return false, err
+	}
+	return info.RequiresDocument, nil
+}
+
+func lookupLSPActionInfo(action string) (LSPActionInfo, error) {
+	canonical, err := NormalizeLSPAction(action)
+	if err != nil {
+		return LSPActionInfo{}, err
+	}
+	for _, info := range lspActionInfos {
+		if info.Name == canonical {
+			return info, nil
+		}
+	}
+	return LSPActionInfo{}, fmt.Errorf("unknown lsp action %q", action)
 }
 
 func supportedLSPActionNames() []string {
@@ -374,6 +403,10 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 	if err != nil {
 		return LSPQueryResult{}, err
 	}
+	actionInfo, err := lookupLSPActionInfo(action)
+	if err != nil {
+		return LSPQueryResult{}, err
+	}
 	if strings.TrimSpace(command) == "" {
 		return LSPQueryResult{}, errors.New("lsp command is required")
 	}
@@ -386,13 +419,18 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	path, rel, err := resolveWorkspaceFile(workspace, request.Path)
-	if err != nil {
-		return LSPQueryResult{}, err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return LSPQueryResult{}, err
+	path := ""
+	rel := ""
+	data := []byte(nil)
+	if actionInfo.RequiresDocument {
+		path, rel, err = resolveWorkspaceFile(workspace, request.Path)
+		if err != nil {
+			return LSPQueryResult{}, err
+		}
+		data, err = os.ReadFile(path)
+		if err != nil {
+			return LSPQueryResult{}, err
+		}
 	}
 	cmd := lspShellCommand(ctx, command)
 	cmd.Dir = workspace
@@ -438,16 +476,19 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 	if err := client.notify("initialized", map[string]any{}); err != nil {
 		return LSPQueryResult{}, err
 	}
-	uri := fileURI(path)
-	if err := client.notify("textDocument/didOpen", map[string]any{
-		"textDocument": map[string]any{
-			"uri":        uri,
-			"languageId": languageID(language, path),
-			"version":    1,
-			"text":       string(data),
-		},
-	}); err != nil {
-		return LSPQueryResult{}, err
+	uri := ""
+	if actionInfo.RequiresDocument {
+		uri = fileURI(path)
+		if err := client.notify("textDocument/didOpen", map[string]any{
+			"textDocument": map[string]any{
+				"uri":        uri,
+				"languageId": languageID(language, path),
+				"version":    1,
+				"text":       string(data),
+			},
+		}); err != nil {
+			return LSPQueryResult{}, err
+		}
 	}
 	if action == "diagnostics" {
 		diagnostics, err := client.waitForDiagnostics(uri)
@@ -468,7 +509,7 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 			Diagnostics: diagnostics,
 		}, nil
 	}
-	method, params, err := lspMethodParams(action, uri, request.Line, request.Character, request.NewName)
+	method, params, err := lspMethodParams(action, uri, request.Line, request.Character, request.NewName, request.Query)
 	if err != nil {
 		return LSPQueryResult{}, err
 	}
@@ -623,7 +664,7 @@ func decodeLSPParams(params any, out any) error {
 	return json.Unmarshal(data, out)
 }
 
-func lspMethodParams(action string, uri string, line int, character int, newName string) (string, any, error) {
+func lspMethodParams(action string, uri string, line int, character int, newName string, query string) (string, any, error) {
 	position := map[string]any{"line": max(0, line), "character": max(0, character)}
 	textDocument := map[string]any{"uri": uri}
 	switch action {
@@ -677,6 +718,8 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		start := map[string]any{"line": line, "character": 0}
 		end := map[string]any{"line": line, "character": max(0, character)}
 		return "textDocument/semanticTokens/range", map[string]any{"textDocument": textDocument, "range": map[string]any{"start": start, "end": end}}, nil
+	case "workspace-symbol":
+		return "workspace/symbol", map[string]any{"query": strings.TrimSpace(query)}, nil
 	case "signature-help":
 		return "textDocument/signatureHelp", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "symbols":

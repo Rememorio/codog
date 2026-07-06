@@ -400,6 +400,30 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.NoError(t, json.Unmarshal(encodedSemanticTokenRange, &semanticTokenRange))
 	require.Equal(t, []int{0, 5, 6, 12, 0}, semanticTokenRange.Data)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "workspace_symbol", Query: "Build"})
+	require.NoError(t, err)
+	require.Equal(t, "workspace-symbol", result.Action)
+	require.Equal(t, "workspace/symbol", result.Method)
+	require.Empty(t, result.Path)
+	var workspaceSymbols []struct {
+		Name     string `json:"name"`
+		Kind     int    `json:"kind"`
+		Location struct {
+			URI   string `json:"uri"`
+			Range struct {
+				Start LSPPosition `json:"start"`
+				End   LSPPosition `json:"end"`
+			} `json:"range"`
+		} `json:"location"`
+	}
+	encodedWorkspaceSymbols, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedWorkspaceSymbols, &workspaceSymbols))
+	require.Len(t, workspaceSymbols, 1)
+	require.Equal(t, "BuildWidget", workspaceSymbols[0].Name)
+	require.Equal(t, 12, workspaceSymbols[0].Kind)
+	require.Equal(t, "file:///workspace/main.go", workspaceSymbols[0].Location.URI)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "rename", Path: "main.go", Line: 2, Character: 5, NewName: "Start"})
 	require.NoError(t, err)
 	require.Equal(t, "rename", result.Action)
@@ -546,6 +570,10 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"semantic_tokens_range": "semantic-tokens-range",
 		"semanticTokensRange":   "semantic-tokens-range",
 		"semantic-range":        "semantic-tokens-range",
+		"workspace_symbol":      "workspace-symbol",
+		"workspace_symbols":     "workspace-symbol",
+		"workspaceSymbol":       "workspace-symbol",
+		"symbol-search":         "workspace-symbol",
 		"signature_help":        "signature-help",
 		"signatureHelp":         "signature-help",
 		"signature":             "signature-help",
@@ -675,6 +703,18 @@ func TestFakeLSPServer(t *testing.T) {
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
 				"data": []int{0, 5, 6, 12, 0},
 			})})
+		case "workspace/symbol":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"name": "BuildWidget",
+				"kind": 12,
+				"location": map[string]any{
+					"uri": "file:///workspace/main.go",
+					"range": map[string]any{
+						"start": map[string]any{"line": 2, "character": 5},
+						"end":   map[string]any{"line": 2, "character": 16},
+					},
+				},
+			}})})
 		case "textDocument/signatureHelp":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
 				"activeSignature": 0,

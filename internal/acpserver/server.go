@@ -334,6 +334,7 @@ type LSPQueryRequest struct {
 	Action          string `json:"action"`
 	Path            string `json:"path,omitempty"`
 	FilePath        string `json:"file_path,omitempty"`
+	Query           string `json:"query,omitempty"`
 	Line            int    `json:"line,omitempty"`
 	Character       int    `json:"character,omitempty"`
 	NewName         string `json:"new_name,omitempty"`
