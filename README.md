@@ -71,8 +71,8 @@ The strongest surfaces are:
 - slash commands, skills, templates, MCP client/server paths, provider profiles,
   background tasks, and bridge surfaces;
 - deterministic mock parity scenarios for remote control, IDE bridge commands,
-  MCP auth recovery, policy checks, updater manifests, background agents, and
-  command validation.
+  MCP auth recovery, policy checks, updater manifests, background agents,
+  onboarding, bookmarks, and command validation.
 
 The broad integration surfaces still need real deployment hardening before they
 should be relied on for multi-user or enterprise use, especially around hosted

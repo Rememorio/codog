@@ -27,12 +27,14 @@ import (
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/bookmarks"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/customcommands"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/oauth"
+	"github.com/Rememorio/codog/internal/onboarding"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/policyengine"
 	"github.com/Rememorio/codog/internal/providerdiag"
@@ -208,6 +210,7 @@ var scenarioOrder = []string{
 	"lsp_static_roundtrip",
 	"plugin_tool_roundtrip",
 	"command_skill_template_roundtrip",
+	"onboarding_bookmarks_roundtrip",
 	"tui_prompt_completion_roundtrip",
 	"ask_user_question_roundtrip",
 	"runtime_output_tools_roundtrip",
@@ -748,6 +751,7 @@ func Run(ctx context.Context) (Report, error) {
 			},
 		},
 		commandSkillTemplateScenario(),
+		onboardingBookmarksScenario(),
 		tuiPromptCompletionScenario(),
 		askUserQuestionScenario(),
 		runtimeOutputToolsScenario(),
@@ -1407,6 +1411,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "command-workflows",
 		Description: "Discovers and renders project slash commands, skills, and prompt templates without contacting a provider.",
 		ParityRefs:  []string{"Slash commands", "Skills", "Templates", "Project workflow surfaces"},
+	},
+	"onboarding_bookmarks_roundtrip": {
+		Category:    "command-workflows",
+		Description: "Inspects workspace onboarding readiness and persists bookmark lifecycle state for resumable workflows.",
+		ParityRefs:  []string{"Slash commands", "Onboarding", "Bookmarks", "Session context management", "Workspace state"},
 	},
 	"tui_prompt_completion_roundtrip": {
 		Category:    "interactive-ui",
@@ -2077,6 +2086,125 @@ Review skill body for $TARGET during ${CLAUDE_SESSION_ID}.`
 				Output:       string(data),
 				FinalMessage: "command skill template harness ok",
 				RequestCount: 3,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+func onboardingBookmarksScenario() scenario {
+	return scenario{
+		name: "onboarding_bookmarks_roundtrip",
+		runLocal: func(_ context.Context, workspace string) (localScenarioResult, error) {
+			if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Harness\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/onboarding\n\ngo 1.25\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "main_test.go"), []byte("package main\n\nimport \"testing\"\n\nfunc TestMain(t *testing.T) {}\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Use focused changes.\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.Mkdir(filepath.Join(workspace, ".git"), 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			onboardingReport, err := onboarding.Analyze(onboarding.Options{Workspace: workspace})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if onboardingReport.Status != "needs_setup" || !onboardingReport.HasReadme || !onboardingReport.HasTests || onboardingReport.PrimaryLanguage != "Go" {
+				return localScenarioResult{}, fmt.Errorf("unexpected onboarding report: %#v", onboardingReport)
+			}
+			if !onboardingReport.GitRepository || !slices.Contains(onboardingReport.ReadmeFiles, "README.md") || !slices.Contains(onboardingReport.InstructionFiles, "AGENTS.md") {
+				return localScenarioResult{}, fmt.Errorf("onboarding report missed repository files: %#v", onboardingReport)
+			}
+			if len(onboardingReport.Recommendations) == 0 {
+				return localScenarioResult{}, fmt.Errorf("expected onboarding recommendation for missing codog config")
+			}
+
+			configHome := filepath.Join(workspace, "config-home")
+			store := bookmarks.NewStore(configHome)
+			messageIndex := 2
+			created, err := store.Add(bookmarks.Bookmark{
+				Name:         "review-start",
+				Workspace:    workspace,
+				SessionID:    "session-abc",
+				MessageIndex: &messageIndex,
+				PRRepo:       "Rememorio/codog",
+				PRNumber:     42,
+				Note:         "resume review",
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if created.ID == "" || created.Name != "review-start" || created.SessionID != "session-abc" {
+				return localScenarioResult{}, fmt.Errorf("unexpected created bookmark: %#v", created)
+			}
+			listed, err := store.List(bookmarks.ListOptions{Workspace: workspace})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if len(listed) != 1 || listed[0].ID != created.ID {
+				return localScenarioResult{}, fmt.Errorf("unexpected bookmark list: %#v", listed)
+			}
+			shown, err := store.Get("review-start")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if shown.ID != created.ID || shown.PRNumber != 42 || shown.Note != "resume review" {
+				return localScenarioResult{}, fmt.Errorf("unexpected shown bookmark: %#v", shown)
+			}
+			deleted, err := store.Delete(created.ID)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if deleted.ID != created.ID {
+				return localScenarioResult{}, fmt.Errorf("unexpected deleted bookmark: %#v", deleted)
+			}
+			remaining, err := store.List(bookmarks.ListOptions{Workspace: workspace, All: true})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if len(remaining) != 0 {
+				return localScenarioResult{}, fmt.Errorf("expected no bookmarks after delete, got %#v", remaining)
+			}
+
+			report := map[string]any{
+				"kind": "onboarding_bookmarks",
+				"onboarding": map[string]any{
+					"status":           onboardingReport.Status,
+					"primary_language": onboardingReport.PrimaryLanguage,
+					"has_readme":       onboardingReport.HasReadme,
+					"has_tests":        onboardingReport.HasTests,
+					"git_repository":   onboardingReport.GitRepository,
+					"recommendations":  len(onboardingReport.Recommendations),
+				},
+				"bookmarks": map[string]any{
+					"created":         created.Name,
+					"listed":          len(listed),
+					"shown":           shown.Name,
+					"deleted":         deleted.Name,
+					"remaining":       len(remaining),
+					"message_index":   messageIndex,
+					"pull_request":    shown.PRNumber,
+					"config_home_set": configHome != "",
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "onboarding bookmarks harness ok",
+				RequestCount: 2,
 				MessageCount: 1,
 			}, nil
 		},
