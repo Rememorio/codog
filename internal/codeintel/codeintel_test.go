@@ -339,6 +339,30 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "https://example.test/docs", documentLinks[0].Target)
 	require.Equal(t, LSPPosition{Line: 2, Character: 0}, documentLinks[0].Range.Start)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "document_color", Path: "main.go"})
+	require.NoError(t, err)
+	require.Equal(t, "document-color", result.Action)
+	require.Equal(t, "textDocument/documentColor", result.Method)
+	var documentColors []struct {
+		Color struct {
+			Red   float64 `json:"red"`
+			Green float64 `json:"green"`
+			Blue  float64 `json:"blue"`
+			Alpha float64 `json:"alpha"`
+		} `json:"color"`
+		Range struct {
+			Start LSPPosition `json:"start"`
+			End   LSPPosition `json:"end"`
+		} `json:"range"`
+	}
+	encodedColors, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedColors, &documentColors))
+	require.Len(t, documentColors, 1)
+	require.Equal(t, 1.0, documentColors[0].Color.Red)
+	require.Equal(t, 0.5, documentColors[0].Color.Green)
+	require.Equal(t, LSPPosition{Line: 2, Character: 1}, documentColors[0].Range.Start)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "inlay_hint", Path: "main.go", Line: 2, Character: 12})
 	require.NoError(t, err)
 	require.Equal(t, "inlay-hint", result.Action)
@@ -373,6 +397,23 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "[A-Za-z_]+", linkedEditing.WordPattern)
 	require.Len(t, linkedEditing.Ranges, 2)
 	require.Equal(t, LSPPosition{Line: 2, Character: 5}, linkedEditing.Ranges[0].Start)
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "moniker", Path: "main.go", Line: 2, Character: 5})
+	require.NoError(t, err)
+	require.Equal(t, "moniker", result.Action)
+	require.Equal(t, "textDocument/moniker", result.Method)
+	var monikers []struct {
+		Scheme     string `json:"scheme"`
+		Identifier string `json:"identifier"`
+		Kind       string `json:"kind"`
+	}
+	encodedMonikers, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedMonikers, &monikers))
+	require.Len(t, monikers, 1)
+	require.Equal(t, "gomod", monikers[0].Scheme)
+	require.Equal(t, "example.test/demo.BuildWidget", monikers[0].Identifier)
+	require.Equal(t, "export", monikers[0].Kind)
 
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "semantic_tokens", Path: "main.go"})
 	require.NoError(t, err)
@@ -557,12 +598,17 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"document_link":         "document-link",
 		"documentLink":          "document-link",
 		"document-links":        "document-link",
+		"document_color":        "document-color",
+		"documentColor":         "document-color",
+		"document-colors":       "document-color",
 		"inlay_hint":            "inlay-hint",
 		"inlayHint":             "inlay-hint",
 		"inlay-hints":           "inlay-hint",
 		"linked_editing_range":  "linked-editing-range",
 		"linkedEditingRange":    "linked-editing-range",
 		"linked-editing":        "linked-editing-range",
+		"monikers":              "moniker",
+		"symbol_moniker":        "moniker",
 		"semantic_tokens":       "semantic-tokens",
 		"semanticTokens":        "semantic-tokens",
 		"semantic_tokens_full":  "semantic-tokens",
@@ -680,6 +726,14 @@ func TestFakeLSPServer(t *testing.T) {
 				},
 				"target": "https://example.test/docs",
 			}})})
+		case "textDocument/documentColor":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 1},
+					"end":   map[string]any{"line": 2, "character": 8},
+				},
+				"color": map[string]any{"red": 1.0, "green": 0.5, "blue": 0.25, "alpha": 1.0},
+			}})})
 		case "textDocument/inlayHint":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
 				"position": map[string]any{"line": 2, "character": 10},
@@ -694,6 +748,12 @@ func TestFakeLSPServer(t *testing.T) {
 				},
 				"wordPattern": "[A-Za-z_]+",
 			})})
+		case "textDocument/moniker":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"scheme":     "gomod",
+				"identifier": "example.test/demo.BuildWidget",
+				"kind":       "export",
+			}})})
 		case "textDocument/semanticTokens/full":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
 				"resultId": "full-1",

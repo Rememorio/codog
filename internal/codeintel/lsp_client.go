@@ -243,6 +243,13 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return links and link targets discovered in a document.",
 	},
 	{
+		Name:             "document-color",
+		Method:           "textDocument/documentColor",
+		Aliases:          []string{"document_color", "documentColor", "document-colors", "document_colors", "colors"},
+		RequiresDocument: true,
+		Description:      "Return color literals and their ranges discovered in a document.",
+	},
+	{
 		Name:             "inlay-hint",
 		Method:           "textDocument/inlayHint",
 		Aliases:          []string{"inlay_hint", "inlayHint", "hints", "inlay-hints", "inlay_hints"},
@@ -257,6 +264,14 @@ var lspActionInfos = []LSPActionInfo{
 		RequiresDocument: true,
 		RequiresPosition: true,
 		Description:      "Return ranges that should be edited together at a document position.",
+	},
+	{
+		Name:             "moniker",
+		Method:           "textDocument/moniker",
+		Aliases:          []string{"monikers", "symbol_moniker", "symbol-moniker"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return symbol monikers that identify a symbol across tools and indexes.",
 	},
 	{
 		Name:             "semantic-tokens",
@@ -704,6 +719,8 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		return "textDocument/foldingRange", map[string]any{"textDocument": textDocument}, nil
 	case "document-link":
 		return "textDocument/documentLink", map[string]any{"textDocument": textDocument}, nil
+	case "document-color":
+		return "textDocument/documentColor", map[string]any{"textDocument": textDocument}, nil
 	case "inlay-hint":
 		line = max(0, line)
 		start := map[string]any{"line": line, "character": 0}
@@ -711,6 +728,8 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		return "textDocument/inlayHint", map[string]any{"textDocument": textDocument, "range": map[string]any{"start": start, "end": end}}, nil
 	case "linked-editing-range":
 		return "textDocument/linkedEditingRange", map[string]any{"textDocument": textDocument, "position": position}, nil
+	case "moniker":
+		return "textDocument/moniker", map[string]any{"textDocument": textDocument, "position": position}, nil
 	case "semantic-tokens":
 		return "textDocument/semanticTokens/full", map[string]any{"textDocument": textDocument}, nil
 	case "semantic-tokens-range":
