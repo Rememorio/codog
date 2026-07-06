@@ -281,6 +281,29 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "textDocument/signatureHelp", result.Method)
 	require.NotNil(t, result.Result)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "selection_range", Path: "main.go", Line: 2, Character: 5})
+	require.NoError(t, err)
+	require.Equal(t, "selection-range", result.Action)
+	require.Equal(t, "textDocument/selectionRange", result.Method)
+	var selectionRanges []struct {
+		Range struct {
+			Start LSPPosition `json:"start"`
+			End   LSPPosition `json:"end"`
+		} `json:"range"`
+		Parent *struct {
+			Range struct {
+				Start LSPPosition `json:"start"`
+				End   LSPPosition `json:"end"`
+			} `json:"range"`
+		} `json:"parent"`
+	}
+	encodedSelection, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedSelection, &selectionRanges))
+	require.Len(t, selectionRanges, 1)
+	require.Equal(t, LSPPosition{Line: 2, Character: 5}, selectionRanges[0].Range.Start)
+	require.NotNil(t, selectionRanges[0].Parent)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "rename", Path: "main.go", Line: 2, Character: 5, NewName: "Start"})
 	require.NoError(t, err)
 	require.Equal(t, "rename", result.Action)
@@ -405,6 +428,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"completions":         "completion",
 		"document_highlight":  "document-highlight",
 		"documentHighlight":   "document-highlight",
+		"selection_range":     "selection-range",
+		"selectionRange":      "selection-range",
+		"expand_selection":    "selection-range",
 		"signature_help":      "signature-help",
 		"signatureHelp":       "signature-help",
 		"signature":           "signature-help",
@@ -483,6 +509,19 @@ func TestFakeLSPServer(t *testing.T) {
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
 				"kind":  1,
 				"range": map[string]any{"start": map[string]any{"line": 2, "character": 5}, "end": map[string]any{"line": 2, "character": 9}},
+			}})})
+		case "textDocument/selectionRange":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 5},
+					"end":   map[string]any{"line": 2, "character": 10},
+				},
+				"parent": map[string]any{
+					"range": map[string]any{
+						"start": map[string]any{"line": 2, "character": 0},
+						"end":   map[string]any{"line": 2, "character": 15},
+					},
+				},
 			}})})
 		case "textDocument/signatureHelp":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{

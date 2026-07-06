@@ -220,6 +220,14 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return document highlights for the symbol at a document position.",
 	},
 	{
+		Name:             "selection-range",
+		Method:           "textDocument/selectionRange",
+		Aliases:          []string{"selection_range", "selectionRange", "expand_selection", "expand-selection"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return nested selection ranges at a document position.",
+	},
+	{
 		Name:             "signature-help",
 		Method:           "textDocument/signatureHelp",
 		Aliases:          []string{"signature_help", "signatureHelp", "signature", "signatures"},
@@ -604,6 +612,8 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		return "textDocument/completion", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "document-highlight":
 		return "textDocument/documentHighlight", map[string]any{"textDocument": textDocument, "position": position}, nil
+	case "selection-range":
+		return "textDocument/selectionRange", map[string]any{"textDocument": textDocument, "positions": []any{position}}, nil
 	case "signature-help":
 		return "textDocument/signatureHelp", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "symbols":

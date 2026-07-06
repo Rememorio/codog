@@ -5767,7 +5767,7 @@ func (LSPTool) Definition() anthropic.ToolDefinition {
 			"properties": map[string]any{
 				"action": map[string]any{
 					"type": "string",
-					"enum": []string{"symbols", "document_symbols", "references", "find_references", "diagnostics", "definition", "goto_definition", "declaration", "goto_declaration", "implementation", "goto_implementation", "type_definition", "goto_type_definition", "rename", "rename_symbol", "prepare_rename", "code_action", "quickfix", "hover", "completion", "completions", "document_highlight", "signature_help", "format", "formatting"},
+					"enum": []string{"symbols", "document_symbols", "references", "find_references", "diagnostics", "definition", "goto_definition", "declaration", "goto_declaration", "implementation", "goto_implementation", "type_definition", "goto_type_definition", "rename", "rename_symbol", "prepare_rename", "code_action", "quickfix", "hover", "completion", "completions", "document_highlight", "selection_range", "signature_help", "format", "formatting"},
 				},
 				"path":      map[string]any{"type": "string"},
 				"line":      map[string]any{"type": "integer", "minimum": 0},
@@ -5921,7 +5921,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 
 func lspActionRequiresServer(action string) bool {
 	switch action {
-	case "declaration", "implementation", "type-definition", "rename", "prepare-rename", "code-action", "document-highlight", "signature-help":
+	case "declaration", "implementation", "type-definition", "rename", "prepare-rename", "code-action", "document-highlight", "selection-range", "signature-help":
 		return true
 	default:
 		return false
