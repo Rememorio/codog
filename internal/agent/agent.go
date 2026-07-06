@@ -26011,6 +26011,42 @@ type capabilityTool struct {
 	InputSchema    map[string]any `json:"input_schema,omitempty"`
 }
 
+type referenceParityAuditReport struct {
+	Kind     string                 `json:"kind"`
+	Action   string                 `json:"action"`
+	Status   string                 `json:"status"`
+	Commands *referenceSurfaceAudit `json:"commands,omitempty"`
+	Tools    *referenceSurfaceAudit `json:"tools,omitempty"`
+}
+
+type referenceSurfaceAudit struct {
+	Kind           string                 `json:"kind"`
+	SnapshotPath   string                 `json:"snapshot_path"`
+	ReferenceCount int                    `json:"reference_count"`
+	CoveredCount   int                    `json:"covered_count"`
+	MissingCount   int                    `json:"missing_count"`
+	MissingGroups  []referenceAuditGroup  `json:"missing_groups,omitempty"`
+	Covered        []referenceAuditMatch  `json:"covered,omitempty"`
+	Missing        []referenceSnapshotRef `json:"missing,omitempty"`
+}
+
+type referenceAuditGroup struct {
+	Source string `json:"source"`
+	Count  int    `json:"count"`
+}
+
+type referenceAuditMatch struct {
+	Name       string `json:"name"`
+	SourceHint string `json:"source_hint,omitempty"`
+	Matched    string `json:"matched"`
+}
+
+type referenceSnapshotRef struct {
+	Name           string `json:"name"`
+	SourceHint     string `json:"source_hint,omitempty"`
+	Responsibility string `json:"responsibility,omitempty"`
+}
+
 type capabilityMCP struct {
 	ConfiguredServerCount  int              `json:"configured_server_count"`
 	ConfiguredServers      []string         `json:"configured_servers"`
@@ -26027,6 +26063,19 @@ func (a *App) Capabilities(args []string) error {
 	req, err := parseCapabilitiesArgs(args)
 	if err != nil {
 		return err
+	}
+	if req.Action == "audit" {
+		report, err := a.referenceParityAuditReport(req)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderReferenceParityAuditText(a.Out, report)
+		return nil
 	}
 	if req.Action == "resolve" {
 		report := a.capabilityResolveReport(req.Query)
@@ -26049,15 +26098,17 @@ func (a *App) Capabilities(args []string) error {
 }
 
 type capabilitiesRequest struct {
-	Action string
-	Query  string
-	Format string
+	Action          string
+	Query           string
+	Format          string
+	CommandSnapshot string
+	ToolSnapshot    string
 }
 
 func parseCapabilitiesArgs(args []string) (capabilitiesRequest, error) {
 	req := capabilitiesRequest{Action: "show", Format: "text"}
 	positionals := []string{}
-	usage := "codog capabilities [show|list|resolve NAME] [--json|--output-format text|json]"
+	usage := "codog capabilities [show|list|resolve NAME|audit] [--commands-snapshot PATH] [--tools-snapshot PATH] [--json|--output-format text|json]"
 	for index := 0; index < len(args); index++ {
 		arg := strings.TrimSpace(args[index])
 		switch {
@@ -26073,6 +26124,26 @@ func parseCapabilitiesArgs(args []string) (capabilitiesRequest, error) {
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--commands-snapshot" || arg == "--command-snapshot":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "capabilities audit", Flag: arg, Usage: usage}
+			}
+			req.CommandSnapshot = args[index]
+		case strings.HasPrefix(arg, "--commands-snapshot="):
+			req.CommandSnapshot = strings.TrimPrefix(arg, "--commands-snapshot=")
+		case strings.HasPrefix(arg, "--command-snapshot="):
+			req.CommandSnapshot = strings.TrimPrefix(arg, "--command-snapshot=")
+		case arg == "--tools-snapshot" || arg == "--tool-snapshot":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "capabilities audit", Flag: arg, Usage: usage}
+			}
+			req.ToolSnapshot = args[index]
+		case strings.HasPrefix(arg, "--tools-snapshot="):
+			req.ToolSnapshot = strings.TrimPrefix(arg, "--tools-snapshot=")
+		case strings.HasPrefix(arg, "--tool-snapshot="):
+			req.ToolSnapshot = strings.TrimPrefix(arg, "--tool-snapshot=")
 		case strings.HasPrefix(arg, "-"):
 			return req, unknownOptionError{Command: "capabilities", Option: arg, Usage: usage}
 		default:
@@ -26101,8 +26172,18 @@ func parseCapabilitiesArgs(args []string) (capabilitiesRequest, error) {
 		}
 		req.Action = "resolve"
 		req.Query = positionals[1]
+	case "audit", "reference-audit", "parity-audit":
+		if len(positionals) > 1 {
+			return req, unexpectedExtraArgsError{Command: "capabilities audit", Args: positionals[1:], Usage: usage}
+		}
+		req.Action = "audit"
 	default:
 		return req, unknownOptionError{Command: "capabilities", Option: positionals[0], Usage: usage}
+	}
+	req.CommandSnapshot = strings.TrimSpace(req.CommandSnapshot)
+	req.ToolSnapshot = strings.TrimSpace(req.ToolSnapshot)
+	if req.Action == "audit" && req.CommandSnapshot == "" && req.ToolSnapshot == "" {
+		return req, requiredArgumentError{Command: "capabilities audit", Argument: "--commands-snapshot or --tools-snapshot", Usage: usage}
 	}
 	return req, nil
 }
@@ -26172,6 +26253,152 @@ func (a *App) capabilitiesReport() capabilitiesReport {
 		Protocols:     codogCapabilityProtocols(),
 		OutputFormats: []string{"text", "json", "stream-json"},
 	}
+}
+
+func (a *App) referenceParityAuditReport(req capabilitiesRequest) (referenceParityAuditReport, error) {
+	capabilities := a.capabilitiesReport()
+	report := referenceParityAuditReport{
+		Kind:   "capabilities",
+		Action: "audit",
+		Status: "ok",
+	}
+	if req.CommandSnapshot != "" {
+		audit, err := auditReferenceSurface(req.CommandSnapshot, "commands", commandCapabilityNames(capabilities))
+		if err != nil {
+			return referenceParityAuditReport{}, err
+		}
+		report.Commands = &audit
+	}
+	if req.ToolSnapshot != "" {
+		audit, err := auditReferenceSurface(req.ToolSnapshot, "tools", toolCapabilityNames(capabilities))
+		if err != nil {
+			return referenceParityAuditReport{}, err
+		}
+		report.Tools = &audit
+	}
+	if (report.Commands != nil && report.Commands.MissingCount > 0) || (report.Tools != nil && report.Tools.MissingCount > 0) {
+		report.Status = "gap"
+	}
+	return report, nil
+}
+
+func auditReferenceSurface(path string, kind string, available map[string]string) (referenceSurfaceAudit, error) {
+	entries, err := readReferenceSnapshot(path)
+	if err != nil {
+		return referenceSurfaceAudit{}, err
+	}
+	audit := referenceSurfaceAudit{
+		Kind:           kind,
+		SnapshotPath:   path,
+		ReferenceCount: len(entries),
+	}
+	for _, entry := range entries {
+		if matched, ok := available[normalizeReferenceName(entry.Name)]; ok {
+			audit.Covered = append(audit.Covered, referenceAuditMatch{
+				Name:       entry.Name,
+				SourceHint: entry.SourceHint,
+				Matched:    matched,
+			})
+			continue
+		}
+		audit.Missing = append(audit.Missing, entry)
+	}
+	audit.CoveredCount = len(audit.Covered)
+	audit.MissingCount = len(audit.Missing)
+	audit.MissingGroups = referenceMissingGroups(audit.Missing)
+	return audit, nil
+}
+
+func readReferenceSnapshot(path string) ([]referenceSnapshotRef, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return nil, fmt.Errorf("read reference snapshot: %w", err)
+	}
+	var entries []referenceSnapshotRef
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("read reference snapshot: %w", err)
+	}
+	return entries, nil
+}
+
+func commandCapabilityNames(report capabilitiesReport) map[string]string {
+	names := map[string]string{}
+	add := func(name string) {
+		normalized := normalizeReferenceName(name)
+		if normalized != "" {
+			names[normalized] = name
+		}
+	}
+	for _, command := range report.Commands {
+		add(command)
+	}
+	for _, command := range report.SlashCommands {
+		add(command.Name)
+		add(strings.TrimPrefix(command.Name, "/"))
+	}
+	return names
+}
+
+func toolCapabilityNames(report capabilitiesReport) map[string]string {
+	names := map[string]string{}
+	add := func(name string, matched string) {
+		normalized := normalizeReferenceName(name)
+		if normalized != "" {
+			names[normalized] = matched
+		}
+	}
+	for _, tool := range report.Tools {
+		add(tool.Name, tool.Name)
+		for _, alias := range tool.Aliases {
+			add(alias, tool.Name)
+		}
+	}
+	for alias, canonical := range report.ToolAliases {
+		add(alias, canonical)
+	}
+	return names
+}
+
+func normalizeReferenceName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(name, "/")))
+	var builder strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
+}
+
+func referenceMissingGroups(entries []referenceSnapshotRef) []referenceAuditGroup {
+	counts := map[string]int{}
+	for _, entry := range entries {
+		source := referenceSourceGroup(entry.SourceHint)
+		counts[source]++
+	}
+	groups := make([]referenceAuditGroup, 0, len(counts))
+	for source, count := range counts {
+		groups = append(groups, referenceAuditGroup{Source: source, Count: count})
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].Count != groups[j].Count {
+			return groups[i].Count > groups[j].Count
+		}
+		return groups[i].Source < groups[j].Source
+	})
+	return groups
+}
+
+func referenceSourceGroup(sourceHint string) string {
+	sourceHint = strings.Trim(strings.TrimSpace(sourceHint), "/")
+	if sourceHint == "" {
+		return "unknown"
+	}
+	parts := strings.Split(sourceHint, "/")
+	if len(parts) >= 2 {
+		return parts[0] + "/" + parts[1]
+	}
+	return parts[0]
 }
 
 func (a *App) capabilityResolveReport(query string) capabilityResolveReport {
@@ -26415,6 +26642,51 @@ func renderCapabilityResolveText(out io.Writer, report capabilityResolveReport) 
 	if len(report.Suggestions) > 0 {
 		fmt.Fprintf(out, "  Suggestions      %s\n", strings.Join(report.Suggestions, ", "))
 	}
+}
+
+func renderReferenceParityAuditText(out io.Writer, report referenceParityAuditReport) {
+	fmt.Fprintln(out, "Reference Parity Audit")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	if report.Commands != nil {
+		renderReferenceSurfaceAuditText(out, *report.Commands)
+	}
+	if report.Tools != nil {
+		renderReferenceSurfaceAuditText(out, *report.Tools)
+	}
+}
+
+func renderReferenceSurfaceAuditText(out io.Writer, audit referenceSurfaceAudit) {
+	fmt.Fprintf(out, "  %s          %d/%d covered\n", titleCaseASCII(audit.Kind), audit.CoveredCount, audit.ReferenceCount)
+	if audit.MissingCount == 0 {
+		return
+	}
+	fmt.Fprintf(out, "    Missing        %d\n", audit.MissingCount)
+	if len(audit.MissingGroups) > 0 {
+		fmt.Fprintln(out, "    Missing groups")
+		limit := min(len(audit.MissingGroups), 5)
+		for _, group := range audit.MissingGroups[:limit] {
+			fmt.Fprintf(out, "      - %s: %d\n", group.Source, group.Count)
+		}
+	}
+	limit := min(audit.MissingCount, 10)
+	for _, item := range audit.Missing[:limit] {
+		fmt.Fprintf(out, "      - %s", item.Name)
+		if item.SourceHint != "" {
+			fmt.Fprintf(out, " (%s)", item.SourceHint)
+		}
+		fmt.Fprintln(out)
+	}
+	if audit.MissingCount > limit {
+		fmt.Fprintf(out, "      ... %d more\n", audit.MissingCount-limit)
+	}
+}
+
+func titleCaseASCII(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return value
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
 }
 
 func renderCapabilitiesText(out io.Writer, report capabilitiesReport) {
@@ -51812,10 +52084,10 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"capabilities",
 			"capabilities",
-			"codog capabilities [show|list|resolve NAME] [--output-format text|json]",
-			"Capabilities\n\nUsage:\n  codog capabilities [show|list] [--output-format text|json]\n  codog capabilities resolve NAME [--output-format text|json]\n\nReports the commands, slash commands, tools, protocols, MCP resources, and feature flags supported by this build. `resolve` projects the live execution registry for one command, slash command, tool, or Claude-style tool alias.\n",
-			[]string{"commands", "slash_commands", "tools", "features", "protocols", "mcp", "matches", "suggestions"},
-			[]string{"ok", "not_found", "error"},
+			"codog capabilities [show|list|resolve NAME|audit] [--commands-snapshot PATH] [--tools-snapshot PATH] [--output-format text|json]",
+			"Capabilities\n\nUsage:\n  codog capabilities [show|list] [--output-format text|json]\n  codog capabilities resolve NAME [--output-format text|json]\n  codog capabilities audit --commands-snapshot PATH --tools-snapshot PATH [--output-format text|json]\n\nReports the commands, slash commands, tools, protocols, MCP resources, and feature flags supported by this build. `resolve` projects the live execution registry for one command, slash command, tool, or Claude-style tool alias. `audit` compares Codog's live command and tool surface against Claude Code reference snapshots.\n",
+			[]string{"commands", "slash_commands", "tools", "features", "protocols", "mcp", "matches", "suggestions", "covered_count", "missing_count"},
+			[]string{"ok", "gap", "not_found", "error"},
 			false,
 		), true
 	case "cost":

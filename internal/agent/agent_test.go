@@ -1335,6 +1335,44 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("upgrade"))
 	require.True(t, commandAcceptsGlobalOutputFormat("workspace"))
 	require.True(t, commandAcceptsGlobalOutputFormat("cwd"))
+
+	commandSnapshot := filepath.Join(t.TempDir(), "commands.json")
+	require.NoError(t, os.WriteFile(commandSnapshot, []byte(`[
+		{"name":"status","source_hint":"commands/status/index.ts"},
+		{"name":"reviewRemote","source_hint":"commands/reviewRemote/index.ts"},
+		{"name":"missing-reference-command","source_hint":"commands/missing/index.ts"}
+	]`), 0o644))
+	toolSnapshot := filepath.Join(t.TempDir(), "tools.json")
+	require.NoError(t, os.WriteFile(toolSnapshot, []byte(`[
+		{"name":"BashTool","source_hint":"tools/BashTool/BashTool.tsx"},
+		{"name":"FileReadTool","source_hint":"tools/FileReadTool/FileReadTool.tsx"},
+		{"name":"MissingReferenceTool","source_hint":"tools/MissingReferenceTool/index.ts"}
+	]`), 0o644))
+	out.Reset()
+	require.NoError(t, app.Capabilities([]string{"audit", "--commands-snapshot", commandSnapshot, "--tools-snapshot", toolSnapshot, "--json"}))
+	var audit referenceParityAuditReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &audit))
+	require.Equal(t, "capabilities", audit.Kind)
+	require.Equal(t, "audit", audit.Action)
+	require.Equal(t, "gap", audit.Status)
+	require.NotNil(t, audit.Commands)
+	require.Equal(t, 3, audit.Commands.ReferenceCount)
+	require.Equal(t, 2, audit.Commands.CoveredCount)
+	require.Equal(t, 1, audit.Commands.MissingCount)
+	require.Equal(t, "missing-reference-command", audit.Commands.Missing[0].Name)
+	require.NotNil(t, audit.Tools)
+	require.Equal(t, 3, audit.Tools.ReferenceCount)
+	require.Equal(t, 2, audit.Tools.CoveredCount)
+	require.Equal(t, 1, audit.Tools.MissingCount)
+	require.Equal(t, "MissingReferenceTool", audit.Tools.Missing[0].Name)
+	require.Equal(t, []referenceAuditGroup{{Source: "tools/MissingReferenceTool", Count: 1}}, audit.Tools.MissingGroups)
+	require.Contains(t, audit.Tools.Covered, referenceAuditMatch{Name: "BashTool", SourceHint: "tools/BashTool/BashTool.tsx", Matched: "bash"})
+	out.Reset()
+	require.NoError(t, app.Capabilities([]string{"audit", "--commands-snapshot", commandSnapshot}))
+	require.Contains(t, out.String(), "Reference Parity Audit")
+	require.Contains(t, out.String(), "Commands")
+	require.Contains(t, out.String(), "Missing groups")
+	require.Contains(t, out.String(), "missing-reference-command")
 }
 
 func TestCapabilitiesResolveProjectsExecutionRegistry(t *testing.T) {
