@@ -5515,6 +5515,12 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		return err
 	}
 	args = cleanArgs
+	if len(args) > 0 {
+		normalizedAction := normalizeBackgroundAction(args[0])
+		if normalizedAction != args[0] {
+			args = append([]string{normalizedAction}, args[1:]...)
+		}
+	}
 	store := background.NewStore(a.Config.ConfigHome)
 	if len(args) == 0 || args[0] == "list" {
 		tasks, err := store.List()
@@ -5784,6 +5790,35 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		return nil
 	default:
 		return fmt.Errorf("unknown background command %q", args[0])
+	}
+}
+
+func normalizeBackgroundAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "list", "ls":
+		return "list"
+	case "run", "start", "new":
+		return "run"
+	case "board", "lane-board", "lanes":
+		return "board"
+	case "heartbeat", "beat":
+		return "heartbeat"
+	case "status", "stat", "get", "show":
+		return "status"
+	case "stop", "kill", "cancel":
+		return "stop"
+	case "restart", "rerun":
+		return "restart"
+	case "logs", "log", "output":
+		return "logs"
+	case "watch", "tail", "follow":
+		return "watch"
+	case "prune", "gc":
+		return "prune"
+	case "supervise", "supervisor":
+		return "supervise"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
 	}
 }
 
@@ -29202,10 +29237,10 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOverrides, format string) error {
 	action := ""
 	if meaningful := routeMeaningfulArgs(args); len(meaningful) > 0 {
-		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
+		action = normalizeBackgroundAction(meaningful[0])
 	}
 	switch action {
-	case "", "list", "run", "status", "logs", "board", "lane-board", "lanes",
+	case "", "list", "run", "status", "logs", "board",
 		"heartbeat", "stop", "restart", "prune", "supervise":
 		return a.BackgroundWithOverrides(args, overrides)
 	case "watch":
@@ -29227,7 +29262,7 @@ func validateResumedBackgroundWatch(args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(cleanArgs) == 0 || !strings.EqualFold(strings.TrimSpace(cleanArgs[0]), "watch") {
+	if len(cleanArgs) == 0 || normalizeBackgroundAction(cleanArgs[0]) != "watch" {
 		return errors.New("usage: codog background watch ID [offset|--offset N] [--max-events N]")
 	}
 	_, _, maxEvents, err := parseBackgroundWatchArgs(cleanArgs[1:])

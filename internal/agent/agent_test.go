@@ -5538,7 +5538,7 @@ func risky(value any) {
 	require.Equal(t, "resume-install", resumedPluginRemove.ID)
 	require.NoFileExists(t, filepath.Join(workspace, ".codog", "plugins", "resume-install", "plugin.json"))
 
-	out, err = runResumedJSON("/tasks")
+	out, err = runResumedJSON("/tasks", "ls")
 	require.NoError(t, err)
 	var resumedTasks []background.Task
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedTasks))
@@ -5563,6 +5563,21 @@ func risky(value any) {
 	expectedTaskWorkspace, err := filepath.EvalSymlinks(workspace)
 	require.NoError(t, err)
 	require.Equal(t, expectedTaskWorkspace, resumedTaskWorkspace)
+
+	out, err = runResumedJSON("/tasks", "get", resumedTaskRun.ID)
+	require.NoError(t, err)
+	var resumedTaskGet background.Task
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTaskGet))
+	require.Equal(t, resumedTaskRun.ID, resumedTaskGet.ID)
+	require.Equal(t, "echo resumed-task", resumedTaskGet.Command)
+
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(resumedTaskRun.ID, 1024)
+		return err == nil && strings.Contains(logs, "resumed-task")
+	}, 2*time.Second, 50*time.Millisecond)
+	out, err = runResumedJSON("/tasks", "log", resumedTaskRun.ID, "--bytes", "1024")
+	require.NoError(t, err)
+	require.Contains(t, out, "resumed-task")
 
 	out, err = runResumedJSON("/agents", "run", "reviewer", "check auth")
 	require.NoError(t, err)
