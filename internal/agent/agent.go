@@ -2251,6 +2251,8 @@ type sshReport struct {
 	RemoteShell                string   `json:"remote_shell,omitempty"`
 	RemoteEnvKeys              []string `json:"remote_env_keys,omitempty"`
 	RemoteAuthForwarded        bool     `json:"remote_auth_forwarded"`
+	RemoteExecutable           string   `json:"remote_executable,omitempty"`
+	DeployCommand              []string `json:"deploy_command,omitempty"`
 	Executed                   bool     `json:"executed"`
 	Message                    string   `json:"message,omitempty"`
 }
@@ -2369,6 +2371,7 @@ func parseSSHArgs(args []string) (sshRequest, error) {
 func (a *App) buildSSHReport(req sshRequest) sshReport {
 	command, remoteShell := a.sshCommand(req, true)
 	remoteEnv := a.sshRemoteEnv(req, true)
+	deployCommand, remoteExecutable := a.sshDeployCommand(req)
 	return sshReport{
 		Kind:                       "ssh",
 		Action:                     "connect",
@@ -2382,6 +2385,8 @@ func (a *App) buildSSHReport(req sshRequest) sshReport {
 		RemoteShell:                remoteShell,
 		RemoteEnvKeys:              sshRemoteEnvKeys(remoteEnv),
 		RemoteAuthForwarded:        sshRemoteAuthForwarded(remoteEnv),
+		RemoteExecutable:           remoteExecutable,
+		DeployCommand:              deployCommand,
 		Executed:                   false,
 	}
 }
@@ -2390,6 +2395,11 @@ func (a *App) runSSHCommand(ctx context.Context, req sshRequest, command []strin
 	command, _ = a.sshCommand(req, false)
 	if len(command) == 0 {
 		return errors.New("ssh command is empty")
+	}
+	if !req.Local {
+		if err := a.deploySSHBinary(ctx, req); err != nil {
+			return err
+		}
 	}
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	if req.Local && strings.TrimSpace(req.Directory) != "" {
@@ -2411,7 +2421,7 @@ func (a *App) sshCommand(req sshRequest, redact bool) ([]string, string) {
 }
 
 func (a *App) sshRemoteCodogArgs(req sshRequest) []string {
-	executable := "codog"
+	executable := sshRemoteExecutable(req.Host)
 	if req.Local {
 		executable = strings.TrimSpace(a.Executable)
 	}
@@ -2432,6 +2442,63 @@ func (a *App) sshRemoteCodogArgs(req sshRequest) []string {
 	}
 	out = append(out, "repl")
 	return out
+}
+
+func (a *App) sshDeployCommand(req sshRequest) ([]string, string) {
+	if req.Local {
+		return nil, ""
+	}
+	remoteExecutable := sshRemoteExecutable(req.Host)
+	return []string{"ssh", req.Host, sshDeployShell(remoteExecutable)}, remoteExecutable
+}
+
+func (a *App) deploySSHBinary(ctx context.Context, req sshRequest) error {
+	deployCommand, _ := a.sshDeployCommand(req)
+	if len(deployCommand) == 0 {
+		return nil
+	}
+	localExecutable := strings.TrimSpace(a.Executable)
+	if localExecutable == "" {
+		if path, err := resolveExecutablePath(); err == nil {
+			localExecutable = strings.TrimSpace(path)
+		}
+	}
+	if localExecutable == "" {
+		return errors.New("cannot deploy ssh binary: current executable path is unavailable")
+	}
+	binary, err := os.Open(localExecutable)
+	if err != nil {
+		return fmt.Errorf("cannot open ssh deploy binary: %w", err)
+	}
+	defer binary.Close()
+	cmd := exec.CommandContext(ctx, deployCommand[0], deployCommand[1:]...)
+	cmd.Stdin = binary
+	cmd.Stdout = a.Out
+	cmd.Stderr = a.Err
+	return cmd.Run()
+}
+
+func sshRemoteExecutable(host string) string {
+	slug := regexp.MustCompile(`[^A-Za-z0-9_.-]+`).ReplaceAllString(strings.TrimSpace(host), "-")
+	slug = strings.Trim(slug, "-.")
+	if slug == "" {
+		slug = "remote"
+	}
+	return ".cache/codog/remote/" + slug + "/codog"
+}
+
+func sshDeployShell(remoteExecutable string) string {
+	dir := remotePathDir(remoteExecutable)
+	return "mkdir -p " + shellQuote(dir) + " && cat > " + shellQuote(remoteExecutable) + " && chmod 700 " + shellQuote(remoteExecutable)
+}
+
+func remotePathDir(path string) string {
+	path = strings.TrimSpace(path)
+	index := strings.LastIndex(path, "/")
+	if index <= 0 {
+		return "."
+	}
+	return path[:index]
 }
 
 func (a *App) sshRemoteEnv(req sshRequest, redact bool) map[string]string {
@@ -55239,7 +55306,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"ssh",
 			sshUsage,
 			"SSH\n\nUsage:\n  codog ssh <host> [dir] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--output-format text|json]\n\nStarts a Codog REPL on a remote host through SSH using a Claude Code-compatible command shape. Text mode executes `ssh HOST 'cd DIR && env ... codog ... repl'` and forwards local provider credentials, model, base URL, and Claude remote bootstrap variables with JSON plans redacting secret values. `--local` runs the child Codog process locally for end-to-end plumbing tests.\n",
-			[]string{"kind", "status", "host", "directory", "local", "command", "remote_shell", "remote_env_keys", "remote_auth_forwarded", "executed"},
+			[]string{"kind", "status", "host", "directory", "local", "command", "deploy_command", "remote_shell", "remote_executable", "remote_env_keys", "remote_auth_forwarded", "executed"},
 			[]string{"planned", "error"},
 			false,
 		), true

@@ -19713,12 +19713,67 @@ func TestSSHCommandReportsPlan(t *testing.T) {
 	require.Contains(t, report.RemoteShell, "ANTHROPIC_API_KEY='[redacted]'")
 	require.Contains(t, report.RemoteShell, "ANTHROPIC_AUTH_TOKEN='[redacted]'")
 	require.Contains(t, report.RemoteShell, "CODOG_BASE_URL='https://api.example.test'")
-	require.Contains(t, report.RemoteShell, "codog --permission-mode read-only --dangerously-skip-permissions repl")
+	require.Equal(t, ".cache/codog/remote/devbox/codog", report.RemoteExecutable)
+	require.Equal(t, []string{"ssh", "devbox", "mkdir -p '.cache/codog/remote/devbox' && cat > '.cache/codog/remote/devbox/codog' && chmod 700 '.cache/codog/remote/devbox/codog'"}, report.DeployCommand)
+	require.Contains(t, report.RemoteShell, ".cache/codog/remote/devbox/codog --permission-mode read-only --dangerously-skip-permissions repl")
 	require.NotContains(t, report.RemoteShell, "secret-api-key")
 	require.NotContains(t, report.RemoteShell, "secret-auth-token")
 	require.NotContains(t, out.String(), "secret-api-key")
 	require.NotContains(t, out.String(), "secret-auth-token")
 	require.Equal(t, []string{"ssh", "devbox", report.RemoteShell}, report.Command)
+}
+
+func TestSSHCommandDeploysBinaryBeforeRemoteRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell script")
+	}
+	fakeBin := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "ssh.log")
+	countPath := filepath.Join(t.TempDir(), "ssh.count")
+	sshPath := filepath.Join(fakeBin, "ssh")
+	script := `#!/bin/sh
+count=0
+if [ -f "$SSH_COUNT" ]; then
+  count=$(cat "$SSH_COUNT")
+fi
+count=$((count + 1))
+printf '%s' "$count" > "$SSH_COUNT"
+printf 'call%s:%s\n' "$count" "$*" >> "$SSH_LOG"
+bytes=$(wc -c | tr -d ' ')
+printf 'stdin%s:%s\n' "$count" "$bytes" >> "$SSH_LOG"
+if [ "$count" -eq 2 ]; then
+  printf 'run:%s\n' "$*"
+fi
+`
+	require.NoError(t, os.WriteFile(sshPath, []byte(script), 0o755))
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("SSH_LOG", logPath)
+	t.Setenv("SSH_COUNT", countPath)
+
+	localBinary := filepath.Join(t.TempDir(), "codog-local")
+	require.NoError(t, os.WriteFile(localBinary, []byte("binary-payload"), 0o755))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:     config.Config{APIKey: "deploy-api-key", Model: "claude-test"},
+		Out:        &out,
+		Err:        &errOut,
+		In:         strings.NewReader(""),
+		Executable: localBinary,
+	}
+	require.NoError(t, app.SSH(context.Background(), []string{"deploy-box", "/repo", "--permission-mode", "read-only"}))
+
+	logData, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	logText := string(logData)
+	require.Contains(t, logText, "call1:deploy-box mkdir -p '.cache/codog/remote/deploy-box'")
+	require.Contains(t, logText, "cat > '.cache/codog/remote/deploy-box/codog'")
+	require.Contains(t, logText, "stdin1:14")
+	require.Contains(t, logText, "call2:deploy-box cd '/repo' && env")
+	require.Contains(t, logText, "ANTHROPIC_API_KEY='deploy-api-key'")
+	require.Contains(t, logText, ".cache/codog/remote/deploy-box/codog --permission-mode read-only repl")
+	require.Contains(t, out.String(), "run:deploy-box cd '/repo' && env")
+	require.Empty(t, errOut.String())
 }
 
 func TestSSHCommandLocalExecutesChild(t *testing.T) {
