@@ -2582,7 +2582,7 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	var report harness.Report
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, harness.ReportSchemaVersion, report.SchemaVersion)
-	require.True(t, report.OK)
+	require.True(t, report.OK, failedMockParityScenarioSummaries(report))
 	require.Equal(t, report.Total, report.Passed)
 	require.Equal(t, report.Total, report.ScenarioCount)
 	require.Greater(t, report.RequestCount, 0)
@@ -27783,4 +27783,29 @@ func TestVoiceCommandHelperProcess(t *testing.T) {
 	data, _ := io.ReadAll(os.Stdin)
 	fmt.Printf("voice:%s", strings.TrimSpace(string(data)))
 	os.Exit(0)
+}
+
+func failedMockParityScenarioSummaries(report harness.Report) string {
+	var builder strings.Builder
+	for _, scenario := range report.Scenarios {
+		if scenario.OK {
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteString("; ")
+		}
+		builder.WriteString(scenario.Name)
+		if scenario.Error != "" {
+			builder.WriteString(": ")
+			builder.WriteString(scenario.Error)
+		}
+		if scenario.Output != "" {
+			builder.WriteString(" output=")
+			builder.WriteString(scenario.Output)
+		}
+	}
+	if builder.Len() == 0 {
+		return "no failed scenario details"
+	}
+	return builder.String()
 }

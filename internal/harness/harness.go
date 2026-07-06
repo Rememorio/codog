@@ -156,6 +156,7 @@ type scenario struct {
 	verify              func(string, runloop.TurnResult, string) error
 	verifyRequests      func([]anthropic.Request) error
 	configureRegistry   func(*tools.Registry) error
+	registryOptions     func(workspace string, configHome string) tools.RegistryOptions
 	runLocal            func(context.Context, string) (localScenarioResult, error)
 }
 
@@ -186,6 +187,7 @@ var scenarioOrder = []string{
 	"edit_glob_ls_roundtrip",
 	"multi_edit_apply_patch_roundtrip",
 	"bash_stdout_roundtrip",
+	"powershell_stdout_roundtrip",
 	"bash_output_truncation_roundtrip",
 	"bash_permission_prompt_approved",
 	"bash_permission_prompt_denied",
@@ -630,6 +632,7 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		powerShellStdoutScenario(),
 		bashOutputTruncationScenario(),
 		{
 			name:       "bash_permission_prompt_approved",
@@ -1329,6 +1332,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "bash",
 		Description: "Runs bash in danger-full-access mode and returns stdout to the model.",
 		ParityRefs:  []string{"Bash tool", "Shell command output"},
+	},
+	"powershell_stdout_roundtrip": {
+		Category:    "powershell",
+		Description: "Runs a PowerShell command through the agent tool loop and returns stdout to the model.",
+		ParityRefs:  []string{"PowerShell tool", "Shell command output", "Tool result roundtrip"},
 	},
 	"bash_permission_prompt_approved": {
 		Category:    "permissions",
@@ -2494,6 +2502,46 @@ func bashOutputTruncationScenario() scenario {
 			}
 			if persisted.Kind != "bash_output" || len(persisted.Stdout) != 20000 || strings.Join(persisted.TruncatedFields, ",") != "stdout" {
 				return fmt.Errorf("unexpected persisted bash output metadata: kind=%q stdout=%d fields=%v", persisted.Kind, len(persisted.Stdout), persisted.TruncatedFields)
+			}
+			return nil
+		},
+	}
+}
+
+func powerShellStdoutScenario() scenario {
+	return scenario{
+		name:       "powershell_stdout_roundtrip",
+		permission: tools.PermissionAllow,
+		registryOptions: func(_ string, configHome string) tools.RegistryOptions {
+			return tools.RegistryOptions{
+				ConfigHome: configHome,
+				PowerShell: "echo",
+			}
+		},
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-1",
+				Name:  "powershell",
+				Input: json.RawMessage(`{"command":"Write-Output harness-powershell","timeout":1000}`),
+			}}},
+			{Text: "powershell harness ok"},
+		},
+		prompt: "run powershell",
+		verify: func(_ string, result runloop.TurnResult, output string) error {
+			if !strings.Contains(output, "powershell harness ok") {
+				return fmt.Errorf("missing powershell final response")
+			}
+			if err := expectToolCalls(result, 1, false); err != nil {
+				return err
+			}
+			var payload struct {
+				Stdout string `json:"stdout"`
+			}
+			if err := json.Unmarshal([]byte(result.ToolCalls[0].Output), &payload); err != nil {
+				return err
+			}
+			if !strings.Contains(payload.Stdout, "harness-powershell") {
+				return fmt.Errorf("missing powershell stdout in tool output: %q", payload.Stdout)
 			}
 			return nil
 		},
@@ -4566,7 +4614,14 @@ func compactRequestCount(requests []anthropic.Request) int {
 }
 
 func registryForScenario(workspace string, configHome string, item scenario) (*tools.Registry, error) {
-	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
+	options := tools.RegistryOptions{ConfigHome: configHome}
+	if item.registryOptions != nil {
+		options = item.registryOptions(workspace, configHome)
+		if options.ConfigHome == "" {
+			options.ConfigHome = configHome
+		}
+	}
+	registry := tools.NewRegistryWithOptions(workspace, options)
 	if item.configureRegistry != nil {
 		if err := item.configureRegistry(registry); err != nil {
 			return nil, err

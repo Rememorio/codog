@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,7 +13,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ValidateReport(report))
 	require.Equal(t, ReportSchemaVersion, report.SchemaVersion)
-	require.True(t, report.OK)
+	require.True(t, report.OK, failedScenarioSummaries(report))
 	require.Equal(t, report.Total, report.Passed)
 	require.Equal(t, report.Total, report.ScenarioCount)
 	require.GreaterOrEqual(t, report.Total, 20)
@@ -112,6 +113,14 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.True(t, grepChunks.OK)
 	require.Equal(t, 1, grepChunks.ToolCalls)
 	require.Contains(t, grepChunks.Output, "grep chunk harness ok")
+
+	powerShellStdout := findScenario(t, report, "powershell_stdout_roundtrip")
+	require.True(t, powerShellStdout.OK)
+	require.Equal(t, "powershell", powerShellStdout.Category)
+	require.Equal(t, []string{"powershell"}, powerShellStdout.ToolUses)
+	require.Equal(t, 1, powerShellStdout.ToolCalls)
+	require.Equal(t, 0, powerShellStdout.ToolErrorCount)
+	require.Contains(t, powerShellStdout.Output, "powershell harness ok")
 
 	bashApproved := findScenario(t, report, "bash_permission_prompt_approved")
 	require.True(t, bashApproved.OK)
@@ -463,6 +472,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.NotEmpty(t, readFile.Description)
 	require.Contains(t, readFile.ParityRefs, "File tools")
 
+	powerShellStdout := findManifestScenario(t, manifest, "powershell_stdout_roundtrip")
+	require.Equal(t, "powershell", powerShellStdout.Category)
+	require.Contains(t, powerShellStdout.ParityRefs, "PowerShell tool")
+
 	remoteAPI := findManifestScenario(t, manifest, "remote_api_listener_roundtrip")
 	require.Equal(t, "remote-control", remoteAPI.Category)
 	require.Contains(t, remoteAPI.ParityRefs, "Control API listener")
@@ -621,4 +634,29 @@ func findScenario(t *testing.T, report Report, name string) ScenarioReport {
 	}
 	t.Fatalf("missing scenario %q in %#v", name, report.Scenarios)
 	return ScenarioReport{}
+}
+
+func failedScenarioSummaries(report Report) string {
+	var builder strings.Builder
+	for _, scenario := range report.Scenarios {
+		if scenario.OK {
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteString("; ")
+		}
+		builder.WriteString(scenario.Name)
+		if scenario.Error != "" {
+			builder.WriteString(": ")
+			builder.WriteString(scenario.Error)
+		}
+		if scenario.Output != "" {
+			builder.WriteString(" output=")
+			builder.WriteString(scenario.Output)
+		}
+	}
+	if builder.Len() == 0 {
+		return "no failed scenario details"
+	}
+	return builder.String()
 }
