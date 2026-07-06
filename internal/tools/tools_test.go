@@ -2818,6 +2818,15 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, workspaceSymbolsOut, `"name": "BuildWidget"`)
 	require.Contains(t, workspaceSymbolsOut, `"total": 2`)
 
+	workspaceSymbolResolveOut, err := tool.Execute(context.Background(), []byte(`{"action":"workspace_symbol_resolve","query":"BuildWidget"}`))
+	require.NoError(t, err)
+	require.Contains(t, workspaceSymbolResolveOut, `"action": "workspace-symbol-resolve"`)
+	require.Contains(t, workspaceSymbolResolveOut, `"source": "static"`)
+	require.Contains(t, workspaceSymbolResolveOut, `"found": true`)
+	require.Contains(t, workspaceSymbolResolveOut, `"name": "BuildWidget"`)
+	require.Contains(t, workspaceSymbolResolveOut, `"symbol": "BuildWidget"`)
+	require.Contains(t, workspaceSymbolResolveOut, `"snippet": [`)
+
 	definitionOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget"}`))
 	require.NoError(t, err)
 	require.Contains(t, definitionOut, `"source": "static"`)
@@ -2845,6 +2854,10 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, err.Error(), "config home is required")
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"workspace_symbol","query":"Widget","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"workspace_symbol_resolve","query":"Widget","use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 

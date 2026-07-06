@@ -54,6 +54,19 @@ func TestWorkspaceSymbolsFiltersByQueryAndLimit(t *testing.T) {
 	all, err := WorkspaceSymbols(workspace, "", 0)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(all), 4)
+
+	resolved, found, err := ResolveWorkspaceSymbol(workspace, "runfast")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "RunFast", resolved.Symbol.Name)
+	require.Equal(t, "function", resolved.Symbol.Kind)
+	require.Equal(t, "pkg/runner.go", resolved.Symbol.Path)
+	require.True(t, resolved.Hover.Found)
+	require.Equal(t, "RunFast", resolved.Hover.Symbol)
+
+	_, found, err = ResolveWorkspaceSymbol(workspace, "MissingSymbol")
+	require.NoError(t, err)
+	require.False(t, found)
 }
 
 func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {

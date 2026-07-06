@@ -53,6 +53,12 @@ type Completion struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// ResolvedSymbol combines a workspace symbol match with hover context.
+type ResolvedSymbol struct {
+	Symbol Symbol `json:"symbol"`
+	Hover  Hover  `json:"hover,omitempty"`
+}
+
 // FormatResult reports the result of formatting a source file.
 type FormatResult struct {
 	Kind    string `json:"kind"`
@@ -141,6 +147,56 @@ func WorkspaceSymbols(workspace string, query string, limit int) ([]Symbol, erro
 		}
 	}
 	return matches, nil
+}
+
+// ResolveWorkspaceSymbol returns the best static match for a workspace symbol
+// query and includes nearby source context.
+func ResolveWorkspaceSymbol(workspace string, query string) (ResolvedSymbol, bool, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return ResolvedSymbol{}, false, errors.New("symbol is required")
+	}
+	symbols, err := GoSymbols(workspace)
+	if err != nil {
+		return ResolvedSymbol{}, false, err
+	}
+	queryLower := strings.ToLower(query)
+	var selected Symbol
+	found := false
+	for _, symbol := range symbols {
+		if symbol.Name == query {
+			selected = symbol
+			found = true
+			break
+		}
+	}
+	if !found {
+		for _, symbol := range symbols {
+			if strings.ToLower(symbol.Name) == queryLower {
+				selected = symbol
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		for _, symbol := range symbols {
+			if strings.Contains(strings.ToLower(symbol.Name), queryLower) {
+				selected = symbol
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		return ResolvedSymbol{}, false, nil
+	}
+	selected.Path = filepath.ToSlash(selected.Path)
+	hover, err := HoverInfo(workspace, selected.Name, 2)
+	if err != nil {
+		return ResolvedSymbol{}, false, err
+	}
+	return ResolvedSymbol{Symbol: selected, Hover: hover}, true, nil
 }
 
 // Definition returns the first discovered definition for a Go symbol.
