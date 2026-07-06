@@ -235,6 +235,13 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return foldable line ranges for a document.",
 	},
 	{
+		Name:             "document-link",
+		Method:           "textDocument/documentLink",
+		Aliases:          []string{"document_link", "documentLink", "links", "document-links", "document_links"},
+		RequiresDocument: true,
+		Description:      "Return links and link targets discovered in a document.",
+	},
+	{
 		Name:             "signature-help",
 		Method:           "textDocument/signatureHelp",
 		Aliases:          []string{"signature_help", "signatureHelp", "signature", "signatures"},
@@ -623,6 +630,8 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		return "textDocument/selectionRange", map[string]any{"textDocument": textDocument, "positions": []any{position}}, nil
 	case "folding-range":
 		return "textDocument/foldingRange", map[string]any{"textDocument": textDocument}, nil
+	case "document-link":
+		return "textDocument/documentLink", map[string]any{"textDocument": textDocument}, nil
 	case "signature-help":
 		return "textDocument/signatureHelp", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "symbols":

@@ -321,6 +321,24 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, 2, foldingRanges[0].EndLine)
 	require.Equal(t, "region", foldingRanges[0].Kind)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "document_link", Path: "main.go"})
+	require.NoError(t, err)
+	require.Equal(t, "document-link", result.Action)
+	require.Equal(t, "textDocument/documentLink", result.Method)
+	var documentLinks []struct {
+		Target string `json:"target"`
+		Range  struct {
+			Start LSPPosition `json:"start"`
+			End   LSPPosition `json:"end"`
+		} `json:"range"`
+	}
+	encodedLinks, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedLinks, &documentLinks))
+	require.Len(t, documentLinks, 1)
+	require.Equal(t, "https://example.test/docs", documentLinks[0].Target)
+	require.Equal(t, LSPPosition{Line: 2, Character: 0}, documentLinks[0].Range.Start)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "rename", Path: "main.go", Line: 2, Character: 5, NewName: "Start"})
 	require.NoError(t, err)
 	require.Equal(t, "rename", result.Action)
@@ -451,6 +469,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"folding_range":       "folding-range",
 		"foldingRange":        "folding-range",
 		"folds":               "folding-range",
+		"document_link":       "document-link",
+		"documentLink":        "document-link",
+		"document-links":      "document-link",
 		"signature_help":      "signature-help",
 		"signatureHelp":       "signature-help",
 		"signature":           "signature-help",
@@ -548,6 +569,14 @@ func TestFakeLSPServer(t *testing.T) {
 				"startLine": 2,
 				"endLine":   2,
 				"kind":      "region",
+			}})})
+		case "textDocument/documentLink":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 0},
+					"end":   map[string]any{"line": 2, "character": 12},
+				},
+				"target": "https://example.test/docs",
 			}})})
 		case "textDocument/signatureHelp":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
