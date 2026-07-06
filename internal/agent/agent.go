@@ -496,7 +496,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			}
 			return renderMissingPrompt(app.Out, req.Format)
 		}
-		return app.promptWithOutputOptions(ctx, input, overrides, req.Format, req.Compact, turnOptions{Attachments: req.Attachments, ReplayUserMessages: streamReplayMessages})
+		return app.promptWithOutputOptions(ctx, input, overrides, req.Format, req.Compact, turnOptions{Attachments: req.Attachments, ReplayUserMessages: streamReplayMessages, JSONSchema: req.JSONSchema})
 	case "acp":
 		return wrapStructured(app.ACP(ctx, rest))
 	case "btw":
@@ -28144,6 +28144,22 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Expected:  expected,
 		}
 	}
+	var jsonSchemaErr promptJSONSchemaValidationError
+	if errors.As(err, &jsonSchemaErr) {
+		path := strings.TrimSpace(jsonSchemaErr.Path)
+		if path == "" {
+			path = "$"
+		}
+		return cliErrorReport{
+			Kind:      "json_schema_validation_failed",
+			ErrorKind: "json_schema_validation_failed",
+			Status:    "error",
+			Option:    "--json-schema",
+			Message:   jsonSchemaErr.Error(),
+			Hint:      "Adjust the prompt or --json-schema so the final assistant response is valid JSON matching the schema.",
+			Path:      path,
+		}
+	}
 	var directoryErr session.PathIsDirectoryError
 	if errors.As(err, &directoryErr) {
 		return cliErrorReport{
@@ -32419,6 +32435,25 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 		}
 		return runErr
 	}
+	if strings.TrimSpace(opts.JSONSchema) != "" {
+		response := strings.TrimSpace(streamCapture.String())
+		if response == "" {
+			response = strings.TrimSpace(lastAssistantText(sess.Messages))
+		}
+		if err := validatePromptJSONSchema(response, opts.JSONSchema); err != nil {
+			if format == "stream-json" {
+				writer := promptStreamJSONWriter{Out: a.Out}
+				if writeErr := writer.Event("error", buildCLIErrorReport(err)); writeErr != nil {
+					return writeErr
+				}
+				return &ExitError{Code: 1, Err: err, Silent: true}
+			}
+			if format == "json" {
+				return renderCLIError(a.Out, err, format)
+			}
+			return err
+		}
+	}
 	if compact {
 		report := promptCompactOutputReport(a.Sessions, sess, a.Config.Model, priorMessageCount)
 		switch format {
@@ -32569,6 +32604,290 @@ func lastAssistantText(messages []anthropic.Message) string {
 		return builder.String()
 	}
 	return ""
+}
+
+type promptJSONSchemaValidationError struct {
+	Path   string
+	Reason string
+}
+
+func (e promptJSONSchemaValidationError) Error() string {
+	path := strings.TrimSpace(e.Path)
+	if path == "" {
+		path = "$"
+	}
+	reason := strings.TrimSpace(e.Reason)
+	if reason == "" {
+		reason = "response does not match schema"
+	}
+	return fmt.Sprintf("json_schema_validation_failed: %s: %s", path, reason)
+}
+
+func validatePromptJSONSchema(response string, rawSchema string) error {
+	var schema any
+	if err := decodeJSONValue(rawSchema, &schema); err != nil {
+		return invalidFlagValueError{
+			Flag:    "--json-schema",
+			Value:   "",
+			Message: "--json-schema must be valid JSON",
+			Usage:   "codog -p --json-schema '{\"type\":\"object\"}' --output-format json",
+		}
+	}
+	var value any
+	if err := decodeJSONValue(response, &value); err != nil {
+		return promptJSONSchemaValidationError{Path: "$", Reason: "response is not valid JSON"}
+	}
+	return validateJSONSchemaValue(value, schema, "$")
+}
+
+func decodeJSONValue(raw string, dst any) error {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return errors.New("multiple JSON values")
+	}
+	return nil
+}
+
+func validateJSONSchemaValue(value any, schema any, path string) error {
+	switch typed := schema.(type) {
+	case bool:
+		if typed {
+			return nil
+		}
+		return promptJSONSchemaValidationError{Path: path, Reason: "schema rejects all values"}
+	case map[string]any:
+		return validateJSONSchemaObject(value, typed, path)
+	default:
+		return promptJSONSchemaValidationError{Path: path, Reason: "schema must be a JSON object or boolean"}
+	}
+}
+
+func validateJSONSchemaObject(value any, schema map[string]any, path string) error {
+	if enumValues, ok := schema["enum"]; ok {
+		values, ok := enumValues.([]any)
+		if !ok {
+			return promptJSONSchemaValidationError{Path: path, Reason: "schema enum must be an array"}
+		}
+		matched := false
+		for _, candidate := range values {
+			if jsonValuesEqual(value, candidate) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return promptJSONSchemaValidationError{Path: path, Reason: "value is not in enum"}
+		}
+	}
+	if rawType, ok := schema["type"]; ok {
+		allowed, err := schemaTypeNames(rawType)
+		if err != nil {
+			return promptJSONSchemaValidationError{Path: path, Reason: err.Error()}
+		}
+		if !jsonValueMatchesAnyType(value, allowed) {
+			return promptJSONSchemaValidationError{Path: path, Reason: fmt.Sprintf("expected %s, got %s", strings.Join(allowed, " or "), jsonValueTypeName(value))}
+		}
+	}
+	if requiredRaw, ok := schema["required"]; ok {
+		objectValue, ok := value.(map[string]any)
+		if !ok {
+			return nil
+		}
+		required, err := schemaStringArray(requiredRaw, "required")
+		if err != nil {
+			return promptJSONSchemaValidationError{Path: path, Reason: err.Error()}
+		}
+		for _, name := range required {
+			if _, ok := objectValue[name]; !ok {
+				return promptJSONSchemaValidationError{Path: joinJSONPath(path, name), Reason: "required property is missing"}
+			}
+		}
+	}
+	if propertiesRaw, ok := schema["properties"]; ok {
+		objectValue, ok := value.(map[string]any)
+		if !ok {
+			return nil
+		}
+		properties, ok := propertiesRaw.(map[string]any)
+		if !ok {
+			return promptJSONSchemaValidationError{Path: path, Reason: "schema properties must be an object"}
+		}
+		for name, propertySchema := range properties {
+			propertyValue, ok := objectValue[name]
+			if !ok {
+				continue
+			}
+			if err := validateJSONSchemaValue(propertyValue, propertySchema, joinJSONPath(path, name)); err != nil {
+				return err
+			}
+		}
+		if additional, ok := schema["additionalProperties"].(bool); ok && !additional {
+			for name := range objectValue {
+				if _, known := properties[name]; !known {
+					return promptJSONSchemaValidationError{Path: joinJSONPath(path, name), Reason: "additional property is not allowed"}
+				}
+			}
+		}
+	}
+	if itemsRaw, ok := schema["items"]; ok {
+		arrayValue, ok := value.([]any)
+		if !ok {
+			return nil
+		}
+		for index, item := range arrayValue {
+			if err := validateJSONSchemaValue(item, itemsRaw, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func schemaTypeNames(raw any) ([]string, error) {
+	switch typed := raw.(type) {
+	case string:
+		return []string{typed}, nil
+	case []any:
+		values := []string{}
+		for _, item := range typed {
+			name, ok := item.(string)
+			if !ok {
+				return nil, errors.New("schema type array must contain strings")
+			}
+			values = append(values, name)
+		}
+		return values, nil
+	default:
+		return nil, errors.New("schema type must be a string or string array")
+	}
+}
+
+func schemaStringArray(raw any, field string) ([]string, error) {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("schema %s must be an array", field)
+	}
+	values := []string{}
+	for _, item := range items {
+		value, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("schema %s must contain strings", field)
+		}
+		values = append(values, value)
+	}
+	return values, nil
+}
+
+func jsonValueMatchesAnyType(value any, allowed []string) bool {
+	for _, name := range allowed {
+		switch strings.TrimSpace(name) {
+		case "null":
+			if value == nil {
+				return true
+			}
+		case "boolean":
+			_, ok := value.(bool)
+			if ok {
+				return true
+			}
+		case "object":
+			_, ok := value.(map[string]any)
+			if ok {
+				return true
+			}
+		case "array":
+			_, ok := value.([]any)
+			if ok {
+				return true
+			}
+		case "number":
+			if _, ok := value.(json.Number); ok {
+				return true
+			}
+		case "integer":
+			if number, ok := value.(json.Number); ok && jsonNumberIsInteger(number) {
+				return true
+			}
+		case "string":
+			_, ok := value.(string)
+			if ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func jsonNumberIsInteger(number json.Number) bool {
+	value := number.String()
+	if strings.ContainsAny(value, ".eE") {
+		floatValue, err := strconv.ParseFloat(value, 64)
+		return err == nil && math.Trunc(floatValue) == floatValue
+	}
+	_, err := strconv.ParseInt(value, 10, 64)
+	return err == nil
+}
+
+func jsonValueTypeName(value any) string {
+	switch value.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "boolean"
+	case map[string]any:
+		return "object"
+	case []any:
+		return "array"
+	case json.Number:
+		return "number"
+	case string:
+		return "string"
+	default:
+		return "unknown"
+	}
+}
+
+func jsonValuesEqual(left any, right any) bool {
+	leftData, leftErr := json.Marshal(left)
+	rightData, rightErr := json.Marshal(right)
+	if leftErr != nil || rightErr != nil {
+		return reflect.DeepEqual(left, right)
+	}
+	return bytes.Equal(leftData, rightData)
+}
+
+func joinJSONPath(path string, key string) string {
+	if path == "" {
+		path = "$"
+	}
+	if isJSONPathIdentifier(key) {
+		return path + "." + key
+	}
+	encoded, _ := json.Marshal(key)
+	return path + "[" + string(encoded) + "]"
+}
+
+func isJSONPathIdentifier(value string) bool {
+	if value == "" {
+		return false
+	}
+	for index, r := range value {
+		if index == 0 {
+			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_' {
+				continue
+			}
+			return false
+		}
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 type promptStreamJSONWriter struct {
@@ -32781,6 +33100,7 @@ type turnOptions struct {
 	Attachments        []string
 	AllowedTools       []string
 	ReplayUserMessages []promptStreamJSONReplayMessage
+	JSONSchema         string
 	Out                io.Writer
 }
 
@@ -32789,6 +33109,7 @@ type promptCLIRequest struct {
 	Format             string
 	InputFormat        string
 	ReplayUserMessages bool
+	JSONSchema         string
 	PromptProvided     bool
 	Compact            bool
 	UseStdin           bool
@@ -32827,6 +33148,14 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 			req.InputFormat = strings.TrimPrefix(arg, "--input-format=")
 		case arg == "--replay-user-messages":
 			req.ReplayUserMessages = true
+		case arg == "--json-schema":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "prompt", Flag: "--json-schema", Usage: "codog -p --json-schema '{\"type\":\"object\"}' --output-format json"}
+			}
+			req.JSONSchema = args[index]
+		case strings.HasPrefix(arg, "--json-schema="):
+			req.JSONSchema = strings.TrimPrefix(arg, "--json-schema=")
 		case arg == "--compact":
 			req.Compact = true
 		case arg == "--stdin" || arg == "--prompt-stdin":
@@ -32873,6 +33202,14 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 			Value:   "",
 			Message: "--replay-user-messages requires --input-format=stream-json and --output-format=stream-json",
 			Usage:   "codog -p --input-format stream-json --output-format stream-json --replay-user-messages",
+		}
+	}
+	if req.Compact && strings.TrimSpace(req.JSONSchema) != "" {
+		return req, invalidFlagValueError{
+			Flag:    "--json-schema",
+			Value:   "",
+			Message: "--json-schema cannot be used with --compact",
+			Usage:   "codog -p --json-schema '{\"type\":\"object\"}' --output-format json",
 		}
 	}
 	return req, nil
@@ -51577,6 +51914,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	jsonOutput := false
 	outputFormat := ""
 	inputFormat := strings.TrimSpace(base.InputFormat)
+	jsonSchema := strings.TrimSpace(base.JSONSchema)
 	allowedTools := stringListFlag(base.AllowedTools)
 	disallowedTools := stringListFlag(base.DisallowedTools)
 	toolNames := append([]string(nil), base.ToolNames...)
@@ -51603,6 +51941,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&outputFormat, "output-format", "", "text or json output for local commands")
 	flags.StringVar(&outputFormat, "o", "", "text or json output for local commands")
 	flags.StringVar(&inputFormat, "input-format", inputFormat, "text or stream-json input for prompt mode")
+	flags.StringVar(&jsonSchema, "json-schema", jsonSchema, "JSON Schema for prompt structured output validation")
 	flags.StringVar(&base.PermissionMode, "permission-mode", base.PermissionMode, "read-only, workspace-write, danger-full-access, prompt, allow")
 	flags.BoolVar(&base.SkipPermissions, "dangerously-skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
 	flags.BoolVar(&base.SkipPermissions, "skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
@@ -51623,6 +51962,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	}
 	base.OutputFormatSource, base.OutputFormatRaw, base.OutputFormatOverridden = globalOutputFormatProvenance(outputFormat, jsonOutput)
 	base.InputFormat = strings.TrimSpace(inputFormat)
+	base.JSONSchema = strings.TrimSpace(jsonSchema)
 	base.AllowedTools = []string(allowedTools)
 	base.DisallowedTools = []string(disallowedTools)
 	base.ToolNames = append([]string(nil), toolNames...)
@@ -51658,6 +51998,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		if base.ReplayUserMessages {
 			rest = append(rest, "--replay-user-messages")
 		}
+		if base.JSONSchema != "" {
+			rest = append(rest, "--json-schema", base.JSONSchema)
+		}
 		return base, "prompt", rest, nil
 	}
 	if len(rest) == 0 {
@@ -51683,6 +52026,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 				Value:   "",
 				Message: "--replay-user-messages is only supported with prompt mode",
 				Usage:   "codog -p --input-format stream-json --output-format stream-json --replay-user-messages",
+			}
+		}
+		if base.JSONSchema != "" {
+			return base, "", nil, invalidFlagValueError{
+				Flag:    "--json-schema",
+				Value:   "",
+				Message: "--json-schema is only supported with prompt mode",
+				Usage:   "codog -p --json-schema '{\"type\":\"object\"}' --output-format json",
 			}
 		}
 		return base, "", nil, nil
@@ -51712,6 +52063,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 			Usage:   "codog -p --input-format stream-json --output-format stream-json --replay-user-messages",
 		}
 	}
+	if base.JSONSchema != "" && !strings.EqualFold(command, "prompt") {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--json-schema",
+			Value:   command,
+			Message: "--json-schema is only supported with prompt mode",
+			Usage:   "codog -p --json-schema '{\"type\":\"object\"}' --output-format json",
+		}
+	}
 	outputFormat = resolveGlobalOutputFormat(outputFormat, jsonOutput)
 	base.OutputFormatSubcommandExplicit = argsHaveOutputFormat(rest)
 	if outputFormat != "" && commandAcceptsGlobalOutputFormat(command) && !base.OutputFormatSubcommandExplicit {
@@ -51731,6 +52090,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	}
 	if strings.EqualFold(command, "prompt") && base.ReplayUserMessages && !argsHaveReplayUserMessages(rest) {
 		rest = append(rest, "--replay-user-messages")
+	}
+	if strings.EqualFold(command, "prompt") && base.JSONSchema != "" && !argsHaveJSONSchema(rest) {
+		rest = append(rest, "--json-schema", base.JSONSchema)
 	}
 	return base, command, rest, nil
 }
@@ -51839,7 +52201,7 @@ func globalFlagConsumesNext(arg string) bool {
 		"--system-prompt-file", "-system-prompt-file", "--append-system-prompt", "-append-system-prompt",
 		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
 		"--resume", "-resume", "--output-format", "-output-format", "-o", "--o",
-		"--input-format", "-input-format",
+		"--input-format", "-input-format", "--json-schema", "-json-schema",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
 		"--max-tokens", "-max-tokens", "--temperature", "-temperature",
 		"--tools", "-tools",
@@ -51876,7 +52238,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--resume", "--output-format", "-o", "--input-format", "-input-format", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--resume", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
@@ -52090,6 +52452,15 @@ func argsHaveOutputFormat(args []string) bool {
 func argsHaveInputFormat(args []string) bool {
 	for _, arg := range args {
 		if arg == "--input-format" || strings.HasPrefix(arg, "--input-format=") {
+			return true
+		}
+	}
+	return false
+}
+
+func argsHaveJSONSchema(args []string) bool {
+	for _, arg := range args {
+		if arg == "--json-schema" || strings.HasPrefix(arg, "--json-schema=") {
 			return true
 		}
 	}
@@ -53491,7 +53862,7 @@ func helpText(exe string) string {
 	help := `%s is a Go-native coding agent CLI.
 
 Usage:
-  %s [flags] prompt [--stdin] [--attach PATH] [--input-format text|stream-json] "explain this repo" [--json|--output-format text|json|stream-json] | -p "explain this repo"
+  %s [flags] prompt [--stdin] [--attach PATH] [--input-format text|stream-json] [--json-schema SCHEMA] "explain this repo" [--json|--output-format text|json|stream-json] | -p "explain this repo"
   %s [flags] btw "quick side question" [--session ID|--resume ID]
   %s version [--json|--output-format text|json]
   %s config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--json|--output-format text|json]
@@ -53673,6 +54044,7 @@ Flags:
   --no-session-persistence
   --input-format text|stream-json
   --replay-user-messages
+  --json-schema SCHEMA
   --allowed-tools TOOL[,TOOL]
   --disallowed-tools TOOL[,TOOL]
   --tools TOOL[,TOOL]

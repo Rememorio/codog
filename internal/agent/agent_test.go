@@ -10079,6 +10079,27 @@ func TestParseFlagsSupportsInputFormatForPrompt(t *testing.T) {
 	require.Contains(t, flagErr.Message, "prompt mode")
 }
 
+func TestParseFlagsSupportsJSONSchemaForPrompt(t *testing.T) {
+	rawSchema := `{"type":"object"}`
+	overrides, command, rest, err := parseFlags([]string{"-p", "--json-schema", rawSchema, "--output-format", "json", "{}"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, rawSchema, overrides.JSONSchema)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"{}", "--output-format", "json", "--json-schema", rawSchema}, rest)
+
+	_, command, rest, err = parseFlags([]string{"--json-schema", rawSchema, "prompt", "{}"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"{}", "--json-schema", rawSchema}, rest)
+
+	_, _, _, err = parseFlags([]string{"--json-schema", rawSchema, "status"}, config.FlagOverrides{})
+	require.Error(t, err)
+	var flagErr invalidFlagValueError
+	require.ErrorAs(t, err, &flagErr)
+	require.Equal(t, "--json-schema", flagErr.Flag)
+	require.Contains(t, flagErr.Message, "prompt mode")
+}
+
 func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{"--output-format", "json", "status"}, config.FlagOverrides{})
 	require.NoError(t, err)
@@ -10247,6 +10268,13 @@ func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
 	require.Equal(t, "stream-json", req.Format)
 	require.True(t, req.ReplayUserMessages)
 
+	rawSchema := `{"type":"object","required":["name"]}`
+	req, err = parsePromptArgs([]string{"--json-schema", rawSchema, "--output-format", "json", "return json"})
+	require.NoError(t, err)
+	require.Equal(t, rawSchema, req.JSONSchema)
+	require.Equal(t, "json", req.Format)
+	require.Equal(t, "return json", req.Prompt)
+
 	_, err = parsePromptArgs([]string{"--input-format", "stream-json"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "requires --output-format=stream-json")
@@ -10258,6 +10286,48 @@ func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
 	_, err = parsePromptArgs([]string{"--replay-user-messages", "--output-format", "stream-json"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "requires --input-format=stream-json")
+
+	_, err = parsePromptArgs([]string{"--json-schema"})
+	require.Error(t, err)
+	var missing missingFlagValueError
+	require.ErrorAs(t, err, &missing)
+	require.Equal(t, "--json-schema", missing.Flag)
+
+	_, err = parsePromptArgs([]string{"--compact", "--json-schema", rawSchema})
+	require.Error(t, err)
+	var invalid invalidFlagValueError
+	require.ErrorAs(t, err, &invalid)
+	require.Equal(t, "--json-schema", invalid.Flag)
+}
+
+func TestPromptJSONSchemaValidation(t *testing.T) {
+	schema := `{"type":"object","required":["name"],"properties":{"name":{"type":"string"},"count":{"type":"integer"},"tags":{"type":"array","items":{"type":"string"}}},"additionalProperties":false}`
+	require.NoError(t, validatePromptJSONSchema(`{"name":"codog","count":2,"tags":["go"]}`, schema))
+
+	err := validatePromptJSONSchema(`{"count":2}`, schema)
+	require.Error(t, err)
+	var schemaErr promptJSONSchemaValidationError
+	require.ErrorAs(t, err, &schemaErr)
+	require.Equal(t, "$.name", schemaErr.Path)
+	require.Contains(t, schemaErr.Reason, "required")
+
+	err = validatePromptJSONSchema(`{"name":7}`, schema)
+	require.Error(t, err)
+	require.ErrorAs(t, err, &schemaErr)
+	require.Equal(t, "$.name", schemaErr.Path)
+	require.Contains(t, schemaErr.Reason, "expected string")
+
+	require.NoError(t, validatePromptJSONSchema(`"ok"`, `{"enum":["ok","done"]}`))
+	err = validatePromptJSONSchema(`{bad json}`, schema)
+	require.Error(t, err)
+	require.ErrorAs(t, err, &schemaErr)
+	require.Equal(t, "$", schemaErr.Path)
+
+	err = validatePromptJSONSchema(`{"name":"codog"}`, `{bad schema}`)
+	require.Error(t, err)
+	var flagErr invalidFlagValueError
+	require.ErrorAs(t, err, &flagErr)
+	require.Equal(t, "--json-schema", flagErr.Flag)
 }
 
 func TestReadPromptStreamJSONInputExtractsSDKUserMessages(t *testing.T) {
@@ -22554,6 +22624,70 @@ func TestPromptOutputFormats(t *testing.T) {
 	require.Equal(t, "mock", compactReport.Model)
 	require.Equal(t, 10, compactReport.Usage.InputTokens)
 	require.Equal(t, 5, compactReport.Usage.OutputTokens)
+}
+
+func TestPromptJSONSchemaOutputValidation(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Turns: []mockanthropic.Turn{
+		{Text: `{"name":"codog"}`},
+		{Text: `{"name":7}`},
+		{Text: `{"name":7}`},
+	}}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			PermissionRules:     config.PermissionRules{},
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+	schema := `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`
+
+	require.NoError(t, app.promptWithOutputOptions(context.Background(), "json prompt", config.FlagOverrides{SessionID: "schema-ok"}, "json", false, turnOptions{JSONSchema: schema}))
+	var report promptReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "completed", report.Status)
+	require.JSONEq(t, `{"name":"codog"}`, report.Response)
+	out.Reset()
+
+	err := app.promptWithOutputOptions(context.Background(), "json prompt", config.FlagOverrides{SessionID: "schema-fail-json"}, "json", false, turnOptions{JSONSchema: schema})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var errorReport cliErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &errorReport))
+	require.Equal(t, "json_schema_validation_failed", errorReport.ErrorKind)
+	require.Equal(t, "$.name", errorReport.Path)
+	out.Reset()
+
+	err = app.promptWithOutputOptions(context.Background(), "stream prompt", config.FlagOverrides{SessionID: "schema-fail-stream"}, "stream-json", false, turnOptions{JSONSchema: schema})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.GreaterOrEqual(t, len(lines), 3)
+	var lastEvent map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &lastEvent))
+	require.Equal(t, "error", lastEvent["type"])
+	payload, ok := lastEvent["payload"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "json_schema_validation_failed", payload["error_kind"])
 }
 
 func TestBTWUsesForkedSideSession(t *testing.T) {

@@ -1104,6 +1104,7 @@ type FlagOverrides struct {
 	NoSessionPersistence           bool
 	InputFormat                    string
 	ReplayUserMessages             bool
+	JSONSchema                     string
 	OutputFormatSource             string
 	OutputFormatRaw                string
 	OutputFormatOverridden         bool
