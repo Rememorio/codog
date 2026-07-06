@@ -904,6 +904,15 @@ func AllCandidates(options CandidateOptions) []string {
 		"/session delete ",
 		"/session switch ",
 		"/session fork ",
+		"/sessions list",
+		"/sessions show ",
+		"/sessions exists ",
+		"/sessions rename ",
+		"/sessions prune",
+		"/sessions prune --confirm",
+		"/sessions delete ",
+		"/sessions switch ",
+		"/sessions fork ",
 		"/share ",
 		"/skill list",
 		"/skill roots",
@@ -971,6 +980,9 @@ func AllCandidates(options CandidateOptions) []string {
 		add("/session show " + activeSessionID)
 		add("/session exists " + activeSessionID)
 		add("/session switch " + activeSessionID)
+		add("/sessions show " + activeSessionID)
+		add("/sessions exists " + activeSessionID)
+		add("/sessions switch " + activeSessionID)
 	}
 	for index, sessionID := range options.RecentSessionIDs {
 		if index >= 10 {
@@ -984,6 +996,9 @@ func AllCandidates(options CandidateOptions) []string {
 		add("/session show " + sessionID)
 		add("/session exists " + sessionID)
 		add("/session switch " + sessionID)
+		add("/sessions show " + sessionID)
+		add("/sessions exists " + sessionID)
+		add("/sessions switch " + sessionID)
 	}
 	for _, candidate := range options.Extra {
 		add(candidate)
