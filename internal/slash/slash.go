@@ -40,7 +40,7 @@ func Specs() []Spec {
 		{Name: "/remote", Usage: "/remote [status|enable|disable|clear|serve]", Description: "Show, configure, or serve local remote control."},
 		{Name: "/remote-setup", Usage: "/remote-setup [status|enable|disable|clear]", Description: "Prepare and inspect local remote-control setup."},
 		{Name: "/web-setup", Usage: "/web-setup [status|enable|disable|clear]", Description: "Alias for /remote-setup."},
-		{Name: "/api", Usage: "/api [routes|status]", Description: "Show the local remote-control HTTP API routes."},
+		{Name: "/api", Usage: "/api [routes|status|serve|listen|start] [ADDR|--addr ADDR]", Description: "Show or serve the local remote-control HTTP API."},
 		{Name: "/desktop", Usage: "/desktop [status]", Description: "Show desktop handoff instructions for the current session."},
 		{Name: "/app", Usage: "/app [status]", Description: "Alias for /desktop."},
 		{Name: "/bridge", Usage: "/bridge [status|clear|serve]", Description: "Inspect, clear, or serve the trusted editor bridge."},

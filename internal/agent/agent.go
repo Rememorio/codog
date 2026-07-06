@@ -53570,8 +53570,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"api",
 			"api",
-			"codog api [routes|status|serve] [ADDR|--addr ADDR] [--output-format text|json]",
-			"API\n\nUsage:\n  codog api [routes|status] [--addr ADDR] [--output-format text|json]\n  codog api serve [ADDR|--addr ADDR] [--output-format text|json]\n\nReports the local remote-control HTTP API URL, auth state, startup command, and route manifest. `serve` starts the same local control API used by remote-control and IDE bridge clients.\n",
+			"codog api [routes|list|show|status|serve|listen|start] [ADDR|--addr ADDR] [--output-format text|json]",
+			"API\n\nUsage:\n  codog api [routes|list|show|status] [--addr ADDR] [--output-format text|json]\n  codog api serve|listen|start [ADDR|--addr ADDR] [--output-format text|json]\n\nReports the local remote-control HTTP API URL, auth state, startup command, and route manifest. `serve`, `listen`, and `start` start the same local control API used by remote-control and IDE bridge clients.\n",
 			[]string{"remote_url", "auth_required", "listening", "route_count", "routes", "remote_command"},
 			[]string{"disabled", "enabled_without_auth", "ready", "serving"},
 			false,

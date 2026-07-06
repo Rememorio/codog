@@ -376,6 +376,14 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.CheckNames, "Auth")
 
 	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"api", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "api", report.Topic)
+	require.Contains(t, report.Usage, "listen")
+	require.Contains(t, report.Usage, "start")
+	require.Contains(t, report.Help, "serve|listen|start")
+
+	out.Reset()
 	require.NoError(t, renderHelpCommand(&out, []string{"status", "--output-format", "json"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "status", report.Topic)

@@ -287,6 +287,13 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.True(t, SupportsResume("/status"))
 	require.True(t, SupportsResume("/STATUS"))
 
+	api, ok := Lookup("/api")
+	require.True(t, ok)
+	require.True(t, api.ResumeSupported)
+	require.Contains(t, api.Usage, "serve")
+	require.Contains(t, api.Usage, "listen")
+	require.Contains(t, api.Usage, "start")
+
 	skill, ok := Lookup("/skill")
 	require.True(t, ok)
 	require.True(t, skill.ResumeSupported)
