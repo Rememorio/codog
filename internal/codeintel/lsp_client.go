@@ -48,11 +48,13 @@ type LSPQueryResult struct {
 
 // LSPFileEdit previews the text edits a language server returned for one file.
 type LSPFileEdit struct {
-	Path      string `json:"path"`
-	AbsPath   string `json:"-"`
-	TextEdits int    `json:"text_edits"`
-	Changed   bool   `json:"changed"`
-	Content   string `json:"content,omitempty"`
+	Path        string `json:"path"`
+	AbsPath     string `json:"-"`
+	ActionTitle string `json:"action_title,omitempty"`
+	ActionKind  string `json:"action_kind,omitempty"`
+	TextEdits   int    `json:"text_edits"`
+	Changed     bool   `json:"changed"`
+	Content     string `json:"content,omitempty"`
 }
 
 type lspClient struct {
@@ -459,6 +461,16 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 			result.Applied = true
 		}
 	}
+	if action == "code-action" && len(raw) > 0 && string(raw) != "null" {
+		fileEdits, textEdits, err := summarizeLSPCodeActionEdits(workspace, raw)
+		if err != nil {
+			return LSPQueryResult{}, err
+		}
+		result.FileEdits = len(fileEdits)
+		result.TextEdits = textEdits
+		result.Edits = fileEdits
+		result.Changed = textEdits > 0
+	}
 	return result, nil
 }
 
@@ -698,6 +710,32 @@ func applyLSPFileEdits(edits []LSPFileEdit) error {
 		}
 	}
 	return nil
+}
+
+func summarizeLSPCodeActionEdits(workspace string, raw json.RawMessage) ([]LSPFileEdit, int, error) {
+	var actions []struct {
+		Title string           `json:"title"`
+		Kind  string           `json:"kind"`
+		Edit  lspWorkspaceEdit `json:"edit"`
+	}
+	if err := json.Unmarshal(raw, &actions); err != nil {
+		return nil, 0, err
+	}
+	out := []LSPFileEdit{}
+	totalTextEdits := 0
+	for _, action := range actions {
+		fileEdits, textEdits, err := summarizeLSPWorkspaceEdit(workspace, action.Edit)
+		if err != nil {
+			return nil, 0, err
+		}
+		for index := range fileEdits {
+			fileEdits[index].ActionTitle = action.Title
+			fileEdits[index].ActionKind = action.Kind
+		}
+		out = append(out, fileEdits...)
+		totalTextEdits += textEdits
+	}
+	return out, totalTextEdits, nil
 }
 
 func collectLSPWorkspaceEdits(edit lspWorkspaceEdit) map[string][]lspTextEdit {

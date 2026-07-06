@@ -319,6 +319,14 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Len(t, codeActions, 1)
 	require.Equal(t, "Apply fake fix", codeActions[0].Title)
 	require.Equal(t, "quickfix", codeActions[0].Kind)
+	require.Equal(t, 1, result.FileEdits)
+	require.Equal(t, 1, result.TextEdits)
+	require.True(t, result.Changed)
+	require.Len(t, result.Edits, 1)
+	require.Equal(t, "Apply fake fix", result.Edits[0].ActionTitle)
+	require.Equal(t, "quickfix", result.Edits[0].ActionKind)
+	require.Equal(t, "main.go", result.Edits[0].Path)
+	require.Contains(t, result.Edits[0].Content, "func Launch()")
 
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "diagnostics", Path: "main.go"})
 	require.NoError(t, err)
@@ -481,7 +489,7 @@ func TestFakeLSPServer(t *testing.T) {
 								"start": map[string]any{"line": 2, "character": 5},
 								"end":   map[string]any{"line": 2, "character": 10},
 							},
-							"newText": "Start",
+							"newText": "Launch",
 						}},
 					},
 				},

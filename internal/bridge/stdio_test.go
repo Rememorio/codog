@@ -395,6 +395,8 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, string(data), "func Start()")
 	require.Contains(t, out.String(), `"action":"code-action"`)
 	require.Contains(t, out.String(), `"title":"Bridge fake fix"`)
+	require.Contains(t, out.String(), `"file_edits":1`)
+	require.Contains(t, out.String(), `func Launch()`)
 	require.Contains(t, out.String(), `"kind":"lsp_status"`)
 	require.Contains(t, out.String(), `"kind":"lsp_list"`)
 	require.Contains(t, out.String(), `"kind":"lsp_stop"`)
@@ -485,6 +487,17 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
 				"title": "Bridge fake fix",
 				"kind":  "quickfix",
+				"edit": map[string]any{
+					"changes": map[string]any{
+						currentURI: []map[string]any{{
+							"range": map[string]any{
+								"start": map[string]any{"line": 2, "character": 5},
+								"end":   map[string]any{"line": 2, "character": 10},
+							},
+							"newText": "Launch",
+						}},
+					},
+				},
 			}}})
 		case "shutdown":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": nil})
