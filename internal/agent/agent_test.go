@@ -3327,6 +3327,14 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "inspect release", directUltraPlan.State.Plan)
 }
 
+func TestDirectSlashCommandNameCanonicalizesAliases(t *testing.T) {
+	require.Equal(t, "desktop", directSlashCommandName("/app"))
+	require.Equal(t, "bridge", directSlashCommandName("/remote-control"))
+	require.Equal(t, "bridge", directSlashCommandName("/rc"))
+	require.Equal(t, "terminal-setup", directSlashCommandName("/terminalSetup"))
+	require.Equal(t, "pr-comments", directSlashCommandName("/pr_comments"))
+}
+
 func TestModelsCommandActionAliases(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")

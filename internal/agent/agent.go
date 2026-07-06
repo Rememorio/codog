@@ -30208,8 +30208,14 @@ func directSlashCommandName(name string) string {
 		return "feedback"
 	case "/checkpoint":
 		return "rewind"
-	case "/rc":
+	case "/rc", "/remote-control":
 		return "bridge"
+	case "/app":
+		return "desktop"
+	case "/terminalsetup":
+		return "terminal-setup"
+	case "/pr_comments":
+		return "pr-comments"
 	}
 	spec, ok := slash.Lookup(name)
 	if !ok {
