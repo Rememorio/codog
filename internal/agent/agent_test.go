@@ -10111,6 +10111,16 @@ func TestParseFlagsSupportsMCPConfigOverrides(t *testing.T) {
 	require.Equal(t, []string{"list", "--json"}, rest)
 }
 
+func TestParseFlagsSupportsSettingsOverride(t *testing.T) {
+	inline := `{"model":"settings-model","mcpServers":{"one":{"command":"one","args":["--stdio","--flag"]}}}`
+	overrides, command, rest, err := parseFlags([]string{"--settings", inline, "config", "get", "model", "--json"}, config.FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, inline, overrides.Settings)
+	require.Equal(t, "config", command)
+	require.Equal(t, []string{"get", "model", "--json"}, rest)
+}
+
 func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{"--output-format", "json", "status"}, config.FlagOverrides{})
 	require.NoError(t, err)

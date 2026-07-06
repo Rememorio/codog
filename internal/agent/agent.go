@@ -51939,6 +51939,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	toolSelection := toolSelectionFlag{values: &toolNames, set: &base.ToolNamesSet}
 	promptAttachments := stringListFlag{}
 	flags.StringVar(&base.ConfigPath, "config", base.ConfigPath, "config path")
+	flags.StringVar(&base.Settings, "settings", base.Settings, "load additional settings from a JSON file or JSON object")
 	flags.StringVar(&base.CWD, "cwd", base.CWD, "run as if Codog was started in this directory")
 	flags.StringVar(&base.CWD, "C", base.CWD, "alias for --cwd")
 	flags.StringVar(&base.CWD, "directory", base.CWD, "alias for --cwd")
@@ -52217,7 +52218,7 @@ func duplicateFlagUsage(flag string) string {
 
 func globalFlagConsumesNext(arg string) bool {
 	switch arg {
-	case "--config", "-config", "--cwd", "-cwd", "-C", "--C", "--directory", "-directory",
+	case "--config", "-config", "--settings", "-settings", "--cwd", "-cwd", "-C", "--C", "--directory", "-directory",
 		"--model", "-model", "--base-url", "-base-url", "--system-prompt", "-system-prompt",
 		"--system-prompt-file", "-system-prompt-file", "--append-system-prompt", "-append-system-prompt",
 		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
@@ -52259,7 +52260,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--resume", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--resume", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
@@ -54077,6 +54078,7 @@ Flags:
   --json
   --output-format text|json (prompt also accepts stream-json; CODOG_OUTPUT_FORMAT sets the default)
   --config PATH
+  --settings PATH|JSON
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL, ANTHROPIC_DEFAULT_MODEL, ANTHROPIC_SMALL_FAST_MODEL, ANTHROPIC_MAX_TOKENS, ANTHROPIC_TEMPERATURE, ANTHROPIC_REASONING_EFFORT, CLAUDE_MODEL, CLAUDE_CONFIG_HOME, CLAUDE_CONFIG_DIR, OPENAI_API_KEY, OPENAI_BASE_URL, OLLAMA_HOST, XAI_API_KEY, XAI_BASE_URL, DASHSCOPE_API_KEY, DASHSCOPE_BASE_URL, CODOG_CONFIG_HOME, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_MAX_TOKENS, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_LANGUAGE, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_OAUTH_PROFILE, CODOG_TEMPERATURE, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED

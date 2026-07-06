@@ -1399,6 +1399,59 @@ func TestLoadMCPConfigFlagRejectsInvalidSources(t *testing.T) {
 	require.True(t, IsFileError(err))
 }
 
+func TestLoadSettingsFlagMergesFileAndInlineJSON(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	settingsPath := filepath.Join(dir, "settings.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"model": "config-model",
+		"max_tokens": 100,
+		"mcpServers": {
+			"base": {"command": "base-mcp"}
+		}
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(settingsPath, []byte(`{
+		"model": "settings-model",
+		"append_system_prompt": "from settings",
+		"mcpServers": {
+			"settings": {"command": "settings-mcp"}
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{
+		ConfigPath: configPath,
+		Settings:   settingsPath,
+		MaxTokens:  200,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "settings-model", cfg.Model)
+	require.Equal(t, 200, cfg.MaxTokens)
+	require.Equal(t, "from settings", cfg.AppendSystemPrompt)
+	require.Equal(t, "base-mcp", cfg.MCPServers["base"].Command)
+	require.Equal(t, "settings-mcp", cfg.MCPServers["settings"].Command)
+
+	cfg, _, err = LoadForInspection(FlagOverrides{
+		ConfigPath: configPath,
+		Settings:   `{"model":"inline-model","mcpServers":{"inline":{"url":"https://inline.example/mcp"}}}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "inline-model", cfg.Model)
+	require.Equal(t, "https://inline.example/mcp", cfg.MCPServers["inline"].URL)
+}
+
+func TestLoadSettingsFlagRejectsInvalidSources(t *testing.T) {
+	_, _, err := LoadForInspection(FlagOverrides{Settings: `{"model":`})
+	require.Error(t, err)
+	require.True(t, IsFileError(err))
+	require.Contains(t, err.Error(), "--settings")
+
+	_, _, err = LoadForInspection(FlagOverrides{Settings: filepath.Join(t.TempDir(), "missing.json")})
+	require.Error(t, err)
+	require.True(t, IsFileError(err))
+}
+
 func TestLoadProjectMCPJSONRespectsTrustSettings(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()

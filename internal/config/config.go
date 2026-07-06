@@ -1085,6 +1085,7 @@ type MutationReport struct {
 
 type FlagOverrides struct {
 	ConfigPath                     string
+	Settings                       string
 	CWD                            string
 	SessionID                      string
 	Resume                         string
@@ -1132,6 +1133,9 @@ func Load(overrides FlagOverrides) (Config, error) {
 		}
 		merge(&cfg, next)
 	}
+	if err := applyFlagSettings(&cfg, overrides.Settings); err != nil {
+		return Config{}, err
+	}
 
 	applyEnv(&cfg)
 	if err := applyFlags(&cfg, overrides); err != nil {
@@ -1170,6 +1174,9 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 			return Config{}, paths, err
 		}
 	}
+	if err := applyFlagSettings(&cfg, overrides.Settings); err != nil {
+		return Config{}, paths, err
+	}
 	applyEnv(&cfg)
 	if err := applyFlags(&cfg, overrides); err != nil {
 		return Config{}, paths, err
@@ -1199,6 +1206,9 @@ func InspectionPaths(overrides FlagOverrides) ([]string, error) {
 func Default(overrides FlagOverrides) (Config, error) {
 	cfg, err := defaultConfig()
 	if err != nil {
+		return Config{}, err
+	}
+	if err := applyFlagSettings(&cfg, overrides.Settings); err != nil {
 		return Config{}, err
 	}
 	applyEnv(&cfg)
@@ -1336,6 +1346,39 @@ func readConfigFile(path string) (Config, error) {
 		if os.IsNotExist(err) {
 			return Config{}, nil
 		}
+		return Config{}, &FileError{Path: path, Err: err}
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return Config{}, &FileError{Path: path, Err: err}
+	}
+	return cfg, nil
+}
+
+func applyFlagSettings(cfg *Config, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	next, err := readFlagSettings(value)
+	if err != nil {
+		return err
+	}
+	merge(cfg, next)
+	return nil
+}
+
+func readFlagSettings(value string) (Config, error) {
+	if strings.HasPrefix(value, "{") {
+		var cfg Config
+		if err := json.Unmarshal([]byte(value), &cfg); err != nil {
+			return Config{}, &FileError{Path: "--settings", Err: err}
+		}
+		return cfg, nil
+	}
+	path := value
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return Config{}, &FileError{Path: path, Err: err}
 	}
 	var cfg Config
