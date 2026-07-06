@@ -3327,7 +3327,7 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "inspect release", directUltraPlan.State.Plan)
 }
 
-func TestDirectSlashCommandNameCanonicalizesAliases(t *testing.T) {
+func TestSlashCommandNameCanonicalizesAliases(t *testing.T) {
 	for input, expected := range map[string]string{
 		"/app":                 "desktop",
 		"/remote-control":      "bridge",
@@ -3355,8 +3355,8 @@ func TestDirectSlashCommandNameCanonicalizesAliases(t *testing.T) {
 		"/generateSessionName": "generateSessionName",
 		"/exit_plan_mode":      "exit-plan",
 	} {
-		require.Equal(t, expected, directSlashCommandName(input), input)
-		require.Equal(t, "/"+strings.ToLower(expected), resumedSlashCanonicalName(directSlashCommandName(input)), input)
+		require.Equal(t, expected, slashCommandName(input), input)
+		require.Equal(t, "/"+strings.ToLower(expected), slashSwitchName(slashCommandName(input)), input)
 	}
 }
 

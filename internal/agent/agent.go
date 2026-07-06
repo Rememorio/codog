@@ -248,7 +248,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	}
 	helpCommand := command
 	if strings.HasPrefix(command, "/") && strings.TrimSpace(overrides.Resume) == "" {
-		if mapped := directSlashCommandName(command); mapped != "" {
+		if mapped := slashCommandName(command); mapped != "" {
 			helpCommand = mapped
 		}
 	}
@@ -415,7 +415,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.RunResumedSlash(ctx, command, rest, overrides, format)
 	}
 	if strings.HasPrefix(command, "/") {
-		if directSlashCommandName(command) == "" && !directSlashInteractiveOnly(command) {
+		if slashCommandName(command) == "" && !directSlashInteractiveOnly(command) {
 			if handled, err := app.runDirectCustomSlash(ctx, command, rest, overrides, format); handled {
 				return wrapStructured(err)
 			}
@@ -28725,7 +28725,7 @@ func normalizeDirectSlashInvocation(out io.Writer, command string, args []string
 	if directSlashInteractiveOnly(name) {
 		return "", nil, renderInteractiveOnlySlash(out, name, format)
 	}
-	mapped := directSlashCommandName(name)
+	mapped := slashCommandName(name)
 	if mapped == "" {
 		return "", nil, renderUnknownSlashCommand(out, name, format, extraSuggestions)
 	}
@@ -28757,14 +28757,14 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 	if !strings.HasPrefix(name, "/") {
 		return fmt.Errorf("resume slash command must start with /: %q", command)
 	}
-	mapped := directSlashCommandName(name)
+	mapped := slashCommandName(name)
 	if mapped == "" {
 		if handled, err := a.runDirectCustomSlash(ctx, command, args, overrides, format); handled {
 			return err
 		}
 		return renderUnknownSlashCommand(a.Out, command, format, a.customSlashCompletionCandidates())
 	}
-	name = resumedSlashCanonicalName(mapped)
+	name = slashSwitchName(mapped)
 	resumed := overrides
 	if strings.TrimSpace(resumed.Resume) == "" {
 		resumed.Resume = "latest"
@@ -29238,7 +29238,7 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 	}
 }
 
-func resumedSlashCanonicalName(mapped string) string {
+func slashSwitchName(mapped string) string {
 	mapped = strings.TrimSpace(mapped)
 	if mapped == "" {
 		return ""
@@ -30198,7 +30198,7 @@ func resumedSlashCommandLabel(base string, action string) string {
 	return base + " " + action
 }
 
-func directSlashCommandName(name string) string {
+func slashCommandName(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "/exit_plan_mode":
 		return "exit-plan"
@@ -34085,8 +34085,8 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		return true
 	}
 	command := fields[0]
-	if mapped := directSlashCommandName(command); mapped != "" {
-		command = resumedSlashCanonicalName(mapped)
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
 	}
 	switch command {
 	case "/help":
