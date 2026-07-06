@@ -578,6 +578,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	case "auth":
+		if err := app.Auth(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "advisor":
 		if err := app.Advisor(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -10094,6 +10099,187 @@ func (a *App) marketplacePublicKey(marketplaceURL string) string {
 		return ""
 	}
 	return a.Config.Future.PluginMarketplaceKeys[marketplaceURL]
+}
+
+type authRequest struct {
+	Action string
+	Format string
+	Rest   []string
+}
+
+type authReport struct {
+	Kind                string        `json:"kind"`
+	Action              string        `json:"action"`
+	Status              string        `json:"status"`
+	Ready               bool          `json:"ready"`
+	AuthMethod          string        `json:"auth_method"`
+	APIKeyConfigured    bool          `json:"api_key_configured"`
+	APIKeySource        string        `json:"api_key_source,omitempty"`
+	AuthTokenConfigured bool          `json:"auth_token_configured"`
+	OAuthStatus         *oauth.Status `json:"oauth_status,omitempty"`
+	OAuthProfile        string        `json:"oauth_profile,omitempty"`
+	Message             string        `json:"message,omitempty"`
+}
+
+const authUsage = "codog auth [status|login|logout] [--json|--text]"
+
+func (a *App) Auth(args []string) error {
+	req, err := parseAuthArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "status":
+		report := a.authReport()
+		if req.Format == "text" {
+			renderAuthReport(a.Out, report)
+			return nil
+		}
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "login":
+		return a.Login(req.Rest)
+	case "logout":
+		return a.Logout(req.Rest)
+	default:
+		return unexpectedExtraArgsError{Command: "auth", Args: []string{req.Action}, Usage: authUsage}
+	}
+}
+
+func parseAuthArgs(args []string) (authRequest, error) {
+	req := authRequest{Action: "status", Format: "json"}
+	rest := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--text":
+			req.Format = "text"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "auth", Flag: arg, Usage: authUsage}
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			if len(rest) > 0 && strings.EqualFold(rest[0], "login") {
+				rest = append(rest, arg)
+				continue
+			}
+			return req, unknownOptionError{Command: "auth", Option: arg, Usage: authUsage}
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	normalizedFormat, err := normalizeOutputFormat("auth", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalizedFormat
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(rest[0])) {
+	case "status", "show", "whoami":
+		req.Action = "status"
+		if len(rest) > 1 {
+			return req, unexpectedExtraArgsError{Command: "auth status", Args: rest[1:], Usage: authUsage}
+		}
+	case "login", "signin", "sign-in":
+		req.Action = "login"
+		req.Rest = normalizeAuthLoginArgs(rest[1:])
+	case "logout", "signout", "sign-out":
+		req.Action = "logout"
+		req.Rest = rest[1:]
+	default:
+		return req, unexpectedExtraArgsError{Command: "auth", Args: []string{rest[0]}, Usage: authUsage}
+	}
+	return req, nil
+}
+
+func normalizeAuthLoginArgs(args []string) []string {
+	out := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--email":
+			if index+1 < len(args) {
+				index++
+			}
+		case strings.HasPrefix(arg, "--email="):
+		case arg == "--sso":
+		default:
+			out = append(out, arg)
+		}
+	}
+	return out
+}
+
+func (a *App) authReport() authReport {
+	apiSource := ""
+	apiKey := strings.TrimSpace(a.Config.APIKey)
+	envName, envValue := apiKeyEnvValue(a.Config.Model)
+	if apiKey != "" {
+		if envValue != "" && apiKey == strings.TrimSpace(envValue) {
+			apiSource = envName
+		} else {
+			apiSource = "config"
+		}
+	}
+	oauthStatus := oauth.InspectStatus(a.Config.ConfigHome, a.Config.OAuthProfile, time.Now().UTC())
+	report := authReport{
+		Kind:                "auth",
+		Action:              "status",
+		Status:              "ok",
+		APIKeyConfigured:    apiKey != "",
+		APIKeySource:        apiSource,
+		AuthTokenConfigured: strings.TrimSpace(a.Config.AuthToken) != "",
+		OAuthStatus:         &oauthStatus,
+		OAuthProfile:        a.Config.OAuthProfile,
+	}
+	switch {
+	case report.AuthTokenConfigured:
+		report.Ready = true
+		report.AuthMethod = "auth_token"
+	case report.APIKeyConfigured:
+		report.Ready = true
+		report.AuthMethod = "api_key"
+	case oauthStatus.Ready:
+		report.Ready = true
+		report.AuthMethod = "oauth_token"
+	default:
+		report.AuthMethod = "none"
+	}
+	if report.Ready {
+		report.Message = "Authentication is configured."
+	} else {
+		report.Message = "No authentication credentials are configured. Run `codog auth login` or `codog api-key set KEY`."
+	}
+	return report
+}
+
+func renderAuthReport(out io.Writer, report authReport) {
+	fmt.Fprintln(out, "Auth")
+	fmt.Fprintf(out, "  Ready            %t\n", report.Ready)
+	fmt.Fprintf(out, "  Method           %s\n", report.AuthMethod)
+	fmt.Fprintf(out, "  API key          %t\n", report.APIKeyConfigured)
+	if report.APIKeySource != "" {
+		fmt.Fprintf(out, "  API key source   %s\n", report.APIKeySource)
+	}
+	fmt.Fprintf(out, "  Auth token       %t\n", report.AuthTokenConfigured)
+	if report.OAuthStatus != nil {
+		fmt.Fprintf(out, "  OAuth ready      %t\n", report.OAuthStatus.Ready)
+		if report.OAuthStatus.ProfileName != "" {
+			fmt.Fprintf(out, "  OAuth profile    %s\n", report.OAuthStatus.ProfileName)
+		}
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
 }
 
 func (a *App) Login(args []string) error {
@@ -27536,6 +27722,7 @@ func builtInCommandNames() []string {
 		"api-key",
 		"ApiKeyStep",
 		"app",
+		"auth",
 		"autofix-pr",
 		"backfill-sessions",
 		"background",
@@ -53064,7 +53251,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "subagent", "allowed-tools", "android", "ant-trace", "api", "api-key", "apikeystep", "app", "autofix-pr", "backfill-sessions", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
+	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "subagent", "allowed-tools", "android", "ant-trace", "api", "api-key", "apikeystep", "app", "auth", "autofix-pr", "backfill-sessions", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
 		"break-cache", "bridge", "bridge-kick", "bootstrap-plan", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "config", "continue", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "deferred-init", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "exit-plan", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
@@ -53822,6 +54009,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"codog api-key [status|set KEY|clear] [--target user|project|local] [--output-format text|json]",
 			"API Key\n\nUsage:\n  codog api-key [status|set KEY|clear] [--target user|project|local] [--output-format text|json]\n  codog api-key KEY\n\nShows, stores, or clears the configured API key. Text and JSON output always redact secret values.\n",
 			[]string{"configured", "redacted_value", "source", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "auth":
+		return localCommandHelpSpec(
+			"auth",
+			"auth",
+			"codog auth [status|login|logout] [--json|--text]",
+			"Auth\n\nUsage:\n  codog auth status [--json|--text]\n  codog auth login [--console|--claudeai] [PROFILE]\n  codog auth logout [PROFILE]\n\nClaude-compatible authentication entrypoint. `status` reports API key, auth token, and OAuth readiness without exposing secrets. `login` and `logout` delegate to Codog's OAuth login and logout flows.\n",
+			[]string{"kind", "action", "ready", "auth_method", "api_key_configured", "auth_token_configured", "oauth_status"},
 			[]string{"ok", "error"},
 			true,
 		), true

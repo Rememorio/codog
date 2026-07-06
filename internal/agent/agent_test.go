@@ -14038,6 +14038,59 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.NotContains(t, app.Config.PermissionRules.Allow, "teleport")
 }
 
+func TestAuthCommandReportsLocalCredentials(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("CODOG_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:   configHome,
+			APIKey:       "sk-ant-test-secret",
+			OAuthProfile: "default",
+		},
+		Out: &out,
+		Err: io.Discard,
+	}
+	require.NoError(t, app.Auth(nil))
+	var report authReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "auth", report.Kind)
+	require.Equal(t, "status", report.Action)
+	require.True(t, report.Ready)
+	require.Equal(t, "api_key", report.AuthMethod)
+	require.True(t, report.APIKeyConfigured)
+	require.Equal(t, "config", report.APIKeySource)
+	require.NotContains(t, out.String(), "sk-ant-test-secret")
+	out.Reset()
+
+	require.NoError(t, app.Auth([]string{"status", "--text"}))
+	require.Contains(t, out.String(), "Auth")
+	require.Contains(t, out.String(), "Ready            true")
+	require.NotContains(t, out.String(), "sk-ant-test-secret")
+	out.Reset()
+
+	req, err := parseAuthArgs([]string{"login", "--email", "user@example.test", "--sso", "--console", "default"})
+	require.NoError(t, err)
+	require.Equal(t, "login", req.Action)
+	require.Equal(t, []string{"--console", "default"}, req.Rest)
+}
+
+func TestAuthCommandHonorsGlobalOutputFormat(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"api_key":"secret-key"}`), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "text", "auth"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "Auth")
+	require.Contains(t, out, "Method           api_key")
+	require.NotContains(t, out, "secret-key")
+}
+
 func TestAPIKeyCommandAndSlash(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("CODOG_API_KEY", "")
