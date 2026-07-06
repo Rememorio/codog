@@ -205,6 +205,30 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return code actions and quick fixes for a document position.",
 	},
 	{
+		Name:             "prepare-call-hierarchy",
+		Method:           "textDocument/prepareCallHierarchy",
+		Aliases:          []string{"prepare_call_hierarchy", "prepareCallHierarchy", "call_hierarchy", "callHierarchy"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return call hierarchy items for a symbol at a document position.",
+	},
+	{
+		Name:             "call-hierarchy-incoming",
+		Method:           "callHierarchy/incomingCalls",
+		Aliases:          []string{"incoming_calls", "incomingCalls", "call_hierarchy_incoming", "incoming_call_hierarchy"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return callers for the symbol at a document position.",
+	},
+	{
+		Name:             "call-hierarchy-outgoing",
+		Method:           "callHierarchy/outgoingCalls",
+		Aliases:          []string{"outgoing_calls", "outgoingCalls", "call_hierarchy_outgoing", "outgoing_call_hierarchy"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return callees for the symbol at a document position.",
+	},
+	{
 		Name:             "completion",
 		Method:           "textDocument/completion",
 		Aliases:          []string{"completions", "complete"},
@@ -524,6 +548,20 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 			Diagnostics: diagnostics,
 		}, nil
 	}
+	if strings.HasPrefix(action, "call-hierarchy") || action == "prepare-call-hierarchy" {
+		method, decoded, err := runLSPCallHierarchyQuery(client, action, uri, request.Line, request.Character)
+		if err != nil {
+			return LSPQueryResult{}, err
+		}
+		return LSPQueryResult{
+			Kind:     "lsp_query",
+			Language: language,
+			Action:   action,
+			Method:   method,
+			Path:     rel,
+			Result:   decoded,
+		}, nil
+	}
 	method, params, err := lspMethodParams(action, uri, request.Line, request.Character, request.NewName, request.Query)
 	if err != nil {
 		return LSPQueryResult{}, err
@@ -599,6 +637,45 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 		}
 	}
 	return result, nil
+}
+
+func runLSPCallHierarchyQuery(client *lspClient, action string, uri string, line int, character int) (string, any, error) {
+	position := map[string]any{"line": max(0, line), "character": max(0, character)}
+	textDocument := map[string]any{"uri": uri}
+	raw, err := client.request("textDocument/prepareCallHierarchy", map[string]any{"textDocument": textDocument, "position": position})
+	if err != nil {
+		return "", nil, err
+	}
+	var items []any
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return "", nil, err
+		}
+	}
+	if action == "prepare-call-hierarchy" {
+		return "textDocument/prepareCallHierarchy", items, nil
+	}
+	method := "callHierarchy/incomingCalls"
+	if action == "call-hierarchy-outgoing" {
+		method = "callHierarchy/outgoingCalls"
+	}
+	if len(items) == 0 {
+		return method, map[string]any{"items": items, "calls": []any{}}, nil
+	}
+	raw, err = client.request(method, map[string]any{"item": items[0]})
+	if err != nil {
+		return "", nil, err
+	}
+	var calls any
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &calls); err != nil {
+			return "", nil, err
+		}
+	}
+	if calls == nil {
+		calls = []any{}
+	}
+	return method, map[string]any{"items": items, "calls": calls}, nil
 }
 
 func (c *lspClient) request(method string, params any) (json.RawMessage, error) {

@@ -367,20 +367,23 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":5,"method":"lsp/query","params":{"language":"go","action":"diagnostics","file_path":"main.go","timeout_ms":1000}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"lsp/query","params":{"language":"go","action":"rename","path":"main.go","line":2,"character":5,"new_name":"Start","write":true}}`,
 		`{"jsonrpc":"2.0","id":7,"method":"lsp/query","params":{"language":"go","action":"code_action","path":"main.go","line":2,"character":5,"code_action_title":"Bridge fake fix","apply":true}}`,
-		`{"jsonrpc":"2.0","id":8,"method":"lsp/query","params":{"language":"go","action":"prepare_rename","path":"main.go","line":2,"character":5}}`,
-		`{"jsonrpc":"2.0","id":9,"method":"lsp/query","params":{"language":"go","action":"selection_range","path":"main.go","line":2,"character":5}}`,
-		`{"jsonrpc":"2.0","id":10,"method":"lsp/query","params":{"language":"go","action":"folding_range","path":"main.go"}}`,
-		`{"jsonrpc":"2.0","id":11,"method":"lsp/query","params":{"language":"go","action":"document_link","path":"main.go"}}`,
-		`{"jsonrpc":"2.0","id":12,"method":"lsp/query","params":{"language":"go","action":"document_color","path":"main.go"}}`,
-		`{"jsonrpc":"2.0","id":13,"method":"lsp/query","params":{"language":"go","action":"inlay_hint","path":"main.go","line":2,"character":12}}`,
-		`{"jsonrpc":"2.0","id":14,"method":"lsp/query","params":{"language":"go","action":"linked_editing_range","path":"main.go","line":2,"character":5}}`,
-		`{"jsonrpc":"2.0","id":15,"method":"lsp/query","params":{"language":"go","action":"moniker","path":"main.go","line":2,"character":5}}`,
-		`{"jsonrpc":"2.0","id":16,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens","path":"main.go"}}`,
-		`{"jsonrpc":"2.0","id":17,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens_range","path":"main.go","line":2,"character":12}}`,
-		`{"jsonrpc":"2.0","id":18,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol","query":"Build"}}`,
-		`{"jsonrpc":"2.0","id":19,"method":"lsp/status","params":{"language":"go"}}`,
-		`{"jsonrpc":"2.0","id":20,"method":"lsp/list"}`,
-		`{"jsonrpc":"2.0","id":21,"method":"lsp/stop","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"lsp/query","params":{"language":"go","action":"prepare_call_hierarchy","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"lsp/query","params":{"language":"go","action":"incoming_calls","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"lsp/query","params":{"language":"go","action":"outgoing_calls","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":11,"method":"lsp/query","params":{"language":"go","action":"prepare_rename","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":12,"method":"lsp/query","params":{"language":"go","action":"selection_range","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":13,"method":"lsp/query","params":{"language":"go","action":"folding_range","path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":14,"method":"lsp/query","params":{"language":"go","action":"document_link","path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":15,"method":"lsp/query","params":{"language":"go","action":"document_color","path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":16,"method":"lsp/query","params":{"language":"go","action":"inlay_hint","path":"main.go","line":2,"character":12}}`,
+		`{"jsonrpc":"2.0","id":17,"method":"lsp/query","params":{"language":"go","action":"linked_editing_range","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":18,"method":"lsp/query","params":{"language":"go","action":"moniker","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":19,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens","path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":20,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens_range","path":"main.go","line":2,"character":12}}`,
+		`{"jsonrpc":"2.0","id":21,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol","query":"Build"}}`,
+		`{"jsonrpc":"2.0","id":22,"method":"lsp/status","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":23,"method":"lsp/list"}`,
+		`{"jsonrpc":"2.0","id":24,"method":"lsp/stop","params":{"language":"go"}}`,
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
@@ -406,6 +409,15 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"file_edits":1`)
 	require.Contains(t, out.String(), `"applied":true`)
 	require.Contains(t, out.String(), `func Launch()`)
+	require.Contains(t, out.String(), `"action":"prepare-call-hierarchy"`)
+	require.Contains(t, out.String(), `"method":"textDocument/prepareCallHierarchy"`)
+	require.Contains(t, out.String(), `"name":"BridgeWidget"`)
+	require.Contains(t, out.String(), `"action":"call-hierarchy-incoming"`)
+	require.Contains(t, out.String(), `"method":"callHierarchy/incomingCalls"`)
+	require.Contains(t, out.String(), `"name":"BridgeCaller"`)
+	require.Contains(t, out.String(), `"action":"call-hierarchy-outgoing"`)
+	require.Contains(t, out.String(), `"method":"callHierarchy/outgoingCalls"`)
+	require.Contains(t, out.String(), `"name":"BridgeCallee"`)
 	data, err := os.ReadFile(filepath.Join(workspace, "main.go"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "func Launch()")
@@ -541,6 +553,64 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 						}},
 					},
 				},
+			}}})
+		case "textDocument/prepareCallHierarchy":
+			if currentURI == "" {
+				currentURI = "file:///workspace/main.go"
+			}
+			item := map[string]any{
+				"name": "BridgeWidget",
+				"kind": 12,
+				"uri":  currentURI,
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 0},
+					"end":   map[string]any{"line": 2, "character": 20},
+				},
+				"selectionRange": map[string]any{
+					"start": map[string]any{"line": 2, "character": 5},
+					"end":   map[string]any{"line": 2, "character": 17},
+				},
+			}
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{item}})
+		case "callHierarchy/incomingCalls":
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+				"from": map[string]any{
+					"name": "BridgeCaller",
+					"kind": 12,
+					"uri":  currentURI,
+					"range": map[string]any{
+						"start": map[string]any{"line": 8, "character": 0},
+						"end":   map[string]any{"line": 10, "character": 1},
+					},
+					"selectionRange": map[string]any{
+						"start": map[string]any{"line": 8, "character": 5},
+						"end":   map[string]any{"line": 8, "character": 17},
+					},
+				},
+				"fromRanges": []map[string]any{{
+					"start": map[string]any{"line": 9, "character": 1},
+					"end":   map[string]any{"line": 9, "character": 13},
+				}},
+			}}})
+		case "callHierarchy/outgoingCalls":
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+				"to": map[string]any{
+					"name": "BridgeCallee",
+					"kind": 12,
+					"uri":  currentURI,
+					"range": map[string]any{
+						"start": map[string]any{"line": 4, "character": 0},
+						"end":   map[string]any{"line": 4, "character": 20},
+					},
+					"selectionRange": map[string]any{
+						"start": map[string]any{"line": 4, "character": 5},
+						"end":   map[string]any{"line": 4, "character": 17},
+					},
+				},
+				"fromRanges": []map[string]any{{
+					"start": map[string]any{"line": 3, "character": 1},
+					"end":   map[string]any{"line": 3, "character": 13},
+				}},
 			}}})
 		case "textDocument/prepareRename":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
