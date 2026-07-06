@@ -423,6 +423,19 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, memoryCategory.Total)
 	require.ElementsMatch(t, []string{"memory_lifecycle_roundtrip"}, memoryCategory.Scenarios)
 
+	outputStyle := findScenario(t, report, "output_style_lifecycle_roundtrip")
+	require.True(t, outputStyle.OK)
+	require.Equal(t, "interactive-ui", outputStyle.Category)
+	require.Equal(t, 0, outputStyle.ToolCalls)
+	require.Equal(t, 4, outputStyle.RequestCount)
+	require.Equal(t, "output style lifecycle harness ok", outputStyle.FinalMessage)
+	require.Contains(t, outputStyle.Output, `"kind":"output_style_lifecycle"`)
+	require.Contains(t, outputStyle.Output, `"builtin_concise":true`)
+	require.Contains(t, outputStyle.Output, `"workspace_override":true`)
+	require.Contains(t, outputStyle.Output, `"active":"calm"`)
+	require.Contains(t, outputStyle.Output, `"injected":true`)
+	require.Contains(t, outputStyle.Output, `"empty":true`)
+
 	askUserQuestion := findScenario(t, report, "ask_user_question_roundtrip")
 	require.True(t, askUserQuestion.OK)
 	require.Equal(t, "interactive-ui", askUserQuestion.Category)
@@ -434,8 +447,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, askUserQuestion.Output, "ask user question harness ok")
 	interactiveUI := findCategory(t, report, "interactive-ui")
 	require.True(t, interactiveUI.OK)
-	require.Equal(t, 2, interactiveUI.Total)
-	require.ElementsMatch(t, []string{"ask_user_question_roundtrip", "tui_prompt_completion_roundtrip"}, interactiveUI.Scenarios)
+	require.Equal(t, 3, interactiveUI.Total)
+	require.ElementsMatch(t, []string{"ask_user_question_roundtrip", "output_style_lifecycle_roundtrip", "tui_prompt_completion_roundtrip"}, interactiveUI.Scenarios)
 
 	runtimeOutputTools := findScenario(t, report, "runtime_output_tools_roundtrip")
 	require.True(t, runtimeOutputTools.OK)
@@ -792,6 +805,15 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	askUserQuestion := findManifestScenario(t, manifest, "ask_user_question_roundtrip")
 	require.Equal(t, "interactive-ui", askUserQuestion.Category)
 	require.Contains(t, askUserQuestion.ParityRefs, "AskUserQuestion tool")
+
+	outputStyle := findManifestScenario(t, manifest, "output_style_lifecycle_roundtrip")
+	require.Equal(t, "interactive-ui", outputStyle.Category)
+	require.Contains(t, outputStyle.ParityRefs, "Output styles")
+	require.Contains(t, outputStyle.ParityRefs, "Interactive rendering")
+
+	tuiPrompt := findManifestScenario(t, manifest, "tui_prompt_completion_roundtrip")
+	require.Equal(t, "interactive-ui", tuiPrompt.Category)
+	require.Contains(t, tuiPrompt.ParityRefs, "Bubble Tea TUI")
 
 	runtimeOutputTools := findManifestScenario(t, manifest, "runtime_output_tools_roundtrip")
 	require.Equal(t, "runtime-tools", runtimeOutputTools.Category)

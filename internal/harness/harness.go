@@ -36,6 +36,7 @@ import (
 	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/onboarding"
+	"github.com/Rememorio/codog/internal/outputstyle"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/policyengine"
 	"github.com/Rememorio/codog/internal/providerdiag"
@@ -213,6 +214,7 @@ var scenarioOrder = []string{
 	"command_skill_template_roundtrip",
 	"onboarding_bookmarks_roundtrip",
 	"memory_lifecycle_roundtrip",
+	"output_style_lifecycle_roundtrip",
 	"tui_prompt_completion_roundtrip",
 	"ask_user_question_roundtrip",
 	"runtime_output_tools_roundtrip",
@@ -755,6 +757,7 @@ func Run(ctx context.Context) (Report, error) {
 		commandSkillTemplateScenario(),
 		onboardingBookmarksScenario(),
 		memoryLifecycleScenario(),
+		outputStyleLifecycleScenario(),
 		tuiPromptCompletionScenario(),
 		askUserQuestionScenario(),
 		runtimeOutputToolsScenario(),
@@ -1170,7 +1173,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "OAuth and account lifecycle", RequiredRefs: []string{"OAuth refresh", "Token redaction", "MCP auth"}},
 	{Capability: "enterprise policy and updater", RequiredRefs: []string{"Enterprise policy", "Audit events", "Signed updater"}},
 	{Capability: "plugins and marketplace", RequiredRefs: []string{"Plugin tools", "Plugin lifecycle", "Plugin manifest loading", "External plugin lifecycle"}},
-	{Capability: "TUI and interactive rendering", RequiredRefs: []string{"Bubble Tea TUI", "Interactive rendering"}},
+	{Capability: "TUI and interactive rendering", RequiredRefs: []string{"Bubble Tea TUI", "Interactive rendering", "Output styles"}},
 	{Capability: "interactive question handling", RequiredRefs: []string{"AskUserQuestion tool", "Interactive questions"}},
 	{Capability: "runtime utility tools", RequiredRefs: []string{"Brief tool", "SendUserMessage tool", "StructuredOutput tool", "Sleep tool", "REPL tool"}},
 }
@@ -1424,6 +1427,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "context-management",
 		Description: "Discovers, appends, searches, selects, and resets project memory instruction files.",
 		ParityRefs:  []string{"Project memory", "Session context management", "Slash commands", "Workspace state"},
+	},
+	"output_style_lifecycle_roundtrip": {
+		Category:    "interactive-ui",
+		Description: "Loads, sets, injects, and clears output styles with workspace precedence over user and built-in styles.",
+		ParityRefs:  []string{"Output styles", "Interactive rendering", "Workspace state"},
 	},
 	"tui_prompt_completion_roundtrip": {
 		Category:    "interactive-ui",
@@ -2333,6 +2341,121 @@ func memoryLifecycleScenario() scenario {
 			}, nil
 		},
 	}
+}
+
+func outputStyleLifecycleScenario() scenario {
+	return scenario{
+		name: "output_style_lifecycle_roundtrip",
+		runLocal: func(_ context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			userStyleDir := filepath.Join(configHome, "output-styles")
+			workspaceStyleDir := filepath.Join(workspace, ".codog", "output-styles")
+			if err := os.MkdirAll(userStyleDir, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.MkdirAll(workspaceStyleDir, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(userStyleDir, "calm.md"), []byte("Use calm user prose.\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(workspaceStyleDir, "calm.md"), []byte("Use calm workspace prose.\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			list, err := outputstyle.List(configHome, workspace)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if list.Kind != "output_style" || list.Action != "list" || list.Active != "" {
+				return localScenarioResult{}, fmt.Errorf("unexpected output style list report: %#v", list)
+			}
+			if !styleSummaryPresent(list.Styles, "concise", "builtin") ||
+				!styleSummaryPresent(list.Styles, "calm", "workspace") ||
+				!styleSummaryPresent(list.Styles, "calm", "user") {
+				return localScenarioResult{}, fmt.Errorf("output style list missed expected styles: %#v", list.Styles)
+			}
+
+			set, err := outputstyle.Set(configHome, workspace, "calm")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if set.Active != "calm" || set.Style == nil || set.Style.Source != "workspace" {
+				return localScenarioResult{}, fmt.Errorf("unexpected output style set report: %#v", set)
+			}
+			if _, err := os.Stat(outputstyle.StatePath(workspace)); err != nil {
+				return localScenarioResult{}, fmt.Errorf("output style state not persisted: %w", err)
+			}
+			prompt := outputstyle.RenderPrompt(configHome, workspace)
+			if !strings.Contains(prompt, `<output_style name="calm" source="workspace">`) ||
+				!strings.Contains(prompt, "Use calm workspace prose.") {
+				return localScenarioResult{}, fmt.Errorf("unexpected output style prompt: %s", prompt)
+			}
+
+			show, err := outputstyle.Show(configHome, workspace, "calm")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if show.Style == nil || show.Style.Source != "workspace" || !strings.Contains(show.Style.Body, "workspace prose") {
+				return localScenarioResult{}, fmt.Errorf("unexpected output style show report: %#v", show)
+			}
+
+			cleared, err := outputstyle.Clear(workspace)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if cleared.Action != "clear" || outputstyle.RenderPrompt(configHome, workspace) != "" {
+				return localScenarioResult{}, fmt.Errorf("unexpected output style clear report: %#v", cleared)
+			}
+			if _, err := os.Stat(outputstyle.StatePath(workspace)); !os.IsNotExist(err) {
+				return localScenarioResult{}, fmt.Errorf("output style state still exists after clear: %v", err)
+			}
+
+			report := map[string]any{
+				"kind": "output_style_lifecycle",
+				"list": map[string]any{
+					"styles":             len(list.Styles),
+					"builtin_concise":    styleSummaryPresent(list.Styles, "concise", "builtin"),
+					"workspace_override": styleSummaryPresent(list.Styles, "calm", "workspace"),
+					"user_style":         styleSummaryPresent(list.Styles, "calm", "user"),
+				},
+				"set": map[string]any{
+					"active": set.Active,
+					"source": set.Style.Source,
+				},
+				"prompt": map[string]any{
+					"injected": strings.Contains(prompt, `<output_style name="calm" source="workspace">`),
+				},
+				"show": map[string]any{
+					"source": show.Style.Source,
+					"name":   show.Style.Name,
+				},
+				"clear": map[string]any{
+					"status": cleared.Status,
+					"empty":  outputstyle.RenderPrompt(configHome, workspace) == "",
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "output style lifecycle harness ok",
+				RequestCount: 4,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+func styleSummaryPresent(styles []outputstyle.StyleSummary, name string, source string) bool {
+	for _, style := range styles {
+		if style.Name == name && style.Source == source {
+			return true
+		}
+	}
+	return false
 }
 
 func tuiPromptCompletionScenario() scenario {
