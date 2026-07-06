@@ -175,6 +175,28 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found)
 
+	hintSource := "package pkg\n\nfunc Build(name string, count int) int { return count }\nfunc UseBuild() { _ = Build(\"codog\", 2) }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "hints.go"), []byte(hintSource), 0o644))
+	hints, err := InlayHints(workspace, "pkg/hints.go", 10)
+	require.NoError(t, err)
+	require.Len(t, hints, 2)
+	hintArgChar := strings.Index(strings.Split(hintSource, "\n")[3], `"codog"`)
+	require.Equal(t, "pkg/hints.go", hints[0].Path)
+	require.Equal(t, LSPPosition{Line: 3, Character: hintArgChar}, hints[0].Position)
+	require.Equal(t, "name:", hints[0].Label)
+	require.Equal(t, "parameter", hints[0].Kind)
+	require.Equal(t, "Build parameter 1", hints[0].Tooltip)
+	require.True(t, hints[0].PaddingRight)
+
+	resolvedHint, found, err := InlayHintAtPosition(workspace, "pkg/hints.go", 3, hintArgChar)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, hints[0], resolvedHint)
+
+	_, found, err = InlayHintAtPosition(workspace, "pkg/hints.go", 3, hintArgChar+1)
+	require.NoError(t, err)
+	require.False(t, found)
+
 	hover, err := HoverInfo(workspace, "Run", 1)
 	require.NoError(t, err)
 	require.True(t, hover.Found)

@@ -6010,6 +6010,32 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "found": found, "presentations": presentations, "total": len(presentations)})), nil
+	case "inlay-hint":
+		if strings.TrimSpace(payload.Path) == "" {
+			return "", errors.New("path is required for lsp inlay_hint")
+		}
+		rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, payload.Path)
+		if err != nil {
+			return "", err
+		}
+		hints, err := codeintel.InlayHints(t.Workspace, rel, payload.Limit)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "hints": hints, "total": len(hints)})), nil
+	case "inlay-hint-resolve":
+		if strings.TrimSpace(payload.Path) == "" {
+			return "", errors.New("path is required for lsp inlay_hint_resolve")
+		}
+		rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, payload.Path)
+		if err != nil {
+			return "", err
+		}
+		hint, found, err := codeintel.InlayHintAtPosition(t.Workspace, rel, payload.Line, payload.Character)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "found": found, "hint": hint})), nil
 	case "hover":
 		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
 		if err != nil {
@@ -6062,7 +6088,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 
 func lspActionRequiresServer(action string) bool {
 	switch action {
-	case "document-diagnostic", "workspace-diagnostic", "implementation", "rename", "prepare-rename", "code-action", "code-action-resolve", "code-lens", "code-lens-resolve", "prepare-call-hierarchy", "call-hierarchy-incoming", "call-hierarchy-outgoing", "prepare-type-hierarchy", "type-hierarchy-supertypes", "type-hierarchy-subtypes", "completion-item-resolve", "inlay-hint", "inlay-hint-resolve", "inline-value", "semantic-tokens", "semantic-tokens-range", "semantic-tokens-delta", "execute-command", "signature-help", "range-format", "on-type-format", "will-save":
+	case "document-diagnostic", "workspace-diagnostic", "implementation", "rename", "prepare-rename", "code-action", "code-action-resolve", "code-lens", "code-lens-resolve", "prepare-call-hierarchy", "call-hierarchy-incoming", "call-hierarchy-outgoing", "prepare-type-hierarchy", "type-hierarchy-supertypes", "type-hierarchy-subtypes", "completion-item-resolve", "inline-value", "semantic-tokens", "semantic-tokens-range", "semantic-tokens-delta", "execute-command", "signature-help", "range-format", "on-type-format", "will-save":
 		return true
 	default:
 		return false

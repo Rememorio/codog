@@ -2762,6 +2762,9 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "links.go"), []byte(linkSource), 0o644))
 	colorSource := "package demo\n\nconst Accent = \"#336699\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "colors.go"), []byte(colorSource), 0o644))
+	hintSource := "package demo\n\nfunc Build(name string, count int) int { return count }\nfunc UseBuild() { _ = Build(\"codog\", 2) }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "hints.go"), []byte(hintSource), 0o644))
+	hintArgChar := strings.Index(strings.Split(hintSource, "\n")[3], `"codog"`)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "messy.go"), []byte("package demo\n\nfunc messy(){return}\n"), 0o644))
 	tool := LSPTool{Workspace: workspace}
 	definition := tool.Definition()
@@ -2936,6 +2939,25 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, colorPresentationOut, `"label": "#336699"`)
 	require.Contains(t, colorPresentationOut, `"label": "rgb(51, 102, 153)"`)
 
+	inlayHintOut, err := tool.Execute(context.Background(), []byte(`{"action":"inlay_hint","path":"hints.go","limit":5}`))
+	require.NoError(t, err)
+	require.Contains(t, inlayHintOut, `"action": "inlay-hint"`)
+	require.Contains(t, inlayHintOut, `"source": "static"`)
+	require.Contains(t, inlayHintOut, `"path": "hints.go"`)
+	require.Contains(t, inlayHintOut, `"label": "name:"`)
+	require.Contains(t, inlayHintOut, `"label": "count:"`)
+	require.Contains(t, inlayHintOut, `"kind": "parameter"`)
+	require.Contains(t, inlayHintOut, `"total": 2`)
+
+	inlayHintResolveInput := fmt.Sprintf(`{"action":"inlay_hint_resolve","path":"hints.go","line":3,"character":%d}`, hintArgChar)
+	inlayHintResolveOut, err := tool.Execute(context.Background(), []byte(inlayHintResolveInput))
+	require.NoError(t, err)
+	require.Contains(t, inlayHintResolveOut, `"action": "inlay-hint-resolve"`)
+	require.Contains(t, inlayHintResolveOut, `"source": "static"`)
+	require.Contains(t, inlayHintResolveOut, `"found": true`)
+	require.Contains(t, inlayHintResolveOut, `"label": "name:"`)
+	require.Contains(t, inlayHintResolveOut, `"tooltip": "Build parameter 1"`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -2992,6 +3014,15 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, err.Error(), "config home is required")
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"color_presentation","path":"colors.go","line":2,"character":18,"use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"inlay_hint","path":"hints.go","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	inlayHintResolveServerInput := fmt.Sprintf(`{"action":"inlay_hint_resolve","path":"hints.go","line":3,"character":%d,"use_server":true}`, hintArgChar)
+	_, err = tool.Execute(context.Background(), []byte(inlayHintResolveServerInput))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 

@@ -1515,8 +1515,8 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 	},
 	"lsp_static_roundtrip": {
 		Category:    "code-intelligence",
-		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, selection ranges, monikers, linked editing ranges, document links, document colors, references, hover, completions, diagnostics, and formatting.",
-		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Document links", "Document colors", "Diagnostics"},
+		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, selection ranges, monikers, linked editing ranges, document links, document colors, inlay hints, references, hover, completions, diagnostics, and formatting.",
+		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Document links", "Document colors", "Inlay hints", "Diagnostics"},
 	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
@@ -4352,6 +4352,11 @@ func lspStaticScenario() scenario {
 			if err := os.WriteFile(filepath.Join(pkgDir, "colors.go"), []byte(colorSource), 0o644); err != nil {
 				return localScenarioResult{}, err
 			}
+			hintSource := "package pkg\n\nfunc Build(name string, count int) int { return count }\nfunc UseBuild() { _ = Build(\"codog\", 2) }\n"
+			if err := os.WriteFile(filepath.Join(pkgDir, "hints.go"), []byte(hintSource), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			hintArgChar := strings.Index(strings.Split(hintSource, "\n")[3], `"codog"`)
 			tool := tools.LSPTool{Workspace: workspace}
 
 			symbolsOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"symbols","path":"pkg/runner.go"}`))
@@ -4504,6 +4509,26 @@ func lspStaticScenario() scenario {
 				}
 			}
 
+			inlayHintOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"inlay_hint","path":"pkg/hints.go","limit":5}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "inlay-hint"`, `"source": "static"`, `"path": "pkg/hints.go"`, `"label": "name:"`, `"label": "count:"`, `"kind": "parameter"`, `"total": 2`} {
+				if !strings.Contains(inlayHintOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp inlay hint output missing %s", expected)
+				}
+			}
+
+			inlayHintResolveOut, err := tool.Execute(ctx, json.RawMessage(fmt.Sprintf(`{"action":"inlay_hint_resolve","path":"pkg/hints.go","line":3,"character":%d}`, hintArgChar)))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "inlay-hint-resolve"`, `"source": "static"`, `"found": true`, `"label": "name:"`, `"tooltip": "Build parameter 1"`} {
+				if !strings.Contains(inlayHintResolveOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp inlay hint resolve output missing %s", expected)
+				}
+			}
+
 			referencesOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"references","query":"Runner","limit":10}`))
 			if err != nil {
 				return localScenarioResult{}, err
@@ -4562,11 +4587,11 @@ func lspStaticScenario() scenario {
 			}
 
 			return localScenarioResult{
-				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, documentColorOut, colorPresentationOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
+				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, documentColorOut, colorPresentationOut, inlayHintOut, inlayHintResolveOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
 				FinalMessage: "lsp static harness ok",
-				ToolCalls:    20,
-				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
-				RequestCount: 20,
+				ToolCalls:    22,
+				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
+				RequestCount: 22,
 			}, nil
 		},
 	}

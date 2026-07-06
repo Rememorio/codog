@@ -106,6 +106,16 @@ type ColorPresentation struct {
 	Color DocumentColor `json:"color"`
 }
 
+// InlayHint describes a static editor hint for a document position.
+type InlayHint struct {
+	Path         string      `json:"path"`
+	Position     LSPPosition `json:"position"`
+	Label        string      `json:"label"`
+	Kind         string      `json:"kind,omitempty"`
+	Tooltip      string      `json:"tooltip,omitempty"`
+	PaddingRight bool        `json:"paddingRight,omitempty"`
+}
+
 // Hover contains static hover context for a discovered symbol.
 type Hover struct {
 	Symbol  string   `json:"symbol"`
@@ -815,6 +825,145 @@ func parseHexColor(raw string) (LSPColor, bool) {
 		Blue:  float64(value&0xff) / 255,
 		Alpha: 1,
 	}, true
+}
+
+// InlayHints returns static parameter hints for calls to Go functions declared
+// in the workspace.
+func InlayHints(workspace string, relPath string, limit int) ([]InlayHint, error) {
+	if strings.TrimSpace(relPath) == "" {
+		return nil, errors.New("path is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	path, rel, err := resolveWorkspaceFile(workspace, relPath)
+	if err != nil {
+		return nil, err
+	}
+	params, err := workspaceFunctionParams(workspace)
+	if err != nil {
+		return nil, err
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	hints := []InlayHint{}
+	ast.Inspect(file, func(node ast.Node) bool {
+		if len(hints) >= limit {
+			return false
+		}
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		name := callName(call.Fun)
+		if name == "" {
+			return true
+		}
+		names := params[name]
+		if len(names) == 0 {
+			return true
+		}
+		for i, arg := range call.Args {
+			if len(hints) >= limit || i >= len(names) || names[i] == "" || names[i] == "_" {
+				continue
+			}
+			pos := fset.Position(arg.Pos())
+			if !pos.IsValid() {
+				continue
+			}
+			label := names[i] + ":"
+			hints = append(hints, InlayHint{
+				Path:         rel,
+				Position:     LSPPosition{Line: pos.Line - 1, Character: pos.Column - 1},
+				Label:        label,
+				Kind:         "parameter",
+				Tooltip:      fmt.Sprintf("%s parameter %d", name, i+1),
+				PaddingRight: true,
+			})
+		}
+		return true
+	})
+	return hints, nil
+}
+
+// InlayHintAtPosition resolves a static inlay hint at a document position.
+func InlayHintAtPosition(workspace string, relPath string, line int, character int) (InlayHint, bool, error) {
+	if line < 0 || character < 0 {
+		return InlayHint{}, false, errors.New("line and character must be non-negative")
+	}
+	hints, err := InlayHints(workspace, relPath, 0)
+	if err != nil {
+		return InlayHint{}, false, err
+	}
+	for _, hint := range hints {
+		if hint.Position.Line == line && hint.Position.Character == character {
+			return hint, true, nil
+		}
+	}
+	return InlayHint{}, false, nil
+}
+
+func workspaceFunctionParams(workspace string) (map[string][]string, error) {
+	params := map[string][]string{}
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if ignoredDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Type == nil || fn.Type.Params == nil {
+				continue
+			}
+			names := flattenFieldNames(fn.Type.Params.List)
+			if len(names) > 0 {
+				params[fn.Name.Name] = names
+			}
+		}
+		return nil
+	})
+	return params, err
+}
+
+func flattenFieldNames(fields []*ast.Field) []string {
+	names := []string{}
+	for _, field := range fields {
+		if len(field.Names) == 0 {
+			names = append(names, "")
+			continue
+		}
+		for _, name := range field.Names {
+			names = append(names, name.Name)
+		}
+	}
+	return names
+}
+
+func callName(expr ast.Expr) string {
+	switch n := expr.(type) {
+	case *ast.Ident:
+		return n.Name
+	case *ast.SelectorExpr:
+		return n.Sel.Name
+	default:
+		return ""
+	}
 }
 
 // HoverInfo returns static hover context around a symbol definition.
