@@ -1515,8 +1515,8 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 	},
 	"lsp_static_roundtrip": {
 		Category:    "code-intelligence",
-		Description: "Queries static Go code intelligence through the LSP tool for symbols, definitions, references, hover, completions, and formatting.",
-		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge"},
+		Description: "Queries static Go code intelligence through the LSP tool for symbols, definitions, references, hover, completions, diagnostics, and formatting.",
+		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Diagnostics"},
 	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
@@ -4325,12 +4325,19 @@ func lspStaticScenario() scenario {
 			if err := os.MkdirAll(pkgDir, 0o755); err != nil {
 				return localScenarioResult{}, err
 			}
+			if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/harness\n\ngo 1.25\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
 			source := "package pkg\n\ntype Runner struct{}\n\nfunc RunFast() Runner { return Runner{} }\n\nfunc UseRunner() Runner { return RunFast() }\n"
 			if err := os.WriteFile(filepath.Join(pkgDir, "runner.go"), []byte(source), 0o644); err != nil {
 				return localScenarioResult{}, err
 			}
 			messy := "package pkg\n\nfunc messy(){println(\"hi\")}\n"
 			if err := os.WriteFile(filepath.Join(pkgDir, "messy.go"), []byte(messy), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			broken := "package pkg\n\nfunc Broken() { MissingSymbol() }\n"
+			if err := os.WriteFile(filepath.Join(pkgDir, "broken.go"), []byte(broken), 0o644); err != nil {
 				return localScenarioResult{}, err
 			}
 			tool := tools.LSPTool{Workspace: workspace}
@@ -4385,6 +4392,16 @@ func lspStaticScenario() scenario {
 				}
 			}
 
+			diagnosticsOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"diagnostics"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "diagnostics"`, `"path": "pkg/broken.go"`, `"line": 3`, "MissingSymbol"} {
+				if !strings.Contains(diagnosticsOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp diagnostics output missing %s", expected)
+				}
+			}
+
 			formatOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"format","path":"pkg/messy.go"}`))
 			if err != nil {
 				return localScenarioResult{}, err
@@ -4403,11 +4420,11 @@ func lspStaticScenario() scenario {
 			}
 
 			return localScenarioResult{
-				Output:       strings.Join([]string{symbolsOut, definitionOut, referencesOut, hoverOut, completionOut, formatOut}, "\n"),
+				Output:       strings.Join([]string{symbolsOut, definitionOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
 				FinalMessage: "lsp static harness ok",
-				ToolCalls:    6,
-				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
-				RequestCount: 6,
+				ToolCalls:    7,
+				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
+				RequestCount: 7,
 			}, nil
 		},
 	}
