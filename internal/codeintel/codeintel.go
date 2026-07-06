@@ -68,6 +68,13 @@ type Moniker struct {
 	Unique     string `json:"unique,omitempty"`
 }
 
+// LinkedEditingRange describes ranges that should be edited together.
+type LinkedEditingRange struct {
+	Path        string     `json:"path"`
+	Ranges      []LSPRange `json:"ranges"`
+	WordPattern string     `json:"wordPattern,omitempty"`
+}
+
 // Hover contains static hover context for a discovered symbol.
 type Hover struct {
 	Symbol  string   `json:"symbol"`
@@ -579,6 +586,31 @@ func isExportedIdentifier(name string) bool {
 	}
 	first := name[0]
 	return first >= 'A' && first <= 'Z'
+}
+
+// LinkedEditingRanges returns same-document symbol ranges that can be edited
+// together.
+func LinkedEditingRanges(workspace string, symbol string, relPath string, limit int) (LinkedEditingRange, error) {
+	if strings.TrimSpace(relPath) == "" {
+		return LinkedEditingRange{}, errors.New("path is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	relPath = filepath.ToSlash(strings.TrimSpace(relPath))
+	highlights, err := DocumentHighlights(workspace, symbol, relPath, limit)
+	if err != nil {
+		return LinkedEditingRange{}, err
+	}
+	ranges := make([]LSPRange, 0, len(highlights))
+	for _, highlight := range highlights {
+		ranges = append(ranges, highlight.Range)
+	}
+	return LinkedEditingRange{
+		Path:        relPath,
+		Ranges:      ranges,
+		WordPattern: `[A-Za-z_][A-Za-z0-9_]*`,
+	}, nil
 }
 
 // HoverInfo returns static hover context around a symbol definition.

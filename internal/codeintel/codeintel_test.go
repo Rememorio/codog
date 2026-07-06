@@ -123,6 +123,13 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.Equal(t, "export", monikers[0].Kind)
 	require.Equal(t, "project", monikers[0].Unique)
 
+	linked, err := LinkedEditingRanges(workspace, "Runner", "pkg/runner.go", 10)
+	require.NoError(t, err)
+	require.Equal(t, "pkg/runner.go", linked.Path)
+	require.Len(t, linked.Ranges, 3)
+	require.Equal(t, LSPPosition{Line: 2, Character: 5}, linked.Ranges[0].Start)
+	require.Equal(t, `[A-Za-z_][A-Za-z0-9_]*`, linked.WordPattern)
+
 	hover, err := HoverInfo(workspace, "Run", 1)
 	require.NoError(t, err)
 	require.True(t, hover.Found)

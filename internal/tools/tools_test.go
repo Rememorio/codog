@@ -2890,6 +2890,15 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, monikerOut, `"kind": "export"`)
 	require.Contains(t, monikerOut, `"unique": "project"`)
 
+	linkedEditingOut, err := tool.Execute(context.Background(), []byte(`{"action":"linked_editing_range","path":"demo.go","query":"Widget","limit":3}`))
+	require.NoError(t, err)
+	require.Contains(t, linkedEditingOut, `"action": "linked-editing-range"`)
+	require.Contains(t, linkedEditingOut, `"source": "static"`)
+	require.Contains(t, linkedEditingOut, `"query": "Widget"`)
+	require.Contains(t, linkedEditingOut, `"path": "demo.go"`)
+	require.Contains(t, linkedEditingOut, `"wordPattern": "[A-Za-z_][A-Za-z0-9_]*"`)
+	require.Contains(t, linkedEditingOut, `"total": 3`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -2926,6 +2935,10 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, err.Error(), "config home is required")
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"moniker","query":"Widget","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"linked_editing_range","path":"demo.go","query":"Widget","use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 

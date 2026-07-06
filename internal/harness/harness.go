@@ -1515,8 +1515,8 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 	},
 	"lsp_static_roundtrip": {
 		Category:    "code-intelligence",
-		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, selection ranges, monikers, references, hover, completions, diagnostics, and formatting.",
-		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Diagnostics"},
+		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, selection ranges, monikers, linked editing ranges, references, hover, completions, diagnostics, and formatting.",
+		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Diagnostics"},
 	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
@@ -4446,6 +4446,16 @@ func lspStaticScenario() scenario {
 				}
 			}
 
+			linkedEditingOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"linked_editing_range","path":"pkg/runner.go","query":"Runner","limit":3}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "linked-editing-range"`, `"source": "static"`, `"query": "Runner"`, `"path": "pkg/runner.go"`, `"wordPattern": "[A-Za-z_][A-Za-z0-9_]*"`, `"total": 3`} {
+				if !strings.Contains(linkedEditingOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp linked editing output missing %s", expected)
+				}
+			}
+
 			referencesOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"references","query":"Runner","limit":10}`))
 			if err != nil {
 				return localScenarioResult{}, err
@@ -4504,11 +4514,11 @@ func lspStaticScenario() scenario {
 			}
 
 			return localScenarioResult{
-				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
+				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
 				FinalMessage: "lsp static harness ok",
-				ToolCalls:    15,
-				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
-				RequestCount: 15,
+				ToolCalls:    16,
+				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
+				RequestCount: 16,
 			}, nil
 		},
 	}
