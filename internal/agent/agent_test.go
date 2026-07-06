@@ -1393,9 +1393,10 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "commands", "missing", "index.ts"), []byte(`export default { name: 'missing-reference-command' }`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "commands", "disabled", "index.js"), []byte(`export default { isEnabled: () => false, isHidden: true, name: 'stub' };`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "commands", "report", "sections.ts"), []byte(`export const sections = [{ name: 'not-a-command' }]`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "tools", "BashTool", "BashTool.tsx"), []byte(`export const BASH_TOOL_NAME = 'BashTool'; export const BashTool = { name: 'BashTool' }`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "tools", "BashTool", "BashTool.tsx"), []byte(`export const BashTool = buildTool({ name: BASH_TOOL_NAME })`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "tools", "BashTool", "toolName.ts"), []byte(`export const BASH_TOOL_NAME = 'Bash'`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "tools", "BashTool", "bashSecurity.ts"), []byte(`export const bashSecurity = true`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "tools", "MissingReferenceTool", "index.ts"), []byte(`export const MissingReferenceTool = { name: 'MissingReferenceTool' }`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "tools", "MissingReferenceTool", "index.ts"), []byte(`export const MissingReferenceTool = buildTool({ name: 'MissingReferenceTool' })`), 0o644))
 	out.Reset()
 	require.NoError(t, app.Capabilities([]string{"audit", "--reference-root", referenceRoot, "--json"}))
 	var sourceAudit referenceParityAuditReport
@@ -1408,11 +1409,12 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, 1, sourceAudit.Commands.MissingCount)
 	require.Equal(t, referenceRoot, sourceAudit.Commands.SourceRoot)
 	require.NotNil(t, sourceAudit.Tools)
-	require.Equal(t, 4, sourceAudit.Tools.ReferenceCount)
-	require.Equal(t, 1, sourceAudit.Tools.CoveredCount)
-	require.Equal(t, 1, sourceAudit.Tools.GroupCoveredCount)
-	require.Equal(t, 2, sourceAudit.Tools.MissingCount)
-	require.Contains(t, sourceAudit.Tools.GroupCovered, referenceAuditMatch{Name: "bashSecurity", SourceHint: "tools/BashTool/bashSecurity.ts", Matched: "bash"})
+	require.Equal(t, 3, sourceAudit.Tools.ReferenceCount)
+	require.Equal(t, 2, sourceAudit.Tools.CoveredCount)
+	require.Equal(t, 0, sourceAudit.Tools.GroupCoveredCount)
+	require.Equal(t, 1, sourceAudit.Tools.MissingCount)
+	require.Contains(t, sourceAudit.Tools.Covered, referenceAuditMatch{Name: "BashTool", SourceHint: "tools/BashTool/BashTool.tsx", Matched: "bash"})
+	require.Contains(t, sourceAudit.Tools.Covered, referenceAuditMatch{Name: "Bash", SourceHint: "tools/BashTool/toolName.ts", Matched: "bash"})
 }
 
 func TestCapabilitiesResolveProjectsExecutionRegistry(t *testing.T) {

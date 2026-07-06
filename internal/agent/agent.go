@@ -26444,7 +26444,7 @@ func referenceSourceRoot(root string) (string, error) {
 }
 
 func extractReferenceCommandEntries(sourceRoot string, commandRoot string) ([]referenceSnapshotRef, error) {
-	extractor := referenceEntryExtractor{sourceRoot: sourceRoot, kind: "commands"}
+	extractor := referenceEntryExtractor{}
 	extractor.entriesByIdentity = map[string]referenceSnapshotRef{}
 	if err := filepath.WalkDir(commandRoot, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -26560,33 +26560,9 @@ func referenceAliasBlocks(text string) []string {
 }
 
 func extractReferenceToolEntries(sourceRoot string, toolRoot string) ([]referenceSnapshotRef, error) {
-	extractor := referenceEntryExtractor{
-		sourceRoot: sourceRoot,
-		kind:       "tools",
-		patterns: []*regexp.Regexp{
-			regexp.MustCompile(`\bname\s*:\s*['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]`),
-			regexp.MustCompile(`\b(?:export\s+)?const\s+([A-Za-z0-9_]+_TOOL_NAME)\s*=\s*['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]`),
-			regexp.MustCompile(`\b(?:export\s+)?const\s+([A-Za-z0-9_]*Tool)\b`),
-		},
-		includeFileNames: true,
-	}
-	if err := extractor.walk(toolRoot); err != nil {
-		return nil, err
-	}
-	return extractor.entries(), nil
-}
-
-type referenceEntryExtractor struct {
-	sourceRoot        string
-	kind              string
-	patterns          []*regexp.Regexp
-	includeFileNames  bool
-	entriesByIdentity map[string]referenceSnapshotRef
-}
-
-func (e *referenceEntryExtractor) walk(root string) error {
-	e.entriesByIdentity = map[string]referenceSnapshotRef{}
-	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+	extractor := referenceEntryExtractor{}
+	extractor.entriesByIdentity = map[string]referenceSnapshotRef{}
+	if err := filepath.WalkDir(toolRoot, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -26603,42 +26579,59 @@ func (e *referenceEntryExtractor) walk(root string) error {
 		if err != nil {
 			return err
 		}
-		sourceHint := referenceSourceHint(e.sourceRoot, path)
-		text := string(data)
-		if e.kind == "commands" && isReferenceDisabledStub(text) {
-			return nil
-		}
-		if e.includeFileNames {
-			e.add(referenceFileName(path), sourceHint, "")
-		}
-		for _, pattern := range e.patterns {
-			for _, match := range pattern.FindAllStringSubmatch(text, -1) {
-				e.addReferencePatternMatch(match, sourceHint)
-			}
+		sourceHint := referenceSourceHint(sourceRoot, path)
+		for _, entry := range extractReferenceToolEntriesFromText(string(data), sourceHint) {
+			extractor.add(entry.Name, entry.SourceHint, entry.Responsibility)
 		}
 		return nil
-	})
+	}); err != nil {
+		return nil, err
+	}
+	return extractor.entries(), nil
 }
 
-func (e *referenceEntryExtractor) addReferencePatternMatch(match []string, sourceHint string) {
-	switch len(match) {
-	case 0, 1:
-		return
-	case 2:
-		if strings.Contains(match[1], "'") || strings.Contains(match[1], `"`) || strings.Contains(match[1], "`") {
-			for _, alias := range parseReferenceAliases(match[1]) {
-				e.add(alias, sourceHint, "")
-			}
+func extractReferenceToolEntriesFromText(text string, sourceHint string) []referenceSnapshotRef {
+	var refs []referenceSnapshotRef
+	add := func(name string, responsibility string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
 			return
 		}
-		e.add(match[1], sourceHint, "")
-	default:
-		if strings.HasSuffix(match[1], "_TOOL_NAME") && strings.TrimSpace(match[2]) != "" {
-			e.add(match[2], sourceHint, match[1])
-			return
-		}
-		e.add(match[1], sourceHint, "")
+		refs = append(refs, referenceSnapshotRef{Name: name, SourceHint: sourceHint, Responsibility: responsibility})
 	}
+	toolNamePattern := regexp.MustCompile(`\b(?:export\s+)?const\s+([A-Za-z0-9_]+_TOOL_NAME)\s*=\s*['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]`)
+	for _, match := range toolNamePattern.FindAllStringSubmatch(text, -1) {
+		if len(match) > 2 {
+			add(match[2], match[1])
+		}
+	}
+	toolExportPattern := regexp.MustCompile(`\bexport\s+const\s+([A-Za-z0-9_]*Tool)\b`)
+	for _, match := range toolExportPattern.FindAllStringSubmatch(text, -1) {
+		if len(match) > 1 {
+			add(match[1], "tool_export")
+		}
+	}
+	for _, block := range referenceBuildToolBlocks(text) {
+		if name := firstReferenceName(block); name != "" {
+			add(name, "build_tool_name")
+		}
+	}
+	return refs
+}
+
+func referenceBuildToolBlocks(text string) []string {
+	pattern := regexp.MustCompile(`\bbuildTool\s*\(\s*\{`)
+	var blocks []string
+	for _, match := range pattern.FindAllStringIndex(text, -1) {
+		start := match[0]
+		end := min(len(text), start+4096)
+		blocks = append(blocks, text[start:end])
+	}
+	return blocks
+}
+
+type referenceEntryExtractor struct {
+	entriesByIdentity map[string]referenceSnapshotRef
 }
 
 func (e *referenceEntryExtractor) add(name string, sourceHint string, responsibility string) {
@@ -26719,12 +26712,6 @@ func shouldSkipReferenceFile(path string) bool {
 	}
 	lower := strings.ToLower(base)
 	return strings.Contains(lower, ".test.") || strings.Contains(lower, ".spec.") || strings.HasSuffix(lower, ".d.ts")
-}
-
-func referenceFileName(path string) string {
-	base := filepath.Base(path)
-	ext := filepath.Ext(base)
-	return strings.TrimSuffix(base, ext)
 }
 
 func referenceSourceHint(sourceRoot string, path string) string {
