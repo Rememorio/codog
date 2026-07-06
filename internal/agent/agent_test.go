@@ -2925,6 +2925,32 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "status", bridgeReport.Action)
 
 	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/remote-control", "status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &bridgeReport))
+	require.Equal(t, "ide", bridgeReport.Kind)
+	require.Equal(t, "status", bridgeReport.Action)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/app", "status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var handoffStatus handoffStatusReport
+	require.NoError(t, json.Unmarshal([]byte(out), &handoffStatus))
+	require.Equal(t, "handoff_status", handoffStatus.Kind)
+	require.Equal(t, "desktop", handoffStatus.Surface)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/ios", "status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &handoffStatus))
+	require.Equal(t, "handoff_status", handoffStatus.Kind)
+	require.Equal(t, "mobile", handoffStatus.Surface)
+	require.Equal(t, "ios", handoffStatus.Platform)
+
+	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/exit_plan_mode"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
