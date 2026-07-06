@@ -1084,6 +1084,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	case "rollback":
+		if err := app.Updater(ctx, append([]string{"rollback"}, rest...)); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "upgrade":
 		if err := app.Upgrade(ctx, rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -27896,6 +27901,7 @@ func builtInCommandNames() []string {
 		"resume",
 		"review",
 		"reviewRemote",
+		"rollback",
 		"rewind",
 		"rc",
 		"run",
@@ -53258,7 +53264,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"help", "ide", "init", "init-verifiers", "insights", "install", "ios", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "pr_comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
-		"remote-control", "remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "sandbox-toggle",
+		"remote-control", "remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "sandbox-toggle",
 		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "state", "status", "statusline",
 		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "terminalsetup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
@@ -54303,6 +54309,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "rollback":
+		return localCommandHelpSpec(
+			"rollback",
+			"rollback",
+			"codog rollback [TARGET] [--output-format text|json]",
+			"Rollback\n\nUsage:\n  codog rollback [TARGET] [--output-format text|json]\n\nRestores TARGET from the updater backup at TARGET.bak. When TARGET is omitted, Codog uses the current executable path, matching `codog updater rollback`.\n",
+			[]string{"kind", "action", "status", "result", "target", "backup_path", "rolled_back"},
+			[]string{"ok", "error"},
+			true,
+		), true
 	case "notifications":
 		return localCommandHelpSpec(
 			"notifications",
@@ -54868,6 +54884,7 @@ Usage:
   %s sandbox-toggle [status|on|off|detect|sandbox-exec|bwrap|unshare|restricted-token|clear] [--target user|project|local] [--json|--output-format text|json]
   %s upgrade [status|show|check|verify|download|install|rollback] ARGS...
   %s install [ARTIFACT [TARGET]] [--json|--output-format json]
+  %s rollback [TARGET] [--json|--output-format text|json]
   %s remote-env [show|set|clear] [--enabled on|off] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s remote-setup|web-setup [status|enable|disable|clear] [--addr HOST:PORT] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s desktop|app [status] [--session ID|--resume latest] [--json|--output-format text|json]

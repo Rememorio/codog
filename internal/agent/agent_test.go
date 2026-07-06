@@ -28847,6 +28847,32 @@ func TestUpdaterInstallAndRollbackCommands(t *testing.T) {
 	require.Equal(t, "upgrade-new", string(data))
 }
 
+func TestRollbackCommandDelegatesToUpdater(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "codog")
+	backup := target + ".bak"
+	require.NoError(t, os.WriteFile(target, []byte("current"), 0o755))
+	require.NoError(t, os.WriteFile(backup, []byte("previous"), 0o755))
+
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "rollback", target}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "updater"`)
+	require.Contains(t, out, `"action": "rollback"`)
+	require.Contains(t, out, `"rolled_back": true`)
+
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, "previous", string(data))
+}
+
 func TestUpdaterStatusDefaults(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "codog")
