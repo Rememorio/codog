@@ -1101,6 +1101,7 @@ type FlagOverrides struct {
 	DisallowedTools                []string
 	ToolNames                      []string
 	ToolNamesSet                   bool
+	NoSessionPersistence           bool
 	OutputFormatSource             string
 	OutputFormatRaw                string
 	OutputFormatOverridden         bool

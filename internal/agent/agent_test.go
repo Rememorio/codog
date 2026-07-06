@@ -10042,6 +10042,21 @@ func TestParseFlagsSupportsSystemPromptOverrides(t *testing.T) {
 	require.Equal(t, []string{"hello"}, rest)
 }
 
+func TestParseFlagsSupportsNoSessionPersistenceForPrompt(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{"-p", "--no-session-persistence", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.True(t, overrides.NoSessionPersistence)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+
+	_, _, _, err = parseFlags([]string{"--no-session-persistence", "status"}, config.FlagOverrides{})
+	require.Error(t, err)
+	var flagErr invalidFlagValueError
+	require.ErrorAs(t, err, &flagErr)
+	require.Equal(t, "--no-session-persistence", flagErr.Flag)
+	require.Contains(t, flagErr.Message, "prompt mode")
+}
+
 func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{"--output-format", "json", "status"}, config.FlagOverrides{})
 	require.NoError(t, err)
@@ -22379,6 +22394,17 @@ func TestPromptOutputFormats(t *testing.T) {
 	require.Equal(t, "completed", report.Status)
 	require.Equal(t, "json-session", report.SessionID)
 	require.Equal(t, "done", report.Response)
+	out.Reset()
+
+	require.NoError(t, app.PromptWithOutput(context.Background(), "ephemeral prompt", config.FlagOverrides{SessionID: "ephemeral-session", NoSessionPersistence: true}, "json"))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "prompt", report.Kind)
+	require.Equal(t, "completed", report.Status)
+	require.Equal(t, "ephemeral-session", report.SessionID)
+	require.Equal(t, "done", report.Response)
+	exists, err := app.Sessions.Exists("ephemeral-session")
+	require.NoError(t, err)
+	require.False(t, exists)
 	out.Reset()
 
 	require.NoError(t, app.PromptWithOutput(context.Background(), "stream prompt", config.FlagOverrides{SessionID: "stream-session"}, "stream-json"))

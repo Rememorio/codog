@@ -32341,6 +32341,10 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 	if err := a.RegisterMCPTools(ctx); err != nil {
 		return err
 	}
+	restoreSessions := a.disableSessionPersistenceForPrompt(overrides.NoSessionPersistence)
+	if restoreSessions != nil {
+		defer restoreSessions()
+	}
 	sess, err := a.openSession(overrides)
 	if err != nil {
 		if strings.TrimSpace(overrides.Resume) == "" {
@@ -32394,11 +32398,7 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 		return runErr
 	}
 	if compact {
-		current, err := a.Sessions.Open(sess.ID)
-		if err != nil {
-			return err
-		}
-		report := promptCompactOutputReport(a.Sessions, current, a.Config.Model, priorMessageCount)
+		report := promptCompactOutputReport(a.Sessions, sess, a.Config.Model, priorMessageCount)
 		switch format {
 		case "json":
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -32413,11 +32413,7 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 		}
 	}
 	if format == "json" || format == "stream-json" {
-		current, err := a.Sessions.Open(sess.ID)
-		if err != nil {
-			return err
-		}
-		report := promptOutputReport(current, streamCapture.String(), endReason)
+		report := promptOutputReport(sess, streamCapture.String(), endReason)
 		if format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
 			fmt.Fprintln(a.Out, string(data))
@@ -32426,8 +32422,23 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 		writer := promptStreamJSONWriter{Out: a.Out}
 		return writer.Event("result", report)
 	}
-	fmt.Fprintf(a.Err, "\n\nsession: %s\n", sess.ID)
+	if !overrides.NoSessionPersistence {
+		fmt.Fprintf(a.Err, "\n\nsession: %s\n", sess.ID)
+	}
 	return nil
+}
+
+func (a *App) disableSessionPersistenceForPrompt(disabled bool) func() {
+	if !disabled || a.Sessions == nil {
+		return nil
+	}
+	previous := a.Sessions
+	ephemeral := *previous
+	ephemeral.PersistenceDisabled = true
+	a.Sessions = &ephemeral
+	return func() {
+		a.Sessions = previous
+	}
 }
 
 type promptReport struct {
@@ -51387,6 +51398,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.BoolVar(&printMode, "p", false, "run a one-shot prompt")
 	flags.BoolVar(&printMode, "print", false, "run a one-shot prompt")
 	flags.BoolVar(&compactPromptMode, "compact", false, "run a compact one-shot prompt")
+	flags.BoolVar(&base.NoSessionPersistence, "no-session-persistence", base.NoSessionPersistence, "disable session persistence for prompt mode")
 	flags.BoolVar(&jsonOutput, "json", false, "alias for --output-format json for local commands")
 	flags.StringVar(&outputFormat, "output-format", "", "text or json output for local commands")
 	flags.StringVar(&outputFormat, "o", "", "text or json output for local commands")
@@ -51441,9 +51453,25 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		return base, "prompt", rest, nil
 	}
 	if len(rest) == 0 {
+		if base.NoSessionPersistence {
+			return base, "", nil, invalidFlagValueError{
+				Flag:    "--no-session-persistence",
+				Value:   "",
+				Message: "--no-session-persistence is only supported with prompt mode",
+				Usage:   "codog -p --no-session-persistence \"<prompt>\"",
+			}
+		}
 		return base, "", nil, nil
 	}
 	command, rest := rest[0], rest[1:]
+	if base.NoSessionPersistence && !strings.EqualFold(command, "prompt") {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--no-session-persistence",
+			Value:   command,
+			Message: "--no-session-persistence is only supported with prompt mode",
+			Usage:   "codog -p --no-session-persistence \"<prompt>\"",
+		}
+	}
 	outputFormat = resolveGlobalOutputFormat(outputFormat, jsonOutput)
 	base.OutputFormatSubcommandExplicit = argsHaveOutputFormat(rest)
 	if outputFormat != "" && commandAcceptsGlobalOutputFormat(command) && !base.OutputFormatSubcommandExplicit {
@@ -53377,6 +53405,7 @@ Flags:
   --dangerously-skip-permissions
   --skip-permissions
   --allow-broad-cwd
+  --no-session-persistence
   --allowed-tools TOOL[,TOOL]
   --disallowed-tools TOOL[,TOOL]
   --tools TOOL[,TOOL]

@@ -1115,6 +1115,15 @@ func (s *Store) UpdateIdentity(id string, update SessionIdentity) (SessionIdenti
 	if id == "" {
 		return SessionIdentity{}, errors.New("session id is required")
 	}
+	if s.PersistenceDisabled {
+		if IsSessionReferenceAlias(id) {
+			return SessionIdentity{}, ErrNoSessions
+		}
+		if err := validateSessionID(id); err != nil {
+			return SessionIdentity{}, err
+		}
+		return normalizeSessionIdentity(id, s.Workspace, update), nil
+	}
 	if IsSessionReferenceAlias(id) {
 		latest, err := s.LatestID()
 		if err != nil {

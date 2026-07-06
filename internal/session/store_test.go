@@ -293,6 +293,25 @@ func TestWorkspaceStoreCleanupZeroDisablesPersistenceAndRemovesSessions(t *testi
 	require.ErrorIs(t, err, ErrNoSessions)
 }
 
+func TestStoreUpdateIdentityRespectsPersistenceDisabled(t *testing.T) {
+	store := NewWorkspaceStore(t.TempDir(), t.TempDir())
+	store.PersistenceDisabled = true
+
+	identity, err := store.UpdateIdentity("ephemeral-session", SessionIdentity{
+		Title:   "Ephemeral prompt",
+		Purpose: "prompt",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "Ephemeral prompt", identity.Title)
+	require.Equal(t, "prompt", identity.Purpose)
+	require.Equal(t, store.Workspace, identity.Workspace)
+	require.Empty(t, identity.Placeholders)
+	require.NoFileExists(t, filepath.Join(store.Dir, "ephemeral-session.jsonl"))
+
+	_, err = store.UpdateIdentity("latest", SessionIdentity{Title: "alias"})
+	require.ErrorIs(t, err, ErrNoSessions)
+}
+
 func TestStorePruneDryRunAndConfirmEmptySessions(t *testing.T) {
 	store := NewStore(t.TempDir())
 	_, err := store.Create("empty-session")
