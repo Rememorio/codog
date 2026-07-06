@@ -45452,7 +45452,7 @@ func (a *App) Commands(args []string) error {
 	action := "list"
 	rest := args
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		action = strings.ToLower(args[0])
+		action = normalizeCommandsAction(args[0])
 		rest = args[1:]
 	}
 	switch action {
@@ -45462,7 +45462,7 @@ func (a *App) Commands(args []string) error {
 			return err
 		}
 		return a.renderCommandsList(format)
-	case "sources", "roots":
+	case "sources":
 		return a.commandSources(rest)
 	case "show":
 		format, remaining, err := parseTemplateOutputArgs("commands show", rest)
@@ -45492,7 +45492,7 @@ func (a *App) Commands(args []string) error {
 		if !strings.HasSuffix(command.Body, "\n") {
 			fmt.Fprintln(a.Out)
 		}
-	case "run", "render":
+	case "run":
 		format, remaining, err := parseTemplateOutputArgs("commands run", rest)
 		if err != nil {
 			return err
@@ -45522,6 +45522,21 @@ func (a *App) Commands(args []string) error {
 		}
 	}
 	return nil
+}
+
+func normalizeCommandsAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "list", "ls":
+		return "list"
+	case "source", "sources", "root", "roots":
+		return "sources"
+	case "show", "info", "describe", "get", "view", "cat":
+		return "show"
+	case "run", "render", "exec", "execute", "call", "invoke":
+		return "run"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
 }
 
 func (a *App) renderCommandsList(format string) error {
@@ -45605,7 +45620,7 @@ func (a *App) Templates(args []string) error {
 	action := "list"
 	rest := args
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		action = strings.ToLower(args[0])
+		action = normalizeTemplatesAction(args[0])
 		rest = args[1:]
 	}
 	switch action {
@@ -45676,6 +45691,19 @@ func (a *App) Templates(args []string) error {
 		}
 	}
 	return nil
+}
+
+func normalizeTemplatesAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "list", "ls":
+		return "list"
+	case "show", "info", "describe", "get", "view", "cat":
+		return "show"
+	case "apply", "render", "run", "exec", "execute", "call", "invoke":
+		return "apply"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
 }
 
 func (a *App) renderTemplatesList(format string) error {
@@ -53858,8 +53886,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"commands",
 			"commands",
-			"codog commands [list|sources|show|run]",
-			"Commands\n\nUsage:\n  codog commands [list|sources|show|run]\n\nLists, audits sources, shows, or renders custom Markdown slash commands from Codog and compatible Claude command directories. `roots` is an alias for `sources`.\n",
+			"codog commands [list|ls|sources|roots|show|view|run|render|exec]",
+			"Commands\n\nUsage:\n  codog commands [list|ls|sources|roots|show|view|run|render|exec]\n\nLists, audits sources, shows, or renders custom Markdown slash commands from Codog and compatible Claude command directories. `ls` is an alias for `list`; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `exec`, `execute`, `call`, and `invoke` are aliases for `run`.\n",
 			[]string{"commands", "roots", "name", "path", "body", "active", "shadowed_by"},
 			[]string{"ok", "error"},
 			false,
@@ -53868,8 +53896,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"templates",
 			"templates",
-			"codog templates [list|show|apply]",
-			"Templates\n\nUsage:\n  codog templates [list|show|apply]\n\nLists, shows, or renders parameterized prompt templates.\n",
+			"codog templates [list|ls|show|view|apply|render|run]",
+			"Templates\n\nUsage:\n  codog templates [list|ls|show|view|apply|render|run]\n\nLists, shows, or renders parameterized prompt templates. `ls` is an alias for `list`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `run`, `exec`, `execute`, `call`, and `invoke` are aliases for `apply`.\n",
 			[]string{"templates", "name", "path", "body"},
 			[]string{"ok", "error"},
 			false,
@@ -54073,8 +54101,8 @@ Usage:
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID] | paste [--print|--json] [--session ID]
   %s [flags] pin|unpin [message-index|last] [--session ID] [--json|--output-format text|json]
   %s [flags] skill|skills [list|sources|show|info|describe|invoke|add|install|uninstall]
-  %s [flags] commands [list|show|run]
-  %s [flags] templates [list|show|apply]
+  %s [flags] commands [list|ls|sources|roots|show|view|run|render|exec]
+  %s [flags] templates [list|ls|show|view|apply|render|run]
   %s [flags] hooks [list|health EVENT|run EVENT|watch-paths list|check] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME] | models [list|ls|aliases|routes|search|find QUERY|show|view [MODEL]|current|help] [--json|--output-format text|json]

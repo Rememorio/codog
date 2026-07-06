@@ -24213,7 +24213,18 @@ func TestTemplatesCommandAndSlash(t *testing.T) {
 	require.Equal(t, 2, templateList.Count)
 	out.Reset()
 
+	require.NoError(t, app.Templates([]string{"ls", "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &templateList))
+	require.Equal(t, "templates", templateList.Kind)
+	require.Equal(t, "list", templateList.Action)
+	require.Equal(t, 2, templateList.Count)
+	out.Reset()
+
 	require.NoError(t, app.Templates([]string{"show", "review"}))
+	require.Contains(t, out.String(), "Review {{target}} as {{role}}.")
+	out.Reset()
+
+	require.NoError(t, app.Templates([]string{"view", "review"}))
 	require.Contains(t, out.String(), "Review {{target}} as {{role}}.")
 	out.Reset()
 
@@ -24235,12 +24246,16 @@ func TestTemplatesCommandAndSlash(t *testing.T) {
 	require.Equal(t, "Review auth as reviewer.\n", out.String())
 	out.Reset()
 
+	require.NoError(t, app.Templates([]string{"run", "review", "--var", "target=api", "role=maintainer"}))
+	require.Equal(t, "Review api as maintainer.\n", out.String())
+	out.Reset()
+
 	require.NoError(t, app.Templates([]string{"apply", "plan", "--json", "--var=topic=tests"}))
 	require.Contains(t, out.String(), `"kind": "template_apply"`)
 	require.Contains(t, out.String(), `"rendered": "Plan tests."`)
 	out.Reset()
 
-	require.True(t, app.handleSlash(context.Background(), "/templates apply plan topic=release", &session.Session{ID: "session"}))
+	require.True(t, app.handleSlash(context.Background(), "/templates render plan topic=release", &session.Session{ID: "session"}))
 	require.Equal(t, "Plan release.\n", out.String())
 	require.Empty(t, errOut.String())
 }
@@ -24289,8 +24304,19 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 	require.Equal(t, "workspace", commandReportEntry(listReport.Commands, "fix", "claude").ShadowedBy)
 	out.Reset()
 
+	require.NoError(t, app.Commands([]string{"ls", "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &listReport))
+	require.Equal(t, "commands", listReport.Kind)
+	require.Equal(t, "list", listReport.Action)
+	require.Equal(t, 3, listReport.Summary.Total)
+	out.Reset()
+
 	require.NoError(t, app.Commands([]string{"show", "fix", "--json"}))
 	require.Contains(t, out.String(), `"source": "workspace"`)
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"view", "fix"}))
+	require.Equal(t, "Codog fix {{ ARGUMENTS }}\n", out.String())
 	out.Reset()
 
 	require.NoError(t, app.Commands([]string{"show", "--json"}))
@@ -24326,6 +24352,13 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 	requireCommandSourceRoot(t, sourceReport.Roots, "user", filepath.Join(configHome, "commands"), true)
 	out.Reset()
 
+	require.NoError(t, app.Commands([]string{"root", "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &sourceReport))
+	require.Equal(t, "commands", sourceReport.Kind)
+	require.Equal(t, "sources", sourceReport.Action)
+	require.Equal(t, len(sourceReport.Roots), sourceReport.RootCount)
+	out.Reset()
+
 	err := app.Commands([]string{"run", "--json"})
 	require.Error(t, err)
 	var exitErr *ExitError
@@ -24344,7 +24377,11 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 	require.Equal(t, "Codog fix bug 123\n", out.String())
 	out.Reset()
 
-	require.True(t, app.handleSlash(context.Background(), "/commands run review file.go", &session.Session{ID: "session"}))
+	require.NoError(t, app.Commands([]string{"exec", "fix", "bug", "456"}))
+	require.Equal(t, "Codog fix bug 456\n", out.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/commands render review file.go", &session.Session{ID: "session"}))
 	require.Equal(t, "Review file.go\n", out.String())
 	require.Empty(t, errOut.String())
 }
