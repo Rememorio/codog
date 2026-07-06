@@ -215,6 +215,7 @@ var scenarioOrder = []string{
 	"resume_slash_command_roundtrip",
 	"plugin_lifecycle_roundtrip",
 	"task_lifecycle_roundtrip",
+	"task_packet_roundtrip",
 	"team_cron_lifecycle_roundtrip",
 	"worker_lifecycle_roundtrip",
 	"background_agent_run_roundtrip",
@@ -751,6 +752,7 @@ func Run(ctx context.Context) (Report, error) {
 		resumeSlashCommandScenario(),
 		pluginLifecycleScenario(),
 		taskLifecycleScenario(),
+		taskPacketRoundtripScenario(),
 		teamCronLifecycleScenario(),
 		workerLifecycleScenario(),
 		backgroundAgentRunScenario(),
@@ -1144,6 +1146,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "token, cost, and compaction", RequiredRefs: []string{"Token usage", "Cost tracking", "Auto-compaction"}},
 	{Capability: "IDE bridge and remote control", RequiredRefs: []string{"IDE bridge", "ACP/Zed", "Remote sessions", "Control API listener"}},
 	{Capability: "multi-agent and background tasks", RequiredRefs: []string{"Background tasks", "Agent runs", "Lane board", "Supervisor restarts"}},
+	{Capability: "structured task packets", RequiredRefs: []string{"Task packet schema", "Task packet scope resolution", "Task packet persistence"}},
 	{Capability: "team and scheduled tasks", RequiredRefs: []string{"Team tools", "Team task assignment", "Cron tools", "Cron lifecycle"}},
 	{Capability: "worker orchestration", RequiredRefs: []string{"Worker tools", "Worker trust recovery", "Worker prompt delivery", "Worker startup diagnostics"}},
 	{Capability: "notebook and code intelligence", RequiredRefs: []string{"Notebook read", "Notebook edit", "LSP tool", "Code intelligence"}},
@@ -1505,6 +1508,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "background-agents",
 		Description: "Creates, reads, updates, lists, and stops background tasks through the tool registry.",
 		ParityRefs:  []string{"Background tasks", "Task create", "Task status", "Task output", "Task updates", "Task stop"},
+	},
+	"task_packet_roundtrip": {
+		Category:    "task-packets",
+		Description: "Creates a background task from a rich structured task packet and verifies scope resolution plus persisted packet metadata.",
+		ParityRefs:  []string{"Task packet schema", "Task packet scope resolution", "Task packet persistence", "Tool result roundtrip"},
 	},
 	"team_cron_lifecycle_roundtrip": {
 		Category:    "team-cron",
@@ -4292,6 +4300,183 @@ func taskLifecycleScenario() scenario {
 					"task_list",
 					"task_create",
 					"task_output",
+					"task_stop",
+				},
+			}, nil
+		},
+	}
+}
+
+func taskPacketRoundtripScenario() scenario {
+	return scenario{
+		name: "task_packet_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			moduleDir := filepath.Join(workspace, "internal", "taskpacket")
+			if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(moduleDir, "taskpacket.go"), []byte("package taskpacket\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			shim := filepath.Join(workspace, "task-packet-shim")
+			if err := os.WriteFile(shim, []byte("#!/bin/sh\nprintf 'packet:%s\\n' \"$*\"\nsleep 5\n"), 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{
+				ConfigHome: configHome,
+				Executable: shim,
+			})
+
+			runOut, err := registry.Execute(ctx, "RunTaskPacketTool", json.RawMessage(`{
+				"objective": "Implement typed task packet parity",
+				"scope": "module",
+				"scope_path": "internal/taskpacket",
+				"repo": "codog",
+				"worktree": "reviewer",
+				"branch_policy": "main only",
+				"acceptance_tests": ["go test ./internal/taskpacket"],
+				"acceptance_criteria": ["packet validates", "packet persists"],
+				"resources": [{"kind": "module", "value": "internal/taskpacket"}],
+				"model": "claude-test",
+				"provider": "anthropic",
+				"permission_profile": "workspace-write",
+				"commit_policy": "single focused commit",
+				"reporting_targets": ["leader"],
+				"recovery_policy": "retry once with narrowed scope",
+				"verification_plan": ["go test ./internal/taskpacket"]
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var created struct {
+				TaskID        string `json:"task_id"`
+				Status        string `json:"status"`
+				Description   string `json:"description"`
+				Prompt        string `json:"prompt"`
+				ResolvedScope struct {
+					Scope        string `json:"scope"`
+					Path         string `json:"path"`
+					AbsolutePath string `json:"absolute_path"`
+				} `json:"resolved_scope"`
+				TaskPacket struct {
+					Objective          string   `json:"objective"`
+					Scope              string   `json:"scope"`
+					ScopePath          string   `json:"scope_path"`
+					Repo               string   `json:"repo"`
+					Worktree           string   `json:"worktree"`
+					AcceptanceCriteria []string `json:"acceptance_criteria"`
+					Model              string   `json:"model"`
+					Provider           string   `json:"provider"`
+					PermissionProfile  string   `json:"permission_profile"`
+					ReportingTargets   []string `json:"reporting_targets"`
+					VerificationPlan   []string `json:"verification_plan"`
+				} `json:"task_packet"`
+				Task background.Task `json:"task"`
+			}
+			if err := json.Unmarshal([]byte(runOut), &created); err != nil {
+				return localScenarioResult{}, err
+			}
+			if created.TaskID == "" || created.Status != "running" || created.Description != "Implement typed task packet parity" {
+				return localScenarioResult{}, fmt.Errorf("unexpected task packet create output: %s", runOut)
+			}
+			if created.Task.Kind != "task_packet" || created.Task.ID != created.TaskID || len(created.Task.TaskPacket) == 0 {
+				return localScenarioResult{}, fmt.Errorf("task packet metadata was not persisted on task: %s", runOut)
+			}
+			if created.ResolvedScope.Scope != "module" || created.ResolvedScope.Path != "internal/taskpacket" || filepath.Clean(created.ResolvedScope.AbsolutePath) != filepath.Clean(moduleDir) {
+				return localScenarioResult{}, fmt.Errorf("unexpected task packet scope resolution: %s", runOut)
+			}
+			if created.TaskPacket.Objective != "Implement typed task packet parity" ||
+				created.TaskPacket.Scope != "module" ||
+				created.TaskPacket.Repo != "codog" ||
+				created.TaskPacket.Worktree != "reviewer" ||
+				created.TaskPacket.Model != "claude-test" ||
+				created.TaskPacket.Provider != "anthropic" ||
+				created.TaskPacket.PermissionProfile != "workspace-write" ||
+				!slices.Equal(created.TaskPacket.AcceptanceCriteria, []string{"packet validates", "packet persists"}) ||
+				!slices.Equal(created.TaskPacket.ReportingTargets, []string{"leader"}) ||
+				!slices.Equal(created.TaskPacket.VerificationPlan, []string{"go test ./internal/taskpacket"}) {
+				return localScenarioResult{}, fmt.Errorf("unexpected task packet payload: %s", runOut)
+			}
+			var persisted map[string]any
+			if err := json.Unmarshal(created.Task.TaskPacket, &persisted); err != nil {
+				return localScenarioResult{}, err
+			}
+			if persisted["objective"] != "Implement typed task packet parity" || persisted["scope"] != "module" || persisted["provider"] != "anthropic" {
+				return localScenarioResult{}, fmt.Errorf("unexpected persisted task packet: %#v", persisted)
+			}
+
+			outputOut, err := registry.Execute(ctx, "task_output", json.RawMessage(fmt.Sprintf(`{
+				"task_id": %q,
+				"block": true,
+				"timeout_ms": 10000
+			}`, created.TaskID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(outputOut, "packet:prompt") || !strings.Contains(outputOut, "Implement typed task packet parity") || !strings.Contains(outputOut, "Verification plan:") {
+				return localScenarioResult{}, fmt.Errorf("unexpected task packet output: %s", outputOut)
+			}
+
+			getOut, err := registry.Execute(ctx, "task_get", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, created.TaskID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var fetched struct {
+				TaskID string          `json:"task_id"`
+				Task   background.Task `json:"task"`
+			}
+			if err := json.Unmarshal([]byte(getOut), &fetched); err != nil {
+				return localScenarioResult{}, err
+			}
+			if fetched.TaskID != created.TaskID || fetched.Task.Kind != "task_packet" || len(fetched.Task.TaskPacket) == 0 {
+				return localScenarioResult{}, fmt.Errorf("unexpected fetched task packet task: %s", getOut)
+			}
+
+			stopOut, err := registry.Execute(ctx, "task_stop", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, created.TaskID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var stopped struct {
+				TaskID string `json:"task_id"`
+				Status string `json:"status"`
+			}
+			if err := json.Unmarshal([]byte(stopOut), &stopped); err != nil {
+				return localScenarioResult{}, err
+			}
+			if stopped.TaskID != created.TaskID || stopped.Status != "stopped" {
+				return localScenarioResult{}, fmt.Errorf("unexpected task packet stop output: %s", stopOut)
+			}
+
+			report := map[string]any{
+				"kind": "task_packet_roundtrip",
+				"task_packet": map[string]any{
+					"task_id":            created.TaskID,
+					"scope":              created.TaskPacket.Scope,
+					"scope_path":         created.TaskPacket.ScopePath,
+					"repo":               created.TaskPacket.Repo,
+					"model":              created.TaskPacket.Model,
+					"provider":           created.TaskPacket.Provider,
+					"permission_profile": created.TaskPacket.PermissionProfile,
+					"criteria":           len(created.TaskPacket.AcceptanceCriteria),
+					"verification_steps": len(created.TaskPacket.VerificationPlan),
+					"stopped":            stopped.Status,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "task packet harness ok",
+				RequestCount: 4,
+				MessageCount: 1,
+				ToolCalls:    4,
+				ToolUses: []string{
+					"run_task_packet",
+					"task_output",
+					"task_get",
 					"task_stop",
 				},
 			}, nil
