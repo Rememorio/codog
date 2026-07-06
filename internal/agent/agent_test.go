@@ -3140,18 +3140,28 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.NotEmpty(t, newReport.Path)
 	require.Contains(t, newReport.ContinueCommands[0], "--session")
 
-	for _, command := range []string{"/quit"} {
+	for _, command := range []string{"/exit", "/quit"} {
 		out, err = captureStdout(t, func() error {
 			return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", command}, config.FlagOverrides{})
 		})
-		require.Error(t, err, command)
-		require.ErrorAs(t, err, &exitErr, command)
-		require.True(t, exitErr.Silent, command)
-		require.NoError(t, json.Unmarshal([]byte(out), &slashReport), command)
-		require.Equal(t, "interactive_only", slashReport.ErrorKind, command)
-		require.Equal(t, command, slashReport.Command, command)
-		require.NotContains(t, slashReport.Hint, "--resume", command)
+		require.NoError(t, err, command)
+		var exitReport simpleCompatibilityReport
+		require.NoError(t, json.Unmarshal([]byte(out), &exitReport), command)
+		require.Equal(t, "exit", exitReport.Kind, command)
+		require.Equal(t, "exit", exitReport.Action, command)
+		require.Equal(t, "ok", exitReport.Status, command)
+		require.False(t, exitReport.ProviderRequestMade, command)
+		require.False(t, exitReport.WorkspaceWillMutate, command)
 	}
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "quit"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var quitReport simpleCompatibilityReport
+	require.NoError(t, json.Unmarshal([]byte(out), &quitReport))
+	require.Equal(t, "exit", quitReport.Kind)
+	require.Equal(t, "ok", quitReport.Status)
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/commit"}, config.FlagOverrides{})

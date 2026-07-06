@@ -957,7 +957,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return nil
 	case "createMovedToPluginCommand":
 		return wrapStructured(app.MovedToPluginCommand(rest))
-	case "exit":
+	case "exit", "quit":
 		return wrapStructured(app.ExitCompatibility(rest))
 	case "good-claude":
 		return wrapStructured(app.GoodClaude(rest))
@@ -30038,6 +30038,8 @@ func directSlashCommandName(name string) string {
 		return "config"
 	case "/new":
 		return "clear"
+	case "/exit", "/quit":
+		return "exit"
 	case "/bug":
 		return "feedback"
 	case "/checkpoint":
@@ -30093,7 +30095,7 @@ func joinReadable(values []string) string {
 
 func directSlashInteractiveOnly(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/attach", "/exit", "/quit":
+	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/attach":
 		return true
 	default:
 		return false
@@ -52479,7 +52481,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
 		"help", "ide", "init", "init-verifiers", "insights", "install", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
-		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
+		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "state", "status", "statusline",
 		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details", "trust",
