@@ -429,6 +429,35 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, teamCronCategory.Total)
 	require.Equal(t, []string{"team_cron_lifecycle_roundtrip"}, teamCronCategory.Scenarios)
 
+	workerLifecycle := findScenario(t, report, "worker_lifecycle_roundtrip")
+	require.True(t, workerLifecycle.OK)
+	require.Equal(t, "workers", workerLifecycle.Category)
+	require.Equal(t, 11, workerLifecycle.ToolCalls)
+	require.Equal(t, 11, workerLifecycle.RequestCount)
+	require.Equal(t, []string{
+		"worker_create",
+		"worker_list",
+		"worker_await_ready",
+		"worker_observe",
+		"worker_resolve_trust",
+		"worker_send_prompt",
+		"worker_get",
+		"worker_restart",
+		"worker_observe_completion",
+		"worker_startup_timeout",
+		"worker_terminate",
+	}, workerLifecycle.ToolUses)
+	require.Equal(t, "worker lifecycle harness ok", workerLifecycle.FinalMessage)
+	require.Contains(t, workerLifecycle.Output, `"kind":"worker_lifecycle"`)
+	require.Contains(t, workerLifecycle.Output, `"trust_resolved":true`)
+	require.Contains(t, workerLifecycle.Output, `"completion_status":"finished"`)
+	require.Contains(t, workerLifecycle.Output, `"startup_failure":"trust_required"`)
+	require.Contains(t, workerLifecycle.Output, `"terminal_status":"terminated"`)
+	workers := findCategory(t, report, "workers")
+	require.True(t, workers.OK)
+	require.Equal(t, 1, workers.Total)
+	require.Equal(t, []string{"worker_lifecycle_roundtrip"}, workers.Scenarios)
+
 	backgroundAgent := findScenario(t, report, "background_agent_run_roundtrip")
 	require.True(t, backgroundAgent.OK)
 	require.Equal(t, "background-agents", backgroundAgent.Category)
@@ -712,6 +741,13 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Contains(t, teamCron.ParityRefs, "Team task assignment")
 	require.Contains(t, teamCron.ParityRefs, "Cron tools")
 	require.Contains(t, teamCron.ParityRefs, "Cron lifecycle")
+
+	workerLifecycle := findManifestScenario(t, manifest, "worker_lifecycle_roundtrip")
+	require.Equal(t, "workers", workerLifecycle.Category)
+	require.Contains(t, workerLifecycle.ParityRefs, "Worker tools")
+	require.Contains(t, workerLifecycle.ParityRefs, "Worker trust recovery")
+	require.Contains(t, workerLifecycle.ParityRefs, "Worker prompt delivery")
+	require.Contains(t, workerLifecycle.ParityRefs, "Worker startup diagnostics")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {

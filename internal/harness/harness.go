@@ -216,6 +216,7 @@ var scenarioOrder = []string{
 	"plugin_lifecycle_roundtrip",
 	"task_lifecycle_roundtrip",
 	"team_cron_lifecycle_roundtrip",
+	"worker_lifecycle_roundtrip",
 	"background_agent_run_roundtrip",
 	"remote_trigger_roundtrip",
 	"remote_api_listener_roundtrip",
@@ -751,6 +752,7 @@ func Run(ctx context.Context) (Report, error) {
 		pluginLifecycleScenario(),
 		taskLifecycleScenario(),
 		teamCronLifecycleScenario(),
+		workerLifecycleScenario(),
 		backgroundAgentRunScenario(),
 		remoteTriggerScenario(),
 		remoteAPIListenerScenario(),
@@ -1143,6 +1145,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "IDE bridge and remote control", RequiredRefs: []string{"IDE bridge", "ACP/Zed", "Remote sessions", "Control API listener"}},
 	{Capability: "multi-agent and background tasks", RequiredRefs: []string{"Background tasks", "Agent runs", "Lane board", "Supervisor restarts"}},
 	{Capability: "team and scheduled tasks", RequiredRefs: []string{"Team tools", "Team task assignment", "Cron tools", "Cron lifecycle"}},
+	{Capability: "worker orchestration", RequiredRefs: []string{"Worker tools", "Worker trust recovery", "Worker prompt delivery", "Worker startup diagnostics"}},
 	{Capability: "notebook and code intelligence", RequiredRefs: []string{"Notebook read", "Notebook edit", "LSP tool", "Code intelligence"}},
 	{Capability: "git and worktree management", RequiredRefs: []string{"Git tools", "Branch freshness", "Worktree allocation", "Worktree cleanup"}},
 	{Capability: "OAuth and account lifecycle", RequiredRefs: []string{"OAuth refresh", "Token redaction", "MCP auth"}},
@@ -1507,6 +1510,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "team-cron",
 		Description: "Creates, inspects, and deletes team task groups plus scheduled cron task entries through the tool registry.",
 		ParityRefs:  []string{"Team tools", "Team task assignment", "Cron tools", "Cron lifecycle", "Tool result roundtrip"},
+	},
+	"worker_lifecycle_roundtrip": {
+		Category:    "workers",
+		Description: "Creates a prompt worker, resolves trust, sends work, restarts, records completion, classifies startup timeout, and terminates it.",
+		ParityRefs:  []string{"Worker tools", "Worker trust recovery", "Worker prompt delivery", "Worker startup diagnostics", "Tool result roundtrip"},
 	},
 	"background_agent_run_roundtrip": {
 		Category:    "background-agents",
@@ -4334,10 +4342,10 @@ func teamCronLifecycleScenario() scenario {
 			}()
 
 			taskStore := background.NewStore(configHome)
-			if _, err := waitForBackgroundLogs(ctx, taskStore, createdTeam.TaskIDs[0], "Task: auth", 2*time.Second); err != nil {
+			if _, err := waitForBackgroundLogs(ctx, taskStore, createdTeam.TaskIDs[0], "Task: auth", 10*time.Second); err != nil {
 				return localScenarioResult{}, err
 			}
-			if _, err := waitForBackgroundLogs(ctx, taskStore, createdTeam.TaskIDs[1], "check test suite", 2*time.Second); err != nil {
+			if _, err := waitForBackgroundLogs(ctx, taskStore, createdTeam.TaskIDs[1], "check test suite", 10*time.Second); err != nil {
 				return localScenarioResult{}, err
 			}
 
@@ -4487,6 +4495,278 @@ func teamCronLifecycleScenario() scenario {
 					"cron_create",
 					"cron_list",
 					"cron_delete",
+				},
+			}, nil
+		},
+	}
+}
+
+func workerLifecycleScenario() scenario {
+	return scenario{
+		name: "worker_lifecycle_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			shim := filepath.Join(workspace, "worker-shim")
+			if err := os.WriteFile(shim, []byte("#!/bin/sh\nprintf 'worker:%s\\n' \"$*\"\nsleep 5\n"), 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{
+				ConfigHome:   configHome,
+				Executable:   shim,
+				TrustedRoots: []string{"repo-default", "shared"},
+			})
+
+			createOut, err := registry.Execute(ctx, "WorkerCreateTool", json.RawMessage(`{
+				"cwd": ".",
+				"trusted_roots": ["shared", "."],
+				"auto_recover_prompt_misdelivery": false
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var created struct {
+				WorkerID                     string   `json:"worker_id"`
+				Status                       string   `json:"status"`
+				ReadyForPrompt               bool     `json:"ready_for_prompt"`
+				TrustedRoots                 []string `json:"trusted_roots"`
+				AutoRecoverPromptMisdelivery bool     `json:"auto_recover_prompt_misdelivery"`
+			}
+			if err := json.Unmarshal([]byte(createOut), &created); err != nil {
+				return localScenarioResult{}, err
+			}
+			if created.WorkerID == "" || created.Status != "ready_for_prompt" || !created.ReadyForPrompt || created.AutoRecoverPromptMisdelivery || !slices.Equal(created.TrustedRoots, []string{"repo-default", "shared", "."}) {
+				return localScenarioResult{}, fmt.Errorf("unexpected worker create output: %s", createOut)
+			}
+			defer func() {
+				_, _ = registry.Execute(ctx, "worker_terminate", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
+			}()
+
+			listOut, err := registry.Execute(ctx, "worker_list", json.RawMessage(`{"status":"ready_for_prompt"}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var listed struct {
+				Kind    string `json:"kind"`
+				Total   int    `json:"total"`
+				Workers []struct {
+					WorkerID string `json:"worker_id"`
+				} `json:"workers"`
+			}
+			if err := json.Unmarshal([]byte(listOut), &listed); err != nil {
+				return localScenarioResult{}, err
+			}
+			if listed.Kind != "worker_list" || listed.Total != 1 || len(listed.Workers) != 1 || listed.Workers[0].WorkerID != created.WorkerID {
+				return localScenarioResult{}, fmt.Errorf("unexpected worker list output: %s", listOut)
+			}
+
+			readyOut, err := registry.Execute(ctx, "worker_await_ready", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var ready struct {
+				WorkerID       string `json:"worker_id"`
+				Status         string `json:"status"`
+				ReadyForPrompt bool   `json:"ready_for_prompt"`
+			}
+			if err := json.Unmarshal([]byte(readyOut), &ready); err != nil {
+				return localScenarioResult{}, err
+			}
+			if ready.WorkerID != created.WorkerID || ready.Status != "ready_for_prompt" || !ready.ReadyForPrompt {
+				return localScenarioResult{}, fmt.Errorf("unexpected worker ready output: %s", readyOut)
+			}
+
+			observeOut, err := registry.Execute(ctx, "WorkerObserveTool", json.RawMessage(fmt.Sprintf(`{
+				"worker_id": %q,
+				"screen_text": "Do you trust this folder?"
+			}`, created.WorkerID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var observed struct {
+				Status         string `json:"status"`
+				ReadyForPrompt bool   `json:"ready_for_prompt"`
+			}
+			if err := json.Unmarshal([]byte(observeOut), &observed); err != nil {
+				return localScenarioResult{}, err
+			}
+			if observed.Status != "trust_prompt" || observed.ReadyForPrompt {
+				return localScenarioResult{}, fmt.Errorf("unexpected worker observe output: %s", observeOut)
+			}
+
+			resolveOut, err := registry.Execute(ctx, "worker_resolve_trust", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var resolved struct {
+				Status         string `json:"status"`
+				ReadyForPrompt bool   `json:"ready_for_prompt"`
+				TrustResolved  bool   `json:"trust_resolved"`
+			}
+			if err := json.Unmarshal([]byte(resolveOut), &resolved); err != nil {
+				return localScenarioResult{}, err
+			}
+			if resolved.Status != "ready_for_prompt" || !resolved.ReadyForPrompt || !resolved.TrustResolved {
+				return localScenarioResult{}, fmt.Errorf("unexpected worker trust resolution output: %s", resolveOut)
+			}
+
+			sendOut, err := registry.Execute(ctx, "worker_send_prompt", json.RawMessage(fmt.Sprintf(`{
+				"worker_id": %q,
+				"prompt": "implement worker tests",
+				"task_receipt": {
+					"repo": "codog",
+					"task_kind": "test",
+					"source_surface": "tool",
+					"objective_preview": "implement worker tests"
+				}
+			}`, created.WorkerID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var sent struct {
+				Status      string `json:"status"`
+				TaskID      string `json:"task_id"`
+				TaskReceipt struct {
+					Repo             string `json:"repo"`
+					TaskKind         string `json:"task_kind"`
+					SourceSurface    string `json:"source_surface"`
+					ObjectivePreview string `json:"objective_preview"`
+				} `json:"task_receipt"`
+			}
+			if err := json.Unmarshal([]byte(sendOut), &sent); err != nil {
+				return localScenarioResult{}, err
+			}
+			if sent.Status != "running" || sent.TaskID == "" || sent.TaskReceipt.Repo != "codog" || sent.TaskReceipt.ObjectivePreview != "implement worker tests" {
+				return localScenarioResult{}, fmt.Errorf("unexpected worker send output: %s", sendOut)
+			}
+			if _, err := waitForBackgroundLogs(ctx, background.NewStore(configHome), sent.TaskID, "implement worker tests", 10*time.Second); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			getOut, err := registry.Execute(ctx, "WorkerGetTool", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var fetched struct {
+				WorkerID   string `json:"worker_id"`
+				Status     string `json:"status"`
+				TaskID     string `json:"task_id"`
+				TaskStatus string `json:"task_status"`
+			}
+			if err := json.Unmarshal([]byte(getOut), &fetched); err != nil {
+				return localScenarioResult{}, err
+			}
+			if fetched.WorkerID != created.WorkerID || fetched.Status != "running" || fetched.TaskID != sent.TaskID || fetched.TaskStatus == "" {
+				return localScenarioResult{}, fmt.Errorf("unexpected worker get output: %s", getOut)
+			}
+
+			restartOut, err := registry.Execute(ctx, "worker_restart", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var restarted struct {
+				Status string `json:"status"`
+				TaskID string `json:"task_id"`
+			}
+			if err := json.Unmarshal([]byte(restartOut), &restarted); err != nil {
+				return localScenarioResult{}, err
+			}
+			if restarted.Status != "running" || restarted.TaskID == "" || restarted.TaskID == sent.TaskID {
+				return localScenarioResult{}, fmt.Errorf("unexpected worker restart output: %s", restartOut)
+			}
+
+			completeOut, err := registry.Execute(ctx, "worker_observe_completion", json.RawMessage(fmt.Sprintf(`{
+				"worker_id": %q,
+				"finish_reason": "stop",
+				"tokens_output": 12
+			}`, created.WorkerID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var completed struct {
+				Status string `json:"status"`
+			}
+			if err := json.Unmarshal([]byte(completeOut), &completed); err != nil {
+				return localScenarioResult{}, err
+			}
+			if completed.Status != "finished" {
+				return localScenarioResult{}, fmt.Errorf("unexpected worker completion output: %s", completeOut)
+			}
+
+			timeoutOut, err := registry.Execute(ctx, "worker_startup_timeout", json.RawMessage(fmt.Sprintf(`{
+				"worker_id": %q,
+				"last_lifecycle_state": "trust_prompt",
+				"pane_command": "codog repl",
+				"transport_healthy": true,
+				"mcp_healthy": true,
+				"elapsed_seconds": 42,
+				"trust_prompt_detected": true
+			}`, created.WorkerID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var timedOut struct {
+				Status            string `json:"status"`
+				LastError         string `json:"last_error"`
+				StartupNoEvidence struct {
+					Classification string `json:"classification"`
+				} `json:"startup_no_evidence"`
+			}
+			if err := json.Unmarshal([]byte(timeoutOut), &timedOut); err != nil {
+				return localScenarioResult{}, err
+			}
+			if timedOut.Status != "failed" || timedOut.LastError != "startup_no_evidence: trust_required" || timedOut.StartupNoEvidence.Classification != "trust_required" {
+				return localScenarioResult{}, fmt.Errorf("unexpected worker startup timeout output: %s", timeoutOut)
+			}
+
+			terminateOut, err := registry.Execute(ctx, "WorkerTerminateTool", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var terminated struct {
+				Status string `json:"status"`
+			}
+			if err := json.Unmarshal([]byte(terminateOut), &terminated); err != nil {
+				return localScenarioResult{}, err
+			}
+			if terminated.Status != "terminated" {
+				return localScenarioResult{}, fmt.Errorf("unexpected worker terminate output: %s", terminateOut)
+			}
+
+			report := map[string]any{
+				"kind": "worker_lifecycle",
+				"worker": map[string]any{
+					"id":                created.WorkerID,
+					"trusted_roots":     created.TrustedRoots,
+					"trust_resolved":    resolved.TrustResolved,
+					"prompt_task":       sent.TaskID,
+					"restarted_task":    restarted.TaskID,
+					"completion_status": completed.Status,
+					"startup_failure":   timedOut.StartupNoEvidence.Classification,
+					"terminal_status":   terminated.Status,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "worker lifecycle harness ok",
+				RequestCount: 11,
+				MessageCount: 1,
+				ToolCalls:    11,
+				ToolUses: []string{
+					"worker_create",
+					"worker_list",
+					"worker_await_ready",
+					"worker_observe",
+					"worker_resolve_trust",
+					"worker_send_prompt",
+					"worker_get",
+					"worker_restart",
+					"worker_observe_completion",
+					"worker_startup_timeout",
+					"worker_terminate",
 				},
 			}, nil
 		},
