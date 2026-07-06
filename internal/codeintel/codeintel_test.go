@@ -304,6 +304,23 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), "func Start()")
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "prepare_rename", Path: "main.go", Line: 2, Character: 5})
+	require.NoError(t, err)
+	require.Equal(t, "prepare-rename", result.Action)
+	require.Equal(t, "textDocument/prepareRename", result.Method)
+	var prepareRename struct {
+		Placeholder string `json:"placeholder"`
+		Range       struct {
+			Start LSPPosition `json:"start"`
+			End   LSPPosition `json:"end"`
+		} `json:"range"`
+	}
+	encodedPrepare, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedPrepare, &prepareRename))
+	require.Equal(t, "Start", prepareRename.Placeholder)
+	require.Equal(t, LSPPosition{Line: 2, Character: 5}, prepareRename.Range.Start)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "code_action", Path: "main.go", Line: 2, Character: 5})
 	require.NoError(t, err)
 	require.Equal(t, "code-action", result.Action)
@@ -378,6 +395,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"rename_symbol":       "rename",
 		"renameSymbol":        "rename",
 		"symbol-rename":       "rename",
+		"prepare_rename":      "prepare-rename",
+		"prepareRename":       "prepare-rename",
+		"rename-prepare":      "prepare-rename",
 		"code_action":         "code-action",
 		"codeAction":          "code-action",
 		"quickfix":            "code-action",
@@ -489,6 +509,14 @@ func TestFakeLSPServer(t *testing.T) {
 						"newText": params.NewName,
 					}},
 				},
+			})})
+		case "textDocument/prepareRename":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 5},
+					"end":   map[string]any{"line": 2, "character": 10},
+				},
+				"placeholder": "Start",
 			})})
 		case "textDocument/codeAction":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{

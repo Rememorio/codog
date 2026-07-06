@@ -2761,6 +2761,7 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	properties := definition.InputSchema["properties"].(map[string]any)
 	actionSchema := properties["action"].(map[string]any)
 	require.Contains(t, actionSchema["enum"], "rename")
+	require.Contains(t, actionSchema["enum"], "prepare_rename")
 	require.Contains(t, actionSchema["enum"], "code_action")
 	require.Contains(t, actionSchema["enum"], "implementation")
 	require.Contains(t, properties, "new_name")
