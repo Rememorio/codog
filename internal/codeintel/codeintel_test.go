@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -653,9 +654,13 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "workspace/executeCommand", result.Method)
 	require.Empty(t, result.Path)
 	var executedCommand struct {
-		Status    string `json:"status"`
-		Command   string `json:"command"`
-		Arguments []any  `json:"arguments"`
+		Status               string `json:"status"`
+		Command              string `json:"command"`
+		Arguments            []any  `json:"arguments"`
+		ConfigurationHandled bool   `json:"configurationHandled"`
+		FoldersHandled       bool   `json:"foldersHandled"`
+		RegisterHandled      bool   `json:"registerHandled"`
+		UnregisterHandled    bool   `json:"unregisterHandled"`
 	}
 	encodedExecutedCommand, err := json.Marshal(result.Result)
 	require.NoError(t, err)
@@ -664,6 +669,10 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "demo.run", executedCommand.Command)
 	require.Len(t, executedCommand.Arguments, 2)
 	require.Equal(t, "main.go", executedCommand.Arguments[0])
+	require.True(t, executedCommand.ConfigurationHandled)
+	require.True(t, executedCommand.FoldersHandled)
+	require.True(t, executedCommand.RegisterHandled)
+	require.True(t, executedCommand.UnregisterHandled)
 	require.Equal(t, 1, result.FileEdits)
 	require.Equal(t, 1, result.TextEdits)
 	require.True(t, result.Changed)
@@ -1341,6 +1350,16 @@ func TestFakeLSPServer(t *testing.T) {
 			if currentURI == "" && rootURI != "" {
 				currentURI = rootURI + "/main.go"
 			}
+			configurationHandled := fakeLSPServerRequestHandled(reader, "configuration-check", "workspace/configuration", map[string]any{
+				"items": []map[string]any{{"section": "gopls"}},
+			})
+			foldersHandled := fakeLSPServerRequestHandled(reader, "folders-check", "workspace/workspaceFolders", nil)
+			registerHandled := fakeLSPServerRequestHandled(reader, "register-check", "client/registerCapability", map[string]any{
+				"registrations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
+			})
+			unregisterHandled := fakeLSPServerRequestHandled(reader, "unregister-check", "client/unregisterCapability", map[string]any{
+				"unregisterations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
+			})
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: "apply-execute", Method: "workspace/applyEdit", Params: map[string]any{
 				"label": "execute preview",
 				"edit": map[string]any{
@@ -1357,9 +1376,13 @@ func TestFakeLSPServer(t *testing.T) {
 			}})
 			_, _ = readLSPMessage(reader)
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
-				"status":    "ok",
-				"command":   params.Command,
-				"arguments": params.Arguments,
+				"status":               "ok",
+				"command":              params.Command,
+				"arguments":            params.Arguments,
+				"configurationHandled": configurationHandled,
+				"foldersHandled":       foldersHandled,
+				"registerHandled":      registerHandled,
+				"unregisterHandled":    unregisterHandled,
 			})})
 		case "textDocument/signatureHelp":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
@@ -1571,6 +1594,19 @@ func TestFakeLSPServer(t *testing.T) {
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(nil)})
 		}
 	}
+}
+
+func fakeLSPServerRequestHandled(reader *bufio.Reader, id string, method string, params any) bool {
+	_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: id, Method: method, Params: params})
+	raw, err := readLSPMessage(reader)
+	if err != nil {
+		return false
+	}
+	var response lspRPCMessage
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return false
+	}
+	return fmt.Sprint(response.ID) == id && response.Error == nil
 }
 
 func mustRawJSON(value any) json.RawMessage {

@@ -511,6 +511,10 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"method":"workspace/executeCommand"`)
 	require.Contains(t, out.String(), `"command":"bridge.run"`)
 	require.Contains(t, out.String(), `"arguments":["main.go",{"line":2}]`)
+	require.Contains(t, out.String(), `"configurationHandled":true`)
+	require.Contains(t, out.String(), `"foldersHandled":true`)
+	require.Contains(t, out.String(), `"registerHandled":true`)
+	require.Contains(t, out.String(), `"unregisterHandled":true`)
 	require.Contains(t, out.String(), `func bridgeExecutePreview()`)
 	require.Contains(t, out.String(), `"action":"document-diagnostic"`)
 	require.Contains(t, out.String(), `"method":"textDocument/diagnostic"`)
@@ -951,6 +955,16 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 				Arguments []any  `json:"arguments"`
 			}
 			_ = json.Unmarshal(msg.Params, &params)
+			configurationHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-configuration-check", "workspace/configuration", map[string]any{
+				"items": []map[string]any{{"section": "gopls"}},
+			})
+			foldersHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-folders-check", "workspace/workspaceFolders", nil)
+			registerHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-register-check", "client/registerCapability", map[string]any{
+				"registrations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
+			})
+			unregisterHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-unregister-check", "client/unregisterCapability", map[string]any{
+				"unregisterations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
+			})
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": "bridge-apply-execute", "method": "workspace/applyEdit", "params": map[string]any{
 				"label": "bridge execute preview",
 				"edit": map[string]any{
@@ -967,9 +981,13 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 			}})
 			_, _ = readBridgeTestLSPMessage(reader)
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
-				"status":    "ok",
-				"command":   params.Command,
-				"arguments": params.Arguments,
+				"status":               "ok",
+				"command":              params.Command,
+				"arguments":            params.Arguments,
+				"configurationHandled": configurationHandled,
+				"foldersHandled":       foldersHandled,
+				"registerHandled":      registerHandled,
+				"unregisterHandled":    unregisterHandled,
 			}})
 		case "textDocument/rangeFormatting":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
@@ -1045,6 +1063,22 @@ func writeBridgeTestLSPMessage(writer io.Writer, value any) error {
 	}
 	_, err = writer.Write(data)
 	return err
+}
+
+func bridgeFakeLSPServerRequestHandled(reader *bufio.Reader, id string, method string, params any) bool {
+	_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+	raw, err := readBridgeTestLSPMessage(reader)
+	if err != nil {
+		return false
+	}
+	var response struct {
+		ID    any `json:"id"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return false
+	}
+	return response.Error == nil && fmt.Sprint(response.ID) == id
 }
 
 func bridgeTestLSPDocumentURI(params json.RawMessage) string {

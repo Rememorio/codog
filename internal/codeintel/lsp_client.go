@@ -1449,6 +1449,15 @@ func (c *lspClient) handleServerRequest(msg lspRPCMessage) error {
 	switch msg.Method {
 	case "workspace/applyEdit":
 		return c.handleWorkspaceApplyEdit(msg)
+	case "workspace/configuration":
+		return c.handleWorkspaceConfiguration(msg)
+	case "workspace/workspaceFolders":
+		return c.writeServerResult(msg.ID, []map[string]any{{
+			"uri":  fileURI(c.workspace),
+			"name": filepath.Base(c.workspace),
+		}})
+	case "client/registerCapability", "client/unregisterCapability", "window/showMessageRequest":
+		return c.writeServerResult(msg.ID, nil)
 	default:
 		return writeLSPMessage(c.stdin, lspRPCMessage{
 			JSONRPC: "2.0",
@@ -1456,6 +1465,24 @@ func (c *lspClient) handleServerRequest(msg lspRPCMessage) error {
 			Error:   &lspRPCError{Code: -32601, Message: fmt.Sprintf("unsupported server request %q", msg.Method)},
 		})
 	}
+}
+
+func (c *lspClient) handleWorkspaceConfiguration(msg lspRPCMessage) error {
+	var params struct {
+		Items []any `json:"items"`
+	}
+	if err := decodeLSPParams(msg.Params, &params); err != nil {
+		return writeLSPMessage(c.stdin, lspRPCMessage{
+			JSONRPC: "2.0",
+			ID:      msg.ID,
+			Error:   &lspRPCError{Code: -32602, Message: err.Error()},
+		})
+	}
+	values := make([]any, len(params.Items))
+	for index := range values {
+		values[index] = map[string]any{}
+	}
+	return c.writeServerResult(msg.ID, values)
 }
 
 func (c *lspClient) handleWorkspaceApplyEdit(msg lspRPCMessage) error {
@@ -1492,6 +1519,10 @@ func (c *lspClient) writeApplyEditResponse(id any, applied bool, failureReason s
 	if strings.TrimSpace(failureReason) != "" {
 		result["failureReason"] = failureReason
 	}
+	return c.writeServerResult(id, result)
+}
+
+func (c *lspClient) writeServerResult(id any, result any) error {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return err
