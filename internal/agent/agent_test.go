@@ -19234,19 +19234,34 @@ func TestTodosCommandAndSlash(t *testing.T) {
 		Err:       &errOut,
 	}
 
-	require.NoError(t, app.Todos([]string{"add", "write", "tests", "--priority", "high", "--json"}))
+	require.NoError(t, app.Todos([]string{"new", "write", "tests", "--priority", "high", "--json"}))
 	require.Contains(t, out.String(), `"kind": "todos"`)
+	require.Contains(t, out.String(), `"action": "add"`)
 	require.Contains(t, out.String(), `"priority": "high"`)
 	require.FileExists(t, todos.Path(workspace))
 	out.Reset()
 
-	require.NoError(t, app.Todos([]string{"done", "todo-1"}))
+	require.NoError(t, app.Todos([]string{"complete", "todo-1"}))
 	require.Contains(t, out.String(), "completed")
 	out.Reset()
 
-	require.True(t, app.handleSlash(context.Background(), "/todos list", &session.Session{ID: "session"}))
+	require.NoError(t, app.Todos([]string{"reopen", "todo-1", "--json"}))
+	require.Contains(t, out.String(), `"action": "pending"`)
+	require.Contains(t, out.String(), `"status": "pending"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/todos begin todo-1", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "in_progress")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/todos ls", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Todos")
 	require.Contains(t, out.String(), "write tests")
+	out.Reset()
+
+	require.NoError(t, app.Todos([]string{"reset", "--json"}))
+	require.Contains(t, out.String(), `"action": "clear"`)
+	require.Contains(t, out.String(), `"total": 0`)
 	require.Empty(t, errOut.String())
 }
 

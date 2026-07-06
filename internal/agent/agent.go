@@ -18113,10 +18113,13 @@ func parseTodosArgs(args []string) (todosRequest, error) {
 	default:
 		return todosRequest{}, fmt.Errorf("unknown todos output format %q", req.Format)
 	}
-	if len(rest) == 0 || rest[0] == "list" {
+	if len(rest) == 0 {
 		return req, nil
 	}
-	req.Action = rest[0]
+	req.Action = normalizeTodosAction(rest[0])
+	if req.Action == "list" {
+		return req, nil
+	}
 	switch req.Action {
 	case "add":
 		if len(rest) < 2 {
@@ -18133,6 +18136,25 @@ func parseTodosArgs(args []string) (todosRequest, error) {
 		return todosRequest{}, fmt.Errorf("unknown todos command %q", req.Action)
 	}
 	return req, nil
+}
+
+func normalizeTodosAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "list", "ls", "status", "show":
+		return "list"
+	case "add", "new", "create":
+		return "add"
+	case "start", "begin", "in-progress", "in_progress", "doing":
+		return "start"
+	case "done", "complete", "completed", "finish", "finished", "resolve", "resolved":
+		return "done"
+	case "pending", "todo", "open", "reopen":
+		return "pending"
+	case "clear", "reset", "remove-all", "delete-all":
+		return "clear"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
 }
 
 type commandRequest struct {
@@ -54146,7 +54168,7 @@ Usage:
   %s [flags] history [--session ID] [--limit N] [--json|--output-format text|json]
   %s [flags] summary [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
-  %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
+  %s [flags] todos [list|ls|add|new|start|doing|done|complete|pending|reopen|clear|reset] [ARGS...] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID] | paste [--print|--json] [--session ID]
   %s [flags] pin|unpin [message-index|last] [--session ID] [--json|--output-format text|json]
   %s [flags] skill|skills [list|sources|show|info|describe|invoke|add|install|uninstall]
