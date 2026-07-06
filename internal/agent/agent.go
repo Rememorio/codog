@@ -514,8 +514,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			}
 			return renderMissingPrompt(app.Out, req.Format)
 		}
-		includePartialMessages := req.IncludePartialMessages || overrides.IncludePartialMessages
-		if includePartialMessages && req.Format != "stream-json" {
+		verboseOutput := req.Verbose || overrides.Verbose
+		includePartialMessages := req.IncludePartialMessages || overrides.IncludePartialMessages || (verboseOutput && req.Format == "stream-json")
+		if (req.IncludePartialMessages || overrides.IncludePartialMessages) && req.Format != "stream-json" {
 			return renderCLIError(app.Out, invalidFlagValueError{
 				Flag:    "--include-partial-messages",
 				Value:   req.Format,
@@ -527,7 +528,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if req.MaxBudgetUSD != nil {
 			promptOverrides.MaxBudgetUSD = req.MaxBudgetUSD
 		}
-		return app.promptWithOutputOptions(ctx, input, promptOverrides, req.Format, req.Compact, turnOptions{Attachments: req.Attachments, ReplayUserMessages: streamReplayMessages, JSONSchema: req.JSONSchema, IncludePartialMessages: includePartialMessages})
+		return app.promptWithOutputOptions(ctx, input, promptOverrides, req.Format, req.Compact, turnOptions{Attachments: req.Attachments, ReplayUserMessages: streamReplayMessages, JSONSchema: req.JSONSchema, IncludePartialMessages: includePartialMessages, Verbose: verboseOutput})
 	case "acp":
 		return wrapStructured(app.ACP(ctx, rest))
 	case "btw":
@@ -34434,7 +34435,7 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 	} else if format == "json" {
 		turnOut = &streamCapture
 	} else if format == "stream-json" {
-		writer := promptStreamJSONWriter{Out: a.Out, IncludeDeltas: opts.IncludePartialMessages}
+		writer := promptStreamJSONWriter{Out: a.Out, IncludeDeltas: opts.IncludePartialMessages || opts.Verbose}
 		if err := writer.Event("start", map[string]any{
 			"session_id": sess.ID,
 			"mode":       "prompt",
@@ -34524,7 +34525,7 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 		}
 	}
 	if format == "json" || format == "stream-json" {
-		report := promptOutputReport(sess, streamCapture.String(), endReason)
+		report := promptOutputReportWithOptions(sess, streamCapture.String(), endReason, opts.Verbose)
 		if format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
 			fmt.Fprintln(a.Out, string(data))
@@ -34553,12 +34554,13 @@ func (a *App) disableSessionPersistenceForPrompt(disabled bool) func() {
 }
 
 type promptReport struct {
-	Kind         string `json:"kind"`
-	Action       string `json:"action"`
-	Status       string `json:"status"`
-	SessionID    string `json:"session_id"`
-	MessageCount int    `json:"message_count"`
-	Response     string `json:"response"`
+	Kind         string              `json:"kind"`
+	Action       string              `json:"action"`
+	Status       string              `json:"status"`
+	SessionID    string              `json:"session_id"`
+	MessageCount int                 `json:"message_count"`
+	Response     string              `json:"response"`
+	Messages     []anthropic.Message `json:"messages,omitempty"`
 }
 
 type promptCompactReport struct {
@@ -34576,15 +34578,23 @@ type promptCompactUsage struct {
 }
 
 func promptOutputReport(sess *session.Session, streamed string, status string) promptReport {
+	return promptOutputReportWithOptions(sess, streamed, status, false)
+}
+
+func promptOutputReportWithOptions(sess *session.Session, streamed string, status string, verbose bool) promptReport {
 	response := strings.TrimSpace(streamed)
 	if response == "" && sess != nil {
 		response = strings.TrimSpace(lastAssistantText(sess.Messages))
 	}
 	messageCount := 0
 	sessionID := ""
+	messages := []anthropic.Message(nil)
 	if sess != nil {
 		messageCount = len(sess.Messages)
 		sessionID = sess.ID
+		if verbose {
+			messages = append([]anthropic.Message(nil), sess.Messages...)
+		}
 	}
 	return promptReport{
 		Kind:         "prompt",
@@ -34593,6 +34603,7 @@ func promptOutputReport(sess *session.Session, streamed string, status string) p
 		SessionID:    sessionID,
 		MessageCount: messageCount,
 		Response:     response,
+		Messages:     messages,
 	}
 }
 
@@ -35159,6 +35170,7 @@ type turnOptions struct {
 	AllowedTools           []string
 	ReplayUserMessages     []promptStreamJSONReplayMessage
 	IncludePartialMessages bool
+	Verbose                bool
 	JSONSchema             string
 	MaxBudgetUSD           float64
 	PriorCostUSD           float64
@@ -35171,6 +35183,7 @@ type promptCLIRequest struct {
 	InputFormat            string
 	ReplayUserMessages     bool
 	IncludePartialMessages bool
+	Verbose                bool
 	JSONSchema             string
 	MaxBudgetUSD           *float64
 	PromptProvided         bool
@@ -35213,6 +35226,8 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 			req.ReplayUserMessages = true
 		case arg == "--include-partial-messages":
 			req.IncludePartialMessages = true
+		case arg == "--verbose" || arg == "-v":
+			req.Verbose = true
 		case arg == "--json-schema":
 			index++
 			if index >= len(args) {

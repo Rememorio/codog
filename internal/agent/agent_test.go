@@ -10860,6 +10860,12 @@ func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
 	require.True(t, req.IncludePartialMessages)
 	require.Equal(t, "hello", req.Prompt)
 
+	req, err = parsePromptArgs([]string{"--output-format", "json", "--verbose", "hello"})
+	require.NoError(t, err)
+	require.Equal(t, "json", req.Format)
+	require.True(t, req.Verbose)
+	require.Equal(t, "hello", req.Prompt)
+
 	rawSchema := `{"type":"object","required":["name"]}`
 	req, err = parsePromptArgs([]string{"--json-schema", rawSchema, "--output-format", "json", "return json"})
 	require.NoError(t, err)
@@ -11036,6 +11042,48 @@ func TestPromptStreamJSONIncludePartialMessages(t *testing.T) {
 	require.NoError(t, app.promptWithOutputOptions(context.Background(), "say hi", config.FlagOverrides{SessionID: "partial-session"}, "stream-json", false, turnOptions{IncludePartialMessages: true}))
 	require.Contains(t, out.String(), `"type":"assistant_delta"`)
 	require.Contains(t, out.String(), `"delta":"partial "`)
+	require.Contains(t, out.String(), `"type":"result"`)
+}
+
+func TestPromptVerboseEnrichesStructuredOutput(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Text: "verbose chunks"}.Handler())
+	defer server.Close()
+
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          t.TempDir(),
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			PermissionRules:     config.PermissionRules{},
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(t.TempDir(), workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.promptWithOutputOptions(context.Background(), "say hi", config.FlagOverrides{SessionID: "verbose-json-session"}, "json", false, turnOptions{Verbose: true}))
+	var report promptReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "verbose chunks", report.Response)
+	require.Len(t, report.Messages, 2)
+	require.Equal(t, "user", report.Messages[0].Role)
+	require.Equal(t, "assistant", report.Messages[1].Role)
+	out.Reset()
+
+	require.NoError(t, app.promptWithOutputOptions(context.Background(), "say stream", config.FlagOverrides{SessionID: "verbose-stream-session"}, "stream-json", false, turnOptions{Verbose: true}))
+	require.Contains(t, out.String(), `"type":"assistant_delta"`)
+	require.Contains(t, out.String(), `"delta":"verbose "`)
 	require.Contains(t, out.String(), `"type":"result"`)
 }
 
