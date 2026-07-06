@@ -15698,6 +15698,19 @@ func TestStatusDegradesOnMalformedConfigFile(t *testing.T) {
 	require.Equal(t, "config_load_failed", snapshot.ConfigLoadErrorKind)
 }
 
+func TestShellCompletionBypassesConfigLoad(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "broken.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "completion", "fish"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "complete -c codog")
+	require.Contains(t, out, "__fish_seen_subcommand_from completion")
+	require.NotContains(t, out, "config_load_failed")
+}
+
 func TestStatusIncludesBranchFreshness(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not available")
@@ -15915,6 +15928,19 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Completion")
 	require.Contains(t, out.String(), "runner.go:5:function Run")
 	out.Reset()
+
+	require.NoError(t, app.Completion([]string{"bash"}))
+	require.Contains(t, out.String(), "complete -F _codog_completion codog")
+	require.Contains(t, out.String(), "bash zsh fish")
+	out.Reset()
+
+	completionPath := filepath.Join(t.TempDir(), "codog.zsh")
+	require.NoError(t, app.Completion([]string{"zsh", "--output", completionPath}))
+	require.Empty(t, out.String())
+	completionData, err := os.ReadFile(completionPath)
+	require.NoError(t, err)
+	require.Contains(t, string(completionData), "#compdef codog")
+	require.Contains(t, string(completionData), "_codog")
 
 	require.NoError(t, app.Format([]string{"messy.go"}))
 	require.Contains(t, out.String(), "Format")

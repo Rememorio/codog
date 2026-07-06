@@ -279,6 +279,12 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	}
+	if command == "completion" && (shellCompletionRequested(rest) || shellCompletionOutputFlagPresent(rest)) {
+		if err := renderShellCompletionCommand(os.Stdout, rest); err != nil {
+			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
+	}
 	if command == "init" {
 		workspace, err := os.Getwd()
 		if err != nil {
@@ -31514,12 +31520,15 @@ func (a *App) Hover(args []string) error {
 }
 
 func (a *App) Completion(args []string) error {
+	if shellCompletionRequested(args) || shellCompletionOutputFlagPresent(args) {
+		return renderShellCompletionCommand(a.Out, args)
+	}
 	format, rest, limit, err := parseSymbolLimitArgs("completion", args)
 	if err != nil {
 		return err
 	}
 	if len(rest) != 1 {
-		return errors.New("usage: codog completion PREFIX [--limit N] [--json]")
+		return errors.New("usage: codog completion PREFIX [--limit N] [--json] or codog completion bash|zsh|fish [--output PATH]")
 	}
 	query := rest[0]
 	completions, err := codeintel.Completions(a.Workspace, query, limit)
@@ -31534,6 +31543,199 @@ func (a *App) Completion(args []string) error {
 	}
 	renderCompletion(a.Out, report)
 	return nil
+}
+
+type shellCompletionRequest struct {
+	Shell  string
+	Output string
+}
+
+func shellCompletionRequested(args []string) bool {
+	req, err := parseShellCompletionArgs(args)
+	return err == nil && req.Shell != ""
+}
+
+func shellCompletionOutputFlagPresent(args []string) bool {
+	for _, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if arg == "--output" || strings.HasPrefix(arg, "--output=") {
+			return true
+		}
+	}
+	return false
+}
+
+func renderShellCompletionCommand(out io.Writer, args []string) error {
+	req, err := parseShellCompletionArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Shell == "" {
+		return errors.New("usage: codog completion bash|zsh|fish [--output PATH]")
+	}
+	script, err := shellCompletionScript(req.Shell)
+	if err != nil {
+		return err
+	}
+	if req.Output != "" {
+		if err := os.WriteFile(req.Output, []byte(script), 0o644); err != nil {
+			return err
+		}
+		return nil
+	}
+	fmt.Fprint(out, script)
+	return nil
+}
+
+func parseShellCompletionArgs(args []string) (shellCompletionRequest, error) {
+	const usage = "codog completion bash|zsh|fish [--output PATH]"
+	req := shellCompletionRequest{}
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+			continue
+		case arg == "--output":
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "completion", Flag: arg, Usage: usage}
+			}
+			index++
+			req.Output = args[index]
+		case strings.HasPrefix(arg, "--output="):
+			req.Output = strings.TrimPrefix(arg, "--output=")
+		case arg == "--json" || arg == "--limit" || strings.HasPrefix(arg, "--limit=") || arg == "--output-format" || arg == "-o" || strings.HasPrefix(arg, "--output-format="):
+			return shellCompletionRequest{}, nil
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: "completion", Option: arg, Usage: usage}
+		default:
+			if req.Shell != "" {
+				return req, unexpectedExtraArgsError{Command: "completion", Args: []string{arg}, Usage: usage}
+			}
+			req.Shell = strings.ToLower(arg)
+		}
+	}
+	if req.Shell == "" {
+		if req.Output != "" {
+			return req, missingArgumentError{Argument: "shell", Example: "codog completion bash --output codog.bash"}
+		}
+		return req, nil
+	}
+	if !validCompletionShell(req.Shell) {
+		return req, invalidFlagValueError{
+			Flag:    "shell",
+			Value:   req.Shell,
+			Message: "completion shell must be one of bash, zsh, or fish",
+			Usage:   usage,
+		}
+	}
+	return req, nil
+}
+
+func validCompletionShell(shell string) bool {
+	switch strings.ToLower(strings.TrimSpace(shell)) {
+	case "bash", "zsh", "fish":
+		return true
+	default:
+		return false
+	}
+}
+
+func shellCompletionScript(shell string) (string, error) {
+	commands := strings.Join(shellCompletionCommands(), " ")
+	switch strings.ToLower(strings.TrimSpace(shell)) {
+	case "bash":
+		return bashCompletionScript(commands), nil
+	case "zsh":
+		return zshCompletionScript(shellCompletionCommands()), nil
+	case "fish":
+		return fishCompletionScript(commands), nil
+	default:
+		return "", invalidFlagValueError{
+			Flag:    "shell",
+			Value:   shell,
+			Message: "completion shell must be one of bash, zsh, or fish",
+			Usage:   "codog completion bash|zsh|fish [--output PATH]",
+		}
+	}
+}
+
+func shellCompletionCommands() []string {
+	commands := []string{}
+	for _, command := range builtInCommandNames() {
+		command = strings.TrimSpace(command)
+		if command == "" || strings.HasPrefix(command, "/") {
+			continue
+		}
+		commands = append(commands, command)
+	}
+	return sortedUniqueStrings(commands)
+}
+
+func bashCompletionScript(commands string) string {
+	return fmt.Sprintf(`# bash completion for codog
+_codog_completion() {
+  local cur prev
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  case "$prev" in
+    completion)
+      COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
+      return 0
+      ;;
+    --config|--settings|--cwd|-C|--directory|--output)
+      compopt -o default 2>/dev/null
+      return 0
+      ;;
+  esac
+
+  if [[ $COMP_CWORD -eq 1 ]]; then
+    COMPREPLY=( $(compgen -W %q -- "$cur") )
+  fi
+}
+complete -F _codog_completion codog
+`, commands)
+}
+
+func zshCompletionScript(commands []string) string {
+	quoted := make([]string, 0, len(commands))
+	for _, command := range commands {
+		quoted = append(quoted, shellSingleQuote(command))
+	}
+	return fmt.Sprintf(`#compdef codog
+
+_codog() {
+  local -a commands
+  commands=(%s)
+
+  if (( CURRENT == 2 )); then
+    _describe 'command' commands
+    return
+  fi
+
+  if [[ ${words[2]} == completion && CURRENT == 3 ]]; then
+    _values 'shell' bash zsh fish
+    return
+  fi
+
+  _files
+}
+
+_codog "$@"
+`, strings.Join(quoted, " "))
+}
+
+func fishCompletionScript(commands string) string {
+	return fmt.Sprintf(`# fish completion for codog
+complete -c codog -f -n '__fish_use_subcommand' -a %q
+complete -c codog -f -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish'
+complete -c codog -l output -r -d 'Write completion script to a file'
+`, commands)
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func (a *App) Format(args []string) error {
@@ -53464,6 +53666,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"State\n\nUsage:\n  codog state [--output-format text|json]\n\nShows the latest local worker state written by `codog repl` or `codog prompt <text>`. Produces state after an interactive REPL turn or a non-interactive prompt; if no state exists yet, rerun one of those commands first.\n",
 			[]string{"worker_id", "mode", "status", "session_id", "model", "permission_mode", "updated_at"},
 			[]string{"idle", "running", "completed", "error"},
+			false,
+		), true
+	case "completion":
+		return localCommandHelpSpec(
+			"completion",
+			"completion",
+			"codog completion PREFIX [--limit N] [--output-format text|json] | codog completion bash|zsh|fish [--output PATH]",
+			"Completion\n\nUsage:\n  codog completion PREFIX [--limit N] [--output-format text|json]\n  codog completion bash|zsh|fish [--output PATH]\n\nWith a regular prefix, lists local Go code completion candidates. With `bash`, `zsh`, or `fish`, prints a Claude-compatible shell completion script; pass `--output PATH` to write the script directly.\n",
+			[]string{"kind", "query", "total", "completions"},
+			[]string{"ok", "error"},
 			false,
 		), true
 	case "code-intel":
