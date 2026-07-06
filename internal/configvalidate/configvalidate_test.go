@@ -54,6 +54,14 @@ func TestValidateBytesAcceptsAPIKeyHelper(t *testing.T) {
 	require.Empty(t, result.Warnings)
 }
 
+func TestValidateBytesAcceptsSubagentModel(t *testing.T) {
+	result := ValidateBytes([]byte(`{"subagentModel":"claude-haiku-subagent"}`), "config.json")
+
+	require.Equal(t, "ok", result.Status)
+	require.Empty(t, result.Errors)
+	require.Empty(t, result.Warnings)
+}
+
 func TestValidateBytesReportsAPIKeyHelperWrongType(t *testing.T) {
 	result := ValidateBytes([]byte(`{"apiKeyHelper":true}`), "config.json")
 

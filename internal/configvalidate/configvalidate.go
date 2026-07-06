@@ -80,6 +80,7 @@ var topLevelFields = []fieldSpec{
 	{"base_url", FieldString},
 	{"model", FieldString},
 	{"advisor_model", FieldString},
+	{"subagentModel", FieldString},
 	{"system_prompt", FieldString},
 	{"append_system_prompt", FieldString},
 	{"language", FieldString},

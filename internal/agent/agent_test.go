@@ -14401,6 +14401,7 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 		AuthToken:      "token",
 		BaseURL:        "https://api.example.test",
 		Model:          "model-a",
+		AdvisorModel:   "claude-advisor",
 		MaxTokens:      100,
 		MaxTurns:       3,
 		PermissionMode: "workspace-write",
@@ -14451,6 +14452,7 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 
 	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"model"}))
 	require.Contains(t, out.String(), `"model": "model-a"`)
+	require.Contains(t, out.String(), `"subagentModel": "claude-advisor"`)
 	out.Reset()
 
 	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"model", "--output-format", "text"}))

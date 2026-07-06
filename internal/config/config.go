@@ -1010,6 +1010,7 @@ type Config struct {
 	RuntimeProvider            string                     `json:"-"`
 	RuntimeProviderSource      string                     `json:"-"`
 	AdvisorModel               string                     `json:"advisor_model,omitempty"`
+	SubagentModel              string                     `json:"subagentModel,omitempty"`
 	SystemPrompt               string                     `json:"system_prompt,omitempty"`
 	AppendSystemPrompt         string                     `json:"append_system_prompt,omitempty"`
 	Language                   string                     `json:"language,omitempty"`
@@ -1104,6 +1105,10 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	if parsed.PermissionMode == "" {
 		parsed.PermissionMode = aliases.PermissionModeCamel
 	}
+	if parsed.AdvisorModel == "" {
+		parsed.AdvisorModel = parsed.SubagentModel
+	}
+	parsed.SubagentModel = ""
 	if permissionRulesSet(aliases.PermissionRules) {
 		mergePermissionRules(&parsed.PermissionRules, aliases.PermissionRules)
 	}

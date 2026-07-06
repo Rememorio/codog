@@ -38247,7 +38247,7 @@ var resetSectionKeys = map[string][]string{
 	"interface":     {"language", "theme", "editorMode"},
 	"marketplace":   marketplaceResetKeys,
 	"mcp":           {"mcp_servers"},
-	"model":         {"model", "advisor_model", "max_tokens", "max_turns", "temperature", "reasoning_effort", "fast_mode"},
+	"model":         {"model", "advisor_model", "subagentModel", "max_tokens", "max_turns", "temperature", "reasoning_effort", "fast_mode"},
 	"permissions":   {"permission_mode", "permission_rules"},
 	"preferences":   preferencesResetKeys,
 	"privacy":       {"privacy_settings"},
@@ -38595,7 +38595,7 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 	}
 	switch strings.ToLower(args[0]) {
 	case "model":
-		return map[string]any{"model": cfg.Model, "advisor_model": cfg.AdvisorModel, "max_tokens": cfg.MaxTokens, "max_turns": cfg.MaxTurns, "temperature": cfg.Temperature, "reasoning_effort": cfg.ReasoningEffort, "fast_mode": fastModeEnabled(cfg.FastMode)}, nil
+		return map[string]any{"model": cfg.Model, "advisor_model": cfg.AdvisorModel, "subagentModel": cfg.AdvisorModel, "max_tokens": cfg.MaxTokens, "max_turns": cfg.MaxTurns, "temperature": cfg.Temperature, "reasoning_effort": cfg.ReasoningEffort, "fast_mode": fastModeEnabled(cfg.FastMode)}, nil
 	case "interface", "ui":
 		return map[string]any{"language": cfg.Language, "theme": cfg.Theme, "editorMode": cfg.EditorMode}, nil
 	case "privacy", "privacy-settings":

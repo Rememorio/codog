@@ -1893,6 +1893,20 @@ func TestLoadFutureClickCountersOnly(t *testing.T) {
 	require.Equal(t, 5, cfg.Future.GuestPassVisitCount)
 }
 
+func TestLoadSubagentModelAlias(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"subagentModel":"claude-haiku-subagent"}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, "claude-haiku-subagent", cfg.AdvisorModel)
+
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"advisor_model":"claude-opus-advisor","subagentModel":"claude-haiku-subagent"}`), 0o644))
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, "claude-opus-advisor", cfg.AdvisorModel)
+}
+
 func TestLoadSkipPermissionsFlagOverridesPermissionMode(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
