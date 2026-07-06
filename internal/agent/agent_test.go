@@ -964,6 +964,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "startup-report")
 	require.Contains(t, report.Commands, "budget")
 	require.Contains(t, report.Commands, "capabilities")
+	require.Contains(t, report.Commands, "continue")
 	require.Contains(t, report.Commands, "bug")
 	require.Contains(t, report.Commands, "checkpoint")
 	require.Contains(t, report.Commands, "generateSessionName")
@@ -1285,6 +1286,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, prCommentsSlash.ResumeSupported)
 	require.True(t, capabilityReportHasSlash(report, "/new"))
+	require.True(t, capabilityReportHasSlash(report, "/continue"))
 	require.True(t, capabilityReportHasSlash(report, "/quit"))
 	require.True(t, capabilityReportHasSlash(report, "/rc"))
 	require.True(t, capabilityReportHasSlash(report, "/settings"))
@@ -1384,11 +1386,13 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(referenceRoot, "src", "commands", "status"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(referenceRoot, "src", "commands", "missing"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(referenceRoot, "src", "commands", "disabled"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(referenceRoot, "src", "commands", "report"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(referenceRoot, "src", "tools", "BashTool"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(referenceRoot, "src", "tools", "MissingReferenceTool"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "commands", "status", "index.ts"), []byte(`export default { name: 'status', aliases: ['st'] }`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "commands", "missing", "index.ts"), []byte(`export default { name: 'missing-reference-command' }`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "commands", "disabled", "index.js"), []byte(`export default { isEnabled: () => false, isHidden: true, name: 'stub' };`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "commands", "report", "sections.ts"), []byte(`export const sections = [{ name: 'not-a-command' }]`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "tools", "BashTool", "BashTool.tsx"), []byte(`export const BASH_TOOL_NAME = 'BashTool'; export const BashTool = { name: 'BashTool' }`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "tools", "BashTool", "bashSecurity.ts"), []byte(`export const bashSecurity = true`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "tools", "MissingReferenceTool", "index.ts"), []byte(`export const MissingReferenceTool = { name: 'MissingReferenceTool' }`), 0o644))
@@ -11277,6 +11281,23 @@ func TestRunCLISessionAliasAndResumeCommand(t *testing.T) {
 	require.Equal(t, 1, report.MessageCount)
 
 	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "continue", "source", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "resume", report.Kind)
+	require.Equal(t, "source", report.SessionID)
+	require.Equal(t, 1, report.MessageCount)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "continue", "source"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "resume", report.Kind)
+	require.Equal(t, "source", report.SessionID)
+
+	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "resume", "source"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
@@ -12095,6 +12116,15 @@ func TestClearAndResumeSlashSwitchSessionState(t *testing.T) {
 	require.Equal(t, "source", sess.ID)
 	require.Len(t, sess.Messages, 1)
 	require.Empty(t, app.dynamicSkillPaths)
+	require.Contains(t, errOut.String(), "session resumed: source")
+	errOut.Reset()
+
+	next, err := store.Open("")
+	require.NoError(t, err)
+	*sess = *next
+	require.True(t, app.handleSlash(context.Background(), "/continue source", sess))
+	require.Equal(t, "source", sess.ID)
+	require.Len(t, sess.Messages, 1)
 	require.Contains(t, errOut.String(), "session resumed: source")
 }
 

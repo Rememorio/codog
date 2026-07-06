@@ -498,7 +498,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderSessionsCommandError(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
-	case "resume":
+	case "resume", "continue":
 		return wrapStructured(app.ResumeCommand(rest))
 	case "clear":
 		return wrapStructured(app.ClearCommand(rest))
@@ -26444,18 +26444,119 @@ func referenceSourceRoot(root string) (string, error) {
 }
 
 func extractReferenceCommandEntries(sourceRoot string, commandRoot string) ([]referenceSnapshotRef, error) {
-	extractor := referenceEntryExtractor{
-		sourceRoot: sourceRoot,
-		kind:       "commands",
-		patterns: []*regexp.Regexp{
-			regexp.MustCompile(`\bname\s*:\s*['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]`),
-			regexp.MustCompile(`\baliases\s*:\s*\[([^\]]*)\]`),
-		},
-	}
-	if err := extractor.walk(commandRoot); err != nil {
+	extractor := referenceEntryExtractor{sourceRoot: sourceRoot, kind: "commands"}
+	extractor.entriesByIdentity = map[string]referenceSnapshotRef{}
+	if err := filepath.WalkDir(commandRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if shouldSkipReferenceDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if shouldSkipReferenceFile(path) {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		text := string(data)
+		if isReferenceDisabledStub(text) {
+			return nil
+		}
+		sourceHint := referenceSourceHint(sourceRoot, path)
+		for _, entry := range extractReferenceCommandEntriesFromText(text, sourceHint) {
+			extractor.add(entry.Name, entry.SourceHint, entry.Responsibility)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	return extractor.entries(), nil
+}
+
+func extractReferenceCommandEntriesFromText(text string, sourceHint string) []referenceSnapshotRef {
+	var refs []referenceSnapshotRef
+	add := func(name string, responsibility string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		refs = append(refs, referenceSnapshotRef{Name: name, SourceHint: sourceHint, Responsibility: responsibility})
+	}
+	for _, block := range referenceCommandObjectBlocks(text) {
+		name := firstReferenceName(block)
+		if name == "" {
+			continue
+		}
+		add(name, "command_name")
+		for _, aliases := range referenceAliasBlocks(block) {
+			for _, alias := range parseReferenceAliases(aliases) {
+				add(alias, "command_alias")
+			}
+		}
+	}
+	if len(refs) == 0 && looksLikeExportedReferenceCommand(text) {
+		if name := firstReferenceName(text); name != "" {
+			add(name, "command_name")
+		}
+		for _, aliases := range referenceAliasBlocks(text) {
+			for _, alias := range parseReferenceAliases(aliases) {
+				add(alias, "command_alias")
+			}
+		}
+	}
+	return refs
+}
+
+func referenceCommandObjectBlocks(text string) []string {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?m)(?:const|let|var)\s+[A-Za-z0-9_]+\s*:\s*Command\s*=\s*\{`),
+		regexp.MustCompile(`(?m)export\s+default\s+\{`),
+	}
+	var blocks []string
+	for _, pattern := range patterns {
+		for _, match := range pattern.FindAllStringIndex(text, -1) {
+			start := match[0]
+			end := min(len(text), start+4096)
+			blocks = append(blocks, text[start:end])
+		}
+	}
+	return blocks
+}
+
+func looksLikeExportedReferenceCommand(text string) bool {
+	if !strings.Contains(text, "export default") {
+		return false
+	}
+	return strings.Contains(text, "description:") ||
+		strings.Contains(text, "argumentHint:") ||
+		strings.Contains(text, "load:") ||
+		strings.Contains(text, "getPromptForCommand")
+}
+
+func firstReferenceName(text string) string {
+	pattern := regexp.MustCompile(`\bname\s*:\s*['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]`)
+	match := pattern.FindStringSubmatch(text)
+	if len(match) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(match[1])
+}
+
+func referenceAliasBlocks(text string) []string {
+	pattern := regexp.MustCompile(`\baliases\s*:\s*\[([^\]]*)\]`)
+	matches := pattern.FindAllStringSubmatch(text, -1)
+	blocks := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) > 1 {
+			blocks = append(blocks, match[1])
+		}
+	}
+	return blocks
 }
 
 func extractReferenceToolEntries(sourceRoot string, toolRoot string) ([]referenceSnapshotRef, error) {
@@ -27252,6 +27353,7 @@ func builtInCommandNames() []string {
 		"compact",
 		"completion",
 		"config",
+		"continue",
 		"context",
 		"context-noninteractive",
 		"conversation",
@@ -28780,7 +28882,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Conversation(resumeSlashArgs("conversation", args, format), resumed)
 	case "/session":
 		return a.runResumedSessionSlash(resumeSlashArgs("sessions", args, format), resumed)
-	case "/resume":
+	case "/resume", "/continue":
 		return a.ResumeCommand(resumeSlashArgs("resume", args, format))
 	case "/summary":
 		return a.Summary(resumeSlashArgs("summary", args, format), resumed)
@@ -29995,7 +30097,7 @@ func bareApprovalSlashName(command string) string {
 
 func directSlashResumeSafe(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/clear", "/new", "/compact", "/conversation", "/resume":
+	case "/clear", "/new", "/compact", "/conversation", "/resume", "/continue":
 		return true
 	default:
 		return false
@@ -33956,7 +34058,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Conversation(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/resume":
+	case "/resume", "/continue":
 		a.handleResumeSlash(ctx, fields[1:], sess)
 	case "/rewind", "/checkpoint":
 		a.handleRewindSlash(fields[1:], sess)
@@ -51615,7 +51717,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "subagent", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "backfill-sessions", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
-		"break-cache", "bridge", "bridge-kick", "bootstrap-plan", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
+		"break-cache", "bridge", "bridge-kick", "bootstrap-plan", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "config", "continue", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "deferred-init", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
 		"help", "ide", "init", "init-verifiers", "insights", "install", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
