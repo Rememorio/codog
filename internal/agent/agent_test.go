@@ -6043,6 +6043,19 @@ func risky(value any) {
 	require.Contains(t, resumedMockLimitsServe.Task.Command, "mock-limits serve")
 	require.Contains(t, resumedMockLimitsServe.Task.Command, "127.0.0.1:0")
 
+	out, err = runResumedJSON("/mock-limits", "start", "--addr", "127.0.0.1:0")
+	require.NoError(t, err)
+	var resumedMockLimitsStart backgroundCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedMockLimitsStart))
+	require.Equal(t, "background", resumedMockLimitsStart.Kind)
+	require.Equal(t, "run", resumedMockLimitsStart.Action)
+	require.Equal(t, "ok", resumedMockLimitsStart.Status)
+	require.NotNil(t, resumedMockLimitsStart.Task)
+	require.Equal(t, "mock_limits", resumedMockLimitsStart.Task.Kind)
+	require.Contains(t, resumedMockLimitsStart.Task.Command, "mock-limits serve")
+	require.NotContains(t, resumedMockLimitsStart.Task.Command, "mock-limits start")
+	require.Contains(t, resumedMockLimitsStart.Task.Command, "127.0.0.1:0")
+
 	out, err = runResumedJSON("/acp", "serve")
 	require.NoError(t, err)
 	var resumedACPServe backgroundCommandReport

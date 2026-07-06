@@ -29676,9 +29676,20 @@ func (a *App) runResumedMockLimitsSlash(args []string, overrides config.FlagOver
 	case "show":
 		return a.MockLimits(args)
 	case "serve":
-		return a.startResumedMockLimitsServer(args, overrides)
+		serveArgs := resumedMockLimitsServeArgs(req)
+		return a.startResumedMockLimitsServer(serveArgs, overrides)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/mock-limits", req.Action), format)
+	}
+}
+
+func resumedMockLimitsServeArgs(req mockLimitsRequest) []string {
+	return []string{
+		"serve",
+		"--addr", req.Addr,
+		"--failures", strconv.Itoa(req.Failures),
+		"--retry-after-ms", strconv.Itoa(req.RetryAfterMS),
+		"--text", req.Text,
 	}
 }
 
