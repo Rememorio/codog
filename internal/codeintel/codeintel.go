@@ -11,6 +11,7 @@ import (
 	goformat "go/format"
 	"go/parser"
 	"go/token"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,6 +74,14 @@ type LinkedEditingRange struct {
 	Path        string     `json:"path"`
 	Ranges      []LSPRange `json:"ranges"`
 	WordPattern string     `json:"wordPattern,omitempty"`
+}
+
+// DocumentLink describes a URL range discovered in a source document.
+type DocumentLink struct {
+	Path    string   `json:"path"`
+	Target  string   `json:"target"`
+	Range   LSPRange `json:"range"`
+	Tooltip string   `json:"tooltip,omitempty"`
 }
 
 // Hover contains static hover context for a discovered symbol.
@@ -611,6 +620,89 @@ func LinkedEditingRanges(workspace string, symbol string, relPath string, limit 
 		Ranges:      ranges,
 		WordPattern: `[A-Za-z_][A-Za-z0-9_]*`,
 	}, nil
+}
+
+var documentLinkRe = regexp.MustCompile(`https?://[^\s"'<>]+`)
+
+// DocumentLinks returns static URL links discovered in one source document.
+func DocumentLinks(workspace string, relPath string, limit int) ([]DocumentLink, error) {
+	if strings.TrimSpace(relPath) == "" {
+		return nil, errors.New("path is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	path, rel, err := resolveWorkspaceFile(workspace, relPath)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var links []DocumentLink
+	for lineNo, line := range strings.Split(string(data), "\n") {
+		for _, bounds := range documentLinkRe.FindAllStringIndex(line, -1) {
+			if len(links) >= limit {
+				return links, nil
+			}
+			raw := line[bounds[0]:bounds[1]]
+			target := trimDocumentLinkTarget(raw)
+			if target == "" || !validDocumentLinkTarget(target) {
+				continue
+			}
+			links = append(links, DocumentLink{
+				Path:   rel,
+				Target: target,
+				Range: LSPRange{
+					Start: LSPPosition{Line: lineNo, Character: bounds[0]},
+					End:   LSPPosition{Line: lineNo, Character: bounds[0] + len(target)},
+				},
+				Tooltip: target,
+			})
+		}
+	}
+	return links, nil
+}
+
+// DocumentLinkAtPosition returns the static URL link containing a document
+// position.
+func DocumentLinkAtPosition(workspace string, relPath string, line int, character int) (DocumentLink, bool, error) {
+	if line < 0 || character < 0 {
+		return DocumentLink{}, false, errors.New("line and character must be non-negative")
+	}
+	links, err := DocumentLinks(workspace, relPath, 0)
+	if err != nil {
+		return DocumentLink{}, false, err
+	}
+	for _, link := range links {
+		if positionInRange(line, character, link.Range) {
+			return link, true, nil
+		}
+	}
+	return DocumentLink{}, false, nil
+}
+
+func trimDocumentLinkTarget(target string) string {
+	return strings.TrimRight(target, ".,;:!?)]}")
+}
+
+func validDocumentLinkTarget(target string) bool {
+	parsed, err := url.Parse(target)
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
+}
+
+func positionInRange(line int, character int, rng LSPRange) bool {
+	if line < rng.Start.Line || line > rng.End.Line {
+		return false
+	}
+	if line == rng.Start.Line && character < rng.Start.Character {
+		return false
+	}
+	if line == rng.End.Line && character >= rng.End.Character {
+		return false
+	}
+	return true
 }
 
 // HoverInfo returns static hover context around a symbol definition.

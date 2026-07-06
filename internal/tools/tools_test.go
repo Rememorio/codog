@@ -2758,6 +2758,8 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "demo.go"), []byte(source), 0o644))
 	foldSource := "package demo\n\nfunc FoldOnly() {\n\tprintln(\"fold\")\n}\n"
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "fold.go"), []byte(foldSource), 0o644))
+	linkSource := "package demo\n\n// Docs: https://example.test/docs.\nconst Link = \"https://example.test/api\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "links.go"), []byte(linkSource), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "messy.go"), []byte("package demo\n\nfunc messy(){return}\n"), 0o644))
 	tool := LSPTool{Workspace: workspace}
 	definition := tool.Definition()
@@ -2899,6 +2901,22 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, linkedEditingOut, `"wordPattern": "[A-Za-z_][A-Za-z0-9_]*"`)
 	require.Contains(t, linkedEditingOut, `"total": 3`)
 
+	documentLinkOut, err := tool.Execute(context.Background(), []byte(`{"action":"document_link","path":"links.go","limit":5}`))
+	require.NoError(t, err)
+	require.Contains(t, documentLinkOut, `"action": "document-link"`)
+	require.Contains(t, documentLinkOut, `"source": "static"`)
+	require.Contains(t, documentLinkOut, `"path": "links.go"`)
+	require.Contains(t, documentLinkOut, `"target": "https://example.test/docs"`)
+	require.Contains(t, documentLinkOut, `"character": 9`)
+	require.Contains(t, documentLinkOut, `"total": 2`)
+
+	documentLinkResolveOut, err := tool.Execute(context.Background(), []byte(`{"action":"document_link_resolve","path":"links.go","line":2,"character":12}`))
+	require.NoError(t, err)
+	require.Contains(t, documentLinkResolveOut, `"action": "document-link-resolve"`)
+	require.Contains(t, documentLinkResolveOut, `"source": "static"`)
+	require.Contains(t, documentLinkResolveOut, `"found": true`)
+	require.Contains(t, documentLinkResolveOut, `"target": "https://example.test/docs"`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -2939,6 +2957,14 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, err.Error(), "config home is required")
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"linked_editing_range","path":"demo.go","query":"Widget","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"document_link","path":"links.go","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"document_link_resolve","path":"links.go","line":2,"character":12,"use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 

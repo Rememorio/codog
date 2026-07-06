@@ -130,6 +130,26 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.Equal(t, LSPPosition{Line: 2, Character: 5}, linked.Ranges[0].Start)
 	require.Equal(t, `[A-Za-z_][A-Za-z0-9_]*`, linked.WordPattern)
 
+	linkSource := "package pkg\n\n// Docs: https://example.test/docs.\nconst Link = \"https://example.test/api\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "links.go"), []byte(linkSource), 0o644))
+	links, err := DocumentLinks(workspace, "pkg/links.go", 10)
+	require.NoError(t, err)
+	require.Len(t, links, 2)
+	require.Equal(t, "pkg/links.go", links[0].Path)
+	require.Equal(t, "https://example.test/docs", links[0].Target)
+	require.Equal(t, LSPPosition{Line: 2, Character: 9}, links[0].Range.Start)
+	require.Equal(t, LSPPosition{Line: 2, Character: 34}, links[0].Range.End)
+	require.Equal(t, "https://example.test/docs", links[0].Tooltip)
+
+	resolvedLink, found, err := DocumentLinkAtPosition(workspace, "pkg/links.go", 2, 12)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, links[0], resolvedLink)
+
+	_, found, err = DocumentLinkAtPosition(workspace, "pkg/links.go", 2, 34)
+	require.NoError(t, err)
+	require.False(t, found)
+
 	hover, err := HoverInfo(workspace, "Run", 1)
 	require.NoError(t, err)
 	require.True(t, hover.Found)
