@@ -578,6 +578,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	case "open":
+		if err := app.Open(ctx, rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "api-key":
 		if err := app.APIKey(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -2181,6 +2186,303 @@ func generateServerAuthToken() (string, error) {
 		return "", err
 	}
 	return "sk-ant-cc-" + base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+type openRequest struct {
+	RawURL string
+	Print  bool
+	Prompt string
+	Format string
+}
+
+type openTarget struct {
+	ServerURL string
+	AuthToken string
+	UnixPath  string
+}
+
+type openReport struct {
+	Kind                string         `json:"kind"`
+	Action              string         `json:"action"`
+	Status              string         `json:"status"`
+	ServerURL           string         `json:"server_url"`
+	SessionID           string         `json:"session_id,omitempty"`
+	WorkDir             string         `json:"work_dir,omitempty"`
+	AuthTokenConfigured bool           `json:"auth_token_configured"`
+	Print               bool           `json:"print"`
+	PromptSubmitted     bool           `json:"prompt_submitted"`
+	PromptTask          map[string]any `json:"prompt_task,omitempty"`
+	Message             string         `json:"message,omitempty"`
+}
+
+const openUsage = "codog open <cc-url|http-url> [-p|--print [PROMPT]] [--output-format text|json|stream-json]"
+
+func (a *App) Open(ctx context.Context, args []string) error {
+	req, err := parseOpenArgs(args)
+	if err != nil {
+		return err
+	}
+	target, err := parseOpenTarget(req.RawURL)
+	if err != nil {
+		return err
+	}
+	client := openHTTPClient(target)
+	sessionID, workDir, err := createOpenSession(ctx, client, target, currentWorkingDirectory())
+	if err != nil {
+		return err
+	}
+	report := openReport{
+		Kind:                "open",
+		Action:              "connect",
+		Status:              "connected",
+		ServerURL:           target.ServerURL,
+		SessionID:           sessionID,
+		WorkDir:             workDir,
+		AuthTokenConfigured: strings.TrimSpace(target.AuthToken) != "",
+		Print:               req.Print,
+		Message:             "Connected to Codog control server.",
+	}
+	if strings.TrimSpace(req.Prompt) != "" {
+		task, err := submitOpenPrompt(ctx, client, target, sessionID, req.Prompt)
+		if err != nil {
+			return err
+		}
+		report.PromptSubmitted = true
+		report.PromptTask = task
+		report.Message = "Connected to Codog control server and submitted prompt."
+	}
+	return renderOpenReport(a.Out, report, req.Format)
+}
+
+func parseOpenArgs(args []string) (openRequest, error) {
+	req := openRequest{Format: "text"}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "open", Flag: arg, Usage: openUsage}
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "-p" || arg == "--print":
+			req.Print = true
+			if index+1 < len(args) && !strings.HasPrefix(args[index+1], "-") {
+				index++
+				req.Prompt = args[index]
+			}
+		case strings.HasPrefix(arg, "-p="):
+			req.Print = true
+			req.Prompt = strings.TrimPrefix(arg, "-p=")
+		case strings.HasPrefix(arg, "--print="):
+			req.Print = true
+			req.Prompt = strings.TrimPrefix(arg, "--print=")
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "open", Option: arg, Usage: openUsage}
+			}
+			if req.RawURL != "" {
+				return req, unexpectedExtraArgsError{Command: "open", Args: []string{arg}, Usage: openUsage}
+			}
+			req.RawURL = arg
+		}
+	}
+	if strings.TrimSpace(req.RawURL) == "" {
+		return req, requiredArgumentError{Command: "open", Argument: "cc-url", Usage: openUsage}
+	}
+	normalizedFormat, err := normalizeOutputFormat("open", req.Format, []string{"text", "json", "stream-json"})
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalizedFormat
+	return req, nil
+}
+
+func parseOpenTarget(raw string) (openTarget, error) {
+	raw = strings.TrimSpace(raw)
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return openTarget{}, fmt.Errorf("invalid open URL %q: %w", raw, err)
+	}
+	switch parsed.Scheme {
+	case "http", "https":
+		token := firstOpenQueryValue(parsed.Query(), "authToken", "auth_token", "token")
+		parsed.RawQuery = removeOpenTokenQuery(parsed.Query()).Encode()
+		return openTarget{ServerURL: strings.TrimRight(parsed.String(), "/"), AuthToken: token}, nil
+	case "cc":
+		query := parsed.Query()
+		token := firstOpenQueryValue(query, "authToken", "auth_token", "token")
+		if serverURL := firstOpenQueryValue(query, "url", "serverUrl", "server_url", "server"); serverURL != "" {
+			target, err := parseOpenTarget(serverURL)
+			if err != nil {
+				return openTarget{}, err
+			}
+			if token != "" {
+				target.AuthToken = token
+			}
+			return target, nil
+		}
+		if parsed.Host == "" {
+			return openTarget{}, fmt.Errorf("invalid cc URL %q: host is required", raw)
+		}
+		path := strings.TrimRight(parsed.EscapedPath(), "/")
+		serverURL := (&url.URL{Scheme: "http", Host: parsed.Host, Path: path}).String()
+		return openTarget{ServerURL: strings.TrimRight(serverURL, "/"), AuthToken: token}, nil
+	case "cc+unix":
+		token := firstOpenQueryValue(parsed.Query(), "authToken", "auth_token", "token")
+		socketPath := strings.TrimSpace(parsed.Host + parsed.Path)
+		if unescaped, err := url.PathUnescape(socketPath); err == nil {
+			socketPath = unescaped
+		}
+		if socketPath == "" {
+			return openTarget{}, fmt.Errorf("invalid cc+unix URL %q: socket path is required", raw)
+		}
+		return openTarget{ServerURL: "unix:" + socketPath, AuthToken: token, UnixPath: socketPath}, nil
+	default:
+		return openTarget{}, fmt.Errorf("unsupported open URL scheme %q", parsed.Scheme)
+	}
+}
+
+func firstOpenQueryValue(query url.Values, names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(query.Get(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func removeOpenTokenQuery(query url.Values) url.Values {
+	out := url.Values{}
+	for key, values := range query {
+		switch strings.ToLower(key) {
+		case "authtoken", "auth_token", "token":
+			continue
+		default:
+			out[key] = append([]string(nil), values...)
+		}
+	}
+	return out
+}
+
+func openHTTPClient(target openTarget) *http.Client {
+	if strings.TrimSpace(target.UnixPath) == "" {
+		return &http.Client{Timeout: 10 * time.Second}
+	}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", target.UnixPath)
+		},
+	}
+	return &http.Client{Transport: transport, Timeout: 10 * time.Second}
+}
+
+func createOpenSession(ctx context.Context, client *http.Client, target openTarget, cwd string) (string, string, error) {
+	var response map[string]any
+	if err := openJSONRequest(ctx, client, target, http.MethodPost, "/sessions", map[string]any{"cwd": cwd}, &response); err != nil {
+		return "", "", err
+	}
+	sessionID := firstOpenString(response, "session_id", "id", "ID")
+	if sessionID == "" {
+		if nested, ok := response["session"].(map[string]any); ok {
+			sessionID = firstOpenString(nested, "session_id", "id", "ID")
+		}
+	}
+	if sessionID == "" {
+		return "", "", errors.New("open: server response did not include a session id")
+	}
+	workDir := firstOpenString(response, "work_dir", "workDir", "workspace")
+	return sessionID, workDir, nil
+}
+
+func submitOpenPrompt(ctx context.Context, client *http.Client, target openTarget, sessionID string, prompt string) (map[string]any, error) {
+	var response map[string]any
+	path := "/sessions/" + url.PathEscape(sessionID) + "/prompt"
+	if err := openJSONRequest(ctx, client, target, http.MethodPost, path, map[string]any{"prompt": prompt}, &response); err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
+func openJSONRequest(ctx context.Context, client *http.Client, target openTarget, method string, path string, payload any, out any) error {
+	baseURL := strings.TrimRight(target.ServerURL, "/")
+	if strings.HasPrefix(baseURL, "unix:") {
+		baseURL = "http://unix"
+	}
+	body := bytes.Buffer{}
+	if payload != nil {
+		if err := json.NewEncoder(&body).Encode(payload); err != nil {
+			return err
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("content-type", "application/json")
+	if strings.TrimSpace(target.AuthToken) != "" {
+		req.Header.Set("authorization", "Bearer "+strings.TrimSpace(target.AuthToken))
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := strings.TrimSpace(string(data))
+		if message == "" {
+			message = resp.Status
+		}
+		return fmt.Errorf("open: %s %s failed: %s", method, path, message)
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("open: decode response: %w", err)
+	}
+	return nil
+}
+
+func firstOpenString(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := values[key]; ok {
+			if text := strings.TrimSpace(fmt.Sprint(value)); text != "" && text != "<nil>" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func renderOpenReport(out io.Writer, report openReport, format string) error {
+	if format == "json" || format == "stream-json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Open")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Server URL       %s\n", report.ServerURL)
+	fmt.Fprintf(out, "  Session ID       %s\n", report.SessionID)
+	if report.WorkDir != "" {
+		fmt.Fprintf(out, "  Work dir         %s\n", report.WorkDir)
+	}
+	fmt.Fprintf(out, "  Auth token       %t\n", report.AuthTokenConfigured)
+	fmt.Fprintf(out, "  Print            %t\n", report.Print)
+	fmt.Fprintf(out, "  Prompt submitted %t\n", report.PromptSubmitted)
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+	return nil
 }
 
 func (a *App) serveControlListener(ctx context.Context, listener net.Listener, addr string) error {
@@ -28362,6 +28664,7 @@ func builtInCommandNames() []string {
 		"oauth-refresh",
 		"OAuthFlowStep",
 		"onboarding",
+		"open",
 		"output-style",
 		"parity",
 		"passes",
@@ -53771,7 +54074,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "deferred-init", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "exit-plan", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
 		"help", "ide", "init", "init-verifiers", "insights", "install", "ios", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
-		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "open", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "pr_comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-control", "remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "sandbox-toggle",
 		"search", "security-review", "self-test", "server", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "state", "status", "statusline",
@@ -54597,6 +54900,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"serving", "error"},
 			false,
 		), true
+	case "open":
+		return localCommandHelpSpec(
+			"open",
+			"open",
+			openUsage,
+			"Open\n\nUsage:\n  codog open <cc-url|http-url> [-p|--print [PROMPT]] [--output-format text|json|stream-json]\n\nConnects to a Codog control server through a Claude Code-compatible direct-connect URL. `cc://HOST:PORT?authToken=TOKEN` maps to `http://HOST:PORT`; `cc://...?url=http://HOST:PORT` and plain HTTP(S) URLs are also accepted. With `-p PROMPT`, Codog creates a remote session and submits the prompt through `/sessions/{id}/prompt`.\n",
+			[]string{"kind", "status", "server_url", "session_id", "auth_token_configured", "prompt_submitted", "prompt_task"},
+			[]string{"connected", "error"},
+			false,
+		), true
 	case "model":
 		return localCommandHelpSpec(
 			"model",
@@ -55263,6 +55576,7 @@ Usage:
   %s reset [status|SECTION|all --confirm] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] api [routes|status|serve] [ADDR|--addr ADDR] [--json|--output-format text|json]
   %s server [--host HOST] [--port PORT] [--auth-token TOKEN] [--unix PATH] [--workspace DIR] [--idle-timeout MS] [--max-sessions N] [--json|--output-format text|json]
+  %s open <cc-url|http-url> [-p|--print [PROMPT]] [--json|--output-format text|json|stream-json]
   %s [flags] api-key [status|set KEY|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] language [status|show|LANGUAGE|set|use LANGUAGE|clear|off] [--target user|project|local] [--json|--output-format text|json]

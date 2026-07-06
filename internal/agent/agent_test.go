@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19541,6 +19542,93 @@ func TestServerArgsGenerateAuthTokenAndValidateOptions(t *testing.T) {
 	_, err = parseServerArgs([]string{"--idle-timeout", "-1"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "non-negative integer")
+}
+
+func TestOpenCommandConnectsAndSubmitsPrompt(t *testing.T) {
+	var sawSession bool
+	var sawPrompt bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "Bearer open-secret", r.Header.Get("authorization"))
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/sessions":
+			require.Equal(t, http.MethodPost, r.Method)
+			sawSession = true
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			require.NotEmpty(t, payload["cwd"])
+			_, _ = w.Write([]byte(`{"session_id":"remote-session","work_dir":"/remote/work"}`))
+		case "/sessions/remote-session/prompt":
+			require.Equal(t, http.MethodPost, r.Method)
+			sawPrompt = true
+			var payload map[string]string
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			require.Equal(t, "hello remote", payload["prompt"])
+			_, _ = w.Write([]byte(`{"id":"task-1","kind":"prompt","status":"running"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	app := &App{Out: &out}
+	ccURL := "cc://connect?url=" + url.QueryEscape(server.URL) + "&authToken=open-secret"
+	require.NoError(t, app.Open(context.Background(), []string{ccURL, "-p", "hello remote", "--json"}))
+	require.True(t, sawSession)
+	require.True(t, sawPrompt)
+	require.NotContains(t, out.String(), "open-secret")
+	var report openReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "open", report.Kind)
+	require.Equal(t, "connected", report.Status)
+	require.Equal(t, server.URL, report.ServerURL)
+	require.Equal(t, "remote-session", report.SessionID)
+	require.Equal(t, "/remote/work", report.WorkDir)
+	require.True(t, report.AuthTokenConfigured)
+	require.True(t, report.Print)
+	require.True(t, report.PromptSubmitted)
+	require.Equal(t, "task-1", report.PromptTask["id"])
+}
+
+func TestRunCLIOpenHonorsGlobalOutputFormat(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/sessions", r.URL.Path)
+		require.Equal(t, http.MethodPost, r.Method)
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"ID":"cli-session"}`))
+	}))
+	defer server.Close()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": t.TempDir()})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "open", server.URL}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "open"`)
+	require.Contains(t, out, `"session_id": "cli-session"`)
+}
+
+func TestOpenTargetParsing(t *testing.T) {
+	target, err := parseOpenTarget("cc://127.0.0.1:9876?authToken=secret")
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:9876", target.ServerURL)
+	require.Equal(t, "secret", target.AuthToken)
+
+	target, err = parseOpenTarget("https://example.test/base?token=secret&keep=1")
+	require.NoError(t, err)
+	require.Equal(t, "https://example.test/base?keep=1", target.ServerURL)
+	require.Equal(t, "secret", target.AuthToken)
+
+	target, err = parseOpenTarget("cc+unix:///tmp/codog.sock?token=secret")
+	require.NoError(t, err)
+	require.Equal(t, "unix:/tmp/codog.sock", target.ServerURL)
+	require.Equal(t, "/tmp/codog.sock", target.UnixPath)
+	require.Equal(t, "secret", target.AuthToken)
 }
 
 func TestRunCLIRoutesWebSetupAlias(t *testing.T) {
