@@ -696,6 +696,42 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Len(t, subtypes.Types, 1)
 	require.Equal(t, "SpecialWidget", subtypes.Types[0].Name)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "document_diagnostic", Path: "main.go"})
+	require.NoError(t, err)
+	require.Equal(t, "document-diagnostic", result.Action)
+	require.Equal(t, "textDocument/diagnostic", result.Method)
+	var documentDiagnostic struct {
+		Kind  string `json:"kind"`
+		Items []struct {
+			Message string `json:"message"`
+		} `json:"items"`
+	}
+	encodedDocumentDiagnostic, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedDocumentDiagnostic, &documentDiagnostic))
+	require.Equal(t, "full", documentDiagnostic.Kind)
+	require.Len(t, documentDiagnostic.Items, 1)
+	require.Equal(t, "pulled document diagnostic", documentDiagnostic.Items[0].Message)
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "workspace_diagnostic"})
+	require.NoError(t, err)
+	require.Equal(t, "workspace-diagnostic", result.Action)
+	require.Equal(t, "workspace/diagnostic", result.Method)
+	require.Empty(t, result.Path)
+	var workspaceDiagnostic struct {
+		Items []struct {
+			URI   string `json:"uri"`
+			Items []struct {
+				Message string `json:"message"`
+			} `json:"items"`
+		} `json:"items"`
+	}
+	encodedWorkspaceDiagnostic, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedWorkspaceDiagnostic, &workspaceDiagnostic))
+	require.Len(t, workspaceDiagnostic.Items, 1)
+	require.Equal(t, "pulled workspace diagnostic", workspaceDiagnostic.Items[0].Items[0].Message)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "diagnostics", Path: "main.go"})
 	require.NoError(t, err)
 	require.Equal(t, "diagnostics", result.Action)
@@ -718,6 +754,12 @@ func TestApplyLSPTextEdits(t *testing.T) {
 
 func TestNormalizeLSPActionAliases(t *testing.T) {
 	cases := map[string]string{
+		"document_diagnostic":       "document-diagnostic",
+		"documentDiagnostic":        "document-diagnostic",
+		"pull_diagnostic":           "document-diagnostic",
+		"workspace_diagnostic":      "workspace-diagnostic",
+		"workspaceDiagnostic":       "workspace-diagnostic",
+		"workspace_diagnostics":     "workspace-diagnostic",
 		"goto_definition":           "definition",
 		"goto-definition":           "definition",
 		"gotoDefinition":            "definition",
@@ -867,6 +909,39 @@ func TestFakeLSPServer(t *testing.T) {
 		switch msg.Method {
 		case "initialize":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"capabilities": map[string]any{}})})
+		case "textDocument/diagnostic":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+				"kind": "full",
+				"items": []map[string]any{{
+					"range": map[string]any{
+						"start": map[string]any{"line": 2, "character": 5},
+						"end":   map[string]any{"line": 2, "character": 9},
+					},
+					"severity": 2,
+					"source":   "fake-lsp",
+					"message":  "pulled document diagnostic",
+				}},
+			})})
+		case "workspace/diagnostic":
+			if currentURI == "" {
+				currentURI = "file:///workspace/main.go"
+			}
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+				"items": []map[string]any{{
+					"uri":     currentURI,
+					"version": 1,
+					"kind":    "full",
+					"items": []map[string]any{{
+						"range": map[string]any{
+							"start": map[string]any{"line": 3, "character": 1},
+							"end":   map[string]any{"line": 3, "character": 5},
+						},
+						"severity": 2,
+						"source":   "fake-lsp",
+						"message":  "pulled workspace diagnostic",
+					}},
+				}},
+			})})
 		case "textDocument/hover":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"contents": map[string]any{"kind": "markdown", "value": "fake hover"}})})
 		case "textDocument/declaration", "textDocument/implementation", "textDocument/typeDefinition":

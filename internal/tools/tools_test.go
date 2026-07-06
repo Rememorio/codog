@@ -2762,6 +2762,8 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	actionSchema := properties["action"].(map[string]any)
 	require.Contains(t, actionSchema["enum"], "rename")
 	require.Contains(t, actionSchema["enum"], "workspace_symbol")
+	require.Contains(t, actionSchema["enum"], "document_diagnostic")
+	require.Contains(t, actionSchema["enum"], "workspace_diagnostic")
 	require.Contains(t, actionSchema["enum"], "prepare_rename")
 	require.Contains(t, actionSchema["enum"], "code_action")
 	require.Contains(t, actionSchema["enum"], "code_lens")

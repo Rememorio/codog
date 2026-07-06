@@ -155,6 +155,19 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Open a document and return diagnostics published by the language server.",
 	},
 	{
+		Name:             "document-diagnostic",
+		Method:           "textDocument/diagnostic",
+		Aliases:          []string{"document_diagnostic", "documentDiagnostic", "pull_diagnostic", "pull-diagnostic"},
+		RequiresDocument: true,
+		Description:      "Pull diagnostics for one document using the language-server diagnostic request.",
+	},
+	{
+		Name:        "workspace-diagnostic",
+		Method:      "workspace/diagnostic",
+		Aliases:     []string{"workspace_diagnostic", "workspaceDiagnostic", "workspace_diagnostics", "pull_workspace_diagnostic"},
+		Description: "Pull diagnostics for the workspace using the language-server diagnostic request.",
+	},
+	{
 		Name:             "hover",
 		Method:           "textDocument/hover",
 		RequiresDocument: true,
@@ -1003,6 +1016,10 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 	position := map[string]any{"line": max(0, line), "character": max(0, character)}
 	textDocument := map[string]any{"uri": uri}
 	switch action {
+	case "document-diagnostic":
+		return "textDocument/diagnostic", map[string]any{"textDocument": textDocument}, nil
+	case "workspace-diagnostic":
+		return "workspace/diagnostic", map[string]any{"previousResultIds": []any{}}, nil
 	case "hover":
 		return "textDocument/hover", map[string]any{"textDocument": textDocument, "position": position}, nil
 	case "definition":
