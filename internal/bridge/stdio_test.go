@@ -369,9 +369,10 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":7,"method":"lsp/query","params":{"language":"go","action":"code_action","path":"main.go","line":2,"character":5,"code_action_title":"Bridge fake fix","apply":true}}`,
 		`{"jsonrpc":"2.0","id":8,"method":"lsp/query","params":{"language":"go","action":"prepare_rename","path":"main.go","line":2,"character":5}}`,
 		`{"jsonrpc":"2.0","id":9,"method":"lsp/query","params":{"language":"go","action":"selection_range","path":"main.go","line":2,"character":5}}`,
-		`{"jsonrpc":"2.0","id":10,"method":"lsp/status","params":{"language":"go"}}`,
-		`{"jsonrpc":"2.0","id":11,"method":"lsp/list"}`,
-		`{"jsonrpc":"2.0","id":12,"method":"lsp/stop","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"lsp/query","params":{"language":"go","action":"folding_range","path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":11,"method":"lsp/status","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":12,"method":"lsp/list"}`,
+		`{"jsonrpc":"2.0","id":13,"method":"lsp/stop","params":{"language":"go"}}`,
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
@@ -404,6 +405,9 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"placeholder":"Launch"`)
 	require.Contains(t, out.String(), `"action":"selection-range"`)
 	require.Contains(t, out.String(), `"method":"textDocument/selectionRange"`)
+	require.Contains(t, out.String(), `"action":"folding-range"`)
+	require.Contains(t, out.String(), `"method":"textDocument/foldingRange"`)
+	require.Contains(t, out.String(), `"startLine":2`)
 	require.Contains(t, out.String(), `"kind":"lsp_status"`)
 	require.Contains(t, out.String(), `"kind":"lsp_list"`)
 	require.Contains(t, out.String(), `"kind":"lsp_stop"`)
@@ -520,6 +524,12 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 					"start": map[string]any{"line": 2, "character": 5},
 					"end":   map[string]any{"line": 2, "character": 11},
 				},
+			}}})
+		case "textDocument/foldingRange":
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+				"startLine": 2,
+				"endLine":   4,
+				"kind":      "region",
 			}}})
 		case "shutdown":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": nil})

@@ -228,6 +228,13 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return nested selection ranges at a document position.",
 	},
 	{
+		Name:             "folding-range",
+		Method:           "textDocument/foldingRange",
+		Aliases:          []string{"folding_range", "foldingRange", "folds", "folding"},
+		RequiresDocument: true,
+		Description:      "Return foldable line ranges for a document.",
+	},
+	{
 		Name:             "signature-help",
 		Method:           "textDocument/signatureHelp",
 		Aliases:          []string{"signature_help", "signatureHelp", "signature", "signatures"},
@@ -614,6 +621,8 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		return "textDocument/documentHighlight", map[string]any{"textDocument": textDocument, "position": position}, nil
 	case "selection-range":
 		return "textDocument/selectionRange", map[string]any{"textDocument": textDocument, "positions": []any{position}}, nil
+	case "folding-range":
+		return "textDocument/foldingRange", map[string]any{"textDocument": textDocument}, nil
 	case "signature-help":
 		return "textDocument/signatureHelp", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "symbols":

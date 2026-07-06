@@ -304,6 +304,23 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, LSPPosition{Line: 2, Character: 5}, selectionRanges[0].Range.Start)
 	require.NotNil(t, selectionRanges[0].Parent)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "folding_range", Path: "main.go"})
+	require.NoError(t, err)
+	require.Equal(t, "folding-range", result.Action)
+	require.Equal(t, "textDocument/foldingRange", result.Method)
+	var foldingRanges []struct {
+		StartLine int    `json:"startLine"`
+		EndLine   int    `json:"endLine"`
+		Kind      string `json:"kind"`
+	}
+	encodedFolding, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedFolding, &foldingRanges))
+	require.Len(t, foldingRanges, 1)
+	require.Equal(t, 2, foldingRanges[0].StartLine)
+	require.Equal(t, 2, foldingRanges[0].EndLine)
+	require.Equal(t, "region", foldingRanges[0].Kind)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "rename", Path: "main.go", Line: 2, Character: 5, NewName: "Start"})
 	require.NoError(t, err)
 	require.Equal(t, "rename", result.Action)
@@ -431,6 +448,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"selection_range":     "selection-range",
 		"selectionRange":      "selection-range",
 		"expand_selection":    "selection-range",
+		"folding_range":       "folding-range",
+		"foldingRange":        "folding-range",
+		"folds":               "folding-range",
 		"signature_help":      "signature-help",
 		"signatureHelp":       "signature-help",
 		"signature":           "signature-help",
@@ -522,6 +542,12 @@ func TestFakeLSPServer(t *testing.T) {
 						"end":   map[string]any{"line": 2, "character": 15},
 					},
 				},
+			}})})
+		case "textDocument/foldingRange":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"startLine": 2,
+				"endLine":   2,
+				"kind":      "region",
 			}})})
 		case "textDocument/signatureHelp":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
