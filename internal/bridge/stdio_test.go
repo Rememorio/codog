@@ -398,7 +398,8 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":36,"method":"lsp/query","params":{"language":"go","action":"inlay_hint_resolve","path":"main.go","line":2,"character":10}}`,
 		`{"jsonrpc":"2.0","id":37,"method":"lsp/status","params":{"language":"go"}}`,
 		`{"jsonrpc":"2.0","id":38,"method":"lsp/list"}`,
-		`{"jsonrpc":"2.0","id":39,"method":"lsp/stop","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":39,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol_resolve","query":"Build"}}`,
+		`{"jsonrpc":"2.0","id":40,"method":"lsp/stop","params":{"language":"go"}}`,
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
@@ -497,6 +498,9 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"action":"workspace-symbol"`)
 	require.Contains(t, out.String(), `"method":"workspace/symbol"`)
 	require.Contains(t, out.String(), `"name":"BridgeWidget"`)
+	require.Contains(t, out.String(), `"action":"workspace-symbol-resolve"`)
+	require.Contains(t, out.String(), `"method":"workspaceSymbol/resolve"`)
+	require.Contains(t, out.String(), `"containerName":"bridge"`)
 	require.Contains(t, out.String(), `"action":"document-diagnostic"`)
 	require.Contains(t, out.String(), `"method":"textDocument/diagnostic"`)
 	require.Contains(t, out.String(), `"message":"bridge pulled document diagnostic"`)
@@ -896,6 +900,11 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 					},
 				},
 			}}})
+		case "workspaceSymbol/resolve":
+			var symbol map[string]any
+			_ = json.Unmarshal(msg.Params, &symbol)
+			symbol["containerName"] = "bridge"
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": symbol})
 		case "textDocument/rangeFormatting":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
 				"range": map[string]any{

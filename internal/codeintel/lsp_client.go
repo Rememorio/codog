@@ -432,6 +432,12 @@ var lspActionInfos = []LSPActionInfo{
 		Description: "Return symbols matching a workspace-wide language-server query.",
 	},
 	{
+		Name:        "workspace-symbol-resolve",
+		Method:      "workspaceSymbol/resolve",
+		Aliases:     []string{"workspace_symbol_resolve", "workspaceSymbolResolve", "resolve_workspace_symbol", "resolveWorkspaceSymbol"},
+		Description: "Resolve a workspace symbol selected from a workspace-wide language-server query.",
+	},
+	{
 		Name:             "signature-help",
 		Method:           "textDocument/signatureHelp",
 		Aliases:          []string{"signature_help", "signatureHelp", "signature", "signatures"},
@@ -754,6 +760,20 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 			Language: language,
 			Action:   action,
 			Method:   "completionItem/resolve",
+			Path:     rel,
+			Result:   decoded,
+		}, nil
+	}
+	if action == "workspace-symbol-resolve" {
+		decoded, err := runLSPWorkspaceSymbolResolveQuery(client, request.Query)
+		if err != nil {
+			return LSPQueryResult{}, err
+		}
+		return LSPQueryResult{
+			Kind:     "lsp_query",
+			Language: language,
+			Action:   action,
+			Method:   "workspaceSymbol/resolve",
 			Path:     rel,
 			Result:   decoded,
 		}, nil
@@ -1170,6 +1190,31 @@ func runLSPInlayHintResolveQuery(client *lspClient, uri string, line int, charac
 	return map[string]any{"items": items, "selected": selected, "resolved": resolved}, nil
 }
 
+func runLSPWorkspaceSymbolResolveQuery(client *lspClient, query string) (any, error) {
+	query = strings.TrimSpace(query)
+	raw, err := client.request("workspace/symbol", map[string]any{"query": query})
+	if err != nil {
+		return nil, err
+	}
+	items, err := decodeLSPMapItems(raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return map[string]any{"items": items, "resolved": nil}, nil
+	}
+	selected := selectLSPWorkspaceSymbol(items, query)
+	raw, err = client.request("workspaceSymbol/resolve", selected)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := decodeLSPAny(raw, selected)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"items": items, "selected": selected, "resolved": resolved}, nil
+}
+
 func runLSPCompletionItemResolveQuery(client *lspClient, uri string, line int, character int, query string) (any, error) {
 	position := map[string]any{"line": max(0, line), "character": max(0, character)}
 	textDocument := map[string]any{"uri": uri}
@@ -1277,6 +1322,25 @@ func selectLSPPositionItem(items []map[string]any, position LSPPosition) map[str
 			if decodeLSPParams(value, &candidate) == nil && candidate.Line == position.Line {
 				return item
 			}
+		}
+	}
+	return items[0]
+}
+
+func selectLSPWorkspaceSymbol(items []map[string]any, query string) map[string]any {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return items[0]
+	}
+	for _, item := range items {
+		if name, ok := item["name"].(string); ok && strings.EqualFold(name, query) {
+			return item
+		}
+	}
+	lowerQuery := strings.ToLower(query)
+	for _, item := range items {
+		if name, ok := item["name"].(string); ok && strings.Contains(strings.ToLower(name), lowerQuery) {
+			return item
 		}
 	}
 	return items[0]

@@ -589,6 +589,29 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, 12, workspaceSymbols[0].Kind)
 	require.Equal(t, "file:///workspace/main.go", workspaceSymbols[0].Location.URI)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "workspace_symbol_resolve", Query: "Build"})
+	require.NoError(t, err)
+	require.Equal(t, "workspace-symbol-resolve", result.Action)
+	require.Equal(t, "workspaceSymbol/resolve", result.Method)
+	require.Empty(t, result.Path)
+	var resolvedWorkspaceSymbol struct {
+		Selected struct {
+			Name string `json:"name"`
+		} `json:"selected"`
+		Resolved struct {
+			Name      string         `json:"name"`
+			Container string         `json:"containerName"`
+			Location  map[string]any `json:"location"`
+		} `json:"resolved"`
+	}
+	encodedResolvedWorkspaceSymbol, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedResolvedWorkspaceSymbol, &resolvedWorkspaceSymbol))
+	require.Equal(t, "BuildWidget", resolvedWorkspaceSymbol.Selected.Name)
+	require.Equal(t, "BuildWidget", resolvedWorkspaceSymbol.Resolved.Name)
+	require.Equal(t, "demo", resolvedWorkspaceSymbol.Resolved.Container)
+	require.NotNil(t, resolvedWorkspaceSymbol.Resolved.Location)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "rename", Path: "main.go", Line: 2, Character: 5, NewName: "Start"})
 	require.NoError(t, err)
 	require.Equal(t, "rename", result.Action)
@@ -947,6 +970,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"workspace_symbols":         "workspace-symbol",
 		"workspaceSymbol":           "workspace-symbol",
 		"symbol-search":             "workspace-symbol",
+		"workspace_symbol_resolve":  "workspace-symbol-resolve",
+		"workspaceSymbolResolve":    "workspace-symbol-resolve",
+		"resolve_workspace_symbol":  "workspace-symbol-resolve",
 		"signature_help":            "signature-help",
 		"signatureHelp":             "signature-help",
 		"signature":                 "signature-help",
@@ -1195,6 +1221,11 @@ func TestFakeLSPServer(t *testing.T) {
 					},
 				},
 			}})})
+		case "workspaceSymbol/resolve":
+			var symbol map[string]any
+			_ = decodeLSPParams(msg.Params, &symbol)
+			symbol["containerName"] = "demo"
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(symbol)})
 		case "textDocument/signatureHelp":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
 				"activeSignature": 0,
