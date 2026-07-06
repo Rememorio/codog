@@ -207,6 +207,7 @@ var scenarioOrder = []string{
 	"tui_prompt_completion_roundtrip",
 	"ask_user_question_roundtrip",
 	"runtime_output_tools_roundtrip",
+	"repl_runtime_roundtrip",
 	"config_precedence_roundtrip",
 	"provider_routing_roundtrip",
 	"session_resume_jsonl_roundtrip",
@@ -738,6 +739,7 @@ func Run(ctx context.Context) (Report, error) {
 		tuiPromptCompletionScenario(),
 		askUserQuestionScenario(),
 		runtimeOutputToolsScenario(),
+		replRuntimeScenario(),
 		configPrecedenceScenario(),
 		providerRoutingScenario(),
 		sessionResumeJSONLRoundtripScenario(),
@@ -1140,7 +1142,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "plugins and marketplace", RequiredRefs: []string{"Plugin tools", "Plugin lifecycle", "Plugin manifest loading", "External plugin lifecycle"}},
 	{Capability: "TUI and interactive rendering", RequiredRefs: []string{"Bubble Tea TUI", "Interactive rendering"}},
 	{Capability: "interactive question handling", RequiredRefs: []string{"AskUserQuestion tool", "Interactive questions"}},
-	{Capability: "runtime utility tools", RequiredRefs: []string{"Brief tool", "SendUserMessage tool", "StructuredOutput tool", "Sleep tool"}},
+	{Capability: "runtime utility tools", RequiredRefs: []string{"Brief tool", "SendUserMessage tool", "StructuredOutput tool", "Sleep tool", "REPL tool"}},
 }
 
 func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
@@ -1392,6 +1394,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "runtime-tools",
 		Description: "Runs user-facing message, structured output, and bounded sleep tools through the registry.",
 		ParityRefs:  []string{"Brief tool", "SendUserMessage tool", "StructuredOutput tool", "Sleep tool"},
+	},
+	"repl_runtime_roundtrip": {
+		Category:    "runtime-tools",
+		Description: "Executes shell code through the REPL tool with workspace and configured environment.",
+		ParityRefs:  []string{"REPL tool", "Runtime subprocess execution", "Tool result roundtrip"},
 	},
 	"auto_compact_triggered": {
 		Category:    "session-compaction",
@@ -2220,6 +2227,68 @@ func runtimeOutputToolsScenario() scenario {
 				FinalMessage: "runtime output tools harness ok",
 				ToolUses:     []string{"brief", "send_user_message", "structured_output", "sleep"},
 				ToolCalls:    4,
+			}, nil
+		},
+	}
+}
+
+func replRuntimeScenario() scenario {
+	return scenario{
+		name: "repl_runtime_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{
+				ConfigEnv: map[string]string{"CODOG_REPL_PARITY": "ready"},
+			})
+			shellOut, err := registry.Execute(ctx, "REPLTool", json.RawMessage(`{
+				"language":"sh",
+				"code":"printf '%s:%s' \"$PWD\" \"$CODOG_REPL_PARITY\"",
+				"timeout_ms":1000
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var shellResult struct {
+				Language   string `json:"language"`
+				Stdout     string `json:"stdout"`
+				Stderr     string `json:"stderr"`
+				ExitCode   int    `json:"exit_code"`
+				TimedOut   bool   `json:"timed_out"`
+				DurationMS int64  `json:"duration_ms"`
+			}
+			if err := json.Unmarshal([]byte(shellOut), &shellResult); err != nil {
+				return localScenarioResult{}, err
+			}
+			if shellResult.Language != "sh" || !strings.HasSuffix(shellResult.Stdout, filepath.Base(workspace)+":ready") || shellResult.Stderr != "" || shellResult.ExitCode != 0 || shellResult.TimedOut {
+				return localScenarioResult{}, fmt.Errorf("unexpected repl shell output: %s", shellOut)
+			}
+			if shellResult.DurationMS < 0 {
+				return localScenarioResult{}, fmt.Errorf("unexpected repl duration: %s", shellOut)
+			}
+
+			timeoutOut, err := registry.Execute(ctx, "repl", json.RawMessage(`{
+				"language":"sh",
+				"code":"sleep 1",
+				"timeout_ms":20
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var timeoutResult struct {
+				Language string `json:"language"`
+				ExitCode int    `json:"exit_code"`
+				TimedOut bool   `json:"timed_out"`
+			}
+			if err := json.Unmarshal([]byte(timeoutOut), &timeoutResult); err != nil {
+				return localScenarioResult{}, err
+			}
+			if timeoutResult.Language != "sh" || timeoutResult.ExitCode != -1 || !timeoutResult.TimedOut {
+				return localScenarioResult{}, fmt.Errorf("unexpected repl timeout output: %s", timeoutOut)
+			}
+			return localScenarioResult{
+				Output:       strings.Join([]string{shellOut, timeoutOut, "repl runtime harness ok"}, "\n"),
+				FinalMessage: "repl runtime harness ok",
+				ToolUses:     []string{"repl", "repl"},
+				ToolCalls:    2,
 			}, nil
 		},
 	}

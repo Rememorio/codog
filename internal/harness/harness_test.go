@@ -326,8 +326,17 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, runtimeOutputTools.Output, "runtime output tools harness ok")
 	runtimeTools := findCategory(t, report, "runtime-tools")
 	require.True(t, runtimeTools.OK)
-	require.Equal(t, 1, runtimeTools.Total)
-	require.ElementsMatch(t, []string{"runtime_output_tools_roundtrip"}, runtimeTools.Scenarios)
+	require.Equal(t, 2, runtimeTools.Total)
+	require.ElementsMatch(t, []string{"repl_runtime_roundtrip", "runtime_output_tools_roundtrip"}, runtimeTools.Scenarios)
+
+	replRuntime := findScenario(t, report, "repl_runtime_roundtrip")
+	require.True(t, replRuntime.OK)
+	require.Equal(t, "runtime-tools", replRuntime.Category)
+	require.Equal(t, []string{"repl", "repl"}, replRuntime.ToolUses)
+	require.Equal(t, 2, replRuntime.ToolCalls)
+	require.Equal(t, 0, replRuntime.ToolErrorCount)
+	require.Contains(t, replRuntime.Output, `"timed_out": true`)
+	require.Contains(t, replRuntime.Output, "repl runtime harness ok")
 
 	configPrecedence := findScenario(t, report, "config_precedence_roundtrip")
 	require.True(t, configPrecedence.OK)
@@ -538,6 +547,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Equal(t, "runtime-tools", runtimeOutputTools.Category)
 	require.Contains(t, runtimeOutputTools.ParityRefs, "StructuredOutput tool")
 	require.Contains(t, runtimeOutputTools.ParityRefs, "Sleep tool")
+
+	replRuntime := findManifestScenario(t, manifest, "repl_runtime_roundtrip")
+	require.Equal(t, "runtime-tools", replRuntime.Category)
+	require.Contains(t, replRuntime.ParityRefs, "REPL tool")
 
 	remoteAPI := findManifestScenario(t, manifest, "remote_api_listener_roundtrip")
 	require.Equal(t, "remote-control", remoteAPI.Category)
