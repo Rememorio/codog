@@ -1187,6 +1187,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	thinkbackPlaySlash, ok := capabilityReportSlash(report, "/thinkback-play")
 	require.True(t, ok)
 	require.True(t, thinkbackPlaySlash.ResumeSupported)
+	sessionsSlash, ok := capabilityReportSlash(report, "/sessions")
+	require.True(t, ok)
+	require.True(t, sessionsSlash.ResumeSupported)
 	reloadPluginsSlash, ok := capabilityReportSlash(report, "/reload-plugins")
 	require.True(t, ok)
 	require.True(t, reloadPluginsSlash.ResumeSupported)
@@ -1474,6 +1477,16 @@ func TestCapabilitiesResolveProjectsExecutionRegistry(t *testing.T) {
 	slashMatch, ok := capabilityResolveMatch(commandReport, "slash", "/prefetch")
 	require.True(t, ok)
 	require.True(t, slashMatch.ResumeSupported)
+	out.Reset()
+
+	require.NoError(t, app.Capabilities([]string{"resolve", "/sessions", "--json"}))
+	var sessionsReport capabilityResolveReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &sessionsReport))
+	require.Equal(t, "ok", sessionsReport.Status)
+	sessionsMatch, ok := capabilityResolveMatch(sessionsReport, "slash", "/sessions")
+	require.True(t, ok)
+	require.True(t, sessionsMatch.ResumeSupported)
+	require.Contains(t, sessionsMatch.Usage, "/sessions")
 	out.Reset()
 
 	require.NoError(t, app.Capabilities([]string{"resolve", "prefetxh", "--json"}))
