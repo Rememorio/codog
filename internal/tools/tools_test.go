@@ -2968,6 +2968,23 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, signatureHelpOut, `"label": "Build(name string, count int) int"`)
 	require.Contains(t, signatureHelpOut, `"activeParameter": 0`)
 
+	codeLensOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_lens","path":"demo.go","limit":5}`))
+	require.NoError(t, err)
+	require.Contains(t, codeLensOut, `"action": "code-lens"`)
+	require.Contains(t, codeLensOut, `"source": "static"`)
+	require.Contains(t, codeLensOut, `"path": "demo.go"`)
+	require.Contains(t, codeLensOut, `"symbol": "Widget"`)
+	require.Contains(t, codeLensOut, `"command": "codog.references"`)
+	require.Contains(t, codeLensOut, `"total": 2`)
+
+	codeLensResolveOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_lens_resolve","path":"demo.go","line":2,"character":6}`))
+	require.NoError(t, err)
+	require.Contains(t, codeLensResolveOut, `"action": "code-lens-resolve"`)
+	require.Contains(t, codeLensResolveOut, `"source": "static"`)
+	require.Contains(t, codeLensResolveOut, `"found": true`)
+	require.Contains(t, codeLensResolveOut, `"symbol": "Widget"`)
+	require.Contains(t, codeLensResolveOut, `"command": "codog.references"`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -3038,6 +3055,14 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 
 	signatureHelpServerInput := fmt.Sprintf(`{"action":"signature_help","path":"hints.go","line":3,"character":%d,"use_server":true}`, hintArgChar)
 	_, err = tool.Execute(context.Background(), []byte(signatureHelpServerInput))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"code_lens","path":"demo.go","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"code_lens_resolve","path":"demo.go","line":2,"character":6,"use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 

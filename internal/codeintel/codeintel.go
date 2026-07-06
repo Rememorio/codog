@@ -143,6 +143,23 @@ type SignatureArgument struct {
 	Type  string `json:"type,omitempty"`
 }
 
+// CodeLens describes a static editor action attached to a declaration.
+type CodeLens struct {
+	Path    string          `json:"path"`
+	Range   LSPRange        `json:"range"`
+	Symbol  string          `json:"symbol"`
+	Kind    string          `json:"kind,omitempty"`
+	Command CodeLensCommand `json:"command"`
+	Data    map[string]any  `json:"data,omitempty"`
+}
+
+// CodeLensCommand describes the command exposed by a code lens.
+type CodeLensCommand struct {
+	Title     string `json:"title"`
+	Command   string `json:"command"`
+	Arguments []any  `json:"arguments,omitempty"`
+}
+
 // Hover contains static hover context for a discovered symbol.
 type Hover struct {
 	Symbol  string   `json:"symbol"`
@@ -1165,6 +1182,88 @@ func exprLabel(fset *token.FileSet, expr ast.Expr) string {
 		return ""
 	}
 	return buf.String()
+}
+
+// CodeLenses returns static declaration lenses for one source document.
+func CodeLenses(workspace string, relPath string, limit int) ([]CodeLens, error) {
+	if strings.TrimSpace(relPath) == "" {
+		return nil, errors.New("path is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	path, rel, err := resolveWorkspaceFile(workspace, relPath)
+	if err != nil {
+		return nil, err
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	lenses := []CodeLens{}
+	addLens := func(name string, kind string, nameNode *ast.Ident) {
+		if len(lenses) >= limit || nameNode == nil || strings.TrimSpace(name) == "" {
+			return
+		}
+		refs, err := References(workspace, name, 0)
+		if err != nil {
+			return
+		}
+		lenses = append(lenses, CodeLens{
+			Path:   rel,
+			Range:  nodeRange(fset, nameNode),
+			Symbol: name,
+			Kind:   kind,
+			Command: CodeLensCommand{
+				Title:     fmt.Sprintf("%d references", len(refs)),
+				Command:   "codog.references",
+				Arguments: []any{name, rel},
+			},
+			Data: map[string]any{
+				"symbol":     name,
+				"kind":       kind,
+				"path":       rel,
+				"references": len(refs),
+			},
+		})
+	}
+	for _, decl := range file.Decls {
+		if len(lenses) >= limit {
+			break
+		}
+		switch n := decl.(type) {
+		case *ast.FuncDecl:
+			addLens(n.Name.Name, "function", n.Name)
+		case *ast.GenDecl:
+			for _, spec := range n.Specs {
+				if len(lenses) >= limit {
+					break
+				}
+				if typ, ok := spec.(*ast.TypeSpec); ok {
+					addLens(typ.Name.Name, "type", typ.Name)
+				}
+			}
+		}
+	}
+	return lenses, nil
+}
+
+// CodeLensAtPosition resolves a static code lens at a document position.
+func CodeLensAtPosition(workspace string, relPath string, line int, character int) (CodeLens, bool, error) {
+	if line < 0 || character < 0 {
+		return CodeLens{}, false, errors.New("line and character must be non-negative")
+	}
+	lenses, err := CodeLenses(workspace, relPath, 0)
+	if err != nil {
+		return CodeLens{}, false, err
+	}
+	for _, lens := range lenses {
+		if positionInRange(line, character, lens.Range) || line == lens.Range.Start.Line {
+			return lens, true, nil
+		}
+	}
+	return CodeLens{}, false, nil
 }
 
 // HoverInfo returns static hover context around a symbol definition.

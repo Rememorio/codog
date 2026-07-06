@@ -215,6 +215,26 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.True(t, signature.Found)
 	require.Equal(t, 1, signature.ActiveParameter)
 
+	lenses, err := CodeLenses(workspace, "pkg/runner.go", 10)
+	require.NoError(t, err)
+	require.Len(t, lenses, 2)
+	require.Equal(t, "pkg/runner.go", lenses[0].Path)
+	require.Equal(t, "Runner", lenses[0].Symbol)
+	require.Equal(t, "type", lenses[0].Kind)
+	require.Equal(t, "codog.references", lenses[0].Command.Command)
+	require.Contains(t, lenses[0].Command.Title, "references")
+	require.Equal(t, []any{"Runner", "pkg/runner.go"}, lenses[0].Command.Arguments)
+	require.Equal(t, LSPPosition{Line: 2, Character: 5}, lenses[0].Range.Start)
+
+	resolvedLens, found, err := CodeLensAtPosition(workspace, "pkg/runner.go", 2, 6)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, lenses[0], resolvedLens)
+
+	_, found, err = CodeLensAtPosition(workspace, "pkg/runner.go", 1, 0)
+	require.NoError(t, err)
+	require.False(t, found)
+
 	hover, err := HoverInfo(workspace, "Run", 1)
 	require.NoError(t, err)
 	require.True(t, hover.Found)
