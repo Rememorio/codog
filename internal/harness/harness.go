@@ -46,6 +46,7 @@ import (
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/session"
+	"github.com/Rememorio/codog/internal/sessionsummary"
 	"github.com/Rememorio/codog/internal/skills"
 	localstatus "github.com/Rememorio/codog/internal/status"
 	prompttemplates "github.com/Rememorio/codog/internal/templates"
@@ -219,6 +220,7 @@ var scenarioOrder = []string{
 	"command_skill_template_roundtrip",
 	"onboarding_bookmarks_roundtrip",
 	"memory_lifecycle_roundtrip",
+	"session_summary_roundtrip",
 	"context_view_roundtrip",
 	"output_style_lifecycle_roundtrip",
 	"diagnostics_status_roundtrip",
@@ -765,6 +767,7 @@ func Run(ctx context.Context) (Report, error) {
 		commandSkillTemplateScenario(),
 		onboardingBookmarksScenario(),
 		memoryLifecycleScenario(),
+		sessionSummaryScenario(),
 		contextViewScenario(),
 		outputStyleLifecycleScenario(),
 		diagnosticsStatusScenario(),
@@ -1167,12 +1170,12 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "bash and shell safety", RequiredRefs: []string{"Bash tool", "BashOutput tool", "KillBash tool", "Permission prompts", "Output truncation"}},
 	{Capability: "permissions and sandbox", RequiredRefs: []string{"Permission enforcement", "Workspace-write permissions", "Sandbox", "Permission safety", "Workspace scope denial"}},
 	{Capability: "policy and approval control plane", RequiredRefs: []string{"Policy evaluation", "Approval tokens", "Delegation audit", "Replay denial"}},
-	{Capability: "sessions, resume, and project memory", RequiredRefs: []string{"Session JSONL", "Resume", "Session context management", "Project memory"}},
+	{Capability: "sessions, resume, and project memory", RequiredRefs: []string{"Session JSONL", "Resume", "Session context management", "Project memory", "Session summary"}},
 	{Capability: "slash commands and custom workflows", RequiredRefs: []string{"Slash commands", "Skills", "Templates", "Project workflow surfaces"}},
 	{Capability: "hooks", RequiredRefs: []string{"Hooks", "PreToolUse", "PostToolUse hooks", "UserPromptSubmit", "Stop"}},
 	{Capability: "configuration and provider routing", RequiredRefs: []string{"Configuration", "Precedence rules", "Provider routing", "OpenAI-compatible APIs"}},
 	{Capability: "MCP client and auth", RequiredRefs: []string{"MCP client", "MCP lifecycle", "MCP tool calls", "MCP auth", "OAuth refresh"}},
-	{Capability: "token, cost, and compaction", RequiredRefs: []string{"Token usage", "Cost tracking", "Auto-compaction"}},
+	{Capability: "token, cost, and compaction", RequiredRefs: []string{"Token usage", "Cost tracking", "Auto-compaction", "Compaction summary"}},
 	{Capability: "IDE bridge and remote control", RequiredRefs: []string{"IDE bridge", "ACP/Zed", "Remote sessions", "Control API listener"}},
 	{Capability: "multi-agent and background tasks", RequiredRefs: []string{"Background tasks", "Agent runs", "Lane board", "Supervisor restarts"}},
 	{Capability: "structured task packets", RequiredRefs: []string{"Task packet schema", "Task packet scope resolution", "Task packet persistence"}},
@@ -1441,6 +1444,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "context-management",
 		Description: "Discovers, appends, searches, selects, and resets project memory instruction files.",
 		ParityRefs:  []string{"Project memory", "Session context management", "Slash commands", "Workspace state"},
+	},
+	"session_summary_roundtrip": {
+		Category:    "context-management",
+		Description: "Builds session summaries, previews tool activity, renders text, and preserves actionable auto-compaction summary context.",
+		ParityRefs:  []string{"Session summary", "Compaction summary", "Session context management", "Token usage", "Tool result roundtrip"},
 	},
 	"context_view_roundtrip": {
 		Category:    "context-management",
@@ -2366,6 +2374,111 @@ func memoryLifecycleScenario() scenario {
 				Output:       string(data),
 				FinalMessage: "memory lifecycle harness ok",
 				RequestCount: 6,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+func sessionSummaryScenario() scenario {
+	return scenario{
+		name: "session_summary_roundtrip",
+		runLocal: func(_ context.Context, workspace string) (localScenarioResult, error) {
+			sessionPath := filepath.Join(workspace, ".codog", "sessions", "summary-session.jsonl")
+			messages := []anthropic.Message{
+				anthropic.TextMessage("user", "investigate failing tests in internal/runloop and keep the summary actionable"),
+				{
+					Role: "assistant",
+					Content: []anthropic.ContentBlock{{
+						Type:  "tool_use",
+						ID:    "tool-1",
+						Name:  "bash",
+						Input: json.RawMessage(`{"command":"go test ./internal/runloop"}`),
+					}},
+				},
+				anthropic.ToolResultMessage("tool-1", "package internal/runloop failed", true),
+				anthropic.TextMessage("assistant", "The failure is in internal/runloop compaction handling."),
+				anthropic.TextMessage("user", "also check session resume summaries before the next edit"),
+			}
+			report := sessionsummary.Build("summary-session", sessionPath, "claude-summary", messages)
+			if report.Kind != "summary" || report.Action != "show" || report.Status != "ok" {
+				return localScenarioResult{}, fmt.Errorf("unexpected session summary identity: %#v", report)
+			}
+			if report.MessageCount != len(messages) || report.UserMessages != 3 || report.AssistantMessages != 2 {
+				return localScenarioResult{}, fmt.Errorf("unexpected session summary counts: %#v", report)
+			}
+			if report.ToolUses != 1 || report.ToolResults != 1 || report.ToolErrors != 1 {
+				return localScenarioResult{}, fmt.Errorf("unexpected session summary tool counts: %#v", report)
+			}
+			if report.FirstUser == nil || !strings.Contains(report.FirstUser.Text, "investigate failing tests") {
+				return localScenarioResult{}, fmt.Errorf("unexpected first user preview: %#v", report.FirstUser)
+			}
+			if report.LastUser == nil || !strings.Contains(report.LastUser.Text, "session resume summaries") {
+				return localScenarioResult{}, fmt.Errorf("unexpected last user preview: %#v", report.LastUser)
+			}
+			if report.LastAssistant == nil || !strings.Contains(report.LastAssistant.Text, "compaction handling") {
+				return localScenarioResult{}, fmt.Errorf("unexpected last assistant preview: %#v", report.LastAssistant)
+			}
+			if report.TokenEstimate.TotalTokens <= 0 {
+				return localScenarioResult{}, fmt.Errorf("missing token estimate: %#v", report.TokenEstimate)
+			}
+
+			var text bytes.Buffer
+			sessionsummary.RenderText(&text, report)
+			textOutput := text.String()
+			for _, expected := range []string{"Summary", "Session          summary-session", "Tool use         calls=1 results=1 errors=1", "session resume summaries"} {
+				if !strings.Contains(textOutput, expected) {
+					return localScenarioResult{}, fmt.Errorf("session summary text missing %q: %s", expected, textOutput)
+				}
+			}
+
+			compaction := sessionsummary.BuildCompactionSummary(messages, 2)
+			for _, expected := range []string{
+				"auto-compacted",
+				"- Current work: also check session resume summaries before the next edit",
+				"- Last assistant response: The failure is in internal/runloop compaction handling.",
+				"- Tools mentioned: bash",
+				"- Tool results: 1 result message(s), 1 error result(s).",
+			} {
+				if !strings.Contains(compaction.Summary, expected) {
+					return localScenarioResult{}, fmt.Errorf("compaction summary missing %q: %s", expected, compaction.Summary)
+				}
+			}
+			if compaction.OriginalLines == 0 || compaction.CompressedLines == 0 || compaction.CompressedChars == 0 {
+				return localScenarioResult{}, fmt.Errorf("unexpected compaction metrics: %#v", compaction)
+			}
+
+			output := map[string]any{
+				"kind": "session_summary",
+				"summary": map[string]any{
+					"session_id":         report.SessionID,
+					"message_count":      report.MessageCount,
+					"user_messages":      report.UserMessages,
+					"assistant_messages": report.AssistantMessages,
+					"tool_uses":          report.ToolUses,
+					"tool_results":       report.ToolResults,
+					"tool_errors":        report.ToolErrors,
+					"token_total":        report.TokenEstimate.TotalTokens,
+					"text_rendered":      strings.Contains(textOutput, "Tool use         calls=1 results=1 errors=1"),
+				},
+				"compaction": map[string]any{
+					"compressed_lines":       compaction.CompressedLines,
+					"omitted_lines":          compaction.OmittedLines,
+					"truncated":              compaction.Truncated,
+					"has_current_work":       strings.Contains(compaction.Summary, "- Current work:"),
+					"has_last_assistant":     strings.Contains(compaction.Summary, "- Last assistant response:"),
+					"has_tool_summary":       strings.Contains(compaction.Summary, "- Tools mentioned: bash"),
+					"has_tool_result_counts": strings.Contains(compaction.Summary, "- Tool results: 1 result message(s), 1 error result(s)."),
+				},
+			}
+			data, err := json.Marshal(output)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "session summary harness ok",
+				RequestCount: 2,
 				MessageCount: 1,
 			}, nil
 		},
