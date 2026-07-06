@@ -10100,6 +10100,17 @@ func TestParseFlagsSupportsJSONSchemaForPrompt(t *testing.T) {
 	require.Contains(t, flagErr.Message, "prompt mode")
 }
 
+func TestParseFlagsSupportsMCPConfigOverrides(t *testing.T) {
+	inline := `{"mcpServers":{"one":{"command":"one","args":["--stdio","--flag"]},"two":{"url":"https://two.example/mcp"}}}`
+	overrides, command, rest, err := parseFlags([]string{"--mcp-config", "mcp.json", "--mcp-config", inline, "--strict-mcp-config", "mcp", "list", "--json"}, config.FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"mcp.json", inline}, overrides.MCPConfigs)
+	require.True(t, overrides.StrictMCPConfig)
+	require.Equal(t, "mcp", command)
+	require.Equal(t, []string{"list", "--json"}, rest)
+}
+
 func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{"--output-format", "json", "status"}, config.FlagOverrides{})
 	require.NoError(t, err)

@@ -1333,6 +1333,72 @@ func TestLoadNestedMCPServersAlias(t *testing.T) {
 	require.Equal(t, []string{"TOKEN=secret"}, cfg.MCPServers["demo"].Env)
 }
 
+func TestLoadMCPConfigFlagMergesFileAndInlineJSON(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	flagPath := filepath.Join(dir, "mcp.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"mcpServers": {
+			"base": {"command": "base-mcp"},
+			"override": {"command": "base-override"}
+		}
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(flagPath, []byte(`{
+		"mcp": {
+			"servers": {
+				"file": {"command": "file-mcp", "args": ["--stdio"]},
+				"override": {"command": "file-override"}
+			}
+		}
+	}`), 0o644))
+	inline := `{"mcpServers":{"inline":{"url":"https://inline.example/mcp","headers":{"Authorization":"Bearer test"}}}}`
+
+	cfg, _, err := LoadForInspection(FlagOverrides{
+		ConfigPath: configPath,
+		MCPConfigs: []string{flagPath, inline},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "base-mcp", cfg.MCPServers["base"].Command)
+	require.Equal(t, "file-mcp", cfg.MCPServers["file"].Command)
+	require.Equal(t, []string{"--stdio"}, cfg.MCPServers["file"].Args)
+	require.Equal(t, "file-override", cfg.MCPServers["override"].Command)
+	require.Equal(t, "https://inline.example/mcp", cfg.MCPServers["inline"].URL)
+	require.Equal(t, "Bearer test", cfg.MCPServers["inline"].Headers["Authorization"])
+}
+
+func TestLoadStrictMCPConfigFlagIgnoresConfiguredServers(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"mcpServers": {
+			"base": {"command": "base-mcp"}
+		}
+	}`), 0o644))
+	inline := `{"mcpServers":{"dynamic":{"command":"dynamic-mcp"}}}`
+
+	cfg, _, err := LoadForInspection(FlagOverrides{
+		ConfigPath:      configPath,
+		MCPConfigs:      []string{inline},
+		StrictMCPConfig: true,
+	})
+
+	require.NoError(t, err)
+	require.NotContains(t, cfg.MCPServers, "base")
+	require.Equal(t, "dynamic-mcp", cfg.MCPServers["dynamic"].Command)
+}
+
+func TestLoadMCPConfigFlagRejectsInvalidSources(t *testing.T) {
+	_, _, err := LoadForInspection(FlagOverrides{MCPConfigs: []string{`{"mcpServers":`}})
+	require.Error(t, err)
+	require.True(t, IsFileError(err))
+	require.Contains(t, err.Error(), "--mcp-config")
+
+	_, _, err = LoadForInspection(FlagOverrides{MCPConfigs: []string{filepath.Join(t.TempDir(), "missing.json")}})
+	require.Error(t, err)
+	require.True(t, IsFileError(err))
+}
+
 func TestLoadProjectMCPJSONRespectsTrustSettings(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()

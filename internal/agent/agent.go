@@ -51840,6 +51840,23 @@ func (v *stringListFlag) String() string {
 	return strings.Join(*v, ",")
 }
 
+type appendStringFlag []string
+
+func (v *appendStringFlag) Set(value string) error {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		*v = append(*v, value)
+	}
+	return nil
+}
+
+func (v *appendStringFlag) String() string {
+	if v == nil {
+		return ""
+	}
+	return strings.Join(*v, ",")
+}
+
 type toolSelectionFlag struct {
 	values *[]string
 	set    *bool
@@ -51917,6 +51934,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	jsonSchema := strings.TrimSpace(base.JSONSchema)
 	allowedTools := stringListFlag(base.AllowedTools)
 	disallowedTools := stringListFlag(base.DisallowedTools)
+	mcpConfigs := appendStringFlag(base.MCPConfigs)
 	toolNames := append([]string(nil), base.ToolNames...)
 	toolSelection := toolSelectionFlag{values: &toolNames, set: &base.ToolNamesSet}
 	promptAttachments := stringListFlag{}
@@ -51951,6 +51969,8 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.Var(&disallowedTools, "disallowed-tools", "deny a tool; repeat or comma-separate")
 	flags.Var(&disallowedTools, "disallowedTools", "deny a tool; repeat or comma-separate")
 	flags.Var(&toolSelection, "tools", "restrict tools exposed to the model; use default for all or empty string for none")
+	flags.Var(&mcpConfigs, "mcp-config", "load MCP servers from a JSON file or JSON object; repeat to merge")
+	flags.BoolVar(&base.StrictMCPConfig, "strict-mcp-config", base.StrictMCPConfig, "only use MCP servers from --mcp-config")
 	flags.Var(&promptAttachments, "attach", "attach a local text, image, or PDF file to a prompt; repeat or comma-separate")
 	flags.Var(&promptAttachments, "attachment", "alias for --attach")
 	flags.Var(&promptAttachments, "file", "alias for --attach")
@@ -51965,6 +51985,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	base.JSONSchema = strings.TrimSpace(jsonSchema)
 	base.AllowedTools = []string(allowedTools)
 	base.DisallowedTools = []string(disallowedTools)
+	base.MCPConfigs = []string(mcpConfigs)
 	base.ToolNames = append([]string(nil), toolNames...)
 	rest := flags.Args()
 	if compactPromptMode && len(rest) > 0 && !strings.EqualFold(rest[0], "prompt") && isKnownNonPromptCommand(rest[0]) {
@@ -52204,7 +52225,7 @@ func globalFlagConsumesNext(arg string) bool {
 		"--input-format", "-input-format", "--json-schema", "-json-schema",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
 		"--max-tokens", "-max-tokens", "--temperature", "-temperature",
-		"--tools", "-tools",
+		"--tools", "-tools", "--mcp-config", "-mcp-config",
 		"--attach", "-attach", "--attachment", "-attachment", "--file", "-file":
 		return true
 	default:
@@ -52238,7 +52259,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--resume", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--resume", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
@@ -54048,6 +54069,8 @@ Flags:
   --allowed-tools TOOL[,TOOL]
   --disallowed-tools TOOL[,TOOL]
   --tools TOOL[,TOOL]
+  --mcp-config PATH|JSON
+  --strict-mcp-config
   --max-turns N
   --max-tokens N
   --temperature VALUE

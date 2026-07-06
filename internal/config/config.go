@@ -1105,6 +1105,8 @@ type FlagOverrides struct {
 	InputFormat                    string
 	ReplayUserMessages             bool
 	JSONSchema                     string
+	MCPConfigs                     []string
+	StrictMCPConfig                bool
 	OutputFormatSource             string
 	OutputFormatRaw                string
 	OutputFormatOverridden         bool
@@ -2923,6 +2925,21 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 		cfg.ToolNames = append([]string(nil), overrides.ToolNames...)
 		cfg.ToolNamesSet = true
 	}
+	if overrides.StrictMCPConfig {
+		cfg.MCPServers = map[string]MCPServerConfig{}
+	}
+	if len(overrides.MCPConfigs) > 0 {
+		servers, err := loadFlagMCPServers(overrides.MCPConfigs)
+		if err != nil {
+			return err
+		}
+		if cfg.MCPServers == nil {
+			cfg.MCPServers = map[string]MCPServerConfig{}
+		}
+		for name, server := range servers {
+			cfg.MCPServers[name] = server
+		}
+	}
 	if overrides.MaxTurns != 0 {
 		cfg.MaxTurns = overrides.MaxTurns
 	}
@@ -2934,6 +2951,51 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 		cfg.Temperature = &value
 	}
 	return nil
+}
+
+func loadFlagMCPServers(values []string) (map[string]MCPServerConfig, error) {
+	out := map[string]MCPServerConfig{}
+	for _, value := range values {
+		servers, err := parseFlagMCPServers(value)
+		if err != nil {
+			return nil, err
+		}
+		for name, server := range servers {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			out[name] = server
+		}
+	}
+	return out, nil
+}
+
+func parseFlagMCPServers(value string) (map[string]MCPServerConfig, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, errors.New("--mcp-config requires a path or JSON object")
+	}
+	var data []byte
+	source := "--mcp-config"
+	if strings.HasPrefix(value, "{") {
+		data = []byte(value)
+	} else {
+		source = value
+		var err error
+		data, err = os.ReadFile(value)
+		if err != nil {
+			return nil, &FileError{Path: value, Err: err}
+		}
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, &FileError{Path: source, Err: err}
+	}
+	if len(cfg.MCPServers) == 0 {
+		return nil, fmt.Errorf("%s does not define any MCP servers", source)
+	}
+	return cfg.MCPServers, nil
 }
 
 func readPromptOverrideFile(path string, label string) (string, error) {
