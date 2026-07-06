@@ -515,6 +515,9 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"foldersHandled":true`)
 	require.Contains(t, out.String(), `"registerHandled":true`)
 	require.Contains(t, out.String(), `"unregisterHandled":true`)
+	require.Contains(t, out.String(), `"progressHandled":true`)
+	require.Contains(t, out.String(), `"showDocumentHandled":true`)
+	require.Contains(t, out.String(), `"refreshHandled":true`)
 	require.Contains(t, out.String(), `func bridgeExecutePreview()`)
 	require.Contains(t, out.String(), `"action":"document-diagnostic"`)
 	require.Contains(t, out.String(), `"method":"textDocument/diagnostic"`)
@@ -965,6 +968,17 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 			unregisterHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-unregister-check", "client/unregisterCapability", map[string]any{
 				"unregisterations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
 			})
+			progressHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-progress-check", "window/workDoneProgress/create", map[string]any{
+				"token": "bridge-progress",
+			})
+			showDocumentHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-show-document-check", "window/showDocument", map[string]any{
+				"uri":       currentURI,
+				"takeFocus": false,
+			})
+			refreshHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-semantic-refresh-check", "workspace/semanticTokens/refresh", nil) &&
+				bridgeFakeLSPServerRequestHandled(reader, "bridge-inlay-refresh-check", "workspace/inlayHint/refresh", nil) &&
+				bridgeFakeLSPServerRequestHandled(reader, "bridge-code-lens-refresh-check", "workspace/codeLens/refresh", nil) &&
+				bridgeFakeLSPServerRequestHandled(reader, "bridge-diagnostic-refresh-check", "workspace/diagnostic/refresh", nil)
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": "bridge-apply-execute", "method": "workspace/applyEdit", "params": map[string]any{
 				"label": "bridge execute preview",
 				"edit": map[string]any{
@@ -988,6 +1002,9 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 				"foldersHandled":       foldersHandled,
 				"registerHandled":      registerHandled,
 				"unregisterHandled":    unregisterHandled,
+				"progressHandled":      progressHandled,
+				"showDocumentHandled":  showDocumentHandled,
+				"refreshHandled":       refreshHandled,
 			}})
 		case "textDocument/rangeFormatting":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{

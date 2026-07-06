@@ -1456,7 +1456,17 @@ func (c *lspClient) handleServerRequest(msg lspRPCMessage) error {
 			"uri":  fileURI(c.workspace),
 			"name": filepath.Base(c.workspace),
 		}})
-	case "client/registerCapability", "client/unregisterCapability", "window/showMessageRequest":
+	case "window/showDocument":
+		return c.writeServerResult(msg.ID, map[string]any{"success": false})
+	case "client/registerCapability",
+		"client/unregisterCapability",
+		"window/showMessageRequest",
+		"window/workDoneProgress/create",
+		"workspace/codeLens/refresh",
+		"workspace/diagnostic/refresh",
+		"workspace/inlayHint/refresh",
+		"workspace/inlineValue/refresh",
+		"workspace/semanticTokens/refresh":
 		return c.writeServerResult(msg.ID, nil)
 	default:
 		return writeLSPMessage(c.stdin, lspRPCMessage{

@@ -661,6 +661,9 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 		FoldersHandled       bool   `json:"foldersHandled"`
 		RegisterHandled      bool   `json:"registerHandled"`
 		UnregisterHandled    bool   `json:"unregisterHandled"`
+		ProgressHandled      bool   `json:"progressHandled"`
+		ShowDocumentHandled  bool   `json:"showDocumentHandled"`
+		RefreshHandled       bool   `json:"refreshHandled"`
 	}
 	encodedExecutedCommand, err := json.Marshal(result.Result)
 	require.NoError(t, err)
@@ -673,6 +676,9 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.True(t, executedCommand.FoldersHandled)
 	require.True(t, executedCommand.RegisterHandled)
 	require.True(t, executedCommand.UnregisterHandled)
+	require.True(t, executedCommand.ProgressHandled)
+	require.True(t, executedCommand.ShowDocumentHandled)
+	require.True(t, executedCommand.RefreshHandled)
 	require.Equal(t, 1, result.FileEdits)
 	require.Equal(t, 1, result.TextEdits)
 	require.True(t, result.Changed)
@@ -1360,6 +1366,17 @@ func TestFakeLSPServer(t *testing.T) {
 			unregisterHandled := fakeLSPServerRequestHandled(reader, "unregister-check", "client/unregisterCapability", map[string]any{
 				"unregisterations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
 			})
+			progressHandled := fakeLSPServerRequestHandled(reader, "progress-check", "window/workDoneProgress/create", map[string]any{
+				"token": "demo-progress",
+			})
+			showDocumentHandled := fakeLSPServerRequestHandled(reader, "show-document-check", "window/showDocument", map[string]any{
+				"uri":       currentURI,
+				"takeFocus": false,
+			})
+			refreshHandled := fakeLSPServerRequestHandled(reader, "semantic-refresh-check", "workspace/semanticTokens/refresh", nil) &&
+				fakeLSPServerRequestHandled(reader, "inlay-refresh-check", "workspace/inlayHint/refresh", nil) &&
+				fakeLSPServerRequestHandled(reader, "code-lens-refresh-check", "workspace/codeLens/refresh", nil) &&
+				fakeLSPServerRequestHandled(reader, "diagnostic-refresh-check", "workspace/diagnostic/refresh", nil)
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: "apply-execute", Method: "workspace/applyEdit", Params: map[string]any{
 				"label": "execute preview",
 				"edit": map[string]any{
@@ -1383,6 +1400,9 @@ func TestFakeLSPServer(t *testing.T) {
 				"foldersHandled":       foldersHandled,
 				"registerHandled":      registerHandled,
 				"unregisterHandled":    unregisterHandled,
+				"progressHandled":      progressHandled,
+				"showDocumentHandled":  showDocumentHandled,
+				"refreshHandled":       refreshHandled,
 			})})
 		case "textDocument/signatureHelp":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
