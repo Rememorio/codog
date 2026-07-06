@@ -2787,6 +2787,7 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, actionSchema["enum"], "semantic_tokens_range")
 	require.Contains(t, actionSchema["enum"], "range_format")
 	require.Contains(t, actionSchema["enum"], "on_type_format")
+	require.Contains(t, actionSchema["enum"], "will_save")
 	require.Contains(t, properties, "new_name")
 
 	symbolsOut, err := tool.Execute(context.Background(), []byte(`{"action":"symbols","path":"demo.go"}`))

@@ -437,6 +437,13 @@ var lspActionInfos = []LSPActionInfo{
 		RequiresPosition: true,
 		Description:      "Return formatting edits triggered by typing a character at a document position.",
 	},
+	{
+		Name:             "will-save",
+		Method:           "textDocument/willSaveWaitUntil",
+		Aliases:          []string{"will_save", "willSave", "will_save_wait_until", "willSaveWaitUntil", "save_edits"},
+		RequiresDocument: true,
+		Description:      "Return text edits a language server wants to apply before saving a document.",
+	},
 }
 
 // SupportedLSPActions returns supported LSP actions and aliases.
@@ -802,7 +809,7 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 
 func isLSPFormattingAction(action string) bool {
 	switch action {
-	case "format", "range-format", "on-type-format":
+	case "format", "range-format", "on-type-format", "will-save":
 		return true
 	default:
 		return false
@@ -1117,6 +1124,8 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 	case "on-type-format":
 		ch := firstLSPTriggerCharacter(query)
 		return "textDocument/onTypeFormatting", map[string]any{"textDocument": textDocument, "position": position, "ch": ch, "options": map[string]any{"tabSize": 4, "insertSpaces": false}}, nil
+	case "will-save":
+		return "textDocument/willSaveWaitUntil", map[string]any{"textDocument": textDocument, "reason": 1}, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported lsp action %q", action)
 	}
