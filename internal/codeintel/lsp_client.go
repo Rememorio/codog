@@ -93,6 +93,21 @@ type lspWorkspaceEdit struct {
 	DocumentChanges []json.RawMessage        `json:"documentChanges,omitempty"`
 }
 
+type lspRange struct {
+	Start LSPPosition `json:"start"`
+	End   LSPPosition `json:"end"`
+}
+
+type lspColorInformation struct {
+	Range lspRange `json:"range"`
+	Color struct {
+		Red   float64 `json:"red"`
+		Green float64 `json:"green"`
+		Blue  float64 `json:"blue"`
+		Alpha float64 `json:"alpha"`
+	} `json:"color"`
+}
+
 // LSPPosition is a zero-based language-server document position.
 type LSPPosition struct {
 	Line      int `json:"line"`
@@ -296,6 +311,14 @@ var lspActionInfos = []LSPActionInfo{
 		Aliases:          []string{"document_color", "documentColor", "document-colors", "document_colors", "colors"},
 		RequiresDocument: true,
 		Description:      "Return color literals and their ranges discovered in a document.",
+	},
+	{
+		Name:             "color-presentation",
+		Method:           "textDocument/colorPresentation",
+		Aliases:          []string{"color_presentation", "colorPresentation", "color-presentations", "color_presentations"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return presentation labels and edits for a color literal at a document position.",
 	},
 	{
 		Name:             "inlay-hint",
@@ -622,6 +645,20 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 			Result:   decoded,
 		}, nil
 	}
+	if action == "color-presentation" {
+		decoded, err := runLSPColorPresentationQuery(client, uri, request.Line, request.Character)
+		if err != nil {
+			return LSPQueryResult{}, err
+		}
+		return LSPQueryResult{
+			Kind:     "lsp_query",
+			Language: language,
+			Action:   action,
+			Method:   "textDocument/colorPresentation",
+			Path:     rel,
+			Result:   decoded,
+		}, nil
+	}
 	method, params, err := lspMethodParams(action, uri, request.Line, request.Character, request.NewName, request.Query)
 	if err != nil {
 		return LSPQueryResult{}, err
@@ -752,6 +789,62 @@ func runLSPHierarchyQuery(client *lspClient, spec hierarchyQuerySpec) (string, a
 		values = []any{}
 	}
 	return method, map[string]any{"items": items, spec.CallKey: values}, nil
+}
+
+func runLSPColorPresentationQuery(client *lspClient, uri string, line int, character int) (any, error) {
+	textDocument := map[string]any{"uri": uri}
+	raw, err := client.request("textDocument/documentColor", map[string]any{"textDocument": textDocument})
+	if err != nil {
+		return nil, err
+	}
+	var colors []lspColorInformation
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &colors); err != nil {
+			return nil, err
+		}
+	}
+	if len(colors) == 0 {
+		return map[string]any{"colors": colors, "presentations": []any{}}, nil
+	}
+	selected := colors[0]
+	position := LSPPosition{Line: max(0, line), Character: max(0, character)}
+	for _, candidate := range colors {
+		if lspRangeContains(candidate.Range, position) {
+			selected = candidate
+			break
+		}
+	}
+	raw, err = client.request("textDocument/colorPresentation", map[string]any{
+		"textDocument": textDocument,
+		"color":        selected.Color,
+		"range":        selected.Range,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var presentations any
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &presentations); err != nil {
+			return nil, err
+		}
+	}
+	if presentations == nil {
+		presentations = []any{}
+	}
+	return map[string]any{"colors": colors, "selected": selected, "presentations": presentations}, nil
+}
+
+func lspRangeContains(r lspRange, position LSPPosition) bool {
+	if position.Line < r.Start.Line || position.Line > r.End.Line {
+		return false
+	}
+	if position.Line == r.Start.Line && position.Character < r.Start.Character {
+		return false
+	}
+	if position.Line == r.End.Line && position.Character > r.End.Character {
+		return false
+	}
+	return true
 }
 
 func (c *lspClient) request(method string, params any) (json.RawMessage, error) {

@@ -363,6 +363,23 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, 0.5, documentColors[0].Color.Green)
 	require.Equal(t, LSPPosition{Line: 2, Character: 1}, documentColors[0].Range.Start)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "color_presentation", Path: "main.go", Line: 2, Character: 3})
+	require.NoError(t, err)
+	require.Equal(t, "color-presentation", result.Action)
+	require.Equal(t, "textDocument/colorPresentation", result.Method)
+	var colorPresentation struct {
+		Selected      lspColorInformation `json:"selected"`
+		Presentations []struct {
+			Label string `json:"label"`
+		} `json:"presentations"`
+	}
+	encodedColorPresentation, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedColorPresentation, &colorPresentation))
+	require.Equal(t, LSPPosition{Line: 2, Character: 1}, colorPresentation.Selected.Range.Start)
+	require.Len(t, colorPresentation.Presentations, 1)
+	require.Equal(t, "#ff8040", colorPresentation.Presentations[0].Label)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "inlay_hint", Path: "main.go", Line: 2, Character: 12})
 	require.NoError(t, err)
 	require.Equal(t, "inlay-hint", result.Action)
@@ -723,6 +740,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"document_color":            "document-color",
 		"documentColor":             "document-color",
 		"document-colors":           "document-color",
+		"color_presentation":        "color-presentation",
+		"colorPresentation":         "color-presentation",
+		"color-presentations":       "color-presentation",
 		"inlay_hint":                "inlay-hint",
 		"inlayHint":                 "inlay-hint",
 		"inlay-hints":               "inlay-hint",
@@ -855,6 +875,17 @@ func TestFakeLSPServer(t *testing.T) {
 					"end":   map[string]any{"line": 2, "character": 8},
 				},
 				"color": map[string]any{"red": 1.0, "green": 0.5, "blue": 0.25, "alpha": 1.0},
+			}})})
+		case "textDocument/colorPresentation":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"label": "#ff8040",
+				"textEdit": map[string]any{
+					"range": map[string]any{
+						"start": map[string]any{"line": 2, "character": 1},
+						"end":   map[string]any{"line": 2, "character": 8},
+					},
+					"newText": "#ff8040",
+				},
 			}})})
 		case "textDocument/inlayHint":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{

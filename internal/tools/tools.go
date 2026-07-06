@@ -5767,7 +5767,7 @@ func (LSPTool) Definition() anthropic.ToolDefinition {
 			"properties": map[string]any{
 				"action": map[string]any{
 					"type": "string",
-					"enum": []string{"symbols", "document_symbols", "workspace_symbol", "workspace_symbols", "references", "find_references", "diagnostics", "definition", "goto_definition", "declaration", "goto_declaration", "implementation", "goto_implementation", "type_definition", "goto_type_definition", "rename", "rename_symbol", "prepare_rename", "code_action", "quickfix", "prepare_call_hierarchy", "incoming_calls", "outgoing_calls", "prepare_type_hierarchy", "supertypes", "subtypes", "hover", "completion", "completions", "document_highlight", "selection_range", "folding_range", "document_link", "document_color", "inlay_hint", "linked_editing_range", "moniker", "semantic_tokens", "semantic_tokens_full", "semantic_tokens_range", "signature_help", "format", "formatting"},
+					"enum": []string{"symbols", "document_symbols", "workspace_symbol", "workspace_symbols", "references", "find_references", "diagnostics", "definition", "goto_definition", "declaration", "goto_declaration", "implementation", "goto_implementation", "type_definition", "goto_type_definition", "rename", "rename_symbol", "prepare_rename", "code_action", "quickfix", "prepare_call_hierarchy", "incoming_calls", "outgoing_calls", "prepare_type_hierarchy", "supertypes", "subtypes", "hover", "completion", "completions", "document_highlight", "selection_range", "folding_range", "document_link", "document_color", "color_presentation", "inlay_hint", "linked_editing_range", "moniker", "semantic_tokens", "semantic_tokens_full", "semantic_tokens_range", "signature_help", "format", "formatting"},
 				},
 				"path":      map[string]any{"type": "string"},
 				"line":      map[string]any{"type": "integer", "minimum": 0},
@@ -5921,7 +5921,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 
 func lspActionRequiresServer(action string) bool {
 	switch action {
-	case "declaration", "implementation", "type-definition", "rename", "prepare-rename", "code-action", "prepare-call-hierarchy", "call-hierarchy-incoming", "call-hierarchy-outgoing", "prepare-type-hierarchy", "type-hierarchy-supertypes", "type-hierarchy-subtypes", "document-highlight", "selection-range", "folding-range", "document-link", "document-color", "inlay-hint", "linked-editing-range", "moniker", "semantic-tokens", "semantic-tokens-range", "workspace-symbol", "signature-help":
+	case "declaration", "implementation", "type-definition", "rename", "prepare-rename", "code-action", "prepare-call-hierarchy", "call-hierarchy-incoming", "call-hierarchy-outgoing", "prepare-type-hierarchy", "type-hierarchy-supertypes", "type-hierarchy-subtypes", "document-highlight", "selection-range", "folding-range", "document-link", "document-color", "color-presentation", "inlay-hint", "linked-editing-range", "moniker", "semantic-tokens", "semantic-tokens-range", "workspace-symbol", "signature-help":
 		return true
 	default:
 		return false

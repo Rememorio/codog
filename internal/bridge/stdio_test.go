@@ -378,15 +378,16 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":16,"method":"lsp/query","params":{"language":"go","action":"folding_range","path":"main.go"}}`,
 		`{"jsonrpc":"2.0","id":17,"method":"lsp/query","params":{"language":"go","action":"document_link","path":"main.go"}}`,
 		`{"jsonrpc":"2.0","id":18,"method":"lsp/query","params":{"language":"go","action":"document_color","path":"main.go"}}`,
-		`{"jsonrpc":"2.0","id":19,"method":"lsp/query","params":{"language":"go","action":"inlay_hint","path":"main.go","line":2,"character":12}}`,
-		`{"jsonrpc":"2.0","id":20,"method":"lsp/query","params":{"language":"go","action":"linked_editing_range","path":"main.go","line":2,"character":5}}`,
-		`{"jsonrpc":"2.0","id":21,"method":"lsp/query","params":{"language":"go","action":"moniker","path":"main.go","line":2,"character":5}}`,
-		`{"jsonrpc":"2.0","id":22,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens","path":"main.go"}}`,
-		`{"jsonrpc":"2.0","id":23,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens_range","path":"main.go","line":2,"character":12}}`,
-		`{"jsonrpc":"2.0","id":24,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol","query":"Build"}}`,
-		`{"jsonrpc":"2.0","id":25,"method":"lsp/status","params":{"language":"go"}}`,
-		`{"jsonrpc":"2.0","id":26,"method":"lsp/list"}`,
-		`{"jsonrpc":"2.0","id":27,"method":"lsp/stop","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":19,"method":"lsp/query","params":{"language":"go","action":"color_presentation","path":"main.go","line":2,"character":3}}`,
+		`{"jsonrpc":"2.0","id":20,"method":"lsp/query","params":{"language":"go","action":"inlay_hint","path":"main.go","line":2,"character":12}}`,
+		`{"jsonrpc":"2.0","id":21,"method":"lsp/query","params":{"language":"go","action":"linked_editing_range","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":22,"method":"lsp/query","params":{"language":"go","action":"moniker","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":23,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens","path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":24,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens_range","path":"main.go","line":2,"character":12}}`,
+		`{"jsonrpc":"2.0","id":25,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol","query":"Build"}}`,
+		`{"jsonrpc":"2.0","id":26,"method":"lsp/status","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":27,"method":"lsp/list"}`,
+		`{"jsonrpc":"2.0","id":28,"method":"lsp/stop","params":{"language":"go"}}`,
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
@@ -446,6 +447,9 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"action":"document-color"`)
 	require.Contains(t, out.String(), `"method":"textDocument/documentColor"`)
 	require.Contains(t, out.String(), `"red":0.25`)
+	require.Contains(t, out.String(), `"action":"color-presentation"`)
+	require.Contains(t, out.String(), `"method":"textDocument/colorPresentation"`)
+	require.Contains(t, out.String(), `"label":"rgba(64,128,255,1)"`)
 	require.Contains(t, out.String(), `"action":"inlay-hint"`)
 	require.Contains(t, out.String(), `"method":"textDocument/inlayHint"`)
 	require.Contains(t, out.String(), `"label":": string"`)
@@ -706,6 +710,17 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 					"end":   map[string]any{"line": 2, "character": 8},
 				},
 				"color": map[string]any{"red": 0.25, "green": 0.5, "blue": 1.0, "alpha": 1.0},
+			}}})
+		case "textDocument/colorPresentation":
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+				"label": "rgba(64,128,255,1)",
+				"textEdit": map[string]any{
+					"range": map[string]any{
+						"start": map[string]any{"line": 2, "character": 1},
+						"end":   map[string]any{"line": 2, "character": 8},
+					},
+					"newText": "rgba(64,128,255,1)",
+				},
 			}}})
 		case "textDocument/inlayHint":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
