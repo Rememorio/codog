@@ -1034,6 +1034,7 @@ type Config struct {
 	ToolNamesSet               bool                       `json:"-"`
 	Debug                      bool                       `json:"-"`
 	Verbose                    bool                       `json:"-"`
+	DebugFile                  string                     `json:"-"`
 	Privacy                    PrivacyConfig              `json:"privacy_settings,omitempty"`
 	PermissionRules            PermissionRules            `json:"permission_rules,omitempty"`
 	ConfigHome                 string                     `json:"config_home,omitempty"`
@@ -1233,6 +1234,7 @@ type FlagOverrides struct {
 	OutputFormatSubcommandExplicit bool
 	Debug                          bool
 	Verbose                        bool
+	DebugFile                      string
 	MaxTurns                       int
 	MaxTokens                      int
 	MaxBudgetUSD                   *float64
@@ -3140,6 +3142,17 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 	}
 	if overrides.Verbose {
 		cfg.Verbose = true
+	}
+	if strings.TrimSpace(overrides.DebugFile) != "" {
+		debugFile := strings.TrimSpace(overrides.DebugFile)
+		if !filepath.IsAbs(debugFile) {
+			var err error
+			debugFile, err = filepath.Abs(debugFile)
+			if err != nil {
+				return err
+			}
+		}
+		cfg.DebugFile = debugFile
 	}
 	if overrides.StrictMCPConfig {
 		cfg.MCPServers = map[string]MCPServerConfig{}

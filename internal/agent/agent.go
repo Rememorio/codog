@@ -180,6 +180,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderACPStatus(os.Stdout, acpArgs)
 		}
 	}
+	if len(args) == 1 && args[0] == "-v" {
+		args = []string{"version"}
+	}
 	overrides, command, rest, err := parseFlags(args, baseOverrides)
 	if err != nil {
 		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
@@ -410,7 +413,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		Err:        os.Stderr,
 		In:         os.Stdin,
 	}
-	renderDebugStartup(os.Stderr, cfg, command, rest, workspace, overrides, format)
+	if err := renderDebugStartup(os.Stderr, cfg, command, rest, workspace, overrides, format); err != nil {
+		return renderCLIErrorWhenStructured(os.Stdout, err, format)
+	}
 	if err := app.RegisterPluginTools(); err != nil {
 		return err
 	}
@@ -29659,15 +29664,19 @@ type debugStartupReport struct {
 	SessionID         string   `json:"session_id,omitempty"`
 	Resume            string   `json:"resume,omitempty"`
 	FromPR            string   `json:"from_pr,omitempty"`
+	DebugFile         string   `json:"debug_file,omitempty"`
 	Debug             bool     `json:"debug"`
 	Verbose           bool     `json:"verbose"`
 	APIKeyConfigured  bool     `json:"api_key_configured"`
 	AuthTokenProvided bool     `json:"auth_token_provided"`
 }
 
-func renderDebugStartup(out io.Writer, cfg config.Config, command string, args []string, workspace string, overrides config.FlagOverrides, outputFormat string) {
-	if out == nil || (!cfg.Debug && !cfg.Verbose) {
-		return
+func renderDebugStartup(out io.Writer, cfg config.Config, command string, args []string, workspace string, overrides config.FlagOverrides, outputFormat string) error {
+	if out == nil && strings.TrimSpace(cfg.DebugFile) == "" {
+		return nil
+	}
+	if !cfg.Debug && !cfg.Verbose && strings.TrimSpace(cfg.DebugFile) == "" {
+		return nil
 	}
 	report := debugStartupReport{
 		Kind:              "debug_startup",
@@ -29683,6 +29692,7 @@ func renderDebugStartup(out io.Writer, cfg config.Config, command string, args [
 		SessionID:         overrides.SessionID,
 		Resume:            overrides.Resume,
 		FromPR:            overrides.FromPR,
+		DebugFile:         cfg.DebugFile,
 		Debug:             cfg.Debug,
 		Verbose:           cfg.Verbose,
 		APIKeyConfigured:  strings.TrimSpace(cfg.APIKey) != "",
@@ -29690,9 +29700,29 @@ func renderDebugStartup(out io.Writer, cfg config.Config, command string, args [
 	}
 	data, err := json.Marshal(report)
 	if err != nil {
-		return
+		return err
 	}
-	fmt.Fprintf(out, "codog debug: %s\n", data)
+	line := fmt.Sprintf("codog debug: %s\n", data)
+	if strings.TrimSpace(cfg.DebugFile) != "" {
+		if err := os.MkdirAll(filepath.Dir(cfg.DebugFile), 0o755); err != nil {
+			return fmt.Errorf("write debug file: %w", err)
+		}
+		file, err := os.OpenFile(cfg.DebugFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return fmt.Errorf("write debug file: %w", err)
+		}
+		if _, err := file.WriteString(line); err != nil {
+			_ = file.Close()
+			return fmt.Errorf("write debug file: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("write debug file: %w", err)
+		}
+	}
+	if out != nil && (cfg.Debug || cfg.Verbose) {
+		fmt.Fprint(out, line)
+	}
+	return nil
 }
 
 func renderBroadCWDGuard(out io.Writer, command string, args []string, workspace string, allowed bool, format string) error {
@@ -54571,6 +54601,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.BoolVar(&base.Debug, "debug", base.Debug, "write startup diagnostics to stderr")
 	flags.BoolVar(&base.Verbose, "verbose", base.Verbose, "enable verbose diagnostics")
 	flags.BoolVar(&base.Verbose, "v", base.Verbose, "alias for --verbose")
+	flags.StringVar(&base.DebugFile, "debug-file", base.DebugFile, "write startup diagnostics to a file")
 	flags.BoolVar(&continueMode, "continue", false, "resume the latest session")
 	flags.BoolVar(&continueMode, "c", false, "alias for --continue")
 	flags.BoolVar(&base.ForkSession, "fork-session", base.ForkSession, "fork the resumed session before continuing")
@@ -55021,6 +55052,8 @@ func duplicateTrackedGlobalFlagKey(arg string) (string, bool) {
 		return "--from-pr", true
 	case "--resume-session-at", "-resume-session-at":
 		return "--resume-session-at", true
+	case "--debug-file", "-debug-file":
+		return "--debug-file", true
 	case "--max-budget-usd", "-max-budget-usd":
 		return "--max-budget-usd", true
 	case "--output-format", "-output-format", "-o", "--o", "--json", "-json":
@@ -55050,6 +55083,8 @@ func duplicateFlagUsage(flag string) string {
 		return "codog --from-pr OWNER/REPO#123 COMMAND"
 	case "--resume-session-at":
 		return "codog --resume ID --resume-session-at MESSAGE_ID prompt TEXT"
+	case "--debug-file":
+		return "codog --debug-file debug.log COMMAND"
 	case "--max-budget-usd":
 		return "codog -p --max-budget-usd 1.50 TEXT"
 	default:
@@ -55065,7 +55100,7 @@ func globalFlagConsumesNext(arg string) bool {
 		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
 		"--session-id", "-session-id", "--name", "-name", "--resume", "-resume", "-r",
 		"--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo",
-		"--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-output-format", "-o", "--o",
+		"--deep-link-last-fetch", "-deep-link-last-fetch", "--debug-file", "-debug-file", "--output-format", "-output-format", "-o", "--o",
 		"--input-format", "-input-format", "--json-schema", "-json-schema",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
 		"--max-tokens", "-max-tokens", "--max-budget-usd", "-max-budget-usd", "--temperature", "-temperature",
@@ -55104,7 +55139,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--fallback-model", "-fallback-model", "--thinking", "-thinking", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--add-dir", "-add-dir", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--max-budget-usd", "-max-budget-usd", "--temperature":
+	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--fallback-model", "-fallback-model", "--thinking", "-thinking", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--debug-file", "-debug-file", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--add-dir", "-add-dir", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--max-budget-usd", "-max-budget-usd", "--temperature":
 		return true
 	default:
 		return false
@@ -57006,6 +57041,7 @@ Flags:
   --resume-session-at MESSAGE_ID
   --debug
   --verbose | -v
+  --debug-file PATH
   --permission-mode read-only|workspace-write|danger-full-access|prompt|allow
   --dangerously-skip-permissions
   --skip-permissions

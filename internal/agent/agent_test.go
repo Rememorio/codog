@@ -317,6 +317,12 @@ func TestVersionCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, out.String(), `"go_version":`)
 
 	require.NoError(t, RunCLI(context.Background(), []string{"--version"}, config.FlagOverrides{}))
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"-v"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, "Codog")
+	require.Contains(t, cliOut, "Version")
 }
 
 func requireResumeSafeHelpLine(t *testing.T, help string) string {
@@ -9621,10 +9627,11 @@ func TestParseFlagsSupportsMaxBudgetUSDForPrompt(t *testing.T) {
 }
 
 func TestParseFlagsSupportsDebugAndVerbose(t *testing.T) {
-	overrides, command, rest, err := parseFlags([]string{"--debug", "--verbose", "-p", "hello"}, config.FlagOverrides{})
+	overrides, command, rest, err := parseFlags([]string{"--debug", "--verbose", "--debug-file", "debug.log", "-p", "hello"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.True(t, overrides.Debug)
 	require.True(t, overrides.Verbose)
+	require.Equal(t, "debug.log", overrides.DebugFile)
 	require.Equal(t, "prompt", command)
 	require.Equal(t, []string{"hello"}, rest)
 
@@ -9632,6 +9639,12 @@ func TestParseFlagsSupportsDebugAndVerbose(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, overrides.Debug)
 	require.True(t, overrides.Verbose)
+	require.Equal(t, "status", command)
+	require.Empty(t, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--debug-file=trace.log", "status"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "trace.log", overrides.DebugFile)
 	require.Equal(t, "status", command)
 	require.Empty(t, rest)
 }
@@ -9650,7 +9663,7 @@ func TestRenderDebugStartupOmitsSecrets(t *testing.T) {
 		Verbose:         true,
 	}
 
-	renderDebugStartup(&out, cfg, "prompt", []string{"hello"}, "workspace", config.FlagOverrides{SessionID: "session-1", Resume: "latest"}, "json")
+	require.NoError(t, renderDebugStartup(&out, cfg, "prompt", []string{"hello"}, "workspace", config.FlagOverrides{SessionID: "session-1", Resume: "latest"}, "json"))
 
 	line := strings.TrimSpace(out.String())
 	require.Contains(t, line, "codog debug: ")
@@ -9669,6 +9682,33 @@ func TestRenderDebugStartupOmitsSecrets(t *testing.T) {
 	require.True(t, report.AuthTokenProvided)
 	require.Equal(t, "session-1", report.SessionID)
 	require.Equal(t, "latest", report.Resume)
+}
+
+func TestRenderDebugStartupWritesDebugFile(t *testing.T) {
+	var out bytes.Buffer
+	debugFile := filepath.Join(t.TempDir(), "logs", "debug.log")
+	cfg := config.Config{
+		ConfigHome: "config-home",
+		Model:      "mock-model",
+		BaseURL:    "https://api.example.test",
+		APIKey:     "secret-api-key",
+		DebugFile:  debugFile,
+	}
+
+	require.NoError(t, renderDebugStartup(&out, cfg, "status", nil, "workspace", config.FlagOverrides{}, "json"))
+
+	require.Empty(t, out.String())
+	data, err := os.ReadFile(debugFile)
+	require.NoError(t, err)
+	line := strings.TrimSpace(string(data))
+	require.Contains(t, line, "codog debug: ")
+	require.NotContains(t, line, "secret-api-key")
+	var report debugStartupReport
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(line, "codog debug: ")), &report))
+	require.Equal(t, "debug_startup", report.Kind)
+	require.Equal(t, "status", report.Command)
+	require.Equal(t, debugFile, report.DebugFile)
+	require.True(t, report.APIKeyConfigured)
 }
 
 func TestBroadWorkspaceGuard(t *testing.T) {
