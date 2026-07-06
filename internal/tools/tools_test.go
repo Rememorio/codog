@@ -2790,6 +2790,7 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, actionSchema["enum"], "moniker")
 	require.Contains(t, actionSchema["enum"], "semantic_tokens")
 	require.Contains(t, actionSchema["enum"], "semantic_tokens_range")
+	require.Contains(t, actionSchema["enum"], "semantic_tokens_delta")
 	require.Contains(t, actionSchema["enum"], "completion_resolve")
 	require.Contains(t, actionSchema["enum"], "range_format")
 	require.Contains(t, actionSchema["enum"], "on_type_format")

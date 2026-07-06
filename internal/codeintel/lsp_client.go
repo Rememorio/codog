@@ -434,6 +434,13 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return semantic tokens for a document range ending at the requested position.",
 	},
 	{
+		Name:             "semantic-tokens-delta",
+		Method:           "textDocument/semanticTokens/full/delta",
+		Aliases:          []string{"semantic_tokens_delta", "semanticTokensDelta", "semantic_delta", "semantic-tokens-delta"},
+		RequiresDocument: true,
+		Description:      "Return incremental semantic token edits for a previous full-document token result.",
+	},
+	{
 		Name:        "workspace-symbol",
 		Method:      "workspace/symbol",
 		Aliases:     []string{"workspace_symbol", "workspace_symbols", "workspaceSymbol", "workspaceSymbols", "symbol_search", "symbol-search"},
@@ -1533,6 +1540,12 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		start := map[string]any{"line": line, "character": 0}
 		end := map[string]any{"line": line, "character": max(0, character)}
 		return "textDocument/semanticTokens/range", map[string]any{"textDocument": textDocument, "range": map[string]any{"start": start, "end": end}}, nil
+	case "semantic-tokens-delta":
+		previousResultID := strings.TrimSpace(query)
+		if previousResultID == "" {
+			previousResultID = "codog"
+		}
+		return "textDocument/semanticTokens/full/delta", map[string]any{"textDocument": textDocument, "previousResultId": previousResultID}, nil
 	case "workspace-symbol":
 		return "workspace/symbol", map[string]any{"query": strings.TrimSpace(query)}, nil
 	case "signature-help":

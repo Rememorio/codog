@@ -580,6 +580,25 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.NoError(t, json.Unmarshal(encodedSemanticTokenRange, &semanticTokenRange))
 	require.Equal(t, []int{0, 5, 6, 12, 0}, semanticTokenRange.Data)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "semantic_tokens_delta", Path: "main.go", Query: "full-1"})
+	require.NoError(t, err)
+	require.Equal(t, "semantic-tokens-delta", result.Action)
+	require.Equal(t, "textDocument/semanticTokens/full/delta", result.Method)
+	var semanticTokenDelta struct {
+		ResultID string `json:"resultId"`
+		Edits    []struct {
+			Start       int   `json:"start"`
+			DeleteCount int   `json:"deleteCount"`
+			Data        []int `json:"data"`
+		} `json:"edits"`
+	}
+	encodedSemanticTokenDelta, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedSemanticTokenDelta, &semanticTokenDelta))
+	require.Equal(t, "full-2", semanticTokenDelta.ResultID)
+	require.Len(t, semanticTokenDelta.Edits, 1)
+	require.Equal(t, []int{0, 1, 2, 3, 4}, semanticTokenDelta.Edits[0].Data)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "workspace_symbol", Query: "Build"})
 	require.NoError(t, err)
 	require.Equal(t, "workspace-symbol", result.Action)
@@ -984,6 +1003,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"semantic_tokens_range":     "semantic-tokens-range",
 		"semanticTokensRange":       "semantic-tokens-range",
 		"semantic-range":            "semantic-tokens-range",
+		"semantic_tokens_delta":     "semantic-tokens-delta",
+		"semanticTokensDelta":       "semantic-tokens-delta",
+		"semantic_delta":            "semantic-tokens-delta",
 		"workspace_symbol":          "workspace-symbol",
 		"workspace_symbols":         "workspace-symbol",
 		"workspaceSymbol":           "workspace-symbol",
@@ -1234,6 +1256,15 @@ func TestFakeLSPServer(t *testing.T) {
 		case "textDocument/semanticTokens/range":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
 				"data": []int{0, 5, 6, 12, 0},
+			})})
+		case "textDocument/semanticTokens/full/delta":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+				"resultId": "full-2",
+				"edits": []map[string]any{{
+					"start":       0,
+					"deleteCount": 5,
+					"data":        []int{0, 1, 2, 3, 4},
+				}},
 			})})
 		case "workspace/symbol":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{

@@ -390,17 +390,18 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":28,"method":"lsp/query","params":{"language":"go","action":"moniker","path":"main.go","line":2,"character":5}}`,
 		`{"jsonrpc":"2.0","id":29,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens","path":"main.go"}}`,
 		`{"jsonrpc":"2.0","id":30,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens_range","path":"main.go","line":2,"character":12}}`,
-		`{"jsonrpc":"2.0","id":31,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol","query":"Build"}}`,
-		`{"jsonrpc":"2.0","id":32,"method":"lsp/query","params":{"language":"go","action":"document_diagnostic","path":"main.go"}}`,
-		`{"jsonrpc":"2.0","id":33,"method":"lsp/query","params":{"language":"go","action":"workspace_diagnostic"}}`,
-		`{"jsonrpc":"2.0","id":34,"method":"lsp/query","params":{"language":"go","action":"code_action_resolve","path":"main.go","line":2,"character":5,"query":"Bridge lazy fix"}}`,
-		`{"jsonrpc":"2.0","id":35,"method":"lsp/query","params":{"language":"go","action":"document_link_resolve","path":"main.go","line":2,"character":3}}`,
-		`{"jsonrpc":"2.0","id":36,"method":"lsp/query","params":{"language":"go","action":"inlay_hint_resolve","path":"main.go","line":2,"character":10}}`,
-		`{"jsonrpc":"2.0","id":37,"method":"lsp/query","params":{"language":"go","action":"inline_value","path":"main.go","line":2,"character":10,"query":"frame-1"}}`,
-		`{"jsonrpc":"2.0","id":38,"method":"lsp/status","params":{"language":"go"}}`,
-		`{"jsonrpc":"2.0","id":39,"method":"lsp/list"}`,
-		`{"jsonrpc":"2.0","id":40,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol_resolve","query":"Build"}}`,
-		`{"jsonrpc":"2.0","id":41,"method":"lsp/stop","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":31,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens_delta","path":"main.go","query":"bridge-full-1"}}`,
+		`{"jsonrpc":"2.0","id":32,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol","query":"Build"}}`,
+		`{"jsonrpc":"2.0","id":33,"method":"lsp/query","params":{"language":"go","action":"document_diagnostic","path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":34,"method":"lsp/query","params":{"language":"go","action":"workspace_diagnostic"}}`,
+		`{"jsonrpc":"2.0","id":35,"method":"lsp/query","params":{"language":"go","action":"code_action_resolve","path":"main.go","line":2,"character":5,"query":"Bridge lazy fix"}}`,
+		`{"jsonrpc":"2.0","id":36,"method":"lsp/query","params":{"language":"go","action":"document_link_resolve","path":"main.go","line":2,"character":3}}`,
+		`{"jsonrpc":"2.0","id":37,"method":"lsp/query","params":{"language":"go","action":"inlay_hint_resolve","path":"main.go","line":2,"character":10}}`,
+		`{"jsonrpc":"2.0","id":38,"method":"lsp/query","params":{"language":"go","action":"inline_value","path":"main.go","line":2,"character":10,"query":"frame-1"}}`,
+		`{"jsonrpc":"2.0","id":39,"method":"lsp/status","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":40,"method":"lsp/list"}`,
+		`{"jsonrpc":"2.0","id":41,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol_resolve","query":"Build"}}`,
+		`{"jsonrpc":"2.0","id":42,"method":"lsp/stop","params":{"language":"go"}}`,
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
@@ -496,6 +497,9 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"action":"semantic-tokens-range"`)
 	require.Contains(t, out.String(), `"method":"textDocument/semanticTokens/range"`)
 	require.Contains(t, out.String(), `"data":[0,5,6,12,0]`)
+	require.Contains(t, out.String(), `"action":"semantic-tokens-delta"`)
+	require.Contains(t, out.String(), `"method":"textDocument/semanticTokens/full/delta"`)
+	require.Contains(t, out.String(), `"resultId":"bridge-full-2"`)
 	require.Contains(t, out.String(), `"action":"workspace-symbol"`)
 	require.Contains(t, out.String(), `"method":"workspace/symbol"`)
 	require.Contains(t, out.String(), `"name":"BridgeWidget"`)
@@ -899,6 +903,15 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 		case "textDocument/semanticTokens/range":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
 				"data": []int{0, 5, 6, 12, 0},
+			}})
+		case "textDocument/semanticTokens/full/delta":
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+				"resultId": "bridge-full-2",
+				"edits": []map[string]any{{
+					"start":       0,
+					"deleteCount": 5,
+					"data":        []int{0, 2, 4, 8, 16},
+				}},
 			}})
 		case "workspace/symbol":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
