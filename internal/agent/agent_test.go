@@ -14091,6 +14091,69 @@ func TestAuthCommandHonorsGlobalOutputFormat(t *testing.T) {
 	require.NotContains(t, out, "secret-key")
 }
 
+func TestSetupTokenCommandStoresAuthToken(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome},
+		Out:    &out,
+		Err:    io.Discard,
+		In:     strings.NewReader(""),
+	}
+
+	require.NoError(t, app.SetupToken([]string{"--token", "oauth-long-lived-secret", "--json"}))
+	require.NotContains(t, out.String(), "oauth-long-lived-secret")
+	var report setupTokenReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "setup_token", report.Kind)
+	require.Equal(t, "save", report.Action)
+	require.True(t, report.Configured)
+	require.Equal(t, configPath, report.Path)
+	require.Contains(t, report.EnvVars, "CLAUDE_CODE_OAUTH_TOKEN")
+	require.Equal(t, "oauth-long-lived-secret", app.Config.AuthToken)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	var persisted config.Config
+	require.NoError(t, json.Unmarshal(data, &persisted))
+	require.Equal(t, "oauth-long-lived-secret", persisted.AuthToken)
+}
+
+func TestSetupTokenCommandReadsStdinAndHonorsGlobalOutputFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+
+	originalStdin := os.Stdin
+	reader, writer, err := os.Pipe()
+	require.NoError(t, err)
+	_, err = writer.WriteString("oauth-stdin-secret\n")
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	os.Stdin = reader
+	defer func() {
+		os.Stdin = originalStdin
+		require.NoError(t, reader.Close())
+	}()
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "setup-token", "--stdin"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "setup_token"`)
+	require.Contains(t, out, `"configured": true`)
+	require.NotContains(t, out, "oauth-stdin-secret")
+
+	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	var persisted config.Config
+	require.NoError(t, json.Unmarshal(data, &persisted))
+	require.Equal(t, "oauth-stdin-secret", persisted.AuthToken)
+}
+
 func TestAPIKeyCommandAndSlash(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("CODOG_API_KEY", "")

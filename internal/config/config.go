@@ -2834,7 +2834,7 @@ func applyEnv(cfg *Config) {
 	if value := lookup("ANTHROPIC_API_KEY"); value != "" {
 		cfg.APIKey = value
 	}
-	if value := lookup("ANTHROPIC_AUTH_TOKEN"); value != "" {
+	if value, _ := lookupFirstEnv(lookup, "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"); value != "" {
 		cfg.AuthToken = value
 	}
 	if value := lookup("ANTHROPIC_BASE_URL"); value != "" {

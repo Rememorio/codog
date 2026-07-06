@@ -950,6 +950,20 @@ func TestLoadOpenAIEnvironmentForFlagModelOverride(t *testing.T) {
 	require.Equal(t, modelrouting.DefaultOpenAIBaseURL, cfg.BaseURL)
 }
 
+func TestLoadClaudeCodeOAuthTokenEnvironment(t *testing.T) {
+	unsetEnv(t, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CODOG_API_KEY", "CODOG_AUTH_TOKEN")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "claude-oauth-token")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, "claude-oauth-token", cfg.AuthToken)
+
+	t.Setenv("CODOG_AUTH_TOKEN", "codog-auth-token")
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, "codog-auth-token", cfg.AuthToken)
+}
+
 func TestLoadOllamaEnvironmentForFlagModelOverride(t *testing.T) {
 	unsetEnv(t, "CODOG_MODEL", "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_API_KEY", "OPENAI_BASE_URL")
 	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
@@ -1773,7 +1787,7 @@ func TestLoadRejectsInvalidDefaultShell(t *testing.T) {
 }
 
 func unsetCredentialEnv(t *testing.T) {
-	unsetEnv(t, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODOG_API_KEY", "CODOG_AUTH_TOKEN")
+	unsetEnv(t, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CODOG_API_KEY", "CODOG_AUTH_TOKEN")
 	unsetProviderRoutingEnv(t)
 }
 

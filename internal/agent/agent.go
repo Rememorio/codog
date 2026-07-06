@@ -583,6 +583,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	case "setup-token":
+		if err := app.SetupToken(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "advisor":
 		if err := app.Advisor(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -10281,6 +10286,189 @@ func renderAuthReport(out io.Writer, report authReport) {
 		if report.OAuthStatus.ProfileName != "" {
 			fmt.Fprintf(out, "  OAuth profile    %s\n", report.OAuthStatus.ProfileName)
 		}
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
+type setupTokenRequest struct {
+	Token    string
+	Stdin    bool
+	Target   string
+	Path     string
+	Format   string
+	Prompted bool
+}
+
+type setupTokenReport struct {
+	Kind          string   `json:"kind"`
+	Action        string   `json:"action"`
+	Status        string   `json:"status"`
+	Configured    bool     `json:"configured"`
+	RedactedValue string   `json:"redacted_value,omitempty"`
+	Path          string   `json:"path,omitempty"`
+	EnvVars       []string `json:"env_vars,omitempty"`
+	Message       string   `json:"message,omitempty"`
+}
+
+const setupTokenUsage = "codog setup-token [TOKEN|--token TOKEN|--stdin] [--target user|project|local] [--path PATH] [--output-format text|json]"
+
+func (a *App) SetupToken(args []string) error {
+	req, err := parseSetupTokenArgs(args)
+	if err != nil {
+		return err
+	}
+	token, prompted, err := a.setupTokenValue(req)
+	if err != nil {
+		return err
+	}
+	req.Token = token
+	req.Prompted = prompted
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	if _, err := config.SetFileValue(path, "auth_token", token); err != nil {
+		return err
+	}
+	a.Config.AuthToken = token
+	report := setupTokenReport{
+		Kind:          "setup_token",
+		Action:        "save",
+		Status:        "ok",
+		Configured:    true,
+		RedactedValue: redact(token),
+		Path:          path,
+		EnvVars:       []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "CODOG_AUTH_TOKEN"},
+		Message:       "Long-lived authentication token saved as auth_token. Command output redacts the stored value.",
+	}
+	if req.Prompted {
+		report.Message = "Long-lived authentication token saved as auth_token from prompt input. Command output redacts the stored value."
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderSetupTokenReport(a.Out, report)
+	return nil
+}
+
+func parseSetupTokenArgs(args []string) (setupTokenRequest, error) {
+	req := setupTokenRequest{Target: "user", Format: "text"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "setup-token", Flag: arg, Usage: setupTokenUsage}
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "setup-token", Flag: arg, Usage: setupTokenUsage}
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "setup-token", Flag: arg, Usage: setupTokenUsage}
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--token":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "setup-token", Flag: arg, Usage: setupTokenUsage}
+			}
+			req.Token = strings.TrimSpace(args[index])
+		case strings.HasPrefix(arg, "--token="):
+			req.Token = strings.TrimSpace(strings.TrimPrefix(arg, "--token="))
+		case arg == "--stdin":
+			req.Stdin = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "setup-token", Option: arg, Usage: setupTokenUsage}
+			}
+			rest = append(rest, arg)
+		}
+	}
+	normalizedFormat, err := normalizeOutputFormat("setup-token", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalizedFormat
+	switch len(rest) {
+	case 0:
+	case 1:
+		if req.Token != "" {
+			return req, unexpectedExtraArgsError{Command: "setup-token", Args: rest, Usage: setupTokenUsage}
+		}
+		req.Token = strings.TrimSpace(rest[0])
+	default:
+		return req, unexpectedExtraArgsError{Command: "setup-token", Args: rest[1:], Usage: setupTokenUsage}
+	}
+	if req.Token != "" && req.Stdin {
+		return req, unexpectedExtraArgsError{Command: "setup-token", Args: []string{"--stdin"}, Usage: setupTokenUsage}
+	}
+	return req, nil
+}
+
+func (a *App) setupTokenValue(req setupTokenRequest) (string, bool, error) {
+	if token := strings.TrimSpace(req.Token); token != "" {
+		return token, false, nil
+	}
+	in := a.In
+	if in == nil {
+		in = os.Stdin
+	}
+	if req.Stdin {
+		data, err := io.ReadAll(in)
+		if err != nil {
+			return "", false, err
+		}
+		token := strings.TrimSpace(string(data))
+		if token == "" {
+			return "", false, requiredArgumentError{Command: "setup-token", Argument: "TOKEN", Usage: setupTokenUsage}
+		}
+		return token, false, nil
+	}
+	if a.Err != nil {
+		fmt.Fprint(a.Err, "Long-lived authentication token: ")
+	}
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", true, err
+	}
+	token := strings.TrimSpace(line)
+	if token == "" {
+		return "", true, requiredArgumentError{Command: "setup-token", Argument: "TOKEN", Usage: setupTokenUsage}
+	}
+	return token, true, nil
+}
+
+func renderSetupTokenReport(out io.Writer, report setupTokenReport) {
+	fmt.Fprintln(out, "Setup Token")
+	fmt.Fprintf(out, "  Configured       %t\n", report.Configured)
+	if report.RedactedValue != "" {
+		fmt.Fprintf(out, "  Value            %s\n", report.RedactedValue)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if len(report.EnvVars) > 0 {
+		fmt.Fprintf(out, "  Env vars         %s\n", strings.Join(report.EnvVars, ", "))
 	}
 	if report.Message != "" {
 		fmt.Fprintf(out, "  Message          %s\n", report.Message)
@@ -27913,6 +28101,7 @@ func builtInCommandNames() []string {
 		"session",
 		"settings",
 		"setup",
+		"setup-token",
 		"setupGitHubActions",
 		"sessions",
 		"share",
@@ -53265,7 +53454,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "pr_comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-control", "remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "sandbox-toggle",
-		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "state", "status", "statusline",
+		"search", "security-review", "self-test", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "state", "status", "statusline",
 		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "terminalsetup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"teleport", "ultraplan", "ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "unpin", "upgrade", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
@@ -54025,6 +54214,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"codog auth [status|login|logout] [--json|--text]",
 			"Auth\n\nUsage:\n  codog auth status [--json|--text]\n  codog auth login [--console|--claudeai] [PROFILE]\n  codog auth logout [PROFILE]\n\nClaude-compatible authentication entrypoint. `status` reports API key, auth token, and OAuth readiness without exposing secrets. `login` and `logout` delegate to Codog's OAuth login and logout flows.\n",
 			[]string{"kind", "action", "ready", "auth_method", "api_key_configured", "auth_token_configured", "oauth_status"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "setup-token":
+		return localCommandHelpSpec(
+			"setup-token",
+			"setup-token",
+			setupTokenUsage,
+			"Setup Token\n\nUsage:\n  codog setup-token [TOKEN|--token TOKEN|--stdin] [--target user|project|local] [--path PATH] [--output-format text|json]\n\nImports a long-lived Claude OAuth token and stores it as `auth_token` for provider requests. Codog also honors `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN`, and `CODOG_AUTH_TOKEN` when the token is provided by the environment. Text and JSON output always redact token values.\n",
+			[]string{"kind", "action", "status", "configured", "redacted_value", "path", "env_vars"},
 			[]string{"ok", "error"},
 			true,
 		), true
@@ -54874,6 +55073,7 @@ Usage:
   %s reload-plugins [--json|--output-format text|json]
   %s plugin|plugins|marketplace list|health|show|info|describe|validate|sources|remote list|search|show|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]
+  %s setup-token [TOKEN|--token TOKEN|--stdin] [--json|--output-format text|json]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|completion|format|notebook-read|notebook-edit|lsp
   %s heapdump [PATH] [--no-gc] [--json|--output-format text|json]
@@ -54927,7 +55127,7 @@ Flags:
   --settings PATH|JSON
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL, ANTHROPIC_DEFAULT_MODEL, ANTHROPIC_SMALL_FAST_MODEL, ANTHROPIC_MAX_TOKENS, ANTHROPIC_TEMPERATURE, ANTHROPIC_REASONING_EFFORT, CLAUDE_MODEL, CLAUDE_CONFIG_HOME, CLAUDE_CONFIG_DIR, OPENAI_API_KEY, OPENAI_BASE_URL, OLLAMA_HOST, XAI_API_KEY, XAI_BASE_URL, DASHSCOPE_API_KEY, DASHSCOPE_BASE_URL, CODOG_CONFIG_HOME, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_MAX_TOKENS, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_LANGUAGE, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_OAUTH_PROFILE, CODOG_TEMPERATURE, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL, ANTHROPIC_DEFAULT_MODEL, ANTHROPIC_SMALL_FAST_MODEL, ANTHROPIC_MAX_TOKENS, ANTHROPIC_TEMPERATURE, ANTHROPIC_REASONING_EFFORT, CLAUDE_MODEL, CLAUDE_CONFIG_HOME, CLAUDE_CONFIG_DIR, OPENAI_API_KEY, OPENAI_BASE_URL, OLLAMA_HOST, XAI_API_KEY, XAI_BASE_URL, DASHSCOPE_API_KEY, DASHSCOPE_BASE_URL, CODOG_CONFIG_HOME, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_MAX_TOKENS, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_LANGUAGE, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_OAUTH_PROFILE, CODOG_TEMPERATURE, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
 `
 	rendered := strings.ReplaceAll(help, "%s", exe)
 	return strings.Replace(rendered, "\nFlags:\n", "\nResume-safe commands: "+resumeSafeCommandsHelpLine()+"\n\nFlags:\n", 1)
