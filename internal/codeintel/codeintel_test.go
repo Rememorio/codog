@@ -384,6 +384,20 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "https://example.test/docs", documentLinks[0].Target)
 	require.Equal(t, LSPPosition{Line: 2, Character: 0}, documentLinks[0].Range.Start)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "document_link_resolve", Path: "main.go", Line: 2, Character: 3})
+	require.NoError(t, err)
+	require.Equal(t, "document-link-resolve", result.Action)
+	require.Equal(t, "documentLink/resolve", result.Method)
+	var resolvedLink struct {
+		Resolved struct {
+			Target string `json:"target"`
+		} `json:"resolved"`
+	}
+	encodedResolvedLink, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedResolvedLink, &resolvedLink))
+	require.Equal(t, "https://example.test/resolved", resolvedLink.Resolved.Target)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "document_color", Path: "main.go"})
 	require.NoError(t, err)
 	require.Equal(t, "document-color", result.Action)
@@ -475,6 +489,20 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, ": int", inlayHints[0].Label)
 	require.Equal(t, 1, inlayHints[0].Kind)
 	require.Equal(t, LSPPosition{Line: 2, Character: 10}, inlayHints[0].Position)
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "inlay_hint_resolve", Path: "main.go", Line: 2, Character: 10})
+	require.NoError(t, err)
+	require.Equal(t, "inlay-hint-resolve", result.Action)
+	require.Equal(t, "inlayHint/resolve", result.Method)
+	var resolvedHint struct {
+		Resolved struct {
+			Tooltip string `json:"tooltip"`
+		} `json:"resolved"`
+	}
+	encodedResolvedHint, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedResolvedHint, &resolvedHint))
+	require.Equal(t, "resolved inlay hint", resolvedHint.Resolved.Tooltip)
 
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "linked_editing_range", Path: "main.go", Line: 2, Character: 5})
 	require.NoError(t, err)
@@ -888,6 +916,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"document_link":             "document-link",
 		"documentLink":              "document-link",
 		"document-links":            "document-link",
+		"document_link_resolve":     "document-link-resolve",
+		"documentLinkResolve":       "document-link-resolve",
+		"resolve_document_link":     "document-link-resolve",
 		"document_color":            "document-color",
 		"documentColor":             "document-color",
 		"document-colors":           "document-color",
@@ -897,6 +928,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"inlay_hint":                "inlay-hint",
 		"inlayHint":                 "inlay-hint",
 		"inlay-hints":               "inlay-hint",
+		"inlay_hint_resolve":        "inlay-hint-resolve",
+		"inlayHintResolve":          "inlay-hint-resolve",
+		"resolve_inlay_hint":        "inlay-hint-resolve",
 		"linked_editing_range":      "linked-editing-range",
 		"linkedEditingRange":        "linked-editing-range",
 		"linked-editing":            "linked-editing-range",
@@ -1077,6 +1111,11 @@ func TestFakeLSPServer(t *testing.T) {
 				},
 				"target": "https://example.test/docs",
 			}})})
+		case "documentLink/resolve":
+			var link map[string]any
+			_ = decodeLSPParams(msg.Params, &link)
+			link["target"] = "https://example.test/resolved"
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(link)})
 		case "textDocument/documentColor":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
 				"range": map[string]any{
@@ -1116,6 +1155,11 @@ func TestFakeLSPServer(t *testing.T) {
 				"label":    ": int",
 				"kind":     1,
 			}})})
+		case "inlayHint/resolve":
+			var hint map[string]any
+			_ = decodeLSPParams(msg.Params, &hint)
+			hint["tooltip"] = "resolved inlay hint"
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(hint)})
 		case "textDocument/linkedEditingRange":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
 				"ranges": []map[string]any{

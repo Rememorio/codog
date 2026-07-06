@@ -356,6 +356,14 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return links and link targets discovered in a document.",
 	},
 	{
+		Name:             "document-link-resolve",
+		Method:           "documentLink/resolve",
+		Aliases:          []string{"document_link_resolve", "documentLinkResolve", "resolve_document_link", "resolveDocumentLink"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Resolve a document link selected from links discovered in a document.",
+	},
+	{
 		Name:             "document-color",
 		Method:           "textDocument/documentColor",
 		Aliases:          []string{"document_color", "documentColor", "document-colors", "document_colors", "colors"},
@@ -377,6 +385,14 @@ var lspActionInfos = []LSPActionInfo{
 		RequiresDocument: true,
 		RequiresPosition: true,
 		Description:      "Return inlay hints around a document position.",
+	},
+	{
+		Name:             "inlay-hint-resolve",
+		Method:           "inlayHint/resolve",
+		Aliases:          []string{"inlay_hint_resolve", "inlayHintResolve", "resolve_inlay_hint", "resolveInlayHint"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Resolve an inlay hint selected from hints around a document position.",
 	},
 	{
 		Name:             "linked-editing-range",
@@ -696,6 +712,34 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 			Language: language,
 			Action:   action,
 			Method:   "codeAction/resolve",
+			Path:     rel,
+			Result:   decoded,
+		}, nil
+	}
+	if action == "document-link-resolve" {
+		decoded, err := runLSPDocumentLinkResolveQuery(client, uri, request.Line, request.Character)
+		if err != nil {
+			return LSPQueryResult{}, err
+		}
+		return LSPQueryResult{
+			Kind:     "lsp_query",
+			Language: language,
+			Action:   action,
+			Method:   "documentLink/resolve",
+			Path:     rel,
+			Result:   decoded,
+		}, nil
+	}
+	if action == "inlay-hint-resolve" {
+		decoded, err := runLSPInlayHintResolveQuery(client, uri, request.Line, request.Character)
+		if err != nil {
+			return LSPQueryResult{}, err
+		}
+		return LSPQueryResult{
+			Kind:     "lsp_query",
+			Language: language,
+			Action:   action,
+			Method:   "inlayHint/resolve",
 			Path:     rel,
 			Result:   decoded,
 		}, nil
@@ -1072,6 +1116,60 @@ func selectLSPActionByTitle(actions []map[string]any, title string) map[string]a
 	return actions[0]
 }
 
+func runLSPDocumentLinkResolveQuery(client *lspClient, uri string, line int, character int) (any, error) {
+	textDocument := map[string]any{"uri": uri}
+	raw, err := client.request("textDocument/documentLink", map[string]any{"textDocument": textDocument})
+	if err != nil {
+		return nil, err
+	}
+	items, err := decodeLSPMapItems(raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return map[string]any{"items": items, "resolved": nil}, nil
+	}
+	selected := selectLSPRangeItem(items, LSPPosition{Line: max(0, line), Character: max(0, character)})
+	raw, err = client.request("documentLink/resolve", selected)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := decodeLSPAny(raw, selected)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"items": items, "selected": selected, "resolved": resolved}, nil
+}
+
+func runLSPInlayHintResolveQuery(client *lspClient, uri string, line int, character int) (any, error) {
+	line = max(0, line)
+	character = max(0, character)
+	textDocument := map[string]any{"uri": uri}
+	start := map[string]any{"line": line, "character": 0}
+	end := map[string]any{"line": line, "character": character}
+	raw, err := client.request("textDocument/inlayHint", map[string]any{"textDocument": textDocument, "range": map[string]any{"start": start, "end": end}})
+	if err != nil {
+		return nil, err
+	}
+	items, err := decodeLSPMapItems(raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return map[string]any{"items": items, "resolved": nil}, nil
+	}
+	selected := selectLSPPositionItem(items, LSPPosition{Line: line, Character: character})
+	raw, err = client.request("inlayHint/resolve", selected)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := decodeLSPAny(raw, selected)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"items": items, "selected": selected, "resolved": resolved}, nil
+}
+
 func runLSPCompletionItemResolveQuery(client *lspClient, uri string, line int, character int, query string) (any, error) {
 	position := map[string]any{"line": max(0, line), "character": max(0, character)}
 	textDocument := map[string]any{"uri": uri}
@@ -1107,6 +1205,31 @@ func runLSPCompletionItemResolveQuery(client *lspClient, uri string, line int, c
 	return map[string]any{"items": items, "selected": selected, "resolved": resolved}, nil
 }
 
+func decodeLSPMapItems(raw json.RawMessage) ([]map[string]any, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return []map[string]any{}, nil
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func decodeLSPAny(raw json.RawMessage, fallback any) (any, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return fallback, nil
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil, err
+	}
+	if decoded == nil {
+		return fallback, nil
+	}
+	return decoded, nil
+}
+
 func decodeLSPCompletionItems(raw json.RawMessage) ([]map[string]any, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return []map[string]any{}, nil
@@ -1125,6 +1248,38 @@ func decodeLSPCompletionItems(raw json.RawMessage) ([]map[string]any, error) {
 		return []map[string]any{}, nil
 	}
 	return list.Items, nil
+}
+
+func selectLSPRangeItem(items []map[string]any, position LSPPosition) map[string]any {
+	for _, item := range items {
+		if value, ok := item["range"]; ok {
+			var r lspRange
+			if decodeLSPParams(value, &r) == nil && lspRangeContains(r, position) {
+				return item
+			}
+		}
+	}
+	return items[0]
+}
+
+func selectLSPPositionItem(items []map[string]any, position LSPPosition) map[string]any {
+	for _, item := range items {
+		if value, ok := item["position"]; ok {
+			var candidate LSPPosition
+			if decodeLSPParams(value, &candidate) == nil && candidate.Line == position.Line && candidate.Character == position.Character {
+				return item
+			}
+		}
+	}
+	for _, item := range items {
+		if value, ok := item["position"]; ok {
+			var candidate LSPPosition
+			if decodeLSPParams(value, &candidate) == nil && candidate.Line == position.Line {
+				return item
+			}
+		}
+	}
+	return items[0]
 }
 
 func selectLSPCompletionItem(items []map[string]any, query string) map[string]any {
