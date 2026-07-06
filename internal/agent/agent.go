@@ -2109,7 +2109,10 @@ func (a *App) serveTCPServer(ctx context.Context, req serverRequest) error {
 	if a.Err != nil {
 		fmt.Fprintf(a.Err, "codog server listening on %s\n", remoteURL)
 	}
-	return a.serveControlListenerWithMaxSessions(ctx, listener, actualAddr, req.MaxSessions)
+	return a.serveControlListenerWithOptions(ctx, listener, actualAddr, controlListenerOptions{
+		MaxSessions: req.MaxSessions,
+		IdleTimeout: time.Duration(req.IdleTimeoutMS) * time.Millisecond,
+	})
 }
 
 func (a *App) serveUnixServer(ctx context.Context, req serverRequest) error {
@@ -2132,7 +2135,10 @@ func (a *App) serveUnixServer(ctx context.Context, req serverRequest) error {
 	if a.Err != nil {
 		fmt.Fprintf(a.Err, "codog server listening on %s\n", remoteURL)
 	}
-	return a.serveControlListenerWithMaxSessions(ctx, listener, socketPath, req.MaxSessions)
+	return a.serveControlListenerWithOptions(ctx, listener, socketPath, controlListenerOptions{
+		MaxSessions: req.MaxSessions,
+		IdleTimeout: time.Duration(req.IdleTimeoutMS) * time.Millisecond,
+	})
 }
 
 func (a *App) buildServerReport(req serverRequest, network, addr, httpURL string) serverReport {
@@ -2658,18 +2664,38 @@ func renderOpenReport(out io.Writer, report openReport, format string) error {
 }
 
 func (a *App) serveControlListener(ctx context.Context, listener net.Listener, addr string) error {
-	return a.serveControlListenerWithMaxSessions(ctx, listener, addr, 0)
+	return a.serveControlListenerWithOptions(ctx, listener, addr, controlListenerOptions{})
 }
 
 func (a *App) serveControlListenerWithMaxSessions(ctx context.Context, listener net.Listener, addr string, maxSessions int) error {
+	return a.serveControlListenerWithOptions(ctx, listener, addr, controlListenerOptions{MaxSessions: maxSessions})
+}
+
+type controlListenerOptions struct {
+	MaxSessions int
+	IdleTimeout time.Duration
+}
+
+func (a *App) serveControlListenerWithOptions(ctx context.Context, listener net.Listener, addr string, opts controlListenerOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	server := &http.Server{Handler: a.remoteControlServerWithMaxSessions(addr, maxSessions).Handler()}
+	handler := a.remoteControlServerWithMaxSessions(addr, opts.MaxSessions).Handler()
+	var idleActivity chan struct{}
+	if opts.IdleTimeout > 0 {
+		idleActivity = make(chan struct{}, 1)
+		handler = idleTrackingHandler(handler, idleActivity)
+	}
+	server := &http.Server{Handler: handler}
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Serve(listener)
 	}()
+	stopIdle := func() {}
+	if opts.IdleTimeout > 0 {
+		stopIdle = startControlIdleShutdown(ctx, server, opts.IdleTimeout, idleActivity)
+		defer stopIdle()
+	}
 	select {
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -2688,6 +2714,51 @@ func (a *App) serveControlListenerWithMaxSessions(ctx context.Context, listener 
 			return nil
 		}
 		return err
+	}
+}
+
+func idleTrackingHandler(next http.Handler, activity chan<- struct{}) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case activity <- struct{}{}:
+		default:
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func startControlIdleShutdown(ctx context.Context, server *http.Server, timeout time.Duration, activity <-chan struct{}) func() {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		for {
+			select {
+			case <-activity:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(timeout)
+			case <-timer.C:
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = server.Shutdown(shutdownCtx)
+				cancel()
+				return
+			case <-ctx.Done():
+				return
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
 	}
 }
 

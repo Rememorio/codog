@@ -19538,6 +19538,50 @@ func TestServerCommandStartsControlListener(t *testing.T) {
 	require.NoError(t, <-errCh)
 }
 
+func TestServerCommandIdleTimeoutShutsDown(t *testing.T) {
+	configHome := t.TempDir()
+	out := newNotifyBuffer()
+	errOut := newNotifyBuffer()
+	app := &App{
+		Config:   config.Config{ConfigHome: configHome},
+		Sessions: session.NewWorkspaceStore(configHome, t.TempDir()),
+		Out:      out,
+		Err:      errOut,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- app.Server(ctx, []string{
+			"--host", "127.0.0.1",
+			"--port", "0",
+			"--auth-token", "idle-secret-token",
+			"--idle-timeout", "75",
+			"--max-sessions", "0",
+			"--json",
+		})
+	}()
+
+	select {
+	case <-out.writes:
+	case <-time.After(3 * time.Second):
+		require.Fail(t, "server did not write a startup report")
+	}
+	var report serverReport
+	require.NoError(t, json.Unmarshal([]byte(out.String()), &report))
+	require.Equal(t, 75, report.IdleTimeoutMS)
+	require.False(t, report.MaxSessionsEnforced)
+	require.Contains(t, errOut.String(), "codog server listening on "+report.HTTPURL)
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		require.Fail(t, "server did not shut down after idle timeout")
+	}
+}
+
 func TestServerArgsGenerateAuthTokenAndValidateOptions(t *testing.T) {
 	req, err := parseServerArgs([]string{"--json"})
 	require.NoError(t, err)
