@@ -22844,6 +22844,16 @@ func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
 	require.Equal(t, "status", bridgeStatus.Action)
 	out.Reset()
 
+	require.NoError(t, os.MkdirAll(filepath.Dir(statePath), 0o755))
+	require.NoError(t, os.WriteFile(statePath, data, 0o644))
+	require.NoError(t, app.runResumedBridgeSlash("/bridge", []string{"reset", "--json"}, config.FlagOverrides{Resume: "bridge-session"}, "json"))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &bridgeStatus))
+	require.Equal(t, "ide", bridgeStatus.Kind)
+	require.Equal(t, "clear", bridgeStatus.Action)
+	require.True(t, bridgeStatus.Cleared)
+	require.NoFileExists(t, statePath)
+	out.Reset()
+
 	executableShim := filepath.Join(t.TempDir(), "codog-shim")
 	require.NoError(t, os.WriteFile(executableShim, []byte("#!/bin/sh\necho bridge-shim \"$@\"\n"), 0o755))
 	app.Executable = executableShim

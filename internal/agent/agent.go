@@ -29576,10 +29576,12 @@ func (a *App) runResumedBridgeSlash(command string, args []string, overrides con
 	if err != nil {
 		return err
 	}
-	if req.Action != "status" {
+	switch req.Action {
+	case "status", "clear":
+		return a.IDE(bridgeArgs)
+	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel(command, req.Action), format)
 	}
-	return a.IDE(bridgeArgs)
 }
 
 func resumedBridgeServeArgs(args []string) ([]string, error) {
