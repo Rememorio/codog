@@ -126,6 +126,30 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return definitions for the symbol at a document position.",
 	},
 	{
+		Name:             "declaration",
+		Method:           "textDocument/declaration",
+		Aliases:          []string{"goto_declaration", "goto-declaration", "go-to-declaration", "gotoDeclaration"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return declarations for the symbol at a document position.",
+	},
+	{
+		Name:             "implementation",
+		Method:           "textDocument/implementation",
+		Aliases:          []string{"goto_implementation", "goto-implementation", "go-to-implementation", "gotoImplementation"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return implementations for the symbol at a document position.",
+	},
+	{
+		Name:             "type-definition",
+		Method:           "textDocument/typeDefinition",
+		Aliases:          []string{"type_definition", "typeDefinition", "goto_type_definition", "goto-type-definition", "go-to-type-definition", "gotoTypeDefinition"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return type definitions for the symbol at a document position.",
+	},
+	{
 		Name:             "references",
 		Method:           "textDocument/references",
 		Aliases:          []string{"find_references", "find-references", "findReferences"},
@@ -140,6 +164,22 @@ var lspActionInfos = []LSPActionInfo{
 		RequiresDocument: true,
 		RequiresPosition: true,
 		Description:      "Return completion candidates at a document position.",
+	},
+	{
+		Name:             "document-highlight",
+		Method:           "textDocument/documentHighlight",
+		Aliases:          []string{"document_highlight", "documentHighlight", "highlights", "highlight"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return document highlights for the symbol at a document position.",
+	},
+	{
+		Name:             "signature-help",
+		Method:           "textDocument/signatureHelp",
+		Aliases:          []string{"signature_help", "signatureHelp", "signature", "signatures"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return call signature help at a document position.",
 	},
 	{
 		Name:             "symbols",
@@ -453,10 +493,20 @@ func lspMethodParams(action string, uri string, line int, character int) (string
 		return "textDocument/hover", map[string]any{"textDocument": textDocument, "position": position}, nil
 	case "definition":
 		return "textDocument/definition", map[string]any{"textDocument": textDocument, "position": position}, nil
+	case "declaration":
+		return "textDocument/declaration", map[string]any{"textDocument": textDocument, "position": position}, nil
+	case "implementation":
+		return "textDocument/implementation", map[string]any{"textDocument": textDocument, "position": position}, nil
+	case "type-definition":
+		return "textDocument/typeDefinition", map[string]any{"textDocument": textDocument, "position": position}, nil
 	case "references":
 		return "textDocument/references", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"includeDeclaration": true}}, nil
 	case "completion":
 		return "textDocument/completion", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
+	case "document-highlight":
+		return "textDocument/documentHighlight", map[string]any{"textDocument": textDocument, "position": position}, nil
+	case "signature-help":
+		return "textDocument/signatureHelp", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "symbols":
 		return "textDocument/documentSymbol", map[string]any{"textDocument": textDocument}, nil
 	case "format":

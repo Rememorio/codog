@@ -263,6 +263,24 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.True(t, result.Changed)
 	require.Contains(t, result.Content, "func main() {}")
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "implementation", Path: "main.go", Line: 2, Character: 5})
+	require.NoError(t, err)
+	require.Equal(t, "implementation", result.Action)
+	require.Equal(t, "textDocument/implementation", result.Method)
+	require.NotNil(t, result.Result)
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "typeDefinition", Path: "main.go", Line: 2, Character: 5})
+	require.NoError(t, err)
+	require.Equal(t, "type-definition", result.Action)
+	require.Equal(t, "textDocument/typeDefinition", result.Method)
+	require.NotNil(t, result.Result)
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "signature_help", Path: "main.go", Line: 2, Character: 5})
+	require.NoError(t, err)
+	require.Equal(t, "signature-help", result.Action)
+	require.Equal(t, "textDocument/signatureHelp", result.Method)
+	require.NotNil(t, result.Result)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "diagnostics", Path: "main.go"})
 	require.NoError(t, err)
 	require.Equal(t, "diagnostics", result.Action)
@@ -288,10 +306,22 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"goto_definition":     "definition",
 		"goto-definition":     "definition",
 		"gotoDefinition":      "definition",
+		"goto_declaration":    "declaration",
+		"gotoDeclaration":     "declaration",
+		"goto_implementation": "implementation",
+		"gotoImplementation":  "implementation",
+		"type_definition":     "type-definition",
+		"typeDefinition":      "type-definition",
+		"gotoTypeDefinition":  "type-definition",
 		"find_references":     "references",
 		"find-references":     "references",
 		"findReferences":      "references",
 		"completions":         "completion",
+		"document_highlight":  "document-highlight",
+		"documentHighlight":   "document-highlight",
+		"signature_help":      "signature-help",
+		"signatureHelp":       "signature-help",
+		"signature":           "signature-help",
 		"document_symbols":    "symbols",
 		"document-symbols":    "symbols",
 		"documentSymbols":     "symbols",
@@ -356,6 +386,23 @@ func TestFakeLSPServer(t *testing.T) {
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"capabilities": map[string]any{}})})
 		case "textDocument/hover":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"contents": map[string]any{"kind": "markdown", "value": "fake hover"}})})
+		case "textDocument/declaration", "textDocument/implementation", "textDocument/typeDefinition":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"uri":   "file:///workspace/main.go",
+				"range": map[string]any{"start": map[string]any{"line": 2, "character": 5}, "end": map[string]any{"line": 2, "character": 9}},
+			}})})
+		case "textDocument/documentHighlight":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"kind":  1,
+				"range": map[string]any{"start": map[string]any{"line": 2, "character": 5}, "end": map[string]any{"line": 2, "character": 9}},
+			}})})
+		case "textDocument/signatureHelp":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+				"activeSignature": 0,
+				"signatures": []map[string]any{{
+					"label": "main()",
+				}},
+			})})
 		case "textDocument/formatting":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
 				"range": map[string]any{
