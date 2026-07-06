@@ -60,6 +60,14 @@ type SelectionRange struct {
 	Kind  string   `json:"kind,omitempty"`
 }
 
+// Moniker identifies a symbol across files and tools.
+type Moniker struct {
+	Scheme     string `json:"scheme"`
+	Identifier string `json:"identifier"`
+	Kind       string `json:"kind,omitempty"`
+	Unique     string `json:"unique,omitempty"`
+}
+
 // Hover contains static hover context for a discovered symbol.
 type Hover struct {
 	Symbol  string   `json:"symbol"`
@@ -510,6 +518,67 @@ func astNodeKind(node ast.Node) string {
 		name = name[dot+1:]
 	}
 	return strings.TrimPrefix(name, "*")
+}
+
+// Monikers returns stable static identifiers for a discovered Go symbol.
+func Monikers(workspace string, symbol string) ([]Moniker, error) {
+	definition, found, err := Definition(workspace, symbol)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return []Moniker{}, nil
+	}
+	modulePath, err := ModulePath(workspace)
+	if err != nil {
+		return nil, err
+	}
+	importPath := modulePath
+	dir := filepath.ToSlash(filepath.Dir(definition.Path))
+	if dir != "." && dir != "" {
+		importPath += "/" + dir
+	}
+	kind := "local"
+	if isExportedIdentifier(definition.Name) {
+		kind = "export"
+	}
+	return []Moniker{{
+		Scheme:     "gomod",
+		Identifier: importPath + "." + definition.Name,
+		Kind:       kind,
+		Unique:     "project",
+	}}, nil
+}
+
+// ModulePath returns the module path from go.mod, or a stable workspace label
+// when the workspace is not a Go module.
+func ModulePath(workspace string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(workspace, "go.mod"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			base := filepath.Base(filepath.Clean(workspace))
+			if base == "." || base == string(filepath.Separator) || strings.TrimSpace(base) == "" {
+				base = "workspace"
+			}
+			return base, nil
+		}
+		return "", err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "module" {
+			return fields[1], nil
+		}
+	}
+	return "", errors.New("go.mod does not declare a module path")
+}
+
+func isExportedIdentifier(name string) bool {
+	if name == "" {
+		return false
+	}
+	first := name[0]
+	return first >= 'A' && first <= 'Z'
 }
 
 // HoverInfo returns static hover context around a symbol definition.

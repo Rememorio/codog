@@ -71,6 +71,7 @@ func TestWorkspaceSymbolsFiltersByQueryAndLimit(t *testing.T) {
 
 func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/codeintel\n\ngo 1.26\n"), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "pkg"), 0o755))
 	source := "package pkg\n\ntype Runner struct{}\n\nfunc Run() Runner { return Runner{} }\n"
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "runner.go"), []byte(source), 0o644))
@@ -113,6 +114,14 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.Equal(t, LSPPosition{Line: 4, Character: 5}, selections[0].Range.Start)
 	require.Equal(t, LSPPosition{Line: 4, Character: 8}, selections[0].Range.End)
 	require.Equal(t, "Ident", selections[0].Kind)
+
+	monikers, err := Monikers(workspace, "Runner")
+	require.NoError(t, err)
+	require.Len(t, monikers, 1)
+	require.Equal(t, "gomod", monikers[0].Scheme)
+	require.Equal(t, "example.test/codeintel/pkg.Runner", monikers[0].Identifier)
+	require.Equal(t, "export", monikers[0].Kind)
+	require.Equal(t, "project", monikers[0].Unique)
 
 	hover, err := HoverInfo(workspace, "Run", 1)
 	require.NoError(t, err)

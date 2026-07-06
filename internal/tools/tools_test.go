@@ -2744,6 +2744,7 @@ func TestNotebookReadToolReadsCellsAndOutputs(t *testing.T) {
 
 func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/tools\n\ngo 1.26\n"), 0o644))
 	source := strings.Join([]string{
 		"package demo",
 		"",
@@ -2880,6 +2881,15 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, selectionRangeOut, `"kind": "Ident"`)
 	require.Contains(t, selectionRangeOut, `"character": 5`)
 
+	monikerOut, err := tool.Execute(context.Background(), []byte(`{"action":"moniker","query":"BuildWidget"}`))
+	require.NoError(t, err)
+	require.Contains(t, monikerOut, `"action": "moniker"`)
+	require.Contains(t, monikerOut, `"source": "static"`)
+	require.Contains(t, monikerOut, `"scheme": "gomod"`)
+	require.Contains(t, monikerOut, `"identifier": "example.test/tools.BuildWidget"`)
+	require.Contains(t, monikerOut, `"kind": "export"`)
+	require.Contains(t, monikerOut, `"unique": "project"`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -2912,6 +2922,10 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, err.Error(), "config home is required")
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"selection_range","path":"demo.go","line":4,"character":6,"use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"moniker","query":"Widget","use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 
