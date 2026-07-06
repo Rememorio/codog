@@ -187,6 +187,7 @@ var scenarioOrder = []string{
 	"edit_glob_ls_roundtrip",
 	"multi_edit_apply_patch_roundtrip",
 	"bash_stdout_roundtrip",
+	"bash_background_output_roundtrip",
 	"powershell_stdout_roundtrip",
 	"bash_output_truncation_roundtrip",
 	"bash_permission_prompt_approved",
@@ -632,6 +633,7 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		bashBackgroundOutputScenario(),
 		powerShellStdoutScenario(),
 		bashOutputTruncationScenario(),
 		{
@@ -1116,7 +1118,7 @@ type capabilityTarget struct {
 var capabilityTargets = []capabilityTarget{
 	{Capability: "one-shot prompt and streaming", RequiredRefs: []string{"Anthropic streaming", "Tool result roundtrip"}},
 	{Capability: "file tools", RequiredRefs: []string{"File tools", "Edit tool", "Grep chunk assembly", "Glob tool", "MultiEdit tool", "ApplyPatch tool"}},
-	{Capability: "bash and shell safety", RequiredRefs: []string{"Bash tool", "Permission prompts", "Output truncation"}},
+	{Capability: "bash and shell safety", RequiredRefs: []string{"Bash tool", "BashOutput tool", "Permission prompts", "Output truncation"}},
 	{Capability: "permissions and sandbox", RequiredRefs: []string{"Permission enforcement", "Workspace-write permissions", "Sandbox", "Permission safety"}},
 	{Capability: "sessions and resume", RequiredRefs: []string{"Session JSONL", "Resume", "Session context management"}},
 	{Capability: "slash commands and custom workflows", RequiredRefs: []string{"Slash commands", "Skills", "Templates", "Project workflow surfaces"}},
@@ -1332,6 +1334,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "bash",
 		Description: "Runs bash in danger-full-access mode and returns stdout to the model.",
 		ParityRefs:  []string{"Bash tool", "Shell command output"},
+	},
+	"bash_background_output_roundtrip": {
+		Category:    "bash",
+		Description: "Starts a background bash task and reads its output through BashOutput.",
+		ParityRefs:  []string{"Bash tool", "BashOutput tool", "Background shell output", "Tool result roundtrip"},
 	},
 	"powershell_stdout_roundtrip": {
 		Category:    "powershell",
@@ -2504,6 +2511,92 @@ func bashOutputTruncationScenario() scenario {
 				return fmt.Errorf("unexpected persisted bash output metadata: kind=%q stdout=%d fields=%v", persisted.Kind, len(persisted.Stdout), persisted.TruncatedFields)
 			}
 			return nil
+		},
+	}
+}
+
+func bashBackgroundOutputScenario() scenario {
+	return scenario{
+		name: "bash_background_output_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
+			startOut, err := registry.Execute(ctx, "Bash", json.RawMessage(`{
+				"command":"printf background-harness",
+				"run_in_background":true
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var started struct {
+				Background                   bool   `json:"background"`
+				BackgroundTaskID             string `json:"backgroundTaskId"`
+				BackgroundedByUser           bool   `json:"backgroundedByUser"`
+				AssistantAutoBackgrounded    bool   `json:"assistantAutoBackgrounded"`
+				NoOutputExpected             bool   `json:"noOutputExpected"`
+				RawOutputPath                any    `json:"rawOutputPath"`
+				ReturnCodeInterpretation     any    `json:"returnCodeInterpretation"`
+				SandboxPermissionsDowngraded bool   `json:"sandboxPermissionsDowngraded"`
+			}
+			if err := json.Unmarshal([]byte(startOut), &started); err != nil {
+				return localScenarioResult{}, err
+			}
+			if !started.Background || started.BackgroundTaskID == "" || started.BackgroundedByUser || started.AssistantAutoBackgrounded {
+				return localScenarioResult{}, fmt.Errorf("unexpected background bash start payload: %s", startOut)
+			}
+			if !started.NoOutputExpected || started.RawOutputPath != nil || started.ReturnCodeInterpretation != nil || started.SandboxPermissionsDowngraded {
+				return localScenarioResult{}, fmt.Errorf("unexpected background bash contract fields: %s", startOut)
+			}
+
+			outputOut, err := registry.Execute(ctx, "BashOutput", json.RawMessage(fmt.Sprintf(`{
+				"bash_id":%q,
+				"offset":0,
+				"limit":64,
+				"block":true,
+				"timeout_ms":2000
+			}`, started.BackgroundTaskID)), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var output struct {
+				Output           string `json:"output"`
+				Stdout           string `json:"stdout"`
+				BackgroundTaskID string `json:"backgroundTaskId"`
+				Offset           int64  `json:"offset"`
+				NextOffset       int64  `json:"nextOffset"`
+				BytesRead        int    `json:"bytesRead"`
+				TimedOut         bool   `json:"timedOut"`
+				TimeoutMS        int    `json:"timeoutMs"`
+				RawOutputPath    string `json:"rawOutputPath"`
+				NoOutputExpected bool   `json:"noOutputExpected"`
+			}
+			if err := json.Unmarshal([]byte(outputOut), &output); err != nil {
+				return localScenarioResult{}, err
+			}
+			if output.BackgroundTaskID != started.BackgroundTaskID || output.Stdout != "background-harness" || output.Output != output.Stdout {
+				return localScenarioResult{}, fmt.Errorf("unexpected bash output payload: %s", outputOut)
+			}
+			if output.Offset != 0 || output.NextOffset <= 0 || output.BytesRead != len("background-harness") {
+				return localScenarioResult{}, fmt.Errorf("unexpected bash output offsets: %s", outputOut)
+			}
+			if output.TimedOut || output.TimeoutMS != 2000 || output.NoOutputExpected {
+				return localScenarioResult{}, fmt.Errorf("unexpected bash output wait flags: %s", outputOut)
+			}
+			if output.RawOutputPath == "" {
+				return localScenarioResult{}, fmt.Errorf("missing bash output raw path: %s", outputOut)
+			}
+			if _, err := os.Stat(output.RawOutputPath); err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       strings.Join([]string{startOut, outputOut, "bash background output harness ok"}, "\n"),
+				FinalMessage: "bash background output harness ok",
+				ToolUses:     []string{"bash", "bash_output"},
+				ToolCalls:    2,
+			}, nil
 		},
 	}
 }

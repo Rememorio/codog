@@ -114,6 +114,15 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, grepChunks.ToolCalls)
 	require.Contains(t, grepChunks.Output, "grep chunk harness ok")
 
+	bashBackgroundOutput := findScenario(t, report, "bash_background_output_roundtrip")
+	require.True(t, bashBackgroundOutput.OK)
+	require.Equal(t, "bash", bashBackgroundOutput.Category)
+	require.Equal(t, []string{"bash", "bash_output"}, bashBackgroundOutput.ToolUses)
+	require.Equal(t, 2, bashBackgroundOutput.ToolCalls)
+	require.Equal(t, 0, bashBackgroundOutput.ToolErrorCount)
+	require.Contains(t, bashBackgroundOutput.Output, "background-harness")
+	require.Contains(t, bashBackgroundOutput.Output, "bash background output harness ok")
+
 	powerShellStdout := findScenario(t, report, "powershell_stdout_roundtrip")
 	require.True(t, powerShellStdout.OK)
 	require.Equal(t, "powershell", powerShellStdout.Category)
@@ -471,6 +480,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Equal(t, "file-tools", readFile.Category)
 	require.NotEmpty(t, readFile.Description)
 	require.Contains(t, readFile.ParityRefs, "File tools")
+
+	bashBackgroundOutput := findManifestScenario(t, manifest, "bash_background_output_roundtrip")
+	require.Equal(t, "bash", bashBackgroundOutput.Category)
+	require.Contains(t, bashBackgroundOutput.ParityRefs, "BashOutput tool")
 
 	powerShellStdout := findManifestScenario(t, manifest, "powershell_stdout_roundtrip")
 	require.Equal(t, "powershell", powerShellStdout.Category)
