@@ -301,6 +301,20 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, workflowCategory.Total)
 	require.ElementsMatch(t, []string{"command_skill_template_roundtrip"}, workflowCategory.Scenarios)
 
+	askUserQuestion := findScenario(t, report, "ask_user_question_roundtrip")
+	require.True(t, askUserQuestion.OK)
+	require.Equal(t, "interactive-ui", askUserQuestion.Category)
+	require.Equal(t, []string{"ask_user_question", "ask_user_question"}, askUserQuestion.ToolUses)
+	require.Equal(t, 2, askUserQuestion.ToolCalls)
+	require.Equal(t, 0, askUserQuestion.ToolErrorCount)
+	require.Contains(t, askUserQuestion.Output, `"answer": "beta"`)
+	require.Contains(t, askUserQuestion.Output, `"answer": "yes"`)
+	require.Contains(t, askUserQuestion.Output, "ask user question harness ok")
+	interactiveUI := findCategory(t, report, "interactive-ui")
+	require.True(t, interactiveUI.OK)
+	require.Equal(t, 2, interactiveUI.Total)
+	require.ElementsMatch(t, []string{"ask_user_question_roundtrip", "tui_prompt_completion_roundtrip"}, interactiveUI.Scenarios)
+
 	configPrecedence := findScenario(t, report, "config_precedence_roundtrip")
 	require.True(t, configPrecedence.OK)
 	require.Equal(t, 0, configPrecedence.ToolCalls)
@@ -501,6 +515,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	powerShellStdout := findManifestScenario(t, manifest, "powershell_stdout_roundtrip")
 	require.Equal(t, "powershell", powerShellStdout.Category)
 	require.Contains(t, powerShellStdout.ParityRefs, "PowerShell tool")
+
+	askUserQuestion := findManifestScenario(t, manifest, "ask_user_question_roundtrip")
+	require.Equal(t, "interactive-ui", askUserQuestion.Category)
+	require.Contains(t, askUserQuestion.ParityRefs, "AskUserQuestion tool")
 
 	remoteAPI := findManifestScenario(t, manifest, "remote_api_listener_roundtrip")
 	require.Equal(t, "remote-control", remoteAPI.Category)

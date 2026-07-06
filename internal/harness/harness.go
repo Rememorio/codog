@@ -205,6 +205,7 @@ var scenarioOrder = []string{
 	"plugin_tool_roundtrip",
 	"command_skill_template_roundtrip",
 	"tui_prompt_completion_roundtrip",
+	"ask_user_question_roundtrip",
 	"config_precedence_roundtrip",
 	"provider_routing_roundtrip",
 	"session_resume_jsonl_roundtrip",
@@ -734,6 +735,7 @@ func Run(ctx context.Context) (Report, error) {
 		},
 		commandSkillTemplateScenario(),
 		tuiPromptCompletionScenario(),
+		askUserQuestionScenario(),
 		configPrecedenceScenario(),
 		providerRoutingScenario(),
 		sessionResumeJSONLRoundtripScenario(),
@@ -1135,6 +1137,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "enterprise policy and updater", RequiredRefs: []string{"Enterprise policy", "Audit events", "Signed updater"}},
 	{Capability: "plugins and marketplace", RequiredRefs: []string{"Plugin tools", "Plugin lifecycle", "Plugin manifest loading", "External plugin lifecycle"}},
 	{Capability: "TUI and interactive rendering", RequiredRefs: []string{"Bubble Tea TUI", "Interactive rendering"}},
+	{Capability: "interactive question handling", RequiredRefs: []string{"AskUserQuestion tool", "Interactive questions"}},
 }
 
 func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
@@ -1376,6 +1379,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "interactive-ui",
 		Description: "Renders the Bubble Tea prompt model, completes a slash command, and captures Ctrl+S submission state without a live terminal.",
 		ParityRefs:  []string{"Bubble Tea TUI", "Interactive rendering", "Slash commands"},
+	},
+	"ask_user_question_roundtrip": {
+		Category:    "interactive-ui",
+		Description: "Asks a user question through the tool registry and resolves choices plus defaults.",
+		ParityRefs:  []string{"AskUserQuestion tool", "Interactive questions", "Tool result roundtrip"},
 	},
 	"auto_compact_triggered": {
 		Category:    "session-compaction",
@@ -2038,6 +2046,69 @@ func tuiPromptCompletionScenario() scenario {
 				FinalMessage: "tui prompt completion harness ok",
 				RequestCount: 1,
 				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+func askUserQuestionScenario() scenario {
+	return scenario{
+		name: "ask_user_question_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			questionIn := strings.NewReader("2\n\n")
+			var questionOut bytes.Buffer
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{
+				QuestionIn:  questionIn,
+				QuestionOut: &questionOut,
+			})
+			choiceOut, err := registry.Execute(ctx, "AskUserQuestionTool", json.RawMessage(`{
+				"question":"Pick a parity lane",
+				"choices":["alpha","beta"],
+				"default":"alpha"
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var choice struct {
+				Question string `json:"question"`
+				Answer   string `json:"answer"`
+			}
+			if err := json.Unmarshal([]byte(choiceOut), &choice); err != nil {
+				return localScenarioResult{}, err
+			}
+			if choice.Question != "Pick a parity lane" || choice.Answer != "beta" {
+				return localScenarioResult{}, fmt.Errorf("unexpected choice answer: %s", choiceOut)
+			}
+
+			defaultOut, err := registry.Execute(ctx, "ask_user_question", json.RawMessage(`{
+				"question":"Continue with default?",
+				"options":["yes","no"],
+				"default":"yes"
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var defaultAnswer struct {
+				Question string `json:"question"`
+				Answer   string `json:"answer"`
+			}
+			if err := json.Unmarshal([]byte(defaultOut), &defaultAnswer); err != nil {
+				return localScenarioResult{}, err
+			}
+			if defaultAnswer.Question != "Continue with default?" || defaultAnswer.Answer != "yes" {
+				return localScenarioResult{}, fmt.Errorf("unexpected default answer: %s", defaultOut)
+			}
+			rendered := questionOut.String()
+			for _, expected := range []string{"Pick a parity lane", "1. alpha", "2. beta", "Default: alpha", "Continue with default?", "1. yes"} {
+				if !strings.Contains(rendered, expected) {
+					return localScenarioResult{}, fmt.Errorf("question prompt missing %q: %s", expected, rendered)
+				}
+			}
+			return localScenarioResult{
+				Output:       strings.Join([]string{choiceOut, defaultOut, rendered, "ask user question harness ok"}, "\n"),
+				FinalMessage: "ask user question harness ok",
+				ToolUses:     []string{"ask_user_question", "ask_user_question"},
+				ToolCalls:    2,
 			}, nil
 		},
 	}
