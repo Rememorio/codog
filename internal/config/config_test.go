@@ -1134,6 +1134,24 @@ func TestLoadAnthropicReasoningEffortAlias(t *testing.T) {
 	require.Equal(t, "low", cfg.ReasoningEffort)
 }
 
+func TestLoadThinkingFlagMapsReasoningEffort(t *testing.T) {
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json"), Thinking: "enabled"})
+	require.NoError(t, err)
+	require.Equal(t, "auto", cfg.ReasoningEffort)
+
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json"), Thinking: "adaptive"})
+	require.NoError(t, err)
+	require.Equal(t, "auto", cfg.ReasoningEffort)
+
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json"), Thinking: "disabled"})
+	require.NoError(t, err)
+	require.Equal(t, "disabled", cfg.ReasoningEffort)
+
+	_, _, err = LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json"), Thinking: "maybe"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid --thinking")
+}
+
 func TestLoadClaudeConfigHomeAliases(t *testing.T) {
 	codogHome := filepath.Join(t.TempDir(), "codog-home")
 	claudeHome := filepath.Join(t.TempDir(), "claude-home")

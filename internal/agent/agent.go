@@ -16446,11 +16446,11 @@ func normalizeLanguageName(language string) (string, error) {
 	return language, nil
 }
 
-var availableEfforts = []string{"auto", "low", "medium", "high"}
+var availableEfforts = []string{"auto", "low", "medium", "high", "disabled"}
 
 const (
-	effortUsage    = "codog effort [status|list|set|clear] [auto|low|medium|high] [--target user|project|local] [--path PATH] [--output-format text|json]"
-	reasoningUsage = "codog reasoning [status|list|set|clear] [auto|low|medium|high] [--target user|project|local] [--path PATH] [--output-format text|json]"
+	effortUsage    = "codog effort [status|list|set|clear] [auto|low|medium|high|disabled] [--target user|project|local] [--path PATH] [--output-format text|json]"
+	reasoningUsage = "codog reasoning [status|list|set|clear] [auto|low|medium|high|disabled] [--target user|project|local] [--path PATH] [--output-format text|json]"
 )
 
 type effortRequest struct {
@@ -16696,7 +16696,7 @@ func validateEffort(level string, command string) error {
 	return invalidFlagValueError{
 		Flag:    command,
 		Value:   level,
-		Message: command + " level must be one of auto, low, medium, or high",
+		Message: command + " level must be one of auto, low, medium, high, or disabled",
 		Usage:   effortCommandUsage(command),
 	}
 }
@@ -54033,7 +54033,7 @@ func (a *App) systemPromptForInput(input string) string {
 		builder.WriteString(html.EscapeString(language))
 		builder.WriteString("</codog_interface_language>")
 	}
-	if effort := strings.TrimSpace(a.Config.ReasoningEffort); effort != "" {
+	if effort := strings.TrimSpace(a.Config.ReasoningEffort); effort != "" && !strings.EqualFold(effort, "disabled") {
 		builder.WriteString("\n\n<codog_reasoning_effort>")
 		builder.WriteString(effectiveEffort(effort))
 		builder.WriteString("</codog_reasoning_effort>")
@@ -54427,6 +54427,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.CWD, "directory", base.CWD, "alias for --cwd")
 	flags.StringVar(&base.Model, "model", base.Model, "model name")
 	flags.StringVar(&base.FallbackModel, "fallback-model", base.FallbackModel, "fallback model when the primary model is overloaded")
+	flags.StringVar(&base.Thinking, "thinking", base.Thinking, "thinking mode: enabled, adaptive, or disabled")
 	flags.StringVar(&base.BaseURL, "base-url", base.BaseURL, "Anthropic-compatible base URL")
 	flags.StringVar(&base.SystemPrompt, "system-prompt", base.SystemPrompt, "override the base system prompt")
 	flags.StringVar(&base.SystemPromptFile, "system-prompt-file", base.SystemPromptFile, "read the base system prompt from a file")
@@ -54860,6 +54861,8 @@ func duplicateTrackedGlobalFlagKey(arg string) (string, bool) {
 		return "--model", true
 	case "--fallback-model", "-fallback-model":
 		return "--fallback-model", true
+	case "--thinking", "-thinking":
+		return "--thinking", true
 	case "--resume", "-resume", "-r":
 		return "--resume", true
 	case "--from-pr", "-from-pr":
@@ -54881,6 +54884,8 @@ func duplicateFlagUsage(flag string) string {
 		return "codog --model MODEL COMMAND"
 	case "--fallback-model":
 		return "codog --fallback-model MODEL COMMAND"
+	case "--thinking":
+		return "codog --thinking enabled|adaptive|disabled COMMAND"
 	case "--output-format":
 		return "codog --output-format text|json COMMAND"
 	case "--permission-mode":
@@ -54899,7 +54904,7 @@ func duplicateFlagUsage(flag string) string {
 func globalFlagConsumesNext(arg string) bool {
 	switch arg {
 	case "--config", "-config", "--settings", "-settings", "--cwd", "-cwd", "-C", "--C", "--directory", "-directory",
-		"--model", "-model", "--fallback-model", "-fallback-model", "--base-url", "-base-url", "--system-prompt", "-system-prompt",
+		"--model", "-model", "--fallback-model", "-fallback-model", "--thinking", "-thinking", "--base-url", "-base-url", "--system-prompt", "-system-prompt",
 		"--system-prompt-file", "-system-prompt-file", "--append-system-prompt", "-append-system-prompt",
 		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
 		"--session-id", "-session-id", "--name", "-name", "--resume", "-resume", "-r",
@@ -54943,7 +54948,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--fallback-model", "-fallback-model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--add-dir", "-add-dir", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--fallback-model", "-fallback-model", "--thinking", "-thinking", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--add-dir", "-add-dir", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
@@ -56829,6 +56834,7 @@ Usage:
 Flags:
   --model NAME
   --fallback-model NAME
+  --thinking enabled|adaptive|disabled
   --cwd PATH | -C PATH | --directory PATH
   --base-url URL
   --system-prompt TEXT

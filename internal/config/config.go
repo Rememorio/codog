@@ -1203,6 +1203,7 @@ type FlagOverrides struct {
 	DeepLinkLastFetchMS            int64
 	Model                          string
 	FallbackModel                  string
+	Thinking                       string
 	BaseURL                        string
 	SystemPrompt                   string
 	SystemPromptFile               string
@@ -3066,6 +3067,13 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 		cfg.ProviderFallbacks.Primary = cfg.Model
 		cfg.ProviderFallbacks.Fallbacks = []string{overrides.FallbackModel}
 	}
+	if overrides.Thinking != "" {
+		effort, err := reasoningEffortFromThinkingMode(overrides.Thinking)
+		if err != nil {
+			return err
+		}
+		cfg.ReasoningEffort = effort
+	}
 	if overrides.BaseURL != "" {
 		cfg.BaseURL = overrides.BaseURL
 	}
@@ -3148,6 +3156,17 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 		cfg.Temperature = &value
 	}
 	return nil
+}
+
+func reasoningEffortFromThinkingMode(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "enabled", "adaptive":
+		return "auto", nil
+	case "disabled":
+		return "disabled", nil
+	default:
+		return "", fmt.Errorf("invalid --thinking %q; expected enabled, adaptive, or disabled", value)
+	}
 }
 
 func loadFlagMCPServers(values []string) (map[string]MCPServerConfig, error) {
