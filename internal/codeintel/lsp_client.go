@@ -185,6 +185,14 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return a workspace edit preview for renaming the symbol at a document position.",
 	},
 	{
+		Name:             "code-action",
+		Method:           "textDocument/codeAction",
+		Aliases:          []string{"code_action", "codeAction", "quickfix", "quick-fix", "quick_fix", "fixit", "fix-it"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return code actions and quick fixes for a document position.",
+	},
+	{
 		Name:             "completion",
 		Method:           "textDocument/completion",
 		Aliases:          []string{"completions", "complete"},
@@ -554,6 +562,12 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 			return "", nil, errors.New("new_name is required for lsp rename")
 		}
 		return "textDocument/rename", map[string]any{"textDocument": textDocument, "position": position, "newName": newName}, nil
+	case "code-action":
+		return "textDocument/codeAction", map[string]any{
+			"textDocument": textDocument,
+			"range":        map[string]any{"start": position, "end": position},
+			"context":      map[string]any{"diagnostics": []any{}},
+		}, nil
 	case "completion":
 		return "textDocument/completion", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "document-highlight":

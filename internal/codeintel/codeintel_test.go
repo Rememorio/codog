@@ -304,6 +304,22 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), "func Start()")
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "code_action", Path: "main.go", Line: 2, Character: 5})
+	require.NoError(t, err)
+	require.Equal(t, "code-action", result.Action)
+	require.Equal(t, "textDocument/codeAction", result.Method)
+	require.NotNil(t, result.Result)
+	var codeActions []struct {
+		Title string `json:"title"`
+		Kind  string `json:"kind"`
+	}
+	encoded, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encoded, &codeActions))
+	require.Len(t, codeActions, 1)
+	require.Equal(t, "Apply fake fix", codeActions[0].Title)
+	require.Equal(t, "quickfix", codeActions[0].Kind)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "diagnostics", Path: "main.go"})
 	require.NoError(t, err)
 	require.Equal(t, "diagnostics", result.Action)
@@ -342,6 +358,10 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"rename_symbol":       "rename",
 		"renameSymbol":        "rename",
 		"symbol-rename":       "rename",
+		"code_action":         "code-action",
+		"codeAction":          "code-action",
+		"quickfix":            "code-action",
+		"quick-fix":           "code-action",
 		"completions":         "completion",
 		"document_highlight":  "document-highlight",
 		"documentHighlight":   "document-highlight",
@@ -450,6 +470,22 @@ func TestFakeLSPServer(t *testing.T) {
 					}},
 				},
 			})})
+		case "textDocument/codeAction":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"title": "Apply fake fix",
+				"kind":  "quickfix",
+				"edit": map[string]any{
+					"changes": map[string]any{
+						currentURI: []map[string]any{{
+							"range": map[string]any{
+								"start": map[string]any{"line": 2, "character": 5},
+								"end":   map[string]any{"line": 2, "character": 10},
+							},
+							"newText": "Start",
+						}},
+					},
+				},
+			}})})
 		case "textDocument/formatting":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
 				"range": map[string]any{

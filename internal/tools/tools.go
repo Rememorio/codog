@@ -5767,7 +5767,7 @@ func (LSPTool) Definition() anthropic.ToolDefinition {
 			"properties": map[string]any{
 				"action": map[string]any{
 					"type": "string",
-					"enum": []string{"symbols", "document_symbols", "references", "find_references", "diagnostics", "definition", "goto_definition", "declaration", "goto_declaration", "implementation", "goto_implementation", "type_definition", "goto_type_definition", "rename", "rename_symbol", "hover", "completion", "completions", "document_highlight", "signature_help", "format", "formatting"},
+					"enum": []string{"symbols", "document_symbols", "references", "find_references", "diagnostics", "definition", "goto_definition", "declaration", "goto_declaration", "implementation", "goto_implementation", "type_definition", "goto_type_definition", "rename", "rename_symbol", "code_action", "quickfix", "hover", "completion", "completions", "document_highlight", "signature_help", "format", "formatting"},
 				},
 				"path":      map[string]any{"type": "string"},
 				"line":      map[string]any{"type": "integer", "minimum": 0},
@@ -5825,6 +5825,9 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			"reason": "lsp_server_unavailable",
 			"error":  err.Error(),
 		}
+	}
+	if lspActionRequiresServer(action) {
+		return "", fmt.Errorf("lsp action %q requires a configured LSP server", action)
 	}
 	switch action {
 	case "symbols":
@@ -5913,6 +5916,15 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		return pretty(staticLSPToolReport(action, fallback, map[string]any{"diagnostics": diagnostics, "total": len(diagnostics)})), nil
 	default:
 		return "", fmt.Errorf("unknown lsp action %q", payload.Action)
+	}
+}
+
+func lspActionRequiresServer(action string) bool {
+	switch action {
+	case "declaration", "implementation", "type-definition", "rename", "code-action", "document-highlight", "signature-help":
+		return true
+	default:
+		return false
 	}
 }
 

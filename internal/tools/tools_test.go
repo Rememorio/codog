@@ -2761,6 +2761,7 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	properties := definition.InputSchema["properties"].(map[string]any)
 	actionSchema := properties["action"].(map[string]any)
 	require.Contains(t, actionSchema["enum"], "rename")
+	require.Contains(t, actionSchema["enum"], "code_action")
 	require.Contains(t, actionSchema["enum"], "implementation")
 	require.Contains(t, properties, "new_name")
 
@@ -2799,6 +2800,10 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"hover","path":"demo.go","line":4,"character":6,"use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"code_action","path":"demo.go","line":4,"character":6}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires a configured LSP server")
 
 	hoverOut, err := tool.Execute(context.Background(), []byte(`{"action":"hover","path":"demo.go","line":4,"character":6}`))
 	require.NoError(t, err)
