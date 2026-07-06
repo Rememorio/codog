@@ -31,6 +31,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/customcommands"
+	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/oauth"
@@ -211,6 +212,7 @@ var scenarioOrder = []string{
 	"plugin_tool_roundtrip",
 	"command_skill_template_roundtrip",
 	"onboarding_bookmarks_roundtrip",
+	"memory_lifecycle_roundtrip",
 	"tui_prompt_completion_roundtrip",
 	"ask_user_question_roundtrip",
 	"runtime_output_tools_roundtrip",
@@ -752,6 +754,7 @@ func Run(ctx context.Context) (Report, error) {
 		},
 		commandSkillTemplateScenario(),
 		onboardingBookmarksScenario(),
+		memoryLifecycleScenario(),
 		tuiPromptCompletionScenario(),
 		askUserQuestionScenario(),
 		runtimeOutputToolsScenario(),
@@ -1150,7 +1153,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "bash and shell safety", RequiredRefs: []string{"Bash tool", "BashOutput tool", "KillBash tool", "Permission prompts", "Output truncation"}},
 	{Capability: "permissions and sandbox", RequiredRefs: []string{"Permission enforcement", "Workspace-write permissions", "Sandbox", "Permission safety", "Workspace scope denial"}},
 	{Capability: "policy and approval control plane", RequiredRefs: []string{"Policy evaluation", "Approval tokens", "Delegation audit", "Replay denial"}},
-	{Capability: "sessions and resume", RequiredRefs: []string{"Session JSONL", "Resume", "Session context management"}},
+	{Capability: "sessions, resume, and project memory", RequiredRefs: []string{"Session JSONL", "Resume", "Session context management", "Project memory"}},
 	{Capability: "slash commands and custom workflows", RequiredRefs: []string{"Slash commands", "Skills", "Templates", "Project workflow surfaces"}},
 	{Capability: "hooks", RequiredRefs: []string{"Hooks", "PreToolUse", "PostToolUse hooks", "UserPromptSubmit", "Stop"}},
 	{Capability: "configuration and provider routing", RequiredRefs: []string{"Configuration", "Precedence rules", "Provider routing", "OpenAI-compatible APIs"}},
@@ -1416,6 +1419,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "command-workflows",
 		Description: "Inspects workspace onboarding readiness and persists bookmark lifecycle state for resumable workflows.",
 		ParityRefs:  []string{"Slash commands", "Onboarding", "Bookmarks", "Session context management", "Workspace state"},
+	},
+	"memory_lifecycle_roundtrip": {
+		Category:    "context-management",
+		Description: "Discovers, appends, searches, selects, and resets project memory instruction files.",
+		ParityRefs:  []string{"Project memory", "Session context management", "Slash commands", "Workspace state"},
 	},
 	"tui_prompt_completion_roundtrip": {
 		Category:    "interactive-ui",
@@ -2205,6 +2213,122 @@ func onboardingBookmarksScenario() scenario {
 				Output:       string(data),
 				FinalMessage: "onboarding bookmarks harness ok",
 				RequestCount: 2,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+func memoryLifecycleScenario() scenario {
+	return scenario{
+		name: "memory_lifecycle_roundtrip",
+		runLocal: func(_ context.Context, workspace string) (localScenarioResult, error) {
+			if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Prefer focused tests.\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			initial, err := memory.BuildReport(workspace)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initial.Kind != "memory" || initial.Action != "list" || initial.InstructionFiles != 1 || initial.Files[0].Name != "AGENTS.md" {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial memory report: %#v", initial)
+			}
+
+			appendReport, err := memory.Append(workspace, "Remember to cite verification commands.")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if appendReport.Kind != "memory" || appendReport.Action != "add" || appendReport.Bytes == 0 {
+				return localScenarioResult{}, fmt.Errorf("unexpected memory append report: %#v", appendReport)
+			}
+
+			search, err := memory.Search(workspace, "verification commands", 5)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if search.MatchCount != 1 || len(search.Matches) != 1 || search.Matches[0].Name != "AGENTS.md" {
+				return localScenarioResult{}, fmt.Errorf("unexpected memory search report: %#v", search)
+			}
+
+			show, err := memory.Show(workspace, "AGENTS.md")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if show.File.Name != "AGENTS.md" || !strings.Contains(show.Body, "Remember to cite verification commands.") {
+				return localScenarioResult{}, fmt.Errorf("unexpected memory show report: %#v", show)
+			}
+
+			selection, err := memory.Select(workspace, ".codog/instructions.md")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if selection.Kind != "memory" || selection.OptionCount < 2 || !strings.HasSuffix(filepath.ToSlash(selection.Selected), ".codog/instructions.md") {
+				return localScenarioResult{}, fmt.Errorf("unexpected memory selection report: %#v", selection)
+			}
+
+			ensured, err := memory.Ensure(workspace, ".codog/instructions.md")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if ensured.Kind != "memory" || ensured.Action != "ensure" || !ensured.Created {
+				return localScenarioResult{}, fmt.Errorf("unexpected memory ensure report: %#v", ensured)
+			}
+
+			reset, err := memory.Reset(workspace, memory.ResetOptions{Target: "AGENTS.md", Confirm: true})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if reset.Kind != "memory" || reset.ResetCount != 1 || reset.Files[0].Name != "AGENTS.md" || reset.Files[0].BytesRemoved == 0 {
+				return localScenarioResult{}, fmt.Errorf("unexpected memory reset report: %#v", reset)
+			}
+			cleared, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md"))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if len(cleared) != 0 {
+				return localScenarioResult{}, fmt.Errorf("expected AGENTS.md to be reset, got %q", string(cleared))
+			}
+
+			report := map[string]any{
+				"kind": "memory_lifecycle",
+				"list": map[string]any{
+					"instruction_files": initial.InstructionFiles,
+					"name":              initial.Files[0].Name,
+				},
+				"append": map[string]any{
+					"bytes": appendReport.Bytes,
+					"path":  filepath.ToSlash(appendReport.Path),
+				},
+				"search": map[string]any{
+					"query":       search.Query,
+					"match_count": search.MatchCount,
+					"line":        search.Matches[0].Line,
+				},
+				"show": map[string]any{
+					"name":     show.File.Name,
+					"contains": strings.Contains(show.Body, "Remember to cite verification commands."),
+				},
+				"select": map[string]any{
+					"option_count": selection.OptionCount,
+					"selected":     filepath.ToSlash(selection.Selected),
+				},
+				"ensure": map[string]any{
+					"created": ensured.Created,
+					"path":    filepath.ToSlash(ensured.Path),
+				},
+				"reset": map[string]any{
+					"reset_count":   reset.ResetCount,
+					"bytes_removed": reset.Files[0].BytesRemoved,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "memory lifecycle harness ok",
+				RequestCount: 6,
 				MessageCount: 1,
 			}, nil
 		},
