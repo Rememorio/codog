@@ -396,10 +396,11 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":34,"method":"lsp/query","params":{"language":"go","action":"code_action_resolve","path":"main.go","line":2,"character":5,"query":"Bridge lazy fix"}}`,
 		`{"jsonrpc":"2.0","id":35,"method":"lsp/query","params":{"language":"go","action":"document_link_resolve","path":"main.go","line":2,"character":3}}`,
 		`{"jsonrpc":"2.0","id":36,"method":"lsp/query","params":{"language":"go","action":"inlay_hint_resolve","path":"main.go","line":2,"character":10}}`,
-		`{"jsonrpc":"2.0","id":37,"method":"lsp/status","params":{"language":"go"}}`,
-		`{"jsonrpc":"2.0","id":38,"method":"lsp/list"}`,
-		`{"jsonrpc":"2.0","id":39,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol_resolve","query":"Build"}}`,
-		`{"jsonrpc":"2.0","id":40,"method":"lsp/stop","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":37,"method":"lsp/query","params":{"language":"go","action":"inline_value","path":"main.go","line":2,"character":10,"query":"frame-1"}}`,
+		`{"jsonrpc":"2.0","id":38,"method":"lsp/status","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":39,"method":"lsp/list"}`,
+		`{"jsonrpc":"2.0","id":40,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol_resolve","query":"Build"}}`,
+		`{"jsonrpc":"2.0","id":41,"method":"lsp/stop","params":{"language":"go"}}`,
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
@@ -516,6 +517,9 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"action":"inlay-hint-resolve"`)
 	require.Contains(t, out.String(), `"method":"inlayHint/resolve"`)
 	require.Contains(t, out.String(), `"tooltip":"bridge resolved inlay hint"`)
+	require.Contains(t, out.String(), `"action":"inline-value"`)
+	require.Contains(t, out.String(), `"method":"textDocument/inlineValue"`)
+	require.Contains(t, out.String(), `"text":"bridgeCount = 1"`)
 	require.Contains(t, out.String(), `"kind":"lsp_status"`)
 	require.Contains(t, out.String(), `"kind":"lsp_list"`)
 	require.Contains(t, out.String(), `"kind":"lsp_stop"`)
@@ -865,6 +869,14 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 			_ = json.Unmarshal(msg.Params, &hint)
 			hint["tooltip"] = "bridge resolved inlay hint"
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": hint})
+		case "textDocument/inlineValue":
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 5},
+					"end":   map[string]any{"line": 2, "character": 10},
+				},
+				"text": "bridgeCount = 1",
+			}}})
 		case "textDocument/linkedEditingRange":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
 				"ranges": []map[string]any{

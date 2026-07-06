@@ -395,6 +395,14 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Resolve an inlay hint selected from hints around a document position.",
 	},
 	{
+		Name:             "inline-value",
+		Method:           "textDocument/inlineValue",
+		Aliases:          []string{"inline_value", "inlineValue", "inline-values", "inline_values"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return debugger inline values around a stopped document position.",
+	},
+	{
 		Name:             "linked-editing-range",
 		Method:           "textDocument/linkedEditingRange",
 		Aliases:          []string{"linked_editing_range", "linkedEditingRange", "linked-editing", "linked_editing"},
@@ -1498,6 +1506,22 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		start := map[string]any{"line": line, "character": 0}
 		end := map[string]any{"line": line, "character": max(0, character)}
 		return "textDocument/inlayHint", map[string]any{"textDocument": textDocument, "range": map[string]any{"start": start, "end": end}}, nil
+	case "inline-value":
+		line = max(0, line)
+		character = max(0, character)
+		start := map[string]any{"line": line, "character": 0}
+		position := map[string]any{"line": line, "character": character}
+		valueRange := map[string]any{"start": start, "end": position}
+		stoppedLocation := map[string]any{"start": position, "end": position}
+		frameID := strings.TrimSpace(query)
+		if frameID == "" {
+			frameID = "codog"
+		}
+		return "textDocument/inlineValue", map[string]any{
+			"textDocument": textDocument,
+			"range":        valueRange,
+			"context":      map[string]any{"frameId": frameID, "stoppedLocation": stoppedLocation},
+		}, nil
 	case "linked-editing-range":
 		return "textDocument/linkedEditingRange", map[string]any{"textDocument": textDocument, "position": position}, nil
 	case "moniker":
