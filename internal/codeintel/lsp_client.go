@@ -310,6 +310,14 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return completion candidates at a document position.",
 	},
 	{
+		Name:             "completion-item-resolve",
+		Method:           "completionItem/resolve",
+		Aliases:          []string{"completion_resolve", "completionItemResolve", "resolve_completion", "resolveCompletion"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Resolve a completion item selected from completion candidates at a document position.",
+	},
+	{
 		Name:             "document-highlight",
 		Method:           "textDocument/documentHighlight",
 		Aliases:          []string{"document_highlight", "documentHighlight", "highlights", "highlight"},
@@ -666,6 +674,20 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 			Result:   decoded,
 		}, nil
 	}
+	if action == "completion-item-resolve" {
+		decoded, err := runLSPCompletionItemResolveQuery(client, uri, request.Line, request.Character, request.Query)
+		if err != nil {
+			return LSPQueryResult{}, err
+		}
+		return LSPQueryResult{
+			Kind:     "lsp_query",
+			Language: language,
+			Action:   action,
+			Method:   "completionItem/resolve",
+			Path:     rel,
+			Result:   decoded,
+		}, nil
+	}
 	if strings.HasPrefix(action, "call-hierarchy") || action == "prepare-call-hierarchy" {
 		method, decoded, err := runLSPHierarchyQuery(client, hierarchyQuerySpec{
 			Action:        action,
@@ -964,6 +986,82 @@ func runLSPCodeLensResolveQuery(client *lspClient, uri string, line int, charact
 		resolved = selected
 	}
 	return map[string]any{"lenses": lenses, "selected": selected, "resolved": resolved}, nil
+}
+
+func runLSPCompletionItemResolveQuery(client *lspClient, uri string, line int, character int, query string) (any, error) {
+	position := map[string]any{"line": max(0, line), "character": max(0, character)}
+	textDocument := map[string]any{"uri": uri}
+	raw, err := client.request("textDocument/completion", map[string]any{
+		"textDocument": textDocument,
+		"position":     position,
+		"context":      map[string]any{"triggerKind": 1},
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, err := decodeLSPCompletionItems(raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return map[string]any{"items": items, "resolved": nil}, nil
+	}
+	selected := selectLSPCompletionItem(items, query)
+	raw, err = client.request("completionItem/resolve", selected)
+	if err != nil {
+		return nil, err
+	}
+	var resolved any
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &resolved); err != nil {
+			return nil, err
+		}
+	}
+	if resolved == nil {
+		resolved = selected
+	}
+	return map[string]any{"items": items, "selected": selected, "resolved": resolved}, nil
+}
+
+func decodeLSPCompletionItems(raw json.RawMessage) ([]map[string]any, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return []map[string]any{}, nil
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(raw, &items); err == nil {
+		return items, nil
+	}
+	var list struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, err
+	}
+	if list.Items == nil {
+		return []map[string]any{}, nil
+	}
+	return list.Items, nil
+}
+
+func selectLSPCompletionItem(items []map[string]any, query string) map[string]any {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return items[0]
+	}
+	for _, item := range items {
+		label, _ := item["label"].(string)
+		if strings.EqualFold(label, query) {
+			return item
+		}
+	}
+	lowerQuery := strings.ToLower(query)
+	for _, item := range items {
+		label, _ := item["label"].(string)
+		if strings.Contains(strings.ToLower(label), lowerQuery) {
+			return item
+		}
+	}
+	return items[0]
 }
 
 func (c *lspClient) request(method string, params any) (json.RawMessage, error) {

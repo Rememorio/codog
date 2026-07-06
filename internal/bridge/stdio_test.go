@@ -381,20 +381,21 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":19,"method":"lsp/query","params":{"language":"go","action":"color_presentation","path":"main.go","line":2,"character":3}}`,
 		`{"jsonrpc":"2.0","id":20,"method":"lsp/query","params":{"language":"go","action":"code_lens","path":"main.go"}}`,
 		`{"jsonrpc":"2.0","id":21,"method":"lsp/query","params":{"language":"go","action":"code_lens_resolve","path":"main.go","line":2,"character":3}}`,
-		`{"jsonrpc":"2.0","id":22,"method":"lsp/query","params":{"language":"go","action":"range_format","path":"main.go","line":2,"character":14}}`,
-		`{"jsonrpc":"2.0","id":23,"method":"lsp/query","params":{"language":"go","action":"on_type_format","path":"main.go","line":2,"character":14,"query":"}"}}`,
-		`{"jsonrpc":"2.0","id":24,"method":"lsp/query","params":{"language":"go","action":"will_save","path":"main.go"}}`,
-		`{"jsonrpc":"2.0","id":25,"method":"lsp/query","params":{"language":"go","action":"inlay_hint","path":"main.go","line":2,"character":12}}`,
-		`{"jsonrpc":"2.0","id":26,"method":"lsp/query","params":{"language":"go","action":"linked_editing_range","path":"main.go","line":2,"character":5}}`,
-		`{"jsonrpc":"2.0","id":27,"method":"lsp/query","params":{"language":"go","action":"moniker","path":"main.go","line":2,"character":5}}`,
-		`{"jsonrpc":"2.0","id":28,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens","path":"main.go"}}`,
-		`{"jsonrpc":"2.0","id":29,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens_range","path":"main.go","line":2,"character":12}}`,
-		`{"jsonrpc":"2.0","id":30,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol","query":"Build"}}`,
-		`{"jsonrpc":"2.0","id":31,"method":"lsp/query","params":{"language":"go","action":"document_diagnostic","path":"main.go"}}`,
-		`{"jsonrpc":"2.0","id":32,"method":"lsp/query","params":{"language":"go","action":"workspace_diagnostic"}}`,
-		`{"jsonrpc":"2.0","id":33,"method":"lsp/status","params":{"language":"go"}}`,
-		`{"jsonrpc":"2.0","id":34,"method":"lsp/list"}`,
-		`{"jsonrpc":"2.0","id":35,"method":"lsp/stop","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":22,"method":"lsp/query","params":{"language":"go","action":"completion_resolve","path":"main.go","line":2,"character":5,"query":"BridgeWidget"}}`,
+		`{"jsonrpc":"2.0","id":23,"method":"lsp/query","params":{"language":"go","action":"range_format","path":"main.go","line":2,"character":14}}`,
+		`{"jsonrpc":"2.0","id":24,"method":"lsp/query","params":{"language":"go","action":"on_type_format","path":"main.go","line":2,"character":14,"query":"}"}}`,
+		`{"jsonrpc":"2.0","id":25,"method":"lsp/query","params":{"language":"go","action":"will_save","path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":26,"method":"lsp/query","params":{"language":"go","action":"inlay_hint","path":"main.go","line":2,"character":12}}`,
+		`{"jsonrpc":"2.0","id":27,"method":"lsp/query","params":{"language":"go","action":"linked_editing_range","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":28,"method":"lsp/query","params":{"language":"go","action":"moniker","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":29,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens","path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":30,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens_range","path":"main.go","line":2,"character":12}}`,
+		`{"jsonrpc":"2.0","id":31,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol","query":"Build"}}`,
+		`{"jsonrpc":"2.0","id":32,"method":"lsp/query","params":{"language":"go","action":"document_diagnostic","path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":33,"method":"lsp/query","params":{"language":"go","action":"workspace_diagnostic"}}`,
+		`{"jsonrpc":"2.0","id":34,"method":"lsp/status","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":35,"method":"lsp/list"}`,
+		`{"jsonrpc":"2.0","id":36,"method":"lsp/stop","params":{"language":"go"}}`,
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
@@ -463,6 +464,9 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"action":"code-lens-resolve"`)
 	require.Contains(t, out.String(), `"method":"codeLens/resolve"`)
 	require.Contains(t, out.String(), `"title":"Run bridge lens (resolved)"`)
+	require.Contains(t, out.String(), `"action":"completion-item-resolve"`)
+	require.Contains(t, out.String(), `"method":"completionItem/resolve"`)
+	require.Contains(t, out.String(), `"detail":"func BridgeWidget() Widget"`)
 	require.Contains(t, out.String(), `"action":"range-format"`)
 	require.Contains(t, out.String(), `"method":"textDocument/rangeFormatting"`)
 	require.Contains(t, out.String(), `func bridgeRangeFormatted()`)
@@ -596,6 +600,20 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 			})
 		case "textDocument/hover":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"contents": map[string]any{"kind": "markdown", "value": "bridge fake hover"}}})
+		case "textDocument/completion":
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+				"isIncomplete": false,
+				"items": []map[string]any{
+					{"label": "BridgeWidget", "kind": 3, "data": map[string]any{"id": "bridge-completion-1"}},
+					{"label": "BridgeOther", "kind": 3, "data": map[string]any{"id": "bridge-completion-2"}},
+				},
+			}})
+		case "completionItem/resolve":
+			var item map[string]any
+			_ = json.Unmarshal(msg.Params, &item)
+			item["detail"] = "func BridgeWidget() Widget"
+			item["documentation"] = map[string]any{"kind": "markdown", "value": "Constructs a bridge widget."}
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": item})
 		case "textDocument/rename":
 			var params struct {
 				NewName string `json:"newName"`

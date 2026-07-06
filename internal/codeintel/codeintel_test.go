@@ -287,6 +287,27 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.True(t, result.Changed)
 	require.Contains(t, result.Content, "func saved()")
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "completion_resolve", Path: "main.go", Line: 2, Character: 5, Query: "BuildWidget"})
+	require.NoError(t, err)
+	require.Equal(t, "completion-item-resolve", result.Action)
+	require.Equal(t, "completionItem/resolve", result.Method)
+	var resolvedCompletion struct {
+		Selected struct {
+			Label string `json:"label"`
+		} `json:"selected"`
+		Resolved struct {
+			Label         string `json:"label"`
+			Detail        string `json:"detail"`
+			Documentation any    `json:"documentation"`
+		} `json:"resolved"`
+	}
+	encodedResolvedCompletion, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedResolvedCompletion, &resolvedCompletion))
+	require.Equal(t, "BuildWidget", resolvedCompletion.Selected.Label)
+	require.Equal(t, "BuildWidget", resolvedCompletion.Resolved.Label)
+	require.Equal(t, "func BuildWidget() Widget", resolvedCompletion.Resolved.Detail)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "implementation", Path: "main.go", Line: 2, Character: 5})
 	require.NoError(t, err)
 	require.Equal(t, "implementation", result.Action)
@@ -811,6 +832,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"codeLens":                  "code-lens",
 		"code_lens_resolve":         "code-lens-resolve",
 		"codeLensResolve":           "code-lens-resolve",
+		"completion_resolve":        "completion-item-resolve",
+		"completionItemResolve":     "completion-item-resolve",
+		"resolve_completion":        "completion-item-resolve",
 		"prepare_call_hierarchy":    "prepare-call-hierarchy",
 		"prepareCallHierarchy":      "prepare-call-hierarchy",
 		"call_hierarchy":            "prepare-call-hierarchy",
@@ -979,6 +1003,20 @@ func TestFakeLSPServer(t *testing.T) {
 			})})
 		case "textDocument/hover":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"contents": map[string]any{"kind": "markdown", "value": "fake hover"}})})
+		case "textDocument/completion":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+				"isIncomplete": false,
+				"items": []map[string]any{
+					{"label": "BuildWidget", "kind": 3, "data": map[string]any{"id": "completion-1"}},
+					{"label": "BuildOther", "kind": 3, "data": map[string]any{"id": "completion-2"}},
+				},
+			})})
+		case "completionItem/resolve":
+			var item map[string]any
+			_ = decodeLSPParams(msg.Params, &item)
+			item["detail"] = "func BuildWidget() Widget"
+			item["documentation"] = map[string]any{"kind": "markdown", "value": "Constructs a widget."}
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(item)})
 		case "textDocument/declaration", "textDocument/implementation", "textDocument/typeDefinition":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
 				"uri":   "file:///workspace/main.go",
