@@ -19676,7 +19676,16 @@ func TestRunCLIOpenHonorsGlobalOutputFormat(t *testing.T) {
 
 func TestSSHCommandReportsPlan(t *testing.T) {
 	var out bytes.Buffer
-	app := &App{Out: &out, Executable: "codog"}
+	app := &App{
+		Config: config.Config{
+			APIKey:    "secret-api-key",
+			AuthToken: "secret-auth-token",
+			BaseURL:   "https://api.example.test",
+			Model:     "claude-test",
+		},
+		Out:        &out,
+		Executable: "codog",
+	}
 	require.NoError(t, app.SSH(context.Background(), []string{
 		"devbox",
 		"/workspace/repo dir",
@@ -19696,7 +19705,19 @@ func TestSSHCommandReportsPlan(t *testing.T) {
 	require.False(t, report.Executed)
 	require.Equal(t, "read-only", report.PermissionMode)
 	require.True(t, report.DangerouslySkipPermissions)
-	require.Equal(t, "cd '/workspace/repo dir' && codog --permission-mode read-only --dangerously-skip-permissions repl", report.RemoteShell)
+	require.True(t, report.RemoteAuthForwarded)
+	require.Contains(t, report.RemoteEnvKeys, "ANTHROPIC_API_KEY")
+	require.Contains(t, report.RemoteEnvKeys, "ANTHROPIC_AUTH_TOKEN")
+	require.Contains(t, report.RemoteEnvKeys, "CODOG_BASE_URL")
+	require.Contains(t, report.RemoteShell, "env")
+	require.Contains(t, report.RemoteShell, "ANTHROPIC_API_KEY='[redacted]'")
+	require.Contains(t, report.RemoteShell, "ANTHROPIC_AUTH_TOKEN='[redacted]'")
+	require.Contains(t, report.RemoteShell, "CODOG_BASE_URL='https://api.example.test'")
+	require.Contains(t, report.RemoteShell, "codog --permission-mode read-only --dangerously-skip-permissions repl")
+	require.NotContains(t, report.RemoteShell, "secret-api-key")
+	require.NotContains(t, report.RemoteShell, "secret-auth-token")
+	require.NotContains(t, out.String(), "secret-api-key")
+	require.NotContains(t, out.String(), "secret-auth-token")
 	require.Equal(t, []string{"ssh", "devbox", report.RemoteShell}, report.Command)
 }
 

@@ -2249,6 +2249,8 @@ type sshReport struct {
 	DangerouslySkipPermissions bool     `json:"dangerously_skip_permissions,omitempty"`
 	Command                    []string `json:"command"`
 	RemoteShell                string   `json:"remote_shell,omitempty"`
+	RemoteEnvKeys              []string `json:"remote_env_keys,omitempty"`
+	RemoteAuthForwarded        bool     `json:"remote_auth_forwarded"`
 	Executed                   bool     `json:"executed"`
 	Message                    string   `json:"message,omitempty"`
 }
@@ -2365,12 +2367,8 @@ func parseSSHArgs(args []string) (sshRequest, error) {
 }
 
 func (a *App) buildSSHReport(req sshRequest) sshReport {
-	remoteArgs := a.sshRemoteCodogArgs(req)
-	remoteShell := sshRemoteShell(req.Directory, remoteArgs)
-	command := []string{"ssh", req.Host, remoteShell}
-	if req.Local {
-		command = remoteArgs
-	}
+	command, remoteShell := a.sshCommand(req, true)
+	remoteEnv := a.sshRemoteEnv(req, true)
 	return sshReport{
 		Kind:                       "ssh",
 		Action:                     "connect",
@@ -2382,11 +2380,14 @@ func (a *App) buildSSHReport(req sshRequest) sshReport {
 		DangerouslySkipPermissions: req.DangerouslySkipPermissions,
 		Command:                    command,
 		RemoteShell:                remoteShell,
+		RemoteEnvKeys:              sshRemoteEnvKeys(remoteEnv),
+		RemoteAuthForwarded:        sshRemoteAuthForwarded(remoteEnv),
 		Executed:                   false,
 	}
 }
 
 func (a *App) runSSHCommand(ctx context.Context, req sshRequest, command []string) error {
+	command, _ = a.sshCommand(req, false)
 	if len(command) == 0 {
 		return errors.New("ssh command is empty")
 	}
@@ -2398,6 +2399,15 @@ func (a *App) runSSHCommand(ctx context.Context, req sshRequest, command []strin
 	cmd.Stdout = a.Out
 	cmd.Stderr = a.Err
 	return cmd.Run()
+}
+
+func (a *App) sshCommand(req sshRequest, redact bool) ([]string, string) {
+	remoteArgs := a.sshRemoteCodogArgs(req)
+	if req.Local {
+		return remoteArgs, ""
+	}
+	remoteShell := sshRemoteShell(req.Directory, a.sshRemoteEnv(req, redact), remoteArgs)
+	return []string{"ssh", req.Host, remoteShell}, remoteShell
 }
 
 func (a *App) sshRemoteCodogArgs(req sshRequest) []string {
@@ -2424,8 +2434,73 @@ func (a *App) sshRemoteCodogArgs(req sshRequest) []string {
 	return out
 }
 
-func sshRemoteShell(directory string, args []string) string {
-	command := strings.Join(shellQuoteArgs(args), " ")
+func (a *App) sshRemoteEnv(req sshRequest, redact bool) map[string]string {
+	if req.Local {
+		return map[string]string{}
+	}
+	env := map[string]string{}
+	add := func(key, value string, secret bool) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if redact && secret {
+			value = "[redacted]"
+		}
+		env[key] = value
+	}
+	add("CODOG_MODEL", a.Config.Model, false)
+	add("ANTHROPIC_MODEL", a.Config.Model, false)
+	add("CLAUDE_MODEL", a.Config.Model, false)
+	add("CODOG_BASE_URL", a.Config.BaseURL, false)
+	add("ANTHROPIC_BASE_URL", a.Config.BaseURL, false)
+	add("CODOG_API_KEY", a.Config.APIKey, true)
+	add("ANTHROPIC_API_KEY", a.Config.APIKey, true)
+	add("CODOG_AUTH_TOKEN", a.Config.AuthToken, true)
+	add("ANTHROPIC_AUTH_TOKEN", a.Config.AuthToken, true)
+	add("CLAUDE_CODE_OAUTH_TOKEN", a.Config.AuthToken, true)
+	for _, key := range []string{
+		"CLAUDE_CODE_REMOTE",
+		"CLAUDE_CODE_REMOTE_SESSION_ID",
+		"CCR_UPSTREAM_PROXY_ENABLED",
+		"CCR_SESSION_TOKEN_PATH",
+		"CCR_CA_BUNDLE_PATH",
+		"CCR_SYSTEM_CA_BUNDLE",
+	} {
+		add(key, os.Getenv(key), strings.Contains(key, "TOKEN"))
+	}
+	return env
+}
+
+func sshRemoteEnvKeys(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sshRemoteAuthForwarded(env map[string]string) bool {
+	for _, key := range []string{"CODOG_API_KEY", "ANTHROPIC_API_KEY", "CODOG_AUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"} {
+		if strings.TrimSpace(env[key]) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func sshRemoteShell(directory string, env map[string]string, args []string) string {
+	commandParts := []string{}
+	if len(env) > 0 {
+		envArgs := []string{"env"}
+		for _, key := range sshRemoteEnvKeys(env) {
+			envArgs = append(envArgs, key+"="+shellQuote(env[key]))
+		}
+		commandParts = append(commandParts, envArgs...)
+	}
+	commandParts = append(commandParts, shellQuoteArgs(args)...)
+	command := strings.Join(commandParts, " ")
 	if strings.TrimSpace(directory) == "" {
 		return command
 	}
@@ -55163,8 +55238,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"ssh",
 			"ssh",
 			sshUsage,
-			"SSH\n\nUsage:\n  codog ssh <host> [dir] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--output-format text|json]\n\nStarts a Codog REPL on a remote host through SSH using a Claude Code-compatible command shape. Text mode executes `ssh HOST 'cd DIR && codog ... repl'`; JSON mode prints the execution plan without connecting. `--local` runs the child Codog process locally for end-to-end plumbing tests.\n",
-			[]string{"kind", "status", "host", "directory", "local", "command", "remote_shell", "executed"},
+			"SSH\n\nUsage:\n  codog ssh <host> [dir] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--output-format text|json]\n\nStarts a Codog REPL on a remote host through SSH using a Claude Code-compatible command shape. Text mode executes `ssh HOST 'cd DIR && env ... codog ... repl'` and forwards local provider credentials, model, base URL, and Claude remote bootstrap variables with JSON plans redacting secret values. `--local` runs the child Codog process locally for end-to-end plumbing tests.\n",
+			[]string{"kind", "status", "host", "directory", "local", "command", "remote_shell", "remote_env_keys", "remote_auth_forwarded", "executed"},
 			[]string{"planned", "error"},
 			false,
 		), true
