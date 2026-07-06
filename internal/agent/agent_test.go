@@ -10121,6 +10121,16 @@ func TestParseFlagsSupportsSettingsOverride(t *testing.T) {
 	require.Equal(t, []string{"get", "model", "--json"}, rest)
 }
 
+func TestParseFlagsSupportsSessionIDAndNameAliases(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{"--session-id", "sdk-session", "--name", "SDK Display", "-p", "hello"}, config.FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, "sdk-session", overrides.SessionID)
+	require.Equal(t, "SDK Display", overrides.SessionName)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+}
+
 func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{"--output-format", "json", "status"}, config.FlagOverrides{})
 	require.NoError(t, err)
@@ -22645,6 +22655,44 @@ func TestPromptOutputFormats(t *testing.T) {
 	require.Equal(t, "mock", compactReport.Model)
 	require.Equal(t, 10, compactReport.Usage.InputTokens)
 	require.Equal(t, 5, compactReport.Usage.OutputTokens)
+}
+
+func TestPromptWithSessionNamePreservesExplicitTitle(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Text: "done"}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			PermissionRules:     config.PermissionRules{},
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.PromptWithOutput(context.Background(), "input title should not win", config.FlagOverrides{SessionID: "sdk-session", SessionName: "SDK Display"}, "json"))
+	opened, err := app.Sessions.Open("sdk-session")
+	require.NoError(t, err)
+	require.Equal(t, "SDK Display", opened.Identity.Title)
+	require.Equal(t, "prompt", opened.Identity.Purpose)
+	history, err := app.Sessions.PromptHistory("sdk-session")
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	require.Equal(t, "input title should not win", history[0].Text)
 }
 
 func TestPromptJSONSchemaOutputValidation(t *testing.T) {

@@ -1088,6 +1088,7 @@ type FlagOverrides struct {
 	Settings                       string
 	CWD                            string
 	SessionID                      string
+	SessionName                    string
 	Resume                         string
 	Model                          string
 	BaseURL                        string

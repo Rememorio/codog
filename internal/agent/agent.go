@@ -32378,7 +32378,7 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 		}
 		return renderSessionRestoreError(a.Out, "prompt", overrides.Resume, err, format)
 	}
-	if err := a.ensureSessionIdentity(sess, "prompt", input); err != nil {
+	if err := a.ensureSessionIdentity(sess, "prompt", input, overrides.SessionName); err != nil {
 		return err
 	}
 	if err := a.runSessionStartHook(ctx, sess, sessionStartSource(overrides)); err != nil {
@@ -32957,7 +32957,7 @@ func (a *App) BTW(ctx context.Context, args []string, overrides config.FlagOverr
 	if err != nil {
 		return err
 	}
-	if err := a.ensureSessionIdentity(side, "btw", req.Question); err != nil {
+	if err := a.ensureSessionIdentity(side, "btw", req.Question, ""); err != nil {
 		return err
 	}
 	turnOut := a.Out
@@ -33522,7 +33522,7 @@ func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Ses
 }
 
 func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *session.Session, input string, successStatus string, opts turnOptions) error {
-	if err := a.ensureSessionIdentity(sess, mode, input); err != nil {
+	if err := a.ensureSessionIdentity(sess, mode, input, ""); err != nil {
 		return err
 	}
 	if a.promptHistoryEnabled() {
@@ -33685,7 +33685,7 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ensureSessionIdentity(sess, "repl", ""); err != nil {
+	if err := a.ensureSessionIdentity(sess, "repl", "", overrides.SessionName); err != nil {
 		return err
 	}
 	if err := a.runSessionStartHook(ctx, sess, sessionStartSource(overrides)); err != nil {
@@ -34672,7 +34672,7 @@ func (a *App) handleClearSlash(ctx context.Context, args []string, sess *session
 		fmt.Fprintln(a.Err, "error:", err)
 		return
 	}
-	if err := a.ensureSessionIdentity(next, "repl", ""); err != nil {
+	if err := a.ensureSessionIdentity(next, "repl", "", ""); err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
 		return
 	}
@@ -50891,7 +50891,7 @@ func safeHookStateName(value string) string {
 	return name
 }
 
-func (a *App) ensureSessionIdentity(sess *session.Session, purpose string, input string) error {
+func (a *App) ensureSessionIdentity(sess *session.Session, purpose string, input string, titleOverride string) error {
 	if sess == nil || a.Sessions == nil {
 		return nil
 	}
@@ -50900,7 +50900,9 @@ func (a *App) ensureSessionIdentity(sess *session.Session, purpose string, input
 		Worktree:  a.Workspace,
 		Purpose:   strings.TrimSpace(purpose),
 	}
-	if title := sessionTitleFromInput(input); title != "" {
+	if title := strings.TrimSpace(titleOverride); title != "" {
+		update.Title = title
+	} else if title := sessionTitleFromInput(input); title != "" && sessionIdentityTitleCanAutoUpdate(sess) {
 		update.Title = title
 	}
 	identity, err := a.Sessions.UpdateIdentity(sess.ID, update)
@@ -50909,6 +50911,14 @@ func (a *App) ensureSessionIdentity(sess *session.Session, purpose string, input
 	}
 	sess.Identity = identity
 	return nil
+}
+
+func sessionIdentityTitleCanAutoUpdate(sess *session.Session) bool {
+	if sess == nil {
+		return false
+	}
+	title := strings.TrimSpace(sess.Identity.Title)
+	return title == "" || title == strings.TrimSpace(sess.ID)
 }
 
 func sessionTitleFromInput(input string) string {
@@ -51950,6 +51960,8 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.AppendPrompt, "append-system-prompt", base.AppendPrompt, "append text to the system prompt")
 	flags.StringVar(&base.AppendPromptFile, "append-system-prompt-file", base.AppendPromptFile, "read appended system prompt text from a file")
 	flags.StringVar(&base.SessionID, "session", base.SessionID, "session id")
+	flags.StringVar(&base.SessionID, "session-id", base.SessionID, "alias for --session")
+	flags.StringVar(&base.SessionName, "name", base.SessionName, "display name for the current session")
 	flags.StringVar(&base.Resume, "resume", base.Resume, "resume session id or latest")
 	flags.BoolVar(&printMode, "p", false, "run a one-shot prompt")
 	flags.BoolVar(&printMode, "print", false, "run a one-shot prompt")
@@ -52222,7 +52234,7 @@ func globalFlagConsumesNext(arg string) bool {
 		"--model", "-model", "--base-url", "-base-url", "--system-prompt", "-system-prompt",
 		"--system-prompt-file", "-system-prompt-file", "--append-system-prompt", "-append-system-prompt",
 		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
-		"--resume", "-resume", "--output-format", "-output-format", "-o", "--o",
+		"--session-id", "-session-id", "--name", "-name", "--resume", "-resume", "--output-format", "-output-format", "-o", "--o",
 		"--input-format", "-input-format", "--json-schema", "-json-schema",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
 		"--max-tokens", "-max-tokens", "--temperature", "-temperature",
@@ -52260,7 +52272,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--resume", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
@@ -54058,6 +54070,8 @@ Flags:
   --append-system-prompt TEXT
   --append-system-prompt-file PATH
   --session ID
+  --session-id ID
+  --name NAME
   --resume ID|latest
   --permission-mode read-only|workspace-write|danger-full-access|prompt|allow
   --dangerously-skip-permissions
