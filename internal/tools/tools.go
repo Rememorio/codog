@@ -5904,6 +5904,20 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "highlights": highlights, "total": len(highlights)})), nil
+	case "folding-range":
+		rel := ""
+		if strings.TrimSpace(payload.Path) != "" {
+			var err error
+			rel, err = scopedRelativePath(t.Workspace, t.AdditionalDirs, payload.Path)
+			if err != nil {
+				return "", err
+			}
+		}
+		ranges, err := codeintel.FoldingRanges(t.Workspace, rel, payload.Limit)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "ranges": ranges, "total": len(ranges)})), nil
 	case "hover":
 		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
 		if err != nil {
@@ -5956,7 +5970,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 
 func lspActionRequiresServer(action string) bool {
 	switch action {
-	case "document-diagnostic", "workspace-diagnostic", "implementation", "rename", "prepare-rename", "code-action", "code-action-resolve", "code-lens", "code-lens-resolve", "prepare-call-hierarchy", "call-hierarchy-incoming", "call-hierarchy-outgoing", "prepare-type-hierarchy", "type-hierarchy-supertypes", "type-hierarchy-subtypes", "completion-item-resolve", "selection-range", "folding-range", "document-link", "document-link-resolve", "document-color", "color-presentation", "inlay-hint", "inlay-hint-resolve", "inline-value", "linked-editing-range", "moniker", "semantic-tokens", "semantic-tokens-range", "semantic-tokens-delta", "execute-command", "signature-help", "range-format", "on-type-format", "will-save":
+	case "document-diagnostic", "workspace-diagnostic", "implementation", "rename", "prepare-rename", "code-action", "code-action-resolve", "code-lens", "code-lens-resolve", "prepare-call-hierarchy", "call-hierarchy-incoming", "call-hierarchy-outgoing", "prepare-type-hierarchy", "type-hierarchy-supertypes", "type-hierarchy-subtypes", "completion-item-resolve", "selection-range", "document-link", "document-link-resolve", "document-color", "color-presentation", "inlay-hint", "inlay-hint-resolve", "inline-value", "linked-editing-range", "moniker", "semantic-tokens", "semantic-tokens-range", "semantic-tokens-delta", "execute-command", "signature-help", "range-format", "on-type-format", "will-save":
 		return true
 	default:
 		return false

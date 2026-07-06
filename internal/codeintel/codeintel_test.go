@@ -96,6 +96,16 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.Equal(t, LSPPosition{Line: 2, Character: 11}, highlights[0].Range.End)
 	require.Equal(t, 1, highlights[0].Kind)
 
+	foldSource := "package pkg\n\nfunc FoldOnly() {\n\tprintln(\"fold\")\n}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "fold.go"), []byte(foldSource), 0o644))
+	folds, err := FoldingRanges(workspace, "pkg/fold.go", 10)
+	require.NoError(t, err)
+	require.Len(t, folds, 1)
+	require.Equal(t, "pkg/fold.go", folds[0].Path)
+	require.Equal(t, 2, folds[0].StartLine)
+	require.Equal(t, 4, folds[0].EndLine)
+	require.Equal(t, "region", folds[0].Kind)
+
 	hover, err := HoverInfo(workspace, "Run", 1)
 	require.NoError(t, err)
 	require.True(t, hover.Found)

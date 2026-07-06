@@ -2755,6 +2755,8 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 		"",
 	}, "\n")
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "demo.go"), []byte(source), 0o644))
+	foldSource := "package demo\n\nfunc FoldOnly() {\n\tprintln(\"fold\")\n}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "fold.go"), []byte(foldSource), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "messy.go"), []byte("package demo\n\nfunc messy(){return}\n"), 0o644))
 	tool := LSPTool{Workspace: workspace}
 	definition := tool.Definition()
@@ -2861,6 +2863,15 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, documentHighlightOut, `"character": 5`)
 	require.Contains(t, documentHighlightOut, `"total": 3`)
 
+	foldingRangeOut, err := tool.Execute(context.Background(), []byte(`{"action":"folding_range","path":"fold.go","limit":5}`))
+	require.NoError(t, err)
+	require.Contains(t, foldingRangeOut, `"action": "folding-range"`)
+	require.Contains(t, foldingRangeOut, `"source": "static"`)
+	require.Contains(t, foldingRangeOut, `"path": "fold.go"`)
+	require.Contains(t, foldingRangeOut, `"startLine": 2`)
+	require.Contains(t, foldingRangeOut, `"endLine": 4`)
+	require.Contains(t, foldingRangeOut, `"total": 1`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -2885,6 +2896,10 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, err.Error(), "config home is required")
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"document_highlight","path":"demo.go","query":"Widget","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"folding_range","path":"fold.go","use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 

@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
 	goformat "go/format"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +43,14 @@ type DocumentHighlight struct {
 	Range LSPRange `json:"range"`
 	Kind  int      `json:"kind,omitempty"`
 	Text  string   `json:"text,omitempty"`
+}
+
+// FoldingRange describes one static foldable range in a source file.
+type FoldingRange struct {
+	Path      string `json:"path"`
+	StartLine int    `json:"startLine"`
+	EndLine   int    `json:"endLine"`
+	Kind      string `json:"kind,omitempty"`
 }
 
 // Hover contains static hover context for a discovered symbol.
@@ -334,6 +345,91 @@ func DocumentHighlights(workspace string, symbol string, relPath string, limit i
 		return nil
 	})
 	return highlights, err
+}
+
+// FoldingRanges returns static foldable ranges for Go source files.
+func FoldingRanges(workspace string, relPath string, limit int) ([]FoldingRange, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	relPath = filepath.ToSlash(strings.TrimSpace(relPath))
+	fset := token.NewFileSet()
+	var ranges []FoldingRange
+	err := filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if len(ranges) >= limit {
+			return filepath.SkipAll
+		}
+		if entry.IsDir() {
+			if ignoredDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(workspace, path)
+		rel = filepath.ToSlash(rel)
+		if relPath != "" && rel != relPath {
+			return nil
+		}
+		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if err != nil {
+			return err
+		}
+		addRange := func(start token.Pos, end token.Pos, kind string) {
+			if len(ranges) >= limit || !start.IsValid() || !end.IsValid() {
+				return
+			}
+			startLine := fset.Position(start).Line - 1
+			endLine := fset.Position(end).Line - 1
+			if endLine <= startLine {
+				return
+			}
+			ranges = append(ranges, FoldingRange{Path: rel, StartLine: startLine, EndLine: endLine, Kind: kind})
+		}
+		for _, comment := range file.Comments {
+			addRange(comment.Pos(), comment.End(), "comment")
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			if len(ranges) >= limit {
+				return false
+			}
+			switch n := node.(type) {
+			case *ast.FuncDecl:
+				if n.Body != nil {
+					addRange(n.Body.Lbrace, n.Body.Rbrace, "region")
+				}
+			case *ast.GenDecl:
+				if n.Lparen.IsValid() && n.Rparen.IsValid() {
+					addRange(n.Lparen, n.Rparen, "region")
+				}
+			case *ast.TypeSpec:
+				switch typ := n.Type.(type) {
+				case *ast.StructType:
+					if typ.Fields != nil {
+						addRange(typ.Struct, typ.Fields.Closing, "region")
+					}
+				case *ast.InterfaceType:
+					if typ.Methods != nil {
+						addRange(typ.Interface, typ.Methods.Closing, "region")
+					}
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(ranges) > limit {
+		ranges = ranges[:limit]
+	}
+	return ranges, nil
 }
 
 // HoverInfo returns static hover context around a symbol definition.
