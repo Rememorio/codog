@@ -679,6 +679,14 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.True(t, executedCommand.ProgressHandled)
 	require.True(t, executedCommand.ShowDocumentHandled)
 	require.True(t, executedCommand.RefreshHandled)
+	notificationMethods := map[string]bool{}
+	for _, notification := range result.Notifications {
+		notificationMethods[notification.Method] = true
+	}
+	require.True(t, notificationMethods["window/showMessage"])
+	require.True(t, notificationMethods["window/logMessage"])
+	require.True(t, notificationMethods["telemetry/event"])
+	require.True(t, notificationMethods["$/progress"])
 	require.Equal(t, 1, result.FileEdits)
 	require.Equal(t, 1, result.TextEdits)
 	require.True(t, result.Changed)
@@ -1377,6 +1385,21 @@ func TestFakeLSPServer(t *testing.T) {
 				fakeLSPServerRequestHandled(reader, "inlay-refresh-check", "workspace/inlayHint/refresh", nil) &&
 				fakeLSPServerRequestHandled(reader, "code-lens-refresh-check", "workspace/codeLens/refresh", nil) &&
 				fakeLSPServerRequestHandled(reader, "diagnostic-refresh-check", "workspace/diagnostic/refresh", nil)
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "window/showMessage", Params: map[string]any{
+				"type":    3,
+				"message": "execute notice",
+			}})
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "window/logMessage", Params: map[string]any{
+				"type":    3,
+				"message": "execute log",
+			}})
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "telemetry/event", Params: map[string]any{
+				"name": "execute",
+			}})
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "$/progress", Params: map[string]any{
+				"token": "demo-progress",
+				"value": map[string]any{"kind": "report", "message": "running"},
+			}})
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: "apply-execute", Method: "workspace/applyEdit", Params: map[string]any{
 				"label": "execute preview",
 				"edit": map[string]any{

@@ -34,19 +34,27 @@ type LSPQueryRequest struct {
 
 // LSPQueryResult is the normalized result of an LSP JSON-RPC request.
 type LSPQueryResult struct {
-	Kind        string          `json:"kind"`
-	Language    string          `json:"language"`
-	Action      string          `json:"action"`
-	Method      string          `json:"method"`
-	Path        string          `json:"path"`
-	Result      any             `json:"result,omitempty"`
-	Diagnostics []LSPDiagnostic `json:"diagnostics,omitempty"`
-	TextEdits   int             `json:"text_edits,omitempty"`
-	FileEdits   int             `json:"file_edits,omitempty"`
-	Edits       []LSPFileEdit   `json:"edits,omitempty"`
-	Changed     bool            `json:"changed,omitempty"`
-	Applied     bool            `json:"applied,omitempty"`
-	Content     string          `json:"content,omitempty"`
+	Kind          string            `json:"kind"`
+	Language      string            `json:"language"`
+	Action        string            `json:"action"`
+	Method        string            `json:"method"`
+	Path          string            `json:"path"`
+	Result        any               `json:"result,omitempty"`
+	Notifications []LSPNotification `json:"notifications,omitempty"`
+	Diagnostics   []LSPDiagnostic   `json:"diagnostics,omitempty"`
+	TextEdits     int               `json:"text_edits,omitempty"`
+	FileEdits     int               `json:"file_edits,omitempty"`
+	Edits         []LSPFileEdit     `json:"edits,omitempty"`
+	Changed       bool              `json:"changed,omitempty"`
+	Applied       bool              `json:"applied,omitempty"`
+	Content       string            `json:"content,omitempty"`
+}
+
+// LSPNotification records a language-server notification emitted while a query
+// was running.
+type LSPNotification struct {
+	Method string `json:"method"`
+	Params any    `json:"params,omitempty"`
 }
 
 // LSPFileEdit previews the text edits a language server returned for one file.
@@ -67,6 +75,7 @@ type lspClient struct {
 	applyWorkspaceEdits bool
 	nextID              int
 	notifications       []lspRPCMessage
+	notificationEvents  []LSPNotification
 	workspaceEdits      []LSPFileEdit
 	workspaceTextEdits  int
 	workspaceApplied    bool
@@ -892,6 +901,7 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 		Result:   decoded,
 	}
 	mergeLSPClientWorkspaceEdits(client, &result)
+	mergeLSPClientNotifications(client, &result)
 	if isLSPFormattingAction(action) && len(raw) > 0 && string(raw) != "null" {
 		var edits []lspTextEdit
 		if err := json.Unmarshal(raw, &edits); err != nil {
@@ -970,6 +980,13 @@ func mergeLSPClientWorkspaceEdits(client *lspClient, result *LSPQueryResult) {
 			return
 		}
 	}
+}
+
+func mergeLSPClientNotifications(client *lspClient, result *LSPQueryResult) {
+	if len(client.notificationEvents) == 0 {
+		return
+	}
+	result.Notifications = append(result.Notifications, client.notificationEvents...)
 }
 
 type hierarchyQuerySpec struct {
@@ -1434,7 +1451,7 @@ func (c *lspClient) request(method string, params any) (json.RawMessage, error) 
 					}
 					continue
 				}
-				c.notifications = append(c.notifications, msg)
+				c.recordNotification(msg)
 			}
 			continue
 		}
@@ -1557,8 +1574,16 @@ func (c *lspClient) waitForDiagnostics(uri string) ([]LSPDiagnostic, error) {
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			return nil, err
 		}
-		c.notifications = append(c.notifications, msg)
+		c.recordNotification(msg)
 	}
+}
+
+func (c *lspClient) recordNotification(msg lspRPCMessage) {
+	c.notifications = append(c.notifications, msg)
+	if strings.TrimSpace(msg.Method) == "" || msg.Method == "textDocument/publishDiagnostics" {
+		return
+	}
+	c.notificationEvents = append(c.notificationEvents, LSPNotification{Method: msg.Method, Params: msg.Params})
 }
 
 func (c *lspClient) popDiagnostics(uri string) ([]LSPDiagnostic, bool, error) {

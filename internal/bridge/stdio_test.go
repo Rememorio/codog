@@ -518,6 +518,10 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"progressHandled":true`)
 	require.Contains(t, out.String(), `"showDocumentHandled":true`)
 	require.Contains(t, out.String(), `"refreshHandled":true`)
+	require.Contains(t, out.String(), `"method":"window/showMessage"`)
+	require.Contains(t, out.String(), `"method":"window/logMessage"`)
+	require.Contains(t, out.String(), `"method":"telemetry/event"`)
+	require.Contains(t, out.String(), `"method":"$/progress"`)
 	require.Contains(t, out.String(), `func bridgeExecutePreview()`)
 	require.Contains(t, out.String(), `"action":"document-diagnostic"`)
 	require.Contains(t, out.String(), `"method":"textDocument/diagnostic"`)
@@ -979,6 +983,21 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 				bridgeFakeLSPServerRequestHandled(reader, "bridge-inlay-refresh-check", "workspace/inlayHint/refresh", nil) &&
 				bridgeFakeLSPServerRequestHandled(reader, "bridge-code-lens-refresh-check", "workspace/codeLens/refresh", nil) &&
 				bridgeFakeLSPServerRequestHandled(reader, "bridge-diagnostic-refresh-check", "workspace/diagnostic/refresh", nil)
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "method": "window/showMessage", "params": map[string]any{
+				"type":    3,
+				"message": "bridge execute notice",
+			}})
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "method": "window/logMessage", "params": map[string]any{
+				"type":    3,
+				"message": "bridge execute log",
+			}})
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "method": "telemetry/event", "params": map[string]any{
+				"name": "bridge-execute",
+			}})
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "method": "$/progress", "params": map[string]any{
+				"token": "bridge-progress",
+				"value": map[string]any{"kind": "report", "message": "running"},
+			}})
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": "bridge-apply-execute", "method": "workspace/applyEdit", "params": map[string]any{
 				"label": "bridge execute preview",
 				"edit": map[string]any{
