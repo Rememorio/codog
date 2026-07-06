@@ -15712,6 +15712,78 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 	require.Empty(t, data)
 }
 
+func TestMemoryCommandActionAliases(t *testing.T) {
+	for _, tc := range []struct {
+		alias  string
+		action string
+		rest   []string
+	}{
+		{alias: "ls", action: "list"},
+		{alias: "choose", action: "select", rest: []string{"AGENTS.md"}},
+		{alias: "use", action: "select", rest: []string{"AGENTS.md"}},
+		{alias: "view", action: "show", rest: []string{"AGENTS.md"}},
+		{alias: "cat", action: "show", rest: []string{"AGENTS.md"}},
+		{alias: "read", action: "show", rest: []string{"AGENTS.md"}},
+		{alias: "append", action: "add", rest: []string{"remember"}},
+		{alias: "find", action: "search", rest: []string{"remember"}},
+		{alias: "file", action: "path", rest: []string{"AGENTS.md"}},
+		{alias: "init", action: "ensure", rest: []string{".codog/instructions.md"}},
+		{alias: "create", action: "ensure", rest: []string{".codog/instructions.md"}},
+		{alias: "touch", action: "ensure", rest: []string{".codog/instructions.md"}},
+		{alias: "open", action: "edit", rest: []string{".codog/instructions.md"}},
+		{alias: "clear", action: "reset", rest: []string{"AGENTS.md"}},
+	} {
+		args := append([]string{tc.alias}, tc.rest...)
+		req, err := parseMemoryArgs(args)
+		require.NoError(t, err, tc.alias)
+		require.Equal(t, tc.action, req.Action, tc.alias)
+		require.Equal(t, tc.rest, req.Rest, tc.alias)
+	}
+}
+
+func TestMemoryCommandAliasExecution(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Alias first line\n"), 0o644))
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Memory([]string{"view", "AGENTS.md", "--json"}))
+	require.Contains(t, out.String(), `"action": "show"`)
+	require.Contains(t, out.String(), "Alias first line")
+	out.Reset()
+
+	require.NoError(t, app.Memory([]string{"append", "Alias", "appended."}))
+	data, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "Alias appended.")
+	out.Reset()
+
+	require.NoError(t, app.Memory([]string{"find", "appended", "--json"}))
+	require.Contains(t, out.String(), `"action": "search"`)
+	require.Contains(t, out.String(), `"match_count": 1`)
+	out.Reset()
+
+	require.NoError(t, app.Memory([]string{"file", "AGENTS.md", "--json"}))
+	require.Contains(t, out.String(), `"action": "path"`)
+	out.Reset()
+
+	require.NoError(t, app.Memory([]string{"init", ".codog/instructions.md", "--json"}))
+	require.Contains(t, out.String(), `"action": "ensure"`)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "instructions.md"))
+	out.Reset()
+
+	require.NoError(t, app.Memory([]string{"clear", ".codog/instructions.md", "--confirm", "--json"}))
+	require.Contains(t, out.String(), `"action": "reset"`)
+	data, err = os.ReadFile(filepath.Join(workspace, ".codog", "instructions.md"))
+	require.NoError(t, err)
+	require.Empty(t, data)
+}
+
 func TestMemoryCommandJSONErrors(t *testing.T) {
 	workspace := t.TempDir()
 	var out bytes.Buffer

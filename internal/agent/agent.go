@@ -23057,7 +23057,7 @@ func buildMemoryErrorReport(action string, err error) actionErrorReport {
 		report.Hint = "Run `codog memory reset PATH --confirm` to clear one memory file, or `codog memory reset --all --confirm` to clear all discovered memory files."
 	case strings.Contains(message, "unknown memory action"):
 		report.ErrorKind = "unsupported_memory_action"
-		report.Hint = "Supported memory actions are list, select, show, search, relevant, add, path, ensure, edit, and reset."
+		report.Hint = "Supported memory actions are list, select, show, search, relevant, add, path, ensure, edit, and reset. Common aliases include view, find, append, file, init, choose, and clear."
 	case strings.Contains(message, "unknown memory flag"):
 		report.ErrorKind = "unknown_option"
 		report.Hint = "Usage: codog memory [list|select|show|search|relevant|add|path|ensure|edit|reset] [ARGS...] [--all] [--confirm] [--limit N] [--editor COMMAND] [--no-open] [--json|--output-format text|json]."
@@ -23138,7 +23138,7 @@ func parseMemoryArgs(args []string) (memoryRequest, error) {
 			return req, fmt.Errorf("unknown memory flag %q", arg)
 		default:
 			if !actionSet {
-				action := strings.ToLower(arg)
+				action := normalizeMemoryAction(arg)
 				switch action {
 				case "list", "select", "show", "add", "search", "relevant", "path", "ensure", "edit", "reset":
 					req.Action = action
@@ -23156,6 +23156,33 @@ func parseMemoryArgs(args []string) (memoryRequest, error) {
 		return req, fmt.Errorf("unknown memory output format %q", req.Format)
 	}
 	return req, nil
+}
+
+func normalizeMemoryAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "list", "ls":
+		return "list"
+	case "select", "choose", "use":
+		return "select"
+	case "show", "view", "cat", "read":
+		return "show"
+	case "add", "append":
+		return "add"
+	case "search", "find":
+		return "search"
+	case "relevant":
+		return "relevant"
+	case "path", "file":
+		return "path"
+	case "ensure", "init", "create", "touch":
+		return "ensure"
+	case "edit", "open":
+		return "edit"
+	case "reset", "clear":
+		return "reset"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
 }
 
 func scanMemoryOutputFormat(args []string) (string, bool) {
