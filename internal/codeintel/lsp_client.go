@@ -108,6 +108,12 @@ type lspColorInformation struct {
 	} `json:"color"`
 }
 
+type lspCodeLens struct {
+	Range   lspRange `json:"range"`
+	Command any      `json:"command,omitempty"`
+	Data    any      `json:"data,omitempty"`
+}
+
 // LSPPosition is a zero-based language-server document position.
 type LSPPosition struct {
 	Line      int `json:"line"`
@@ -218,6 +224,21 @@ var lspActionInfos = []LSPActionInfo{
 		RequiresDocument: true,
 		RequiresPosition: true,
 		Description:      "Return code actions and quick fixes for a document position.",
+	},
+	{
+		Name:             "code-lens",
+		Method:           "textDocument/codeLens",
+		Aliases:          []string{"code_lens", "codeLens", "lenses"},
+		RequiresDocument: true,
+		Description:      "Return code lenses for a document.",
+	},
+	{
+		Name:             "code-lens-resolve",
+		Method:           "codeLens/resolve",
+		Aliases:          []string{"code_lens_resolve", "codeLensResolve", "resolve_code_lens", "resolveCodeLens"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Resolve the code lens at a document position.",
 	},
 	{
 		Name:             "prepare-call-hierarchy",
@@ -595,6 +616,20 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 			Diagnostics: diagnostics,
 		}, nil
 	}
+	if action == "code-lens-resolve" {
+		decoded, err := runLSPCodeLensResolveQuery(client, uri, request.Line, request.Character)
+		if err != nil {
+			return LSPQueryResult{}, err
+		}
+		return LSPQueryResult{
+			Kind:     "lsp_query",
+			Language: language,
+			Action:   action,
+			Method:   "codeLens/resolve",
+			Path:     rel,
+			Result:   decoded,
+		}, nil
+	}
 	if strings.HasPrefix(action, "call-hierarchy") || action == "prepare-call-hierarchy" {
 		method, decoded, err := runLSPHierarchyQuery(client, hierarchyQuerySpec{
 			Action:        action,
@@ -847,6 +882,45 @@ func lspRangeContains(r lspRange, position LSPPosition) bool {
 	return true
 }
 
+func runLSPCodeLensResolveQuery(client *lspClient, uri string, line int, character int) (any, error) {
+	textDocument := map[string]any{"uri": uri}
+	raw, err := client.request("textDocument/codeLens", map[string]any{"textDocument": textDocument})
+	if err != nil {
+		return nil, err
+	}
+	var lenses []lspCodeLens
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &lenses); err != nil {
+			return nil, err
+		}
+	}
+	if len(lenses) == 0 {
+		return map[string]any{"lenses": lenses, "resolved": nil}, nil
+	}
+	selected := lenses[0]
+	position := LSPPosition{Line: max(0, line), Character: max(0, character)}
+	for _, candidate := range lenses {
+		if lspRangeContains(candidate.Range, position) {
+			selected = candidate
+			break
+		}
+	}
+	raw, err = client.request("codeLens/resolve", selected)
+	if err != nil {
+		return nil, err
+	}
+	var resolved any
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &resolved); err != nil {
+			return nil, err
+		}
+	}
+	if resolved == nil {
+		resolved = selected
+	}
+	return map[string]any{"lenses": lenses, "selected": selected, "resolved": resolved}, nil
+}
+
 func (c *lspClient) request(method string, params any) (json.RawMessage, error) {
 	c.nextID++
 	id := c.nextID
@@ -955,6 +1029,8 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 			"range":        map[string]any{"start": position, "end": position},
 			"context":      map[string]any{"diagnostics": []any{}},
 		}, nil
+	case "code-lens":
+		return "textDocument/codeLens", map[string]any{"textDocument": textDocument}, nil
 	case "completion":
 		return "textDocument/completion", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "document-highlight":

@@ -380,6 +380,40 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Len(t, colorPresentation.Presentations, 1)
 	require.Equal(t, "#ff8040", colorPresentation.Presentations[0].Label)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "code_lens", Path: "main.go"})
+	require.NoError(t, err)
+	require.Equal(t, "code-lens", result.Action)
+	require.Equal(t, "textDocument/codeLens", result.Method)
+	var codeLenses []struct {
+		Command struct {
+			Title   string `json:"title"`
+			Command string `json:"command"`
+		} `json:"command"`
+		Range lspRange `json:"range"`
+	}
+	encodedCodeLenses, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedCodeLenses, &codeLenses))
+	require.Len(t, codeLenses, 1)
+	require.Equal(t, "Run test", codeLenses[0].Command.Title)
+	require.Equal(t, LSPPosition{Line: 2, Character: 0}, codeLenses[0].Range.Start)
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "code_lens_resolve", Path: "main.go", Line: 2, Character: 3})
+	require.NoError(t, err)
+	require.Equal(t, "code-lens-resolve", result.Action)
+	require.Equal(t, "codeLens/resolve", result.Method)
+	var resolvedLens struct {
+		Resolved struct {
+			Command struct {
+				Title string `json:"title"`
+			} `json:"command"`
+		} `json:"resolved"`
+	}
+	encodedResolvedLens, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedResolvedLens, &resolvedLens))
+	require.Equal(t, "Run test (resolved)", resolvedLens.Resolved.Command.Title)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "inlay_hint", Path: "main.go", Line: 2, Character: 12})
 	require.NoError(t, err)
 	require.Equal(t, "inlay-hint", result.Action)
@@ -707,6 +741,10 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"codeAction":                "code-action",
 		"quickfix":                  "code-action",
 		"quick-fix":                 "code-action",
+		"code_lens":                 "code-lens",
+		"codeLens":                  "code-lens",
+		"code_lens_resolve":         "code-lens-resolve",
+		"codeLensResolve":           "code-lens-resolve",
 		"prepare_call_hierarchy":    "prepare-call-hierarchy",
 		"prepareCallHierarchy":      "prepare-call-hierarchy",
 		"call_hierarchy":            "prepare-call-hierarchy",
@@ -887,6 +925,20 @@ func TestFakeLSPServer(t *testing.T) {
 					"newText": "#ff8040",
 				},
 			}})})
+		case "textDocument/codeLens":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 0},
+					"end":   map[string]any{"line": 2, "character": 20},
+				},
+				"command": map[string]any{"title": "Run test", "command": "go.test"},
+				"data":    map[string]any{"id": "lens-1"},
+			}})})
+		case "codeLens/resolve":
+			var lens map[string]any
+			_ = decodeLSPParams(msg.Params, &lens)
+			lens["command"] = map[string]any{"title": "Run test (resolved)", "command": "go.test", "arguments": []string{"./..."}}
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(lens)})
 		case "textDocument/inlayHint":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
 				"position": map[string]any{"line": 2, "character": 10},
