@@ -28875,7 +28875,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 	case "/sandbox-toggle":
 		return a.runResumedSandboxToggleSlash(resumeSlashArgs("sandbox-toggle", args, format), format)
 	case "/mcp":
-		return a.MCP(ctx, resumeSlashArgs("mcp", args, format))
+		return a.runResumedMCPSlash(ctx, resumeSlashArgs("mcp", args, format), resumed, format)
 	case "/capabilities":
 		return a.Capabilities(resumeSlashArgs("capabilities", args, format))
 	case "/prefetch":
@@ -29401,6 +29401,20 @@ func (a *App) runResumedSetupSlash(ctx context.Context, args []string, format st
 
 func (a *App) runResumedRemoteEnvSlash(args []string, format string) error {
 	return a.RemoteEnv(args)
+}
+
+func (a *App) runResumedMCPSlash(ctx context.Context, args []string, overrides config.FlagOverrides, format string) error {
+	if meaningful := routeMeaningfulArgs(args); len(meaningful) > 0 && normalizeMCPAction(meaningful[0]) == "serve" {
+		cleanArgs, _, err := stripJSONOnlyOutputFormat("mcp", args)
+		if err != nil {
+			return err
+		}
+		if len(cleanArgs) != 1 || normalizeMCPAction(cleanArgs[0]) != "serve" {
+			return errors.New("usage: codog mcp serve")
+		}
+		return a.startResumedServerTask("mcp", []string{"serve"}, "mcp", "MCP server started", overrides)
+	}
+	return a.MCP(ctx, args)
 }
 
 func (a *App) runResumedRemoteSlash(args []string, overrides config.FlagOverrides, format string) error {

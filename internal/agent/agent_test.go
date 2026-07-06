@@ -6070,6 +6070,19 @@ func risky(value any) {
 	require.Contains(t, resumedAPIServe.Task.Command, "api serve 127.0.0.1:0")
 	require.NotContains(t, resumedAPIServe.Task.Command, "api start")
 
+	out, err = runResumedJSON("/mcp", "serve")
+	require.NoError(t, err)
+	var resumedMCPServe backgroundCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedMCPServe))
+	require.Equal(t, "background", resumedMCPServe.Kind)
+	require.Equal(t, "run", resumedMCPServe.Action)
+	require.Equal(t, "ok", resumedMCPServe.Status)
+	require.Equal(t, "resume-slash", resumedMCPServe.SessionID)
+	require.NotNil(t, resumedMCPServe.Task)
+	require.Equal(t, "mcp", resumedMCPServe.Task.Kind)
+	require.Equal(t, "resume-slash", resumedMCPServe.Task.SessionID)
+	require.Contains(t, resumedMCPServe.Task.Command, "mcp serve")
+
 	out, err = runResumedJSON("/acp", "serve")
 	require.NoError(t, err)
 	var resumedACPServe backgroundCommandReport
