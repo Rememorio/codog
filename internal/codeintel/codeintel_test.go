@@ -150,6 +150,31 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found)
 
+	colorSource := "package pkg\n\nconst Accent = \"#336699\"\nconst Short = \"#abc\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "colors.go"), []byte(colorSource), 0o644))
+	colors, err := DocumentColors(workspace, "pkg/colors.go", 10)
+	require.NoError(t, err)
+	require.Len(t, colors, 2)
+	require.Equal(t, "pkg/colors.go", colors[0].Path)
+	require.Equal(t, "#336699", colors[0].Text)
+	require.Equal(t, LSPPosition{Line: 2, Character: 16}, colors[0].Range.Start)
+	require.Equal(t, LSPPosition{Line: 2, Character: 23}, colors[0].Range.End)
+	require.InDelta(t, 0.2, colors[0].Color.Red, 0.001)
+	require.InDelta(t, 0.4, colors[0].Color.Green, 0.001)
+	require.InDelta(t, 0.6, colors[0].Color.Blue, 0.001)
+	require.Equal(t, 1.0, colors[0].Color.Alpha)
+
+	presentations, found, err := ColorPresentations(workspace, "pkg/colors.go", 2, 18)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Len(t, presentations, 2)
+	require.Equal(t, "#336699", presentations[0].Label)
+	require.Equal(t, "rgb(51, 102, 153)", presentations[1].Label)
+
+	_, found, err = ColorPresentations(workspace, "pkg/colors.go", 2, 23)
+	require.NoError(t, err)
+	require.False(t, found)
+
 	hover, err := HoverInfo(workspace, "Run", 1)
 	require.NoError(t, err)
 	require.True(t, hover.Found)

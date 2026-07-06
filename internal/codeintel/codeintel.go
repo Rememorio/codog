@@ -84,6 +84,28 @@ type DocumentLink struct {
 	Tooltip string   `json:"tooltip,omitempty"`
 }
 
+// DocumentColor describes one color literal discovered in a source document.
+type DocumentColor struct {
+	Path  string   `json:"path"`
+	Text  string   `json:"text"`
+	Range LSPRange `json:"range"`
+	Color LSPColor `json:"color"`
+}
+
+// LSPColor is the language-server color representation.
+type LSPColor struct {
+	Red   float64 `json:"red"`
+	Green float64 `json:"green"`
+	Blue  float64 `json:"blue"`
+	Alpha float64 `json:"alpha"`
+}
+
+// ColorPresentation describes a textual rendering of a document color.
+type ColorPresentation struct {
+	Label string        `json:"label"`
+	Color DocumentColor `json:"color"`
+}
+
 // Hover contains static hover context for a discovered symbol.
 type Hover struct {
 	Symbol  string   `json:"symbol"`
@@ -703,6 +725,96 @@ func positionInRange(line int, character int, rng LSPRange) bool {
 		return false
 	}
 	return true
+}
+
+var documentColorRe = regexp.MustCompile(`#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b`)
+
+// DocumentColors returns static hex color literals discovered in one source
+// document.
+func DocumentColors(workspace string, relPath string, limit int) ([]DocumentColor, error) {
+	if strings.TrimSpace(relPath) == "" {
+		return nil, errors.New("path is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	path, rel, err := resolveWorkspaceFile(workspace, relPath)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var colors []DocumentColor
+	for lineNo, line := range strings.Split(string(data), "\n") {
+		for _, bounds := range documentColorRe.FindAllStringIndex(line, -1) {
+			if len(colors) >= limit {
+				return colors, nil
+			}
+			raw := line[bounds[0]:bounds[1]]
+			color, ok := parseHexColor(raw)
+			if !ok {
+				continue
+			}
+			colors = append(colors, DocumentColor{
+				Path: rel,
+				Text: raw,
+				Range: LSPRange{
+					Start: LSPPosition{Line: lineNo, Character: bounds[0]},
+					End:   LSPPosition{Line: lineNo, Character: bounds[1]},
+				},
+				Color: color,
+			})
+		}
+	}
+	return colors, nil
+}
+
+// ColorPresentations returns static textual renderings for the color under a
+// document position.
+func ColorPresentations(workspace string, relPath string, line int, character int) ([]ColorPresentation, bool, error) {
+	if line < 0 || character < 0 {
+		return nil, false, errors.New("line and character must be non-negative")
+	}
+	colors, err := DocumentColors(workspace, relPath, 0)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, color := range colors {
+		if !positionInRange(line, character, color.Range) {
+			continue
+		}
+		hex := strings.ToUpper(color.Text)
+		r := int(color.Color.Red * 255)
+		g := int(color.Color.Green * 255)
+		b := int(color.Color.Blue * 255)
+		return []ColorPresentation{
+			{Label: hex, Color: color},
+			{Label: fmt.Sprintf("rgb(%d, %d, %d)", r, g, b), Color: color},
+		}, true, nil
+	}
+	return []ColorPresentation{}, false, nil
+}
+
+func parseHexColor(raw string) (LSPColor, bool) {
+	raw = strings.TrimPrefix(raw, "#")
+	if len(raw) == 3 {
+		raw = strings.Repeat(raw[0:1], 2) + strings.Repeat(raw[1:2], 2) + strings.Repeat(raw[2:3], 2)
+	}
+	if len(raw) != 6 {
+		return LSPColor{}, false
+	}
+	value, err := strconv.ParseUint(raw, 16, 32)
+	if err != nil {
+		return LSPColor{}, false
+	}
+	return LSPColor{
+		Red:   float64((value>>16)&0xff) / 255,
+		Green: float64((value>>8)&0xff) / 255,
+		Blue:  float64(value&0xff) / 255,
+		Alpha: 1,
+	}, true
 }
 
 // HoverInfo returns static hover context around a symbol definition.

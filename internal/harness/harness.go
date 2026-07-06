@@ -1515,8 +1515,8 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 	},
 	"lsp_static_roundtrip": {
 		Category:    "code-intelligence",
-		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, selection ranges, monikers, linked editing ranges, document links, references, hover, completions, diagnostics, and formatting.",
-		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Document links", "Diagnostics"},
+		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, selection ranges, monikers, linked editing ranges, document links, document colors, references, hover, completions, diagnostics, and formatting.",
+		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Document links", "Document colors", "Diagnostics"},
 	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
@@ -4348,6 +4348,10 @@ func lspStaticScenario() scenario {
 			if err := os.WriteFile(filepath.Join(pkgDir, "links.go"), []byte(linkSource), 0o644); err != nil {
 				return localScenarioResult{}, err
 			}
+			colorSource := "package pkg\n\nconst Accent = \"#336699\"\n"
+			if err := os.WriteFile(filepath.Join(pkgDir, "colors.go"), []byte(colorSource), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
 			tool := tools.LSPTool{Workspace: workspace}
 
 			symbolsOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"symbols","path":"pkg/runner.go"}`))
@@ -4480,6 +4484,26 @@ func lspStaticScenario() scenario {
 				}
 			}
 
+			documentColorOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"document_color","path":"pkg/colors.go","limit":5}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "document-color"`, `"source": "static"`, `"path": "pkg/colors.go"`, `"text": "#336699"`, `"red": 0.2`, `"total": 1`} {
+				if !strings.Contains(documentColorOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp document color output missing %s", expected)
+				}
+			}
+
+			colorPresentationOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"color_presentation","path":"pkg/colors.go","line":2,"character":18}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "color-presentation"`, `"source": "static"`, `"found": true`, `"label": "#336699"`, `"label": "rgb(51, 102, 153)"`} {
+				if !strings.Contains(colorPresentationOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp color presentation output missing %s", expected)
+				}
+			}
+
 			referencesOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"references","query":"Runner","limit":10}`))
 			if err != nil {
 				return localScenarioResult{}, err
@@ -4538,11 +4562,11 @@ func lspStaticScenario() scenario {
 			}
 
 			return localScenarioResult{
-				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
+				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, documentColorOut, colorPresentationOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
 				FinalMessage: "lsp static harness ok",
-				ToolCalls:    18,
-				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
-				RequestCount: 18,
+				ToolCalls:    20,
+				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
+				RequestCount: 20,
 			}, nil
 		},
 	}
