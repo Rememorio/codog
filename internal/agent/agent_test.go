@@ -11259,6 +11259,71 @@ func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 	require.NotEmpty(t, deleteReport.Path)
 }
 
+func TestSessionsCommandActionAliases(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello aliases")))
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Executable: "codog"}
+
+	require.NoError(t, app.SessionsCommand([]string{"ls", "--json"}))
+	var listReport sessionListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &listReport))
+	require.Equal(t, "sessions", listReport.Kind)
+	require.Equal(t, "list", listReport.Action)
+	require.Contains(t, listReport.Sessions, "source")
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"get", "source"}))
+	var showReport sessionShowReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &showReport))
+	require.Equal(t, "session_show", showReport.Kind)
+	require.Equal(t, "show", showReport.Action)
+	require.Equal(t, "source", showReport.SessionID)
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"has", "source"}))
+	var existsReport sessionExistsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &existsReport))
+	require.Equal(t, "session_exists", existsReport.Kind)
+	require.Equal(t, "exists", existsReport.Action)
+	require.True(t, existsReport.Exists)
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"use", "source"}))
+	var switchReport sessionSwitchReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &switchReport))
+	require.Equal(t, "session_switch", switchReport.Kind)
+	require.Equal(t, "switch", switchReport.Action)
+	require.Equal(t, "source", switchReport.SessionID)
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"clone", "source", "alias-branch"}))
+	var forkReport sessionForkReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &forkReport))
+	require.Equal(t, "session_fork", forkReport.Kind)
+	require.Equal(t, "fork", forkReport.Action)
+	require.Equal(t, "alias-branch", forkReport.BranchName)
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"mv", forkReport.SessionID, "alias-moved"}))
+	var renameReport sessionRenameReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &renameReport))
+	require.Equal(t, "session_rename", renameReport.Kind)
+	require.Equal(t, "rename", renameReport.Action)
+	require.Equal(t, "alias-moved", renameReport.NewSessionID)
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"rm", "alias-moved", "--force"}))
+	var deleteReport sessionDeleteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &deleteReport))
+	require.Equal(t, "session_delete", deleteReport.Kind)
+	require.Equal(t, "delete", deleteReport.Action)
+	require.True(t, deleteReport.Deleted)
+	ok, err := store.Exists("alias-moved")
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
 func TestSessionsCommandExportWritesFormats(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
@@ -12132,6 +12197,14 @@ func TestResumedSessionForkAndSwitchReportsTargetSession(t *testing.T) {
 	require.NotEmpty(t, forkReport.Path)
 	out.Reset()
 
+	require.NoError(t, app.runResumedSessionSlash([]string{"clone", "alias-incident", "--json"}, config.FlagOverrides{Resume: "active"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &forkReport))
+	require.Equal(t, "session_fork", forkReport.Kind)
+	require.Equal(t, "fork", forkReport.Action)
+	require.Equal(t, "active", forkReport.ParentSessionID)
+	require.Equal(t, "alias-incident", forkReport.BranchName)
+	out.Reset()
+
 	require.NoError(t, app.runResumedSessionSlash([]string{"switch", "other", "--json"}, config.FlagOverrides{Resume: "active"}))
 	var switchReport sessionSwitchReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &switchReport))
@@ -12145,6 +12218,13 @@ func TestResumedSessionForkAndSwitchReportsTargetSession(t *testing.T) {
 	require.Contains(t, switchReport.ContinueCommands[0], "--resume 'other' repl")
 	out.Reset()
 
+	require.NoError(t, app.runResumedSessionSlash([]string{"checkout", "other", "--json"}, config.FlagOverrides{Resume: "active"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &switchReport))
+	require.Equal(t, "session_switch", switchReport.Kind)
+	require.Equal(t, "switch", switchReport.Action)
+	require.Equal(t, "other", switchReport.SessionID)
+	out.Reset()
+
 	require.NoError(t, app.runResumedSessionSlash([]string{"switch", "other"}, config.FlagOverrides{Resume: "active"}))
 	require.Contains(t, out.String(), "Session switched")
 	require.Contains(t, out.String(), "Previous         active")
@@ -12152,7 +12232,7 @@ func TestResumedSessionForkAndSwitchReportsTargetSession(t *testing.T) {
 
 	sessions, err := store.List()
 	require.NoError(t, err)
-	require.Len(t, sessions, 3)
+	require.Len(t, sessions, 4)
 }
 
 func TestResumedSessionPruneSkipsActiveSession(t *testing.T) {

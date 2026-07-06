@@ -28990,7 +28990,7 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 	if len(args) == 0 || strings.HasPrefix(strings.TrimSpace(args[0]), "-") {
 		return a.ResumeCommand(append([]string{overrides.Resume}, args...))
 	}
-	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	switch normalizeSessionAction(args[0]) {
 	case "exists":
 		return a.SessionExists(args[1:], overrides.Resume)
 	case "fork":
@@ -30294,7 +30294,7 @@ func renderLocalRouteGuard(out io.Writer, command string, args []string, format 
 }
 
 func isSessionAction(action string) bool {
-	switch strings.ToLower(strings.TrimSpace(action)) {
+	switch normalizeSessionAction(action) {
 	case "", "list", "show", "exists", "export", "import", "fork", "switch", "rename", "prune", "delete":
 		return true
 	default:
@@ -42351,7 +42351,11 @@ func (a *App) resolveOutputPath(path string) string {
 }
 
 func (a *App) handleSessionSlash(args []string, sess *session.Session) {
-	if len(args) == 0 || args[0] == "list" {
+	action := ""
+	if len(args) > 0 {
+		action = normalizeSessionAction(args[0])
+	}
+	if len(args) == 0 || action == "list" {
 		if len(args) > 0 {
 			args = args[1:]
 		}
@@ -42360,7 +42364,7 @@ func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 		}
 		return
 	}
-	switch args[0] {
+	switch action {
 	case "exists":
 		if err := a.SessionExists(args[1:], sess.ID); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -42517,13 +42521,17 @@ func parseSessionDeleteArgs(command string, args []string) (sessionDeleteRequest
 }
 
 func (a *App) SessionsCommand(args []string) error {
-	if len(args) == 0 || args[0] == "list" {
+	action := ""
+	if len(args) > 0 {
+		action = normalizeSessionAction(args[0])
+	}
+	if len(args) == 0 || action == "list" {
 		if len(args) > 0 {
 			args = args[1:]
 		}
 		return a.ListSessionsWithActive(args, "")
 	}
-	switch args[0] {
+	switch action {
 	case "show":
 		showArgs := args[1:]
 		if !argsHaveOutputFormat(showArgs) {
@@ -42641,6 +42649,33 @@ func (a *App) SessionsCommand(args []string) error {
 	return nil
 }
 
+func normalizeSessionAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "list", "ls":
+		return "list"
+	case "show", "get", "info", "describe":
+		return "show"
+	case "exists", "has":
+		return "exists"
+	case "export", "dump":
+		return "export"
+	case "import", "load":
+		return "import"
+	case "fork", "clone":
+		return "fork"
+	case "switch", "checkout", "use":
+		return "switch"
+	case "rename", "mv", "move":
+		return "rename"
+	case "prune", "gc", "clean":
+		return "prune"
+	case "delete", "del", "remove", "rm":
+		return "delete"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
+}
+
 type sessionsActionError struct {
 	Action string
 }
@@ -42666,7 +42701,7 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_sessions_action",
 			Message:   fmt.Sprintf("unsupported sessions action %q", action),
-			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions switch ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions prune`, or `codog sessions delete ID`.",
+			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions switch ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions prune`, or `codog sessions delete ID`. Common aliases include ls, get, has, clone, checkout, mv, gc, and rm.",
 		}, format)
 	}
 	return renderCLIError(out, err, format)
