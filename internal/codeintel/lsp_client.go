@@ -24,6 +24,7 @@ type LSPQueryRequest struct {
 	Action          string `json:"action"`
 	Path            string `json:"path"`
 	Query           string `json:"query,omitempty"`
+	Arguments       []any  `json:"arguments,omitempty"`
 	Line            int    `json:"line,omitempty"`
 	Character       int    `json:"character,omitempty"`
 	NewName         string `json:"new_name,omitempty"`
@@ -863,7 +864,7 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 			Result:   decoded,
 		}, nil
 	}
-	method, params, err := lspMethodParams(action, uri, request.Line, request.Character, request.NewName, request.Query)
+	method, params, err := lspMethodParams(action, uri, request.Line, request.Character, request.NewName, request.Query, request.Arguments)
 	if err != nil {
 		return LSPQueryResult{}, err
 	}
@@ -1466,7 +1467,7 @@ func decodeLSPParams(params any, out any) error {
 	return json.Unmarshal(data, out)
 }
 
-func lspMethodParams(action string, uri string, line int, character int, newName string, query string) (string, any, error) {
+func lspMethodParams(action string, uri string, line int, character int, newName string, query string, arguments []any) (string, any, error) {
 	position := map[string]any{"line": max(0, line), "character": max(0, character)}
 	textDocument := map[string]any{"uri": uri}
 	switch action {
@@ -1559,7 +1560,10 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		if command == "" {
 			return "", nil, errors.New("query is required for lsp execute-command")
 		}
-		return "workspace/executeCommand", map[string]any{"command": command, "arguments": []any{}}, nil
+		if arguments == nil {
+			arguments = []any{}
+		}
+		return "workspace/executeCommand", map[string]any{"command": command, "arguments": arguments}, nil
 	case "signature-help":
 		return "textDocument/signatureHelp", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "symbols":

@@ -5774,6 +5774,7 @@ func (LSPTool) Definition() anthropic.ToolDefinition {
 				"character": map[string]any{"type": "integer", "minimum": 0},
 				"new_name":  map[string]any{"type": "string"},
 				"query":     map[string]any{"type": "string"},
+				"arguments": map[string]any{"type": "array", "items": map[string]any{}},
 				"limit":     map[string]any{"type": "integer", "minimum": 1},
 				"language":  map[string]any{"type": "string"},
 				"use_server": map[string]any{
@@ -5798,6 +5799,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		Line      int    `json:"line"`
 		Character int    `json:"character"`
 		Query     string `json:"query"`
+		Arguments []any  `json:"arguments"`
 		NewName   string `json:"new_name"`
 		Limit     int    `json:"limit"`
 		Language  string `json:"language"`
@@ -5812,7 +5814,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 	}
 	var fallback any
 	if payload.UseServer || strings.TrimSpace(payload.Language) != "" {
-		result, err := t.executeServerLSP(ctx, action, payload.Language, payload.Path, payload.Query, payload.Line, payload.Character, payload.NewName)
+		result, err := t.executeServerLSP(ctx, action, payload.Language, payload.Path, payload.Query, payload.Arguments, payload.Line, payload.Character, payload.NewName)
 		if err == nil {
 			return pretty(map[string]any{"action": action, "source": "lsp", "lsp": result}), nil
 		}
@@ -5950,7 +5952,7 @@ func (t LSPTool) lspQuery(query string, path string, line int, character int) (s
 	return symbolAtPosition(t.Workspace, t.AdditionalDirs, path, line, character)
 }
 
-func (t LSPTool) executeServerLSP(ctx context.Context, action string, language string, path string, query string, line int, character int, newName string) (codeintel.LSPQueryResult, error) {
+func (t LSPTool) executeServerLSP(ctx context.Context, action string, language string, path string, query string, arguments []any, line int, character int, newName string) (codeintel.LSPQueryResult, error) {
 	if strings.TrimSpace(t.ConfigHome) == "" {
 		return codeintel.LSPQueryResult{}, errors.New("config home is required for lsp server queries")
 	}
@@ -5972,6 +5974,7 @@ func (t LSPTool) executeServerLSP(ctx context.Context, action string, language s
 		Action:    action,
 		Path:      path,
 		Query:     query,
+		Arguments: arguments,
 		Line:      line,
 		Character: character,
 		NewName:   newName,

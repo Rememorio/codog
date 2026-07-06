@@ -646,20 +646,23 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "demo", resolvedWorkspaceSymbol.Resolved.Container)
 	require.NotNil(t, resolvedWorkspaceSymbol.Resolved.Location)
 
-	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "execute_command", Query: "demo.run"})
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "execute_command", Query: "demo.run", Arguments: []any{"main.go", map[string]any{"line": 2}}})
 	require.NoError(t, err)
 	require.Equal(t, "execute-command", result.Action)
 	require.Equal(t, "workspace/executeCommand", result.Method)
 	require.Empty(t, result.Path)
 	var executedCommand struct {
-		Status  string `json:"status"`
-		Command string `json:"command"`
+		Status    string `json:"status"`
+		Command   string `json:"command"`
+		Arguments []any  `json:"arguments"`
 	}
 	encodedExecutedCommand, err := json.Marshal(result.Result)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(encodedExecutedCommand, &executedCommand))
 	require.Equal(t, "ok", executedCommand.Status)
 	require.Equal(t, "demo.run", executedCommand.Command)
+	require.Len(t, executedCommand.Arguments, 2)
+	require.Equal(t, "main.go", executedCommand.Arguments[0])
 
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "rename", Path: "main.go", Line: 2, Character: 5, NewName: "Start"})
 	require.NoError(t, err)
@@ -1303,12 +1306,14 @@ func TestFakeLSPServer(t *testing.T) {
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(symbol)})
 		case "workspace/executeCommand":
 			var params struct {
-				Command string `json:"command"`
+				Command   string `json:"command"`
+				Arguments []any  `json:"arguments"`
 			}
 			_ = decodeLSPParams(msg.Params, &params)
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
-				"status":  "ok",
-				"command": params.Command,
+				"status":    "ok",
+				"command":   params.Command,
+				"arguments": params.Arguments,
 			})})
 		case "textDocument/signatureHelp":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{

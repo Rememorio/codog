@@ -924,6 +924,7 @@ func (s Server) lspQuery(params json.RawMessage) (any, error) {
 		Path            string `json:"path"`
 		FilePath        string `json:"file_path"`
 		Query           string `json:"query"`
+		Arguments       []any  `json:"arguments"`
 		Line            int    `json:"line"`
 		Character       int    `json:"character"`
 		NewName         string `json:"new_name"`
@@ -958,6 +959,7 @@ func (s Server) lspQuery(params json.RawMessage) (any, error) {
 		Action:          payload.Action,
 		Path:            firstNonEmpty(payload.Path, payload.FilePath),
 		Query:           payload.Query,
+		Arguments:       payload.Arguments,
 		Line:            payload.Line,
 		Character:       payload.Character,
 		NewName:         payload.NewName,

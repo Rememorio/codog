@@ -401,7 +401,7 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":39,"method":"lsp/status","params":{"language":"go"}}`,
 		`{"jsonrpc":"2.0","id":40,"method":"lsp/list"}`,
 		`{"jsonrpc":"2.0","id":41,"method":"lsp/query","params":{"language":"go","action":"workspace_symbol_resolve","query":"Build"}}`,
-		`{"jsonrpc":"2.0","id":42,"method":"lsp/query","params":{"language":"go","action":"execute_command","query":"bridge.run"}}`,
+		`{"jsonrpc":"2.0","id":42,"method":"lsp/query","params":{"language":"go","action":"execute_command","query":"bridge.run","arguments":["main.go",{"line":2}]}}`,
 		`{"jsonrpc":"2.0","id":43,"method":"lsp/stop","params":{"language":"go"}}`,
 	}, "\n") + "\n"
 
@@ -510,6 +510,7 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"action":"execute-command"`)
 	require.Contains(t, out.String(), `"method":"workspace/executeCommand"`)
 	require.Contains(t, out.String(), `"command":"bridge.run"`)
+	require.Contains(t, out.String(), `"arguments":["main.go",{"line":2}]`)
 	require.Contains(t, out.String(), `"action":"document-diagnostic"`)
 	require.Contains(t, out.String(), `"method":"textDocument/diagnostic"`)
 	require.Contains(t, out.String(), `"message":"bridge pulled document diagnostic"`)
@@ -936,12 +937,14 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": symbol})
 		case "workspace/executeCommand":
 			var params struct {
-				Command string `json:"command"`
+				Command   string `json:"command"`
+				Arguments []any  `json:"arguments"`
 			}
 			_ = json.Unmarshal(msg.Params, &params)
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
-				"status":  "ok",
-				"command": params.Command,
+				"status":    "ok",
+				"command":   params.Command,
+				"arguments": params.Arguments,
 			}})
 		case "textDocument/rangeFormatting":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
