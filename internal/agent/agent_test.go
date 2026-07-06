@@ -26151,7 +26151,7 @@ func TestTeamCommandAndSlash(t *testing.T) {
 		Err:        &errOut,
 	}
 
-	require.NoError(t, app.Team([]string{"create", "reviewers", "--task", "auth=check auth", "--task", "check tests", "--json"}))
+	require.NoError(t, app.Team([]string{"add", "reviewers", "--task", "auth=check auth", "--task", "check tests", "--json"}))
 	var created teamCommandReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &created))
 	require.Equal(t, "team", created.Kind)
@@ -26163,7 +26163,7 @@ func TestTeamCommandAndSlash(t *testing.T) {
 	require.Len(t, created.Tasks, 2)
 	out.Reset()
 
-	require.NoError(t, app.Team([]string{"status", created.Team.ID, "--json"}))
+	require.NoError(t, app.Team([]string{"stat", created.Team.ID, "--json"}))
 	var status teamCommandReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &status))
 	require.Equal(t, "status", status.Action)
@@ -26174,7 +26174,7 @@ func TestTeamCommandAndSlash(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		out.Reset()
-		require.NoError(t, app.Team([]string{"logs", created.Team.ID, "--bytes", "4096", "--json"}))
+		require.NoError(t, app.Team([]string{"log", created.Team.ID, "--bytes", "4096", "--json"}))
 		return strings.Contains(out.String(), "team-log")
 	}, 5*time.Second, 50*time.Millisecond)
 	var logs teamCommandReport
@@ -26184,7 +26184,7 @@ func TestTeamCommandAndSlash(t *testing.T) {
 	require.Contains(t, logs.Logs[0].Log+logs.Logs[1].Log, "team-log")
 	out.Reset()
 
-	require.NoError(t, app.Team([]string{"watch", created.Team.ID, "--max-events", "2", "--json"}))
+	require.NoError(t, app.Team([]string{"tail", created.Team.ID, "--max-events", "2", "--json"}))
 	require.Contains(t, out.String(), `"kind":"team_watch"`)
 	require.Contains(t, out.String(), `"type":"status"`)
 	out.Reset()
@@ -26196,18 +26196,18 @@ func TestTeamCommandAndSlash(t *testing.T) {
 	require.Equal(t, created.Team.ID, listed.Teams[0].ID)
 	out.Reset()
 
-	require.True(t, app.handleSlash(context.Background(), "/team list --json", &session.Session{ID: "session-1"}))
+	require.True(t, app.handleSlash(context.Background(), "/team ls --json", &session.Session{ID: "session-1"}))
 	require.Contains(t, out.String(), `"kind": "team"`)
 	require.Empty(t, errOut.String())
 	out.Reset()
 
-	require.NoError(t, app.Team([]string{"get", created.Team.ID, "--json"}))
+	require.NoError(t, app.Team([]string{"show", created.Team.ID, "--json"}))
 	var fetched teamCommandReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &fetched))
 	require.Equal(t, created.Team.ID, fetched.Team.ID)
 	out.Reset()
 
-	require.NoError(t, app.Team([]string{"delete", created.Team.ID, "--json"}))
+	require.NoError(t, app.Team([]string{"rm", created.Team.ID, "--json"}))
 	var deleted teamCommandReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &deleted))
 	require.Equal(t, "delete", deleted.Action)

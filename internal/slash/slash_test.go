@@ -309,6 +309,15 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, cron.Usage, "mark")
 	require.Contains(t, cron.Usage, "run")
 
+	team, ok := Lookup("/team")
+	require.True(t, ok)
+	require.True(t, team.ResumeSupported)
+	require.Contains(t, team.Usage, "add")
+	require.Contains(t, team.Usage, "show")
+	require.Contains(t, team.Usage, "stat")
+	require.Contains(t, team.Usage, "tail")
+	require.Contains(t, team.Usage, "rm")
+
 	skill, ok := Lookup("/skill")
 	require.True(t, ok)
 	require.True(t, skill.ResumeSupported)

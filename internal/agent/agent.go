@@ -5205,7 +5205,7 @@ func parseTeamArgs(args []string) (teamRequest, error) {
 			return req, unexpectedExtraArgsError{
 				Command: command,
 				Args:    append([]string(nil), positionals...),
-				Usage:   "codog team [list|get|status|logs|watch|create|delete] [ARGS...] [--json|--output-format text|json]",
+				Usage:   teamUsage,
 			}
 		}
 	case "get", "status", "logs", "watch", "delete":
@@ -5228,7 +5228,7 @@ func parseTeamArgs(args []string) (teamRequest, error) {
 		return req, unexpectedExtraArgsError{
 			Command: "team",
 			Args:    []string{req.Action},
-			Usage:   "codog team [list|get|status|logs|watch|create|delete] [ARGS...] [--json|--output-format text|json]",
+			Usage:   teamUsage,
 		}
 	}
 	return req, nil
@@ -5440,6 +5440,8 @@ func isTeamAction(value string) bool {
 		return false
 	}
 }
+
+const teamUsage = "codog team [list|ls|get|show|status|stat|logs|log|watch|tail|follow|create|add|new|delete|remove|rm] [ARGS...] [--json|--output-format text|json]"
 
 func normalizeTeamAction(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {

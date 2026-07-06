@@ -235,7 +235,7 @@ func Specs() []Spec {
 		{Name: "/quit", Usage: "/quit", Description: "Alias for /exit."},
 		{Name: "/agents", Usage: "/agents [list|show|create|run|worktrees]", Description: "List, create, inspect, or launch local agent definitions."},
 		{Name: "/subagent", Usage: "/subagent [list|steer|kill|status|logs]", Description: "Inspect, steer, stop, or read local subagent runs."},
-		{Name: "/team", Usage: "/team [list|create|get|status|logs|watch|delete]", Description: "Manage background multi-agent task teams."},
+		{Name: "/team", Usage: "/team [list|ls|create|add|get|show|status|stat|logs|log|watch|tail|follow|delete|rm]", Description: "Manage background multi-agent task teams."},
 		{Name: "/tasks", Usage: "/tasks [list|board|heartbeat|status|stop|logs|watch]", Description: "Alias for background task management."},
 		{Name: "/bashes", Usage: "/bashes [list|board|heartbeat|status|stop|logs|watch]", Description: "Alias for background task management."},
 		{Name: "/background", Usage: "/background [run|list|board|heartbeat|status|stop|logs|watch]", Description: "Manage local background tasks."},
