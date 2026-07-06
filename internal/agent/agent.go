@@ -23795,12 +23795,13 @@ func (a *App) serveACP(ctx context.Context) error {
 			}
 			store := codeintel.NewLSPStore(a.Config.ConfigHome, a.Workspace)
 			return store.Query(ctx, req.Language, codeintel.LSPQueryRequest{
-				Action:    req.Action,
-				Path:      firstNonEmpty(req.Path, req.FilePath),
-				Line:      req.Line,
-				Character: req.Character,
-				NewName:   req.NewName,
-				Apply:     req.Apply || req.Write,
+				Action:          req.Action,
+				Path:            firstNonEmpty(req.Path, req.FilePath),
+				Line:            req.Line,
+				Character:       req.Character,
+				NewName:         req.NewName,
+				CodeActionTitle: req.CodeActionTitle,
+				Apply:           req.Apply || req.Write,
 			})
 		},
 		BackgroundList: func(_ context.Context, req acpserver.BackgroundListRequest) (any, error) {
@@ -34330,13 +34331,25 @@ func (a *App) CodeIntelLSP(args []string) error {
 		payload = status
 	case "query", "request":
 		write := false
+		codeActionTitle := ""
 		cleanArgs := []string{}
-		for _, arg := range args {
-			switch arg {
-			case "--write", "--apply":
+		for index := 0; index < len(args); index++ {
+			arg := args[index]
+			switch {
+			case arg == "--write" || arg == "--apply":
 				write = true
-			case "--preview", "--dry-run":
+			case arg == "--preview" || arg == "--dry-run":
 				write = false
+			case arg == "--code-action-title" || arg == "--action-title":
+				index++
+				if index >= len(args) {
+					return errors.New("lsp query code action title is required")
+				}
+				codeActionTitle = args[index]
+			case strings.HasPrefix(arg, "--code-action-title="):
+				codeActionTitle = strings.TrimPrefix(arg, "--code-action-title=")
+			case strings.HasPrefix(arg, "--action-title="):
+				codeActionTitle = strings.TrimPrefix(arg, "--action-title=")
 			default:
 				cleanArgs = append(cleanArgs, arg)
 			}
@@ -34366,12 +34379,13 @@ func (a *App) CodeIntelLSP(args []string) error {
 			newName = args[6]
 		}
 		result, err := store.Query(context.Background(), args[1], codeintel.LSPQueryRequest{
-			Action:    args[2],
-			Path:      args[3],
-			Line:      line,
-			Character: character,
-			NewName:   newName,
-			Apply:     write,
+			Action:          args[2],
+			Path:            args[3],
+			Line:            line,
+			Character:       character,
+			NewName:         newName,
+			CodeActionTitle: codeActionTitle,
+			Apply:           write,
 		})
 		if err != nil {
 			return err

@@ -327,6 +327,18 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "quickfix", result.Edits[0].ActionKind)
 	require.Equal(t, "main.go", result.Edits[0].Path)
 	require.Contains(t, result.Edits[0].Content, "func Launch()")
+	data, err = os.ReadFile(filepath.Join(workspace, "main.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "func Start()")
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "code_action", Path: "main.go", Line: 2, Character: 5, CodeActionTitle: "Apply fake fix", Apply: true})
+	require.NoError(t, err)
+	require.Equal(t, "code-action", result.Action)
+	require.True(t, result.Applied)
+	require.Equal(t, 1, result.FileEdits)
+	data, err = os.ReadFile(filepath.Join(workspace, "main.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "func Launch()")
 
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "diagnostics", Path: "main.go"})
 	require.NoError(t, err)

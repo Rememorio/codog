@@ -366,7 +366,7 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":4,"method":"lsp/query","params":{"language":"go","action":"hover","path":"main.go","line":2,"character":5}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"lsp/query","params":{"language":"go","action":"diagnostics","file_path":"main.go","timeout_ms":1000}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"lsp/query","params":{"language":"go","action":"rename","path":"main.go","line":2,"character":5,"new_name":"Start","write":true}}`,
-		`{"jsonrpc":"2.0","id":7,"method":"lsp/query","params":{"language":"go","action":"code_action","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"lsp/query","params":{"language":"go","action":"code_action","path":"main.go","line":2,"character":5,"code_action_title":"Bridge fake fix","apply":true}}`,
 		`{"jsonrpc":"2.0","id":8,"method":"lsp/status","params":{"language":"go"}}`,
 		`{"jsonrpc":"2.0","id":9,"method":"lsp/list"}`,
 		`{"jsonrpc":"2.0","id":10,"method":"lsp/stop","params":{"language":"go"}}`,
@@ -390,13 +390,14 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"file_edits":1`)
 	require.Contains(t, out.String(), `"applied":true`)
 	require.Contains(t, out.String(), `func Start()`)
-	data, err := os.ReadFile(filepath.Join(workspace, "main.go"))
-	require.NoError(t, err)
-	require.Contains(t, string(data), "func Start()")
 	require.Contains(t, out.String(), `"action":"code-action"`)
 	require.Contains(t, out.String(), `"title":"Bridge fake fix"`)
 	require.Contains(t, out.String(), `"file_edits":1`)
+	require.Contains(t, out.String(), `"applied":true`)
 	require.Contains(t, out.String(), `func Launch()`)
+	data, err := os.ReadFile(filepath.Join(workspace, "main.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "func Launch()")
 	require.Contains(t, out.String(), `"kind":"lsp_status"`)
 	require.Contains(t, out.String(), `"kind":"lsp_list"`)
 	require.Contains(t, out.String(), `"kind":"lsp_stop"`)

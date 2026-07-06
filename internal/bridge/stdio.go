@@ -919,16 +919,17 @@ func (s Server) lspStop(params json.RawMessage) (any, error) {
 
 func (s Server) lspQuery(params json.RawMessage) (any, error) {
 	var payload struct {
-		Language  string `json:"language"`
-		Action    string `json:"action"`
-		Path      string `json:"path"`
-		FilePath  string `json:"file_path"`
-		Line      int    `json:"line"`
-		Character int    `json:"character"`
-		NewName   string `json:"new_name"`
-		Apply     bool   `json:"apply"`
-		Write     bool   `json:"write"`
-		TimeoutMS int    `json:"timeout_ms"`
+		Language        string `json:"language"`
+		Action          string `json:"action"`
+		Path            string `json:"path"`
+		FilePath        string `json:"file_path"`
+		Line            int    `json:"line"`
+		Character       int    `json:"character"`
+		NewName         string `json:"new_name"`
+		CodeActionTitle string `json:"code_action_title"`
+		Apply           bool   `json:"apply"`
+		Write           bool   `json:"write"`
+		TimeoutMS       int    `json:"timeout_ms"`
 	}
 	if err := json.Unmarshal(params, &payload); err != nil {
 		return nil, err
@@ -953,12 +954,13 @@ func (s Server) lspQuery(params json.RawMessage) (any, error) {
 		defer cancel()
 	}
 	return store.Query(ctx, payload.Language, codeintel.LSPQueryRequest{
-		Action:    payload.Action,
-		Path:      firstNonEmpty(payload.Path, payload.FilePath),
-		Line:      payload.Line,
-		Character: payload.Character,
-		NewName:   payload.NewName,
-		Apply:     payload.Apply || payload.Write,
+		Action:          payload.Action,
+		Path:            firstNonEmpty(payload.Path, payload.FilePath),
+		Line:            payload.Line,
+		Character:       payload.Character,
+		NewName:         payload.NewName,
+		CodeActionTitle: payload.CodeActionTitle,
+		Apply:           payload.Apply || payload.Write,
 	})
 }
 

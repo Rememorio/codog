@@ -330,16 +330,17 @@ type LSPStopRequest struct {
 
 // LSPQueryRequest sends a typed request to a language server.
 type LSPQueryRequest struct {
-	Language  string `json:"language"`
-	Action    string `json:"action"`
-	Path      string `json:"path,omitempty"`
-	FilePath  string `json:"file_path,omitempty"`
-	Line      int    `json:"line,omitempty"`
-	Character int    `json:"character,omitempty"`
-	NewName   string `json:"new_name,omitempty"`
-	Apply     bool   `json:"apply,omitempty"`
-	Write     bool   `json:"write,omitempty"`
-	TimeoutMS int    `json:"timeout_ms,omitempty"`
+	Language        string `json:"language"`
+	Action          string `json:"action"`
+	Path            string `json:"path,omitempty"`
+	FilePath        string `json:"file_path,omitempty"`
+	Line            int    `json:"line,omitempty"`
+	Character       int    `json:"character,omitempty"`
+	NewName         string `json:"new_name,omitempty"`
+	CodeActionTitle string `json:"code_action_title,omitempty"`
+	Apply           bool   `json:"apply,omitempty"`
+	Write           bool   `json:"write,omitempty"`
+	TimeoutMS       int    `json:"timeout_ms,omitempty"`
 }
 
 // BackgroundListRequest filters background task listing.

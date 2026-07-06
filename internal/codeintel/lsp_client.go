@@ -21,12 +21,13 @@ import (
 
 // LSPQueryRequest describes one language-server query against a document.
 type LSPQueryRequest struct {
-	Action    string `json:"action"`
-	Path      string `json:"path"`
-	Line      int    `json:"line,omitempty"`
-	Character int    `json:"character,omitempty"`
-	NewName   string `json:"new_name,omitempty"`
-	Apply     bool   `json:"apply,omitempty"`
+	Action          string `json:"action"`
+	Path            string `json:"path"`
+	Line            int    `json:"line,omitempty"`
+	Character       int    `json:"character,omitempty"`
+	NewName         string `json:"new_name,omitempty"`
+	CodeActionTitle string `json:"code_action_title,omitempty"`
+	Apply           bool   `json:"apply,omitempty"`
 }
 
 // LSPQueryResult is the normalized result of an LSP JSON-RPC request.
@@ -462,7 +463,7 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 		}
 	}
 	if action == "code-action" && len(raw) > 0 && string(raw) != "null" {
-		fileEdits, textEdits, err := summarizeLSPCodeActionEdits(workspace, raw)
+		fileEdits, textEdits, actionEdits, err := summarizeLSPCodeActionEdits(workspace, raw, request.CodeActionTitle)
 		if err != nil {
 			return LSPQueryResult{}, err
 		}
@@ -470,6 +471,15 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 		result.TextEdits = textEdits
 		result.Edits = fileEdits
 		result.Changed = textEdits > 0
+		if request.Apply {
+			if actionEdits != 1 {
+				return LSPQueryResult{}, fmt.Errorf("lsp code-action apply requires exactly one matching edit-bearing action, got %d", actionEdits)
+			}
+			if err := applyLSPFileEdits(fileEdits); err != nil {
+				return LSPQueryResult{}, err
+			}
+			result.Applied = true
+		}
 	}
 	return result, nil
 }
@@ -712,21 +722,29 @@ func applyLSPFileEdits(edits []LSPFileEdit) error {
 	return nil
 }
 
-func summarizeLSPCodeActionEdits(workspace string, raw json.RawMessage) ([]LSPFileEdit, int, error) {
+func summarizeLSPCodeActionEdits(workspace string, raw json.RawMessage, titleFilter string) ([]LSPFileEdit, int, int, error) {
 	var actions []struct {
 		Title string           `json:"title"`
 		Kind  string           `json:"kind"`
 		Edit  lspWorkspaceEdit `json:"edit"`
 	}
 	if err := json.Unmarshal(raw, &actions); err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
+	titleFilter = strings.TrimSpace(titleFilter)
 	out := []LSPFileEdit{}
 	totalTextEdits := 0
+	actionEdits := 0
 	for _, action := range actions {
+		if titleFilter != "" && !strings.EqualFold(strings.TrimSpace(action.Title), titleFilter) {
+			continue
+		}
 		fileEdits, textEdits, err := summarizeLSPWorkspaceEdit(workspace, action.Edit)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
+		}
+		if textEdits == 0 {
+			continue
 		}
 		for index := range fileEdits {
 			fileEdits[index].ActionTitle = action.Title
@@ -734,8 +752,9 @@ func summarizeLSPCodeActionEdits(workspace string, raw json.RawMessage) ([]LSPFi
 		}
 		out = append(out, fileEdits...)
 		totalTextEdits += textEdits
+		actionEdits++
 	}
-	return out, totalTextEdits, nil
+	return out, totalTextEdits, actionEdits, nil
 }
 
 func collectLSPWorkspaceEdits(edit lspWorkspaceEdit) map[string][]lspTextEdit {
