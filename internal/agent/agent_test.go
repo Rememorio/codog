@@ -9620,6 +9620,57 @@ func TestParseFlagsSupportsMaxBudgetUSDForPrompt(t *testing.T) {
 	require.Contains(t, flagErr.Message, "prompt mode")
 }
 
+func TestParseFlagsSupportsDebugAndVerbose(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{"--debug", "--verbose", "-p", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.True(t, overrides.Debug)
+	require.True(t, overrides.Verbose)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"-v", "status"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.False(t, overrides.Debug)
+	require.True(t, overrides.Verbose)
+	require.Equal(t, "status", command)
+	require.Empty(t, rest)
+}
+
+func TestRenderDebugStartupOmitsSecrets(t *testing.T) {
+	var out bytes.Buffer
+	cfg := config.Config{
+		ConfigHome:      "config-home",
+		Model:           "mock-model",
+		BaseURL:         "https://api.example.test",
+		RuntimeProvider: "anthropic",
+		PermissionMode:  "workspace-write",
+		APIKey:          "secret-api-key",
+		AuthToken:       "secret-auth-token",
+		Debug:           true,
+		Verbose:         true,
+	}
+
+	renderDebugStartup(&out, cfg, "prompt", []string{"hello"}, "workspace", config.FlagOverrides{SessionID: "session-1", Resume: "latest"}, "json")
+
+	line := strings.TrimSpace(out.String())
+	require.Contains(t, line, "codog debug: ")
+	require.NotContains(t, line, "secret-api-key")
+	require.NotContains(t, line, "secret-auth-token")
+	var report debugStartupReport
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(line, "codog debug: ")), &report))
+	require.Equal(t, "debug_startup", report.Kind)
+	require.Equal(t, "prompt", report.Command)
+	require.Equal(t, []string{"hello"}, report.Args)
+	require.Equal(t, "workspace", report.Workspace)
+	require.Equal(t, "config-home", report.ConfigHome)
+	require.True(t, report.Debug)
+	require.True(t, report.Verbose)
+	require.True(t, report.APIKeyConfigured)
+	require.True(t, report.AuthTokenProvided)
+	require.Equal(t, "session-1", report.SessionID)
+	require.Equal(t, "latest", report.Resume)
+}
+
 func TestBroadWorkspaceGuard(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

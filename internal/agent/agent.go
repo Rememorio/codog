@@ -398,6 +398,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return err
 	}
 	executable, _ := resolveExecutablePath()
+	format := requestedOutputFormat(originalArgs)
 	app := &App{
 		Config:     cfg,
 		Client:     anthropicClientFromConfig(cfg),
@@ -409,13 +410,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		Err:        os.Stderr,
 		In:         os.Stdin,
 	}
+	renderDebugStartup(os.Stderr, cfg, command, rest, workspace, overrides, format)
 	if err := app.RegisterPluginTools(); err != nil {
 		return err
 	}
-	if err := app.validateGlobalToolRules(overrides, requestedOutputFormat(originalArgs)); err != nil {
+	if err := app.validateGlobalToolRules(overrides, format); err != nil {
 		return err
 	}
-	format := requestedOutputFormat(originalArgs)
 	wrapStructured := func(err error) error {
 		if err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, format)
@@ -29644,6 +29645,56 @@ type broadCWDGuardReport struct {
 	Hint      string `json:"hint"`
 }
 
+type debugStartupReport struct {
+	Kind              string   `json:"kind"`
+	Command           string   `json:"command"`
+	Args              []string `json:"args,omitempty"`
+	Workspace         string   `json:"workspace"`
+	ConfigHome        string   `json:"config_home,omitempty"`
+	Model             string   `json:"model,omitempty"`
+	BaseURL           string   `json:"base_url,omitempty"`
+	RuntimeProvider   string   `json:"runtime_provider,omitempty"`
+	OutputFormat      string   `json:"output_format,omitempty"`
+	PermissionMode    string   `json:"permission_mode,omitempty"`
+	SessionID         string   `json:"session_id,omitempty"`
+	Resume            string   `json:"resume,omitempty"`
+	FromPR            string   `json:"from_pr,omitempty"`
+	Debug             bool     `json:"debug"`
+	Verbose           bool     `json:"verbose"`
+	APIKeyConfigured  bool     `json:"api_key_configured"`
+	AuthTokenProvided bool     `json:"auth_token_provided"`
+}
+
+func renderDebugStartup(out io.Writer, cfg config.Config, command string, args []string, workspace string, overrides config.FlagOverrides, outputFormat string) {
+	if out == nil || (!cfg.Debug && !cfg.Verbose) {
+		return
+	}
+	report := debugStartupReport{
+		Kind:              "debug_startup",
+		Command:           strings.TrimSpace(command),
+		Args:              append([]string(nil), args...),
+		Workspace:         workspace,
+		ConfigHome:        cfg.ConfigHome,
+		Model:             cfg.Model,
+		BaseURL:           cfg.BaseURL,
+		RuntimeProvider:   cfg.RuntimeProvider,
+		OutputFormat:      outputFormat,
+		PermissionMode:    cfg.PermissionMode,
+		SessionID:         overrides.SessionID,
+		Resume:            overrides.Resume,
+		FromPR:            overrides.FromPR,
+		Debug:             cfg.Debug,
+		Verbose:           cfg.Verbose,
+		APIKeyConfigured:  strings.TrimSpace(cfg.APIKey) != "",
+		AuthTokenProvided: strings.TrimSpace(cfg.AuthToken) != "",
+	}
+	data, err := json.Marshal(report)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(out, "codog debug: %s\n", data)
+}
+
 func renderBroadCWDGuard(out io.Writer, command string, args []string, workspace string, allowed bool, format string) error {
 	if allowed || !commandRequiresBroadCWDGuard(command, args) {
 		return nil
@@ -54517,6 +54568,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.BoolVar(&base.DeepLinkOrigin, "deep-link-origin", base.DeepLinkOrigin, "signal launch from a deep link")
 	flags.StringVar(&base.DeepLinkRepo, "deep-link-repo", base.DeepLinkRepo, "repo slug resolved by a deep link")
 	flags.StringVar(&deepLinkLastFetch, "deep-link-last-fetch", deepLinkLastFetch, "deep link fetch timestamp in epoch milliseconds")
+	flags.BoolVar(&base.Debug, "debug", base.Debug, "write startup diagnostics to stderr")
+	flags.BoolVar(&base.Verbose, "verbose", base.Verbose, "enable verbose diagnostics")
+	flags.BoolVar(&base.Verbose, "v", base.Verbose, "alias for --verbose")
 	flags.BoolVar(&continueMode, "continue", false, "resume the latest session")
 	flags.BoolVar(&continueMode, "c", false, "alias for --continue")
 	flags.BoolVar(&base.ForkSession, "fork-session", base.ForkSession, "fork the resumed session before continuing")
@@ -56950,6 +57004,8 @@ Flags:
   --continue | -c
   --fork-session
   --resume-session-at MESSAGE_ID
+  --debug
+  --verbose | -v
   --permission-mode read-only|workspace-write|danger-full-access|prompt|allow
   --dangerously-skip-permissions
   --skip-permissions

@@ -465,6 +465,20 @@ func TestLoadPermissionModeFlagClearsPlanMode(t *testing.T) {
 	require.False(t, cfg.PlanMode)
 }
 
+func TestLoadAppliesRuntimeDiagnosticFlags(t *testing.T) {
+	cfg, _, err := LoadForInspection(FlagOverrides{Debug: true, Verbose: true})
+
+	require.NoError(t, err)
+	require.True(t, cfg.Debug)
+	require.True(t, cfg.Verbose)
+	data, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "Debug")
+	require.NotContains(t, string(data), "Verbose")
+	require.NotContains(t, string(data), "debug")
+	require.NotContains(t, string(data), "verbose")
+}
+
 func TestLoadPermissionModeEnvProvenance(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
