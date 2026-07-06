@@ -222,6 +222,7 @@ var scenarioOrder = []string{
 	"memory_lifecycle_roundtrip",
 	"session_summary_roundtrip",
 	"context_view_roundtrip",
+	"theme_lifecycle_roundtrip",
 	"output_style_lifecycle_roundtrip",
 	"diagnostics_status_roundtrip",
 	"statusline_cli_roundtrip",
@@ -769,6 +770,7 @@ func Run(ctx context.Context) (Report, error) {
 		memoryLifecycleScenario(),
 		sessionSummaryScenario(),
 		contextViewScenario(),
+		themeLifecycleScenario(),
 		outputStyleLifecycleScenario(),
 		diagnosticsStatusScenario(),
 		statuslineCLIScenario(),
@@ -1193,6 +1195,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "setup and diagnostics", RequiredRefs: []string{"Doctor", "Status diagnostics", "Terminal setup"}},
 	{Capability: "context view and focus", RequiredRefs: []string{"Context view", "Focused paths", "Context signals"}},
 	{Capability: "statusline rendering", RequiredRefs: []string{"Statusline", "Statusline JSON", "Statusline text"}},
+	{Capability: "appearance and preferences", RequiredRefs: []string{"Theme", "Theme persistence", "Theme reset"}},
 }
 
 func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
@@ -1454,6 +1457,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "context-management",
 		Description: "Builds structured context summaries with memory, focused paths, token estimates, and text plus HTML rendering.",
 		ParityRefs:  []string{"Context view", "Focused paths", "Context signals", "Session context management", "Workspace state"},
+	},
+	"theme_lifecycle_roundtrip": {
+		Category:    "preferences",
+		Description: "Runs the real theme CLI through local preference set, status, and reset operations.",
+		ParityRefs:  []string{"Theme", "Theme persistence", "Theme reset", "Configuration"},
 	},
 	"output_style_lifecycle_roundtrip": {
 		Category:    "interactive-ui",
@@ -2619,6 +2627,140 @@ func contextViewScenario() scenario {
 			}, nil
 		},
 	}
+}
+
+func themeLifecycleScenario() scenario {
+	return scenario{
+		name: "theme_lifecycle_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, ".codog-home")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			configPath := filepath.Join(workspace, "codog-config.json")
+			configData, err := json.Marshal(map[string]any{"config_home": configHome})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			initialOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "theme")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initial, err := decodeThemeHarnessReport(initialOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initial.Kind != "theme" || initial.Action != "status" || initial.Theme != "default" {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial theme report: %#v", initial)
+			}
+			if !slices.Contains(initial.Available, "dark") || !slices.Contains(initial.Available, "light") {
+				return localScenarioResult{}, fmt.Errorf("theme list missing expected values: %#v", initial.Available)
+			}
+
+			setOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "theme", "set", "dark", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			setReport, err := decodeThemeHarnessReport(setOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if setReport.Action != "set" || setReport.Theme != "dark" || setReport.Previous != "default" {
+				return localScenarioResult{}, fmt.Errorf("unexpected set theme report: %#v", setReport)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(configData), `"theme": "dark"`) && !strings.Contains(string(configData), `"theme":"dark"`) {
+				return localScenarioResult{}, fmt.Errorf("theme config did not persist dark theme: %s", string(configData))
+			}
+
+			statusOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "theme")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			statusReport, err := decodeThemeHarnessReport(statusOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if statusReport.Action != "status" || statusReport.Theme != "dark" {
+				return localScenarioResult{}, fmt.Errorf("unexpected persisted theme status: %#v", statusReport)
+			}
+
+			textOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "theme", "list")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(textOut, "Theme") || !strings.Contains(textOut, "Available") || !strings.Contains(textOut, "dark") {
+				return localScenarioResult{}, fmt.Errorf("theme text output missing expected values: %s", textOut)
+			}
+
+			clearOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "theme", "clear", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			clearReport, err := decodeThemeHarnessReport(clearOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if clearReport.Action != "clear" || clearReport.Theme != "default" || clearReport.Previous != "dark" {
+				return localScenarioResult{}, fmt.Errorf("unexpected clear theme report: %#v", clearReport)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if strings.Contains(string(configData), `"theme"`) {
+				return localScenarioResult{}, fmt.Errorf("theme config still contains theme after clear: %s", string(configData))
+			}
+
+			report := map[string]any{
+				"kind": "theme_lifecycle",
+				"theme": map[string]any{
+					"initial":        initial.Theme,
+					"set":            setReport.Theme,
+					"previous":       setReport.Previous,
+					"status":         statusReport.Theme,
+					"cleared":        clearReport.Theme,
+					"clear_previous": clearReport.Previous,
+					"path_persisted": setReport.Path != "" && strings.HasSuffix(setReport.Path, "codog-config.json"),
+					"text_rendered":  strings.Contains(textOut, "Available"),
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "theme lifecycle harness ok",
+				RequestCount: 5,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+type themeHarnessReport struct {
+	Kind      string   `json:"kind"`
+	Action    string   `json:"action"`
+	Status    string   `json:"status"`
+	Theme     string   `json:"theme"`
+	Previous  string   `json:"previous,omitempty"`
+	Path      string   `json:"path,omitempty"`
+	Available []string `json:"available"`
+}
+
+func decodeThemeHarnessReport(output string) (themeHarnessReport, error) {
+	var report themeHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return themeHarnessReport{}, err
+	}
+	return report, nil
 }
 
 func outputStyleLifecycleScenario() scenario {
