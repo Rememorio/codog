@@ -34369,6 +34369,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.MockLimits(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/mock-parity", "/parity", "/self-test":
+		defaultFormat := "text"
+		if fields[0] == "/self-test" {
+			defaultFormat = "json"
+		}
+		if err := runMockParityCommand(ctx, a.Out, fields[1:], "", defaultFormat); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/reset-limits":
 		if err := a.ResetLimits(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)

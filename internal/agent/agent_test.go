@@ -2749,6 +2749,31 @@ func TestMockParityResumedSlashContracts(t *testing.T) {
 	require.Equal(t, harness.ManifestSchemaVersion, manifest.SchemaVersion)
 }
 
+func TestMockParityInteractiveSlashContracts(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: t.TempDir(),
+		Out:       &out,
+		Err:       &errOut,
+	}
+	sess := &session.Session{ID: "session-parity"}
+
+	require.True(t, app.handleSlash(context.Background(), "/mock-parity manifest --json", sess))
+	var manifest harness.Manifest
+	require.NoError(t, json.Unmarshal(out.Bytes(), &manifest))
+	require.Equal(t, harness.ManifestSchemaVersion, manifest.SchemaVersion)
+	require.Equal(t, harness.ScenarioManifest().ScenarioCount, manifest.ScenarioCount)
+	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/self-test manifest", sess))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &manifest))
+	require.Equal(t, harness.ManifestSchemaVersion, manifest.SchemaVersion)
+	require.Empty(t, errOut.String())
+}
+
 func mockParityCoverageTotal(coverage []harness.CategoryReport) int {
 	total := 0
 	for _, category := range coverage {
