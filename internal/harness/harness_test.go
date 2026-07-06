@@ -315,6 +315,20 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 2, interactiveUI.Total)
 	require.ElementsMatch(t, []string{"ask_user_question_roundtrip", "tui_prompt_completion_roundtrip"}, interactiveUI.Scenarios)
 
+	runtimeOutputTools := findScenario(t, report, "runtime_output_tools_roundtrip")
+	require.True(t, runtimeOutputTools.OK)
+	require.Equal(t, "runtime-tools", runtimeOutputTools.Category)
+	require.Equal(t, []string{"brief", "send_user_message", "structured_output", "sleep"}, runtimeOutputTools.ToolUses)
+	require.Equal(t, 4, runtimeOutputTools.ToolCalls)
+	require.Equal(t, 0, runtimeOutputTools.ToolErrorCount)
+	require.Contains(t, runtimeOutputTools.Output, `"message": "Brief parity message"`)
+	require.Contains(t, runtimeOutputTools.Output, `"structured_output": {`)
+	require.Contains(t, runtimeOutputTools.Output, "runtime output tools harness ok")
+	runtimeTools := findCategory(t, report, "runtime-tools")
+	require.True(t, runtimeTools.OK)
+	require.Equal(t, 1, runtimeTools.Total)
+	require.ElementsMatch(t, []string{"runtime_output_tools_roundtrip"}, runtimeTools.Scenarios)
+
 	configPrecedence := findScenario(t, report, "config_precedence_roundtrip")
 	require.True(t, configPrecedence.OK)
 	require.Equal(t, 0, configPrecedence.ToolCalls)
@@ -519,6 +533,11 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	askUserQuestion := findManifestScenario(t, manifest, "ask_user_question_roundtrip")
 	require.Equal(t, "interactive-ui", askUserQuestion.Category)
 	require.Contains(t, askUserQuestion.ParityRefs, "AskUserQuestion tool")
+
+	runtimeOutputTools := findManifestScenario(t, manifest, "runtime_output_tools_roundtrip")
+	require.Equal(t, "runtime-tools", runtimeOutputTools.Category)
+	require.Contains(t, runtimeOutputTools.ParityRefs, "StructuredOutput tool")
+	require.Contains(t, runtimeOutputTools.ParityRefs, "Sleep tool")
 
 	remoteAPI := findManifestScenario(t, manifest, "remote_api_listener_roundtrip")
 	require.Equal(t, "remote-control", remoteAPI.Category)

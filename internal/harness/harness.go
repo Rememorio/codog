@@ -206,6 +206,7 @@ var scenarioOrder = []string{
 	"command_skill_template_roundtrip",
 	"tui_prompt_completion_roundtrip",
 	"ask_user_question_roundtrip",
+	"runtime_output_tools_roundtrip",
 	"config_precedence_roundtrip",
 	"provider_routing_roundtrip",
 	"session_resume_jsonl_roundtrip",
@@ -736,6 +737,7 @@ func Run(ctx context.Context) (Report, error) {
 		commandSkillTemplateScenario(),
 		tuiPromptCompletionScenario(),
 		askUserQuestionScenario(),
+		runtimeOutputToolsScenario(),
 		configPrecedenceScenario(),
 		providerRoutingScenario(),
 		sessionResumeJSONLRoundtripScenario(),
@@ -1138,6 +1140,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "plugins and marketplace", RequiredRefs: []string{"Plugin tools", "Plugin lifecycle", "Plugin manifest loading", "External plugin lifecycle"}},
 	{Capability: "TUI and interactive rendering", RequiredRefs: []string{"Bubble Tea TUI", "Interactive rendering"}},
 	{Capability: "interactive question handling", RequiredRefs: []string{"AskUserQuestion tool", "Interactive questions"}},
+	{Capability: "runtime utility tools", RequiredRefs: []string{"Brief tool", "SendUserMessage tool", "StructuredOutput tool", "Sleep tool"}},
 }
 
 func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
@@ -1384,6 +1387,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "interactive-ui",
 		Description: "Asks a user question through the tool registry and resolves choices plus defaults.",
 		ParityRefs:  []string{"AskUserQuestion tool", "Interactive questions", "Tool result roundtrip"},
+	},
+	"runtime_output_tools_roundtrip": {
+		Category:    "runtime-tools",
+		Description: "Runs user-facing message, structured output, and bounded sleep tools through the registry.",
+		ParityRefs:  []string{"Brief tool", "SendUserMessage tool", "StructuredOutput tool", "Sleep tool"},
 	},
 	"auto_compact_triggered": {
 		Category:    "session-compaction",
@@ -2109,6 +2117,109 @@ func askUserQuestionScenario() scenario {
 				FinalMessage: "ask user question harness ok",
 				ToolUses:     []string{"ask_user_question", "ask_user_question"},
 				ToolCalls:    2,
+			}, nil
+		},
+	}
+}
+
+func runtimeOutputToolsScenario() scenario {
+	return scenario{
+		name: "runtime_output_tools_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			imagePath := filepath.Join(workspace, "diagram.png")
+			notesPath := filepath.Join(workspace, "notes.txt")
+			if err := os.WriteFile(imagePath, []byte("png"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(notesPath, []byte("notes"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			registry := tools.NewRegistry(workspace)
+			briefOut, err := registry.Execute(ctx, "BriefTool", json.RawMessage(`{
+				"message":"Brief parity message",
+				"status":"proactive",
+				"attachments":["diagram.png"]
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var brief struct {
+				Message     string `json:"message"`
+				Status      string `json:"status"`
+				Attachments []struct {
+					Path    string `json:"path"`
+					Size    int64  `json:"size"`
+					IsImage bool   `json:"is_image"`
+				} `json:"attachments"`
+			}
+			if err := json.Unmarshal([]byte(briefOut), &brief); err != nil {
+				return localScenarioResult{}, err
+			}
+			if brief.Message != "Brief parity message" || brief.Status != "proactive" || len(brief.Attachments) != 1 || !brief.Attachments[0].IsImage || brief.Attachments[0].Size != 3 {
+				return localScenarioResult{}, fmt.Errorf("unexpected brief output: %s", briefOut)
+			}
+
+			messageOut, err := registry.Execute(ctx, "send_user_message", json.RawMessage(`{
+				"message":"User-facing parity message",
+				"status":"normal",
+				"attachments":["notes.txt"]
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var message struct {
+				Message     string `json:"message"`
+				Status      string `json:"status"`
+				Attachments []struct {
+					Size    int64 `json:"size"`
+					IsImage bool  `json:"is_image"`
+				} `json:"attachments"`
+			}
+			if err := json.Unmarshal([]byte(messageOut), &message); err != nil {
+				return localScenarioResult{}, err
+			}
+			if message.Message != "User-facing parity message" || message.Status != "normal" || len(message.Attachments) != 1 || message.Attachments[0].IsImage || message.Attachments[0].Size != 5 {
+				return localScenarioResult{}, fmt.Errorf("unexpected send_user_message output: %s", messageOut)
+			}
+
+			structuredOut, err := registry.Execute(ctx, "StructuredOutputTool", json.RawMessage(`{
+				"ok":true,
+				"items":["brief","structured"],
+				"score":2
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var structured struct {
+				Data             string         `json:"data"`
+				StructuredOutput map[string]any `json:"structured_output"`
+			}
+			if err := json.Unmarshal([]byte(structuredOut), &structured); err != nil {
+				return localScenarioResult{}, err
+			}
+			if structured.Data == "" || structured.StructuredOutput["ok"] != true || structured.StructuredOutput["score"] != float64(2) {
+				return localScenarioResult{}, fmt.Errorf("unexpected structured output: %s", structuredOut)
+			}
+
+			sleepOut, err := registry.Execute(ctx, "SleepTool", json.RawMessage(`{"duration_ms":0}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var slept struct {
+				DurationMS int    `json:"duration_ms"`
+				Message    string `json:"message"`
+			}
+			if err := json.Unmarshal([]byte(sleepOut), &slept); err != nil {
+				return localScenarioResult{}, err
+			}
+			if slept.DurationMS != 0 || slept.Message != "Slept for 0ms" {
+				return localScenarioResult{}, fmt.Errorf("unexpected sleep output: %s", sleepOut)
+			}
+			return localScenarioResult{
+				Output:       strings.Join([]string{briefOut, messageOut, structuredOut, sleepOut, "runtime output tools harness ok"}, "\n"),
+				FinalMessage: "runtime output tools harness ok",
+				ToolUses:     []string{"brief", "send_user_message", "structured_output", "sleep"},
+				ToolCalls:    4,
 			}, nil
 		},
 	}
