@@ -19689,6 +19689,9 @@ func TestSSHCommandReportsPlan(t *testing.T) {
 	require.NoError(t, app.SSH(context.Background(), []string{
 		"devbox",
 		"/workspace/repo dir",
+		"-c",
+		"--resume=remote-session",
+		"--model", "claude-opus",
 		"--permission-mode", "read-only",
 		"--dangerously-skip-permissions",
 		"--json",
@@ -19703,6 +19706,7 @@ func TestSSHCommandReportsPlan(t *testing.T) {
 	require.Equal(t, "/workspace/repo dir", report.Directory)
 	require.False(t, report.Local)
 	require.False(t, report.Executed)
+	require.Equal(t, []string{"--continue", "--resume", "remote-session", "--model", "claude-opus"}, report.ExtraArgs)
 	require.Equal(t, "read-only", report.PermissionMode)
 	require.True(t, report.DangerouslySkipPermissions)
 	require.True(t, report.RemoteAuthForwarded)
@@ -19715,7 +19719,7 @@ func TestSSHCommandReportsPlan(t *testing.T) {
 	require.Contains(t, report.RemoteShell, "CODOG_BASE_URL='https://api.example.test'")
 	require.Equal(t, ".cache/codog/remote/devbox/codog", report.RemoteExecutable)
 	require.Equal(t, []string{"ssh", "devbox", "mkdir -p '.cache/codog/remote/devbox' && cat > '.cache/codog/remote/devbox/codog' && chmod 700 '.cache/codog/remote/devbox/codog'"}, report.DeployCommand)
-	require.Contains(t, report.RemoteShell, ".cache/codog/remote/devbox/codog --permission-mode read-only --dangerously-skip-permissions repl")
+	require.Contains(t, report.RemoteShell, ".cache/codog/remote/devbox/codog --continue --resume remote-session --model claude-opus --permission-mode read-only --dangerously-skip-permissions repl")
 	require.NotContains(t, report.RemoteShell, "secret-api-key")
 	require.NotContains(t, report.RemoteShell, "secret-auth-token")
 	require.NotContains(t, out.String(), "secret-api-key")
@@ -19761,7 +19765,7 @@ fi
 		In:         strings.NewReader(""),
 		Executable: localBinary,
 	}
-	require.NoError(t, app.SSH(context.Background(), []string{"deploy-box", "/repo", "--permission-mode", "read-only"}))
+	require.NoError(t, app.SSH(context.Background(), []string{"deploy-box", "/repo", "--model=claude-remote", "--permission-mode", "read-only"}))
 
 	logData, err := os.ReadFile(logPath)
 	require.NoError(t, err)
@@ -19771,7 +19775,7 @@ fi
 	require.Contains(t, logText, "stdin1:14")
 	require.Contains(t, logText, "call2:deploy-box cd '/repo' && env")
 	require.Contains(t, logText, "ANTHROPIC_API_KEY='deploy-api-key'")
-	require.Contains(t, logText, ".cache/codog/remote/deploy-box/codog --permission-mode read-only repl")
+	require.Contains(t, logText, ".cache/codog/remote/deploy-box/codog --model claude-remote --permission-mode read-only repl")
 	require.Contains(t, out.String(), "run:deploy-box cd '/repo' && env")
 	require.Empty(t, errOut.String())
 }
@@ -19792,10 +19796,34 @@ func TestSSHCommandLocalExecutesChild(t *testing.T) {
 		In:         strings.NewReader(""),
 		Executable: script,
 	}
-	require.NoError(t, app.SSH(context.Background(), []string{"--local", "localhost", workspace, "--permission-mode", "read-only"}))
+	require.NoError(t, app.SSH(context.Background(), []string{"--local", "localhost", workspace, "--resume", "latest", "--permission-mode", "read-only"}))
 	require.Contains(t, out.String(), "cwd="+workspace)
-	require.Contains(t, out.String(), "args=--permission-mode read-only repl")
+	require.Contains(t, out.String(), "args=--resume latest --permission-mode read-only repl")
 	require.Empty(t, errOut.String())
+}
+
+func TestSSHCommandRejectsPrintMode(t *testing.T) {
+	_, err := parseSSHArgs([]string{"devbox", "-p"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "does not support headless")
+
+	_, err = parseSSHArgs([]string{"devbox", "--print"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "does not support headless")
+}
+
+func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{"--continue", "repl"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "latest", overrides.Resume)
+	require.Equal(t, "repl", command)
+	require.Empty(t, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"-c", "--resume", "session-id", "repl"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "session-id", overrides.Resume)
+	require.Equal(t, "repl", command)
+	require.Empty(t, rest)
 }
 
 func TestOpenTargetParsing(t *testing.T) {

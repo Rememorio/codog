@@ -2232,6 +2232,7 @@ type openReport struct {
 type sshRequest struct {
 	Host                       string
 	Directory                  string
+	ExtraArgs                  []string
 	PermissionMode             string
 	DangerouslySkipPermissions bool
 	Local                      bool
@@ -2245,6 +2246,7 @@ type sshReport struct {
 	Host                       string   `json:"host"`
 	Directory                  string   `json:"directory,omitempty"`
 	Local                      bool     `json:"local"`
+	ExtraArgs                  []string `json:"extra_args,omitempty"`
 	PermissionMode             string   `json:"permission_mode,omitempty"`
 	DangerouslySkipPermissions bool     `json:"dangerously_skip_permissions,omitempty"`
 	Command                    []string `json:"command"`
@@ -2258,7 +2260,7 @@ type sshReport struct {
 }
 
 const openUsage = "codog open <cc-url|http-url> [-p|--print [PROMPT]] [--output-format text|json|stream-json]"
-const sshUsage = "codog ssh <host> [dir] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--json|--output-format text|json]"
+const sshUsage = "codog ssh <host> [dir] [--continue|-c] [--resume ID|latest] [--model MODEL] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--json|--output-format text|json]"
 
 func (a *App) Open(ctx context.Context, args []string) error {
 	req, err := parseOpenArgs(args)
@@ -2336,6 +2338,42 @@ func parseSSHArgs(args []string) (sshRequest, error) {
 			req.PermissionMode = strings.TrimSpace(args[index])
 		case strings.HasPrefix(arg, "--permission-mode="):
 			req.PermissionMode = strings.TrimSpace(strings.TrimPrefix(arg, "--permission-mode="))
+		case arg == "-c" || arg == "--continue":
+			req.ExtraArgs = append(req.ExtraArgs, "--continue")
+		case arg == "--resume":
+			index++
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "ssh", Flag: arg, Usage: sshUsage}
+			}
+			value := strings.TrimSpace(args[index])
+			if value == "" {
+				return req, missingFlagValueError{Command: "ssh", Flag: arg, Usage: sshUsage}
+			}
+			req.ExtraArgs = append(req.ExtraArgs, "--resume", value)
+		case strings.HasPrefix(arg, "--resume="):
+			value := strings.TrimSpace(strings.TrimPrefix(arg, "--resume="))
+			if value == "" {
+				return req, missingFlagValueError{Command: "ssh", Flag: "--resume", Usage: sshUsage}
+			}
+			req.ExtraArgs = append(req.ExtraArgs, "--resume", value)
+		case arg == "--model":
+			index++
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "ssh", Flag: arg, Usage: sshUsage}
+			}
+			value := strings.TrimSpace(args[index])
+			if value == "" {
+				return req, missingFlagValueError{Command: "ssh", Flag: arg, Usage: sshUsage}
+			}
+			req.ExtraArgs = append(req.ExtraArgs, "--model", value)
+		case strings.HasPrefix(arg, "--model="):
+			value := strings.TrimSpace(strings.TrimPrefix(arg, "--model="))
+			if value == "" {
+				return req, missingFlagValueError{Command: "ssh", Flag: "--model", Usage: sshUsage}
+			}
+			req.ExtraArgs = append(req.ExtraArgs, "--model", value)
+		case arg == "-p" || arg == "--print":
+			return req, errors.New("codog ssh does not support headless -p/--print mode")
 		case arg == "--dangerously-skip-permissions" || arg == "--skip-permissions":
 			req.DangerouslySkipPermissions = true
 		case arg == "--local":
@@ -2379,6 +2417,7 @@ func (a *App) buildSSHReport(req sshRequest) sshReport {
 		Host:                       req.Host,
 		Directory:                  req.Directory,
 		Local:                      req.Local,
+		ExtraArgs:                  append([]string(nil), req.ExtraArgs...),
 		PermissionMode:             req.PermissionMode,
 		DangerouslySkipPermissions: req.DangerouslySkipPermissions,
 		Command:                    command,
@@ -2434,6 +2473,7 @@ func (a *App) sshRemoteCodogArgs(req sshRequest) []string {
 		executable = "codog"
 	}
 	out := []string{executable}
+	out = append(out, req.ExtraArgs...)
 	if req.PermissionMode != "" {
 		out = append(out, "--permission-mode", req.PermissionMode)
 	}
@@ -53941,6 +53981,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.SetOutput(io.Discard)
 	printMode := false
 	compactPromptMode := false
+	continueMode := false
 	jsonOutput := false
 	outputFormat := ""
 	inputFormat := strings.TrimSpace(base.InputFormat)
@@ -53966,6 +54007,8 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.SessionID, "session-id", base.SessionID, "alias for --session")
 	flags.StringVar(&base.SessionName, "name", base.SessionName, "display name for the current session")
 	flags.StringVar(&base.Resume, "resume", base.Resume, "resume session id or latest")
+	flags.BoolVar(&continueMode, "continue", false, "resume the latest session")
+	flags.BoolVar(&continueMode, "c", false, "alias for --continue")
 	flags.BoolVar(&printMode, "p", false, "run a one-shot prompt")
 	flags.BoolVar(&printMode, "print", false, "run a one-shot prompt")
 	flags.BoolVar(&compactPromptMode, "compact", false, "run a compact one-shot prompt")
@@ -54003,6 +54046,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	base.DisallowedTools = []string(disallowedTools)
 	base.MCPConfigs = []string(mcpConfigs)
 	base.ToolNames = append([]string(nil), toolNames...)
+	if continueMode && strings.TrimSpace(base.Resume) == "" {
+		base.Resume = "latest"
+	}
 	rest := flags.Args()
 	if compactPromptMode && len(rest) > 0 && !strings.EqualFold(rest[0], "prompt") && isKnownNonPromptCommand(rest[0]) {
 		return base, "", nil, invalidFlagValueError{
@@ -55305,8 +55351,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"ssh",
 			"ssh",
 			sshUsage,
-			"SSH\n\nUsage:\n  codog ssh <host> [dir] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--output-format text|json]\n\nStarts a Codog REPL on a remote host through SSH using a Claude Code-compatible command shape. Text mode executes `ssh HOST 'cd DIR && env ... codog ... repl'` and forwards local provider credentials, model, base URL, and Claude remote bootstrap variables with JSON plans redacting secret values. `--local` runs the child Codog process locally for end-to-end plumbing tests.\n",
-			[]string{"kind", "status", "host", "directory", "local", "command", "deploy_command", "remote_shell", "remote_executable", "remote_env_keys", "remote_auth_forwarded", "executed"},
+			"SSH\n\nUsage:\n  codog ssh <host> [dir] [--continue|-c] [--resume ID|latest] [--model MODEL] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--output-format text|json]\n\nStarts a Codog REPL on a remote host through SSH using a Claude Code-compatible command shape. Text mode deploys the local binary, then executes `ssh HOST 'cd DIR && env ... codog ... repl'` and forwards local provider credentials, model, base URL, Claude remote bootstrap variables, and session/model startup flags. JSON plans redact secret values. `--local` runs the child Codog process locally for end-to-end plumbing tests. Headless `-p/--print` is not supported with `ssh`.\n",
+			[]string{"kind", "status", "host", "directory", "local", "extra_args", "command", "deploy_command", "remote_shell", "remote_executable", "remote_env_keys", "remote_auth_forwarded", "executed"},
 			[]string{"planned", "error"},
 			false,
 		), true
