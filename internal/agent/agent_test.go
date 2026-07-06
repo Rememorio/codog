@@ -337,6 +337,7 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, helpOutput, "Usage:")
 	require.Contains(t, helpOutput, "prompt")
 	require.Contains(t, helpOutput, "--continue | -c")
+	require.Contains(t, helpOutput, "--resume ID|latest | -r ID|latest")
 	require.Contains(t, helpOutput, "<cc-url|cc+unix-url>")
 	resumeLine := requireResumeSafeHelpLine(t, helpOutput)
 	require.Contains(t, resumeLine, "/status")
@@ -358,6 +359,7 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "show", globalReport.Action)
 	require.Equal(t, "ok", globalReport.Status)
 	require.Contains(t, globalReport.Help, "--continue | -c")
+	require.Contains(t, globalReport.Help, "--resume ID|latest | -r ID|latest")
 	require.Contains(t, globalReport.Help, "<cc-url|cc+unix-url>")
 	require.Equal(t, resumeLine, requireResumeSafeHelpLine(t, globalReport.Help))
 	out.Reset()
@@ -624,6 +626,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 		{
 			name:  "resume global flag",
 			args:  []string{"--resume", "--help", "--output-format", "json"},
+			topic: "resume",
+		},
+		{
+			name:  "resume short global flag",
+			args:  []string{"-r", "--help", "--output-format", "json"},
 			topic: "resume",
 		},
 		{
@@ -10633,6 +10640,10 @@ func TestParseFlagsRejectsDuplicateScalarGlobalFlags(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--model")
 
+	_, _, _, err = parseFlags([]string{"--resume", "first", "-r", "second", "status"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--resume")
+
 	_, command, rest, err := parseFlags([]string{"--output-format", "json", "status", "--output-format", "text"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "status", command)
@@ -19883,6 +19894,12 @@ func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
 	overrides, command, rest, err = parseFlags([]string{"-c", "--resume", "session-id", "repl"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "session-id", overrides.Resume)
+	require.Equal(t, "repl", command)
+	require.Empty(t, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"-r", "short-session", "repl"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "short-session", overrides.Resume)
 	require.Equal(t, "repl", command)
 	require.Empty(t, rest)
 }

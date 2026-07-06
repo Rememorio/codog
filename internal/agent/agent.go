@@ -54080,6 +54080,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.SessionID, "session-id", base.SessionID, "alias for --session")
 	flags.StringVar(&base.SessionName, "name", base.SessionName, "display name for the current session")
 	flags.StringVar(&base.Resume, "resume", base.Resume, "resume session id or latest")
+	flags.StringVar(&base.Resume, "r", base.Resume, "alias for --resume")
 	flags.BoolVar(&continueMode, "continue", false, "resume the latest session")
 	flags.BoolVar(&continueMode, "c", false, "alias for --continue")
 	flags.BoolVar(&printMode, "p", false, "run a one-shot prompt")
@@ -54328,6 +54329,8 @@ func duplicateTrackedGlobalFlagKey(arg string) (string, bool) {
 	switch arg {
 	case "--model", "-model":
 		return "--model", true
+	case "--resume", "-resume", "-r":
+		return "--resume", true
 	case "--output-format", "-output-format", "-o", "--o", "--json", "-json":
 		return "--output-format", true
 	case "--permission-mode", "-permission-mode", "--skip-permissions", "-skip-permissions", "--dangerously-skip-permissions", "-dangerously-skip-permissions":
@@ -54345,6 +54348,8 @@ func duplicateFlagUsage(flag string) string {
 		return "codog --output-format text|json COMMAND"
 	case "--permission-mode":
 		return "codog [--permission-mode MODE | --skip-permissions] COMMAND"
+	case "--resume":
+		return "codog --resume ID|latest COMMAND"
 	default:
 		return "codog [flags] COMMAND"
 	}
@@ -54356,7 +54361,7 @@ func globalFlagConsumesNext(arg string) bool {
 		"--model", "-model", "--base-url", "-base-url", "--system-prompt", "-system-prompt",
 		"--system-prompt-file", "-system-prompt-file", "--append-system-prompt", "-append-system-prompt",
 		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
-		"--session-id", "-session-id", "--name", "-name", "--resume", "-resume", "--output-format", "-output-format", "-o", "--o",
+		"--session-id", "-session-id", "--name", "-name", "--resume", "-resume", "-r", "--output-format", "-output-format", "-o", "--o",
 		"--input-format", "-input-format", "--json-schema", "-json-schema",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
 		"--max-tokens", "-max-tokens", "--temperature", "-temperature",
@@ -54394,7 +54399,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
@@ -54783,7 +54788,7 @@ func providerCommandHelpSpec(topic, command, usage, text string, fields, statuse
 }
 
 func renderGlobalResumeHelp(out io.Writer, args []string) (bool, error) {
-	if len(args) < 2 || (args[0] != "--resume" && args[0] != "--continue" && args[0] != "-c") || !isHelpFlag(args[1]) {
+	if len(args) < 2 || (args[0] != "--resume" && args[0] != "-r" && args[0] != "--continue" && args[0] != "-c") || !isHelpFlag(args[1]) {
 		return false, nil
 	}
 	return true, renderCommandHelpTopic(out, "resume", args[2:], requestedOutputFormat(args))
@@ -56057,8 +56062,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return commandHelpSpec{
 			Topic:                   "resume",
 			Command:                 "resume",
-			Usage:                   "codog --resume ID|latest [prompt TEXT|repl|/slash-command] | codog --continue|-c [prompt TEXT|repl|/slash-command]",
-			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl|/slash-command]\n  codog --continue|-c [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, /paste, /bookmarks, or /session. `--continue` and `-c` resume the latest session. Help is local and does not open a session.\n",
+			Usage:                   "codog --resume|-r ID|latest [prompt TEXT|repl|/slash-command] | codog --continue|-c [prompt TEXT|repl|/slash-command]",
+			Text:                    "Resume\n\nUsage:\n  codog --resume|-r ID|latest [prompt TEXT|repl|/slash-command]\n  codog --continue|-c [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, /paste, /bookmarks, or /session. `-r` is an alias for `--resume`; `--continue` and `-c` resume the latest session. Help is local and does not open a session.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
@@ -56270,7 +56275,7 @@ Flags:
   --session ID
   --session-id ID
   --name NAME
-  --resume ID|latest
+  --resume ID|latest | -r ID|latest
   --continue | -c
   --permission-mode read-only|workspace-write|danger-full-access|prompt|allow
   --dangerously-skip-permissions
