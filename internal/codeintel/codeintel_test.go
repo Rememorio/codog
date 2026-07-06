@@ -30,6 +30,32 @@ func TestGoSymbols(t *testing.T) {
 	require.Equal(t, 5, symbols[1].Line)
 }
 
+func TestWorkspaceSymbolsFiltersByQueryAndLimit(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "pkg"), 0o755))
+	source := strings.Join([]string{
+		"package pkg",
+		"",
+		"type Runner struct{}",
+		"type Helper struct{}",
+		"func RunFast() Runner { return Runner{} }",
+		"func RunSlow() Runner { return Runner{} }",
+		"",
+	}, "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "runner.go"), []byte(source), 0o644))
+
+	symbols, err := WorkspaceSymbols(workspace, "run", 2)
+	require.NoError(t, err)
+	require.Len(t, symbols, 2)
+	require.Equal(t, "Runner", symbols[0].Name)
+	require.Equal(t, "pkg/runner.go", symbols[0].Path)
+	require.Equal(t, "RunFast", symbols[1].Name)
+
+	all, err := WorkspaceSymbols(workspace, "", 0)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(all), 4)
+}
+
 func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "pkg"), 0o755))

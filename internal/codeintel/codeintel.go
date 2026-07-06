@@ -119,6 +119,30 @@ func GoSymbols(workspace string) ([]Symbol, error) {
 	return symbols, err
 }
 
+// WorkspaceSymbols returns symbols matching a workspace-wide query.
+func WorkspaceSymbols(workspace string, query string, limit int) ([]Symbol, error) {
+	symbols, err := GoSymbols(workspace)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	matches := make([]Symbol, 0, min(limit, len(symbols)))
+	for _, symbol := range symbols {
+		if query != "" && !strings.Contains(strings.ToLower(symbol.Name), query) {
+			continue
+		}
+		symbol.Path = filepath.ToSlash(symbol.Path)
+		matches = append(matches, symbol)
+		if len(matches) >= limit {
+			break
+		}
+	}
+	return matches, nil
+}
+
 // Definition returns the first discovered definition for a Go symbol.
 func Definition(workspace string, symbol string) (Symbol, bool, error) {
 	symbol = strings.TrimSpace(symbol)

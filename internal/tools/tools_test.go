@@ -2809,6 +2809,15 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, documentSymbolsOut, `"action": "symbols"`)
 	require.Contains(t, documentSymbolsOut, "BuildWidget")
 
+	workspaceSymbolsOut, err := tool.Execute(context.Background(), []byte(`{"action":"workspace_symbol","query":"widget","limit":2}`))
+	require.NoError(t, err)
+	require.Contains(t, workspaceSymbolsOut, `"action": "workspace-symbol"`)
+	require.Contains(t, workspaceSymbolsOut, `"source": "static"`)
+	require.Contains(t, workspaceSymbolsOut, `"query": "widget"`)
+	require.Contains(t, workspaceSymbolsOut, `"name": "Widget"`)
+	require.Contains(t, workspaceSymbolsOut, `"name": "BuildWidget"`)
+	require.Contains(t, workspaceSymbolsOut, `"total": 2`)
+
 	definitionOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget"}`))
 	require.NoError(t, err)
 	require.Contains(t, definitionOut, `"source": "static"`)
@@ -2832,6 +2841,10 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, languageFallbackOut, `"found": true`)
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"hover","path":"demo.go","line":4,"character":6,"use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"workspace_symbol","query":"Widget","use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 
