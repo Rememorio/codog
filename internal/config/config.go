@@ -1231,6 +1231,7 @@ type FlagOverrides struct {
 	OutputFormatSubcommandExplicit bool
 	MaxTurns                       int
 	MaxTokens                      int
+	MaxBudgetUSD                   *float64
 	Temperature                    *float64
 }
 

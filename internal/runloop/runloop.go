@@ -14,6 +14,7 @@ import (
 	"github.com/Rememorio/codog/internal/sessionsummary"
 	"github.com/Rememorio/codog/internal/shellstate"
 	"github.com/Rememorio/codog/internal/tools"
+	"github.com/Rememorio/codog/internal/usage"
 )
 
 const defaultSystemPrompt = "You are Codog, a Go-native coding agent CLI. Be concise, inspect before editing, and use tools when they materially help."
@@ -49,6 +50,16 @@ type MessageUsage struct {
 	Usage        anthropic.Usage `json:"usage"`
 }
 
+// BudgetExceededError reports that a turn reached the configured spending cap.
+type BudgetExceededError struct {
+	LimitUSD float64
+	CostUSD  float64
+}
+
+func (e BudgetExceededError) Error() string {
+	return fmt.Sprintf("max_budget_exceeded: estimated cost $%.5f reached max budget $%.5f", e.CostUSD, e.LimitUSD)
+}
+
 // Runner coordinates model streaming, tool execution, hooks, and compaction
 // for a single user prompt.
 type Runner struct {
@@ -63,6 +74,8 @@ type Runner struct {
 	Out              io.Writer
 	System           string
 	OnToolUse        func(ToolCall)
+	MaxBudgetUSD     float64
+	PriorCostUSD     float64
 }
 
 // Run submits input with prior messages, executes tool loops until the model
@@ -173,6 +186,15 @@ func (r Runner) RunWithUserContent(ctx context.Context, previous []anthropic.Mes
 		assistantIndex := len(messages)
 		messages = append(messages, assistantMsg)
 		messageUsages = appendMessageUsage(messageUsages, assistantIndex, assistant.Usage)
+		if budgetErr, exceeded := r.budgetExceeded(messageUsages); exceeded {
+			result := TurnResult{
+				Messages:      messages,
+				MessageUsages: messageUsages,
+				ToolCalls:     toolCalls,
+				Iterations:    turn + 1,
+			}
+			return result, budgetErr
+		}
 
 		blocks := toolUseBlocks(assistant.Blocks)
 		if len(blocks) == 0 {
@@ -718,6 +740,25 @@ func appendMessageUsage(usages []MessageUsage, index int, usage anthropic.Usage)
 		return usages
 	}
 	return append(usages, MessageUsage{MessageIndex: index, Usage: usage})
+}
+
+func (r Runner) budgetExceeded(messageUsages []MessageUsage) (BudgetExceededError, bool) {
+	if r.MaxBudgetUSD <= 0 {
+		return BudgetExceededError{}, false
+	}
+	actual := make([]anthropic.Usage, 0, len(messageUsages))
+	for _, messageUsage := range messageUsages {
+		actual = append(actual, messageUsage.Usage)
+	}
+	summary, ok := usage.ActualSummary(actual, r.Config.Model)
+	if !ok {
+		return BudgetExceededError{}, false
+	}
+	cost := r.PriorCostUSD + summary.EstimatedUSD
+	if cost < r.MaxBudgetUSD {
+		return BudgetExceededError{}, false
+	}
+	return BudgetExceededError{LimitUSD: r.MaxBudgetUSD, CostUSD: cost}, true
 }
 
 func toolUseBlocks(blocks []anthropic.ContentBlock) []anthropic.ContentBlock {

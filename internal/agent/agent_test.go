@@ -9599,6 +9599,27 @@ func TestParseFlagsSupportsTemperatureOverride(t *testing.T) {
 	require.Equal(t, []string{"hello"}, rest)
 }
 
+func TestParseFlagsSupportsMaxBudgetUSDForPrompt(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{"-p", "--max-budget-usd", "1.25", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.NotNil(t, overrides.MaxBudgetUSD)
+	require.InDelta(t, 1.25, *overrides.MaxBudgetUSD, 0.0001)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+
+	_, _, _, err = parseFlags([]string{"--max-budget-usd", "0", "prompt", "hello"}, config.FlagOverrides{})
+	require.Error(t, err)
+	var flagErr invalidFlagValueError
+	require.ErrorAs(t, err, &flagErr)
+	require.Equal(t, "--max-budget-usd", flagErr.Flag)
+
+	_, _, _, err = parseFlags([]string{"--max-budget-usd", "1.25", "status"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &flagErr)
+	require.Equal(t, "--max-budget-usd", flagErr.Flag)
+	require.Contains(t, flagErr.Message, "prompt mode")
+}
+
 func TestBroadWorkspaceGuard(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -24545,6 +24566,51 @@ func TestPromptWithSessionNamePreservesExplicitTitle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, history, 1)
 	require.Equal(t, "input title should not win", history[0].Text)
+}
+
+func TestPromptMaxBudgetUSDPersistsPartialResult(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Text: "over budget response"}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			PermissionRules:     config.PermissionRules{},
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+	limit := 0.00001
+
+	err := app.PromptWithOutput(context.Background(), "cost capped", config.FlagOverrides{SessionID: "budget-session", MaxBudgetUSD: &limit}, "text")
+	require.Error(t, err)
+	var budgetErr runloop.BudgetExceededError
+	require.ErrorAs(t, err, &budgetErr)
+	require.Contains(t, out.String(), "over budget response")
+	opened, openErr := app.Sessions.Open("budget-session")
+	require.NoError(t, openErr)
+	require.Len(t, opened.Messages, 2)
+	require.Equal(t, "user", opened.Messages[0].Role)
+	require.Equal(t, "assistant", opened.Messages[1].Role)
+	entries, usageErr := app.Sessions.Usage("budget-session")
+	require.NoError(t, usageErr)
+	require.Len(t, entries, 1)
+	require.Equal(t, 10, entries[0].Usage.InputTokens)
+	require.Equal(t, 5, entries[0].Usage.OutputTokens)
 }
 
 func TestPromptJSONSchemaOutputValidation(t *testing.T) {

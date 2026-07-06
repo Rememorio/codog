@@ -517,7 +517,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 				Usage:   "codog -p --output-format stream-json --include-partial-messages \"<prompt>\"",
 			}, req.Format)
 		}
-		return app.promptWithOutputOptions(ctx, input, overrides, req.Format, req.Compact, turnOptions{Attachments: req.Attachments, ReplayUserMessages: streamReplayMessages, JSONSchema: req.JSONSchema, IncludePartialMessages: includePartialMessages})
+		promptOverrides := overrides
+		if req.MaxBudgetUSD != nil {
+			promptOverrides.MaxBudgetUSD = req.MaxBudgetUSD
+		}
+		return app.promptWithOutputOptions(ctx, input, promptOverrides, req.Format, req.Compact, turnOptions{Attachments: req.Attachments, ReplayUserMessages: streamReplayMessages, JSONSchema: req.JSONSchema, IncludePartialMessages: includePartialMessages})
 	case "acp":
 		return wrapStructured(app.ACP(ctx, rest))
 	case "btw":
@@ -34372,7 +34376,19 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 	}
 	turnOpts := opts
 	turnOpts.Out = turnOut
-	runErr := a.runSessionTurnWithOptions(ctx, "prompt", sess, input, "completed", turnOpts)
+	var runErr error
+	if overrides.MaxBudgetUSD != nil && *overrides.MaxBudgetUSD > 0 {
+		turnOpts.MaxBudgetUSD = *overrides.MaxBudgetUSD
+		if priorCost, ok := a.sessionActualCostUSD(sess.ID, a.Config.Model); ok {
+			turnOpts.PriorCostUSD = priorCost
+			if priorCost >= turnOpts.MaxBudgetUSD {
+				runErr = runloop.BudgetExceededError{LimitUSD: turnOpts.MaxBudgetUSD, CostUSD: priorCost}
+			}
+		}
+	}
+	if runErr == nil {
+		runErr = a.runSessionTurnWithOptions(ctx, "prompt", sess, input, "completed", turnOpts)
+	}
 	endReason := "completed"
 	if runErr != nil {
 		endReason = "error"
@@ -35063,6 +35079,8 @@ type turnOptions struct {
 	ReplayUserMessages     []promptStreamJSONReplayMessage
 	IncludePartialMessages bool
 	JSONSchema             string
+	MaxBudgetUSD           float64
+	PriorCostUSD           float64
 	Out                    io.Writer
 }
 
@@ -35073,6 +35091,7 @@ type promptCLIRequest struct {
 	ReplayUserMessages     bool
 	IncludePartialMessages bool
 	JSONSchema             string
+	MaxBudgetUSD           *float64
 	PromptProvided         bool
 	Compact                bool
 	UseStdin               bool
@@ -35121,6 +35140,22 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 			req.JSONSchema = args[index]
 		case strings.HasPrefix(arg, "--json-schema="):
 			req.JSONSchema = strings.TrimPrefix(arg, "--json-schema=")
+		case arg == "--max-budget-usd":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "prompt", Flag: "--max-budget-usd", Usage: "codog -p --max-budget-usd 1.50 \"<prompt>\""}
+			}
+			value, err := parsePromptMaxBudgetUSD(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.MaxBudgetUSD = &value
+		case strings.HasPrefix(arg, "--max-budget-usd="):
+			value, err := parsePromptMaxBudgetUSD(strings.TrimPrefix(arg, "--max-budget-usd="))
+			if err != nil {
+				return req, err
+			}
+			req.MaxBudgetUSD = &value
 		case arg == "--compact":
 			req.Compact = true
 		case arg == "--stdin" || arg == "--prompt-stdin":
@@ -35186,6 +35221,19 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 		}
 	}
 	return req, nil
+}
+
+func parsePromptMaxBudgetUSD(value string) (float64, error) {
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil || parsed <= 0 {
+		return 0, invalidFlagValueError{
+			Flag:    "--max-budget-usd",
+			Value:   value,
+			Message: "--max-budget-usd must be greater than 0",
+			Usage:   "codog -p --max-budget-usd 1.50 \"<prompt>\"",
+		}
+	}
+	return parsed, nil
 }
 
 func normalizePromptInputFormat(value string) (string, error) {
@@ -35542,11 +35590,25 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		Out:              firstWriter(opts.Out, a.Out),
 		System:           a.systemPromptForInput(input),
 		OnToolUse:        a.onToolUse(sess.ID),
+		MaxBudgetUSD:     opts.MaxBudgetUSD,
+		PriorCostUSD:     opts.PriorCostUSD,
 	}
 	result, err := runner.RunWithUserContent(ctx, sess.Messages, userContent, modelInput)
+	if appendErr := a.appendTurnResult(sess, result); appendErr != nil {
+		a.writeWorkerState(mode, "error", sess, appendErr.Error())
+		return appendErr
+	}
 	if err != nil {
 		a.writeWorkerState(mode, "error", sess, err.Error())
 		return err
+	}
+	a.writeWorkerState(mode, successStatus, sess, "")
+	return nil
+}
+
+func (a *App) appendTurnResult(sess *session.Session, result runloop.TurnResult) error {
+	if sess == nil || len(result.Messages) <= len(sess.Messages) {
+		return nil
 	}
 	messageUsages := usageByMessageIndex(result.MessageUsages)
 	for index, msg := range result.Messages[len(sess.Messages):] {
@@ -35562,7 +35624,6 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		}
 	}
 	sess.Messages = result.Messages
-	a.writeWorkerState(mode, successStatus, sess, "")
 	return nil
 }
 
@@ -51019,6 +51080,18 @@ func (a *App) sessionUsageValues(sessionID string) ([]anthropic.Usage, error) {
 	return values, nil
 }
 
+func (a *App) sessionActualCostUSD(sessionID string, model string) (float64, bool) {
+	actual, err := a.sessionUsageValues(sessionID)
+	if err != nil {
+		return 0, false
+	}
+	summary, ok := usage.ActualSummary(actual, model)
+	if !ok {
+		return 0, false
+	}
+	return summary.EstimatedUSD, true
+}
+
 type compactRequest struct {
 	Format  string
 	Session string
@@ -54475,9 +54548,18 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.Var(&promptAttachments, "file", "alias for --attach")
 	flags.IntVar(&base.MaxTurns, "max-turns", base.MaxTurns, "max model/tool loop iterations")
 	flags.IntVar(&base.MaxTokens, "max-tokens", base.MaxTokens, "maximum output tokens")
+	flags.Var(optionalFloatFlag{value: &base.MaxBudgetUSD}, "max-budget-usd", "maximum estimated USD budget for prompt mode")
 	flags.Var(optionalFloatFlag{value: &base.Temperature}, "temperature", "sampling temperature from 0 to 1")
 	if err := flags.Parse(args); err != nil {
 		return base, "", nil, err
+	}
+	if base.MaxBudgetUSD != nil && *base.MaxBudgetUSD <= 0 {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--max-budget-usd",
+			Value:   strconv.FormatFloat(*base.MaxBudgetUSD, 'f', -1, 64),
+			Message: "--max-budget-usd must be greater than 0",
+			Usage:   "codog -p --max-budget-usd 1.50 \"<prompt>\"",
+		}
 	}
 	base.OutputFormatSource, base.OutputFormatRaw, base.OutputFormatOverridden = globalOutputFormatProvenance(outputFormat, jsonOutput)
 	base.InputFormat = strings.TrimSpace(inputFormat)
@@ -54632,6 +54714,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 				Usage:   "codog -p --json-schema '{\"type\":\"object\"}' --output-format json",
 			}
 		}
+		if base.MaxBudgetUSD != nil {
+			return base, "", nil, invalidFlagValueError{
+				Flag:    "--max-budget-usd",
+				Value:   "",
+				Message: "--max-budget-usd is only supported with prompt mode",
+				Usage:   "codog -p --max-budget-usd 1.50 \"<prompt>\"",
+			}
+		}
 		return base, "", nil, nil
 	}
 	command, rest := rest[0], rest[1:]
@@ -54689,6 +54779,14 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 			Value:   command,
 			Message: "--json-schema is only supported with prompt mode",
 			Usage:   "codog -p --json-schema '{\"type\":\"object\"}' --output-format json",
+		}
+	}
+	if base.MaxBudgetUSD != nil && !strings.EqualFold(command, "prompt") {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--max-budget-usd",
+			Value:   command,
+			Message: "--max-budget-usd is only supported with prompt mode",
+			Usage:   "codog -p --max-budget-usd 1.50 \"<prompt>\"",
 		}
 	}
 	outputFormat = resolveGlobalOutputFormat(outputFormat, jsonOutput)
@@ -54869,6 +54967,8 @@ func duplicateTrackedGlobalFlagKey(arg string) (string, bool) {
 		return "--from-pr", true
 	case "--resume-session-at", "-resume-session-at":
 		return "--resume-session-at", true
+	case "--max-budget-usd", "-max-budget-usd":
+		return "--max-budget-usd", true
 	case "--output-format", "-output-format", "-o", "--o", "--json", "-json":
 		return "--output-format", true
 	case "--permission-mode", "-permission-mode", "--skip-permissions", "-skip-permissions", "--dangerously-skip-permissions", "-dangerously-skip-permissions":
@@ -54896,6 +54996,8 @@ func duplicateFlagUsage(flag string) string {
 		return "codog --from-pr OWNER/REPO#123 COMMAND"
 	case "--resume-session-at":
 		return "codog --resume ID --resume-session-at MESSAGE_ID prompt TEXT"
+	case "--max-budget-usd":
+		return "codog -p --max-budget-usd 1.50 TEXT"
 	default:
 		return "codog [flags] COMMAND"
 	}
@@ -54912,7 +55014,7 @@ func globalFlagConsumesNext(arg string) bool {
 		"--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-output-format", "-o", "--o",
 		"--input-format", "-input-format", "--json-schema", "-json-schema",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
-		"--max-tokens", "-max-tokens", "--temperature", "-temperature",
+		"--max-tokens", "-max-tokens", "--max-budget-usd", "-max-budget-usd", "--temperature", "-temperature",
 		"--tools", "-tools", "--mcp-config", "-mcp-config",
 		"--add-dir", "-add-dir",
 		"--attach", "-attach", "--attachment", "-attachment", "--file", "-file":
@@ -54948,7 +55050,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--fallback-model", "-fallback-model", "--thinking", "-thinking", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--add-dir", "-add-dir", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--fallback-model", "-fallback-model", "--thinking", "-thinking", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--add-dir", "-add-dir", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--max-budget-usd", "-max-budget-usd", "--temperature":
 		return true
 	default:
 		return false
@@ -55524,8 +55626,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return providerCommandHelpSpec(
 			"prompt",
 			"prompt",
-			`codog [flags] prompt [--stdin] [--attach PATH] [--input-format text|stream-json] "MESSAGE" [--json|--output-format text|json|stream-json]`,
-			"Prompt\n\nUsage:\n  codog [flags] prompt [--stdin] [--attach PATH] [--input-format text|stream-json] \"MESSAGE\" [--json|--output-format text|json|stream-json]\n  codog -p \"MESSAGE\"\n\nRuns one provider-backed agent turn, streams assistant text by default, executes approved tools, and persists the turn to a JSONL session. Pass --stdin to append piped input to the prompt, --input-format stream-json to read Claude SDK user-message NDJSON, and --attach to include local text, image, or PDF files in the model request.\n",
+			`codog [flags] prompt [--stdin] [--attach PATH] [--input-format text|stream-json] [--max-budget-usd USD] "MESSAGE" [--json|--output-format text|json|stream-json]`,
+			"Prompt\n\nUsage:\n  codog [flags] prompt [--stdin] [--attach PATH] [--input-format text|stream-json] [--max-budget-usd USD] \"MESSAGE\" [--json|--output-format text|json|stream-json]\n  codog -p \"MESSAGE\"\n\nRuns one provider-backed agent turn, streams assistant text by default, executes approved tools, and persists the turn to a JSONL session. Pass --stdin to append piped input to the prompt, --input-format stream-json to read Claude SDK user-message NDJSON, --max-budget-usd to cap estimated provider spend for the session turn, and --attach to include local text, image, or PDF files in the model request.\n",
 			[]string{"session_id", "message", "tool_calls", "usage", "cost"},
 			[]string{"ok", "error"},
 		), true
@@ -56857,6 +56959,7 @@ Flags:
   --replay-user-messages
   --include-partial-messages
   --json-schema SCHEMA
+  --max-budget-usd USD
   --allowed-tools TOOL[,TOOL]
   --disallowed-tools TOOL[,TOOL]
   --tools TOOL[,TOOL]

@@ -122,6 +122,36 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 	require.Equal(t, "high", client.requests[0].ReasoningEffort)
 }
 
+func TestRunnerStopsWhenMaxBudgetExceeded(t *testing.T) {
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{{
+			ID:     "msg-budget",
+			Blocks: []anthropic.ContentBlock{{Type: "text", Text: "done"}},
+			Usage:  anthropic.Usage{InputTokens: 10, OutputTokens: 10},
+		}},
+	}
+
+	result, err := Runner{
+		Config: config.Config{
+			Model:     "mock",
+			MaxTokens: 64,
+			MaxTurns:  2,
+		},
+		Client:       client,
+		Tools:        tools.NewRegistry(t.TempDir()),
+		MaxBudgetUSD: 0.00001,
+	}.Run(context.Background(), nil, "hello")
+
+	require.Error(t, err)
+	var budgetErr BudgetExceededError
+	require.ErrorAs(t, err, &budgetErr)
+	require.Equal(t, 0.00001, budgetErr.LimitUSD)
+	require.GreaterOrEqual(t, budgetErr.CostUSD, budgetErr.LimitUSD)
+	require.Len(t, result.Messages, 2)
+	require.Equal(t, "msg-budget", result.Messages[1].ID)
+	require.Equal(t, []MessageUsage{{MessageIndex: 1, Usage: anthropic.Usage{InputTokens: 10, OutputTokens: 10}}}, result.MessageUsages)
+}
+
 func TestRunnerPlanModeFiltersToolsAndEnforcesReadOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")
