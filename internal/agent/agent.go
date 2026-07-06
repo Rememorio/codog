@@ -30204,7 +30204,7 @@ func directSlashCommandName(name string) string {
 		return "exit-plan"
 	case "/tokens":
 		return "cost"
-	case "/session":
+	case "/session", "/sessions":
 		return "sessions"
 	case "/settings":
 		return "config"
@@ -34085,8 +34085,8 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		return true
 	}
 	command := fields[0]
-	if spec, ok := slash.Lookup(command); ok {
-		command = spec.Name
+	if mapped := directSlashCommandName(command); mapped != "" {
+		command = resumedSlashCanonicalName(mapped)
 	}
 	switch command {
 	case "/help":
@@ -34105,7 +34105,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Onboarding(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/terminal-setup", "/terminalSetup":
+	case "/terminal-setup":
 		if err := a.TerminalSetup(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -34125,11 +34125,11 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		} else if err := a.RemoteSetup(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/remote-setup", "/web-setup":
+	case "/remote-setup":
 		if err := a.RemoteSetup(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/bridge", "/remote-control", "/rc":
+	case "/bridge":
 		if err := a.Bridge(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -34137,7 +34137,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.BridgeKick(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/desktop", "/app":
+	case "/desktop":
 		if err := a.Desktop(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -34219,11 +34219,11 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Review(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/reviewRemote", "/review-remote":
+	case "/reviewremote":
 		if err := a.ReviewRemote(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/feedback", "/bug":
+	case "/feedback":
 		if err := a.Feedback(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -34239,7 +34239,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.AutofixPR(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/pr-comments", "/pr_comments":
+	case "/pr-comments":
 		if err := a.PRComments(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -34279,7 +34279,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Validation(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/workspace", "/cwd":
+	case "/workspace":
 		if err := a.WorkspaceCommand(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -34296,10 +34296,6 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/theme":
-		if err := a.Theme(fields[1:]); err != nil {
-			fmt.Fprintln(a.Err, "error:", err)
-		}
-	case "/color":
 		if err := a.Theme(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -34357,9 +34353,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/cost":
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
-	case "/tokens":
-		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
-	case "/cache", "/caches":
+	case "/cache":
 		if err := a.Cache(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -34378,10 +34372,6 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Usage(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/stats":
-		if err := a.Usage(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
-			fmt.Fprintln(a.Err, "error:", err)
-		}
 	case "/metrics":
 		if err := a.Metrics(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -34394,7 +34384,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.PerfIssue(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/think-back", "/thinkback", "/thinkback-play":
+	case "/think-back":
 		if err := a.ThinkBack(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -34418,7 +34408,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.MockLimits(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/mock-parity", "/parity", "/self-test":
+	case "/mock-parity", "/self-test":
 		defaultFormat := "text"
 		if command == "/self-test" {
 			defaultFormat = "json"
@@ -34434,11 +34424,11 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Plan(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/exit-plan", "/exit_plan_mode":
+	case "/exit-plan":
 		if err := a.Plan(append([]string{"exit"}, fields[1:]...)); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/config", "/settings":
+	case "/config":
 		a.handleConfigSlash(fields[1:])
 	case "/api-key":
 		if err := a.APIKey(fields[1:]); err != nil {
@@ -34500,19 +34490,19 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Branch(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/branch-lock", "/branchlock":
+	case "/branch-lock":
 		if err := a.BranchLock(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/stale-base", "/base-check":
+	case "/stale-base":
 		if err := a.StaleBase(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/green-contract", "/green":
+	case "/green-contract":
 		if err := a.GreenContract(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/g004-conformance", "/g004":
+	case "/g004-conformance":
 		if err := a.G004Conformance(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -34635,13 +34625,13 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Unpin(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/history", "/prompt-history":
+	case "/history":
 		a.handleHistorySlash(fields[1:], sess)
 	case "/summary":
 		if err := a.Summary(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/generateSessionName", "/generate-session-name":
+	case "/generatesessionname":
 		report, format, err := a.generateSessionNameReport(fields[1:], config.FlagOverrides{SessionID: sess.ID})
 		if err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -34800,7 +34790,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Logout(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/session":
+	case "/sessions":
 		a.handleSessionSlash(fields[1:], sess)
 	case "/bookmarks":
 		if err := a.Bookmarks(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
@@ -34810,15 +34800,15 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.BackfillSessions(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/clear", "/new":
+	case "/clear":
 		a.handleClearSlash(ctx, fields[1:], sess)
 	case "/conversation":
 		if err := a.Conversation(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/resume", "/continue":
+	case "/resume":
 		a.handleResumeSlash(ctx, fields[1:], sess)
-	case "/rewind", "/checkpoint":
+	case "/rewind":
 		a.handleRewindSlash(fields[1:], sess)
 	default:
 		if a.handleCustomSlash(ctx, line, sess) {
