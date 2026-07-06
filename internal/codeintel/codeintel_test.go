@@ -595,6 +595,56 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Len(t, outgoingCalls.Calls, 1)
 	require.Equal(t, "fmt.Println", outgoingCalls.Calls[0].To.Name)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "prepare_type_hierarchy", Path: "main.go", Line: 2, Character: 5})
+	require.NoError(t, err)
+	require.Equal(t, "prepare-type-hierarchy", result.Action)
+	require.Equal(t, "textDocument/prepareTypeHierarchy", result.Method)
+	var typeItems []struct {
+		Name string `json:"name"`
+		Kind int    `json:"kind"`
+		URI  string `json:"uri"`
+	}
+	encodedTypeItems, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedTypeItems, &typeItems))
+	require.Len(t, typeItems, 1)
+	require.Equal(t, "Widget", typeItems[0].Name)
+	require.Equal(t, 23, typeItems[0].Kind)
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "supertypes", Path: "main.go", Line: 2, Character: 5})
+	require.NoError(t, err)
+	require.Equal(t, "type-hierarchy-supertypes", result.Action)
+	require.Equal(t, "typeHierarchy/supertypes", result.Method)
+	var supertypes struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+		Types []struct {
+			Name string `json:"name"`
+		} `json:"types"`
+	}
+	encodedSupertypes, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedSupertypes, &supertypes))
+	require.Len(t, supertypes.Items, 1)
+	require.Len(t, supertypes.Types, 1)
+	require.Equal(t, "BaseWidget", supertypes.Types[0].Name)
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "subtypes", Path: "main.go", Line: 2, Character: 5})
+	require.NoError(t, err)
+	require.Equal(t, "type-hierarchy-subtypes", result.Action)
+	require.Equal(t, "typeHierarchy/subtypes", result.Method)
+	var subtypes struct {
+		Types []struct {
+			Name string `json:"name"`
+		} `json:"types"`
+	}
+	encodedSubtypes, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedSubtypes, &subtypes))
+	require.Len(t, subtypes.Types, 1)
+	require.Equal(t, "SpecialWidget", subtypes.Types[0].Name)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "diagnostics", Path: "main.go"})
 	require.NoError(t, err)
 	require.Equal(t, "diagnostics", result.Action)
@@ -617,81 +667,90 @@ func TestApplyLSPTextEdits(t *testing.T) {
 
 func TestNormalizeLSPActionAliases(t *testing.T) {
 	cases := map[string]string{
-		"goto_definition":         "definition",
-		"goto-definition":         "definition",
-		"gotoDefinition":          "definition",
-		"goto_declaration":        "declaration",
-		"gotoDeclaration":         "declaration",
-		"goto_implementation":     "implementation",
-		"gotoImplementation":      "implementation",
-		"type_definition":         "type-definition",
-		"typeDefinition":          "type-definition",
-		"gotoTypeDefinition":      "type-definition",
-		"find_references":         "references",
-		"find-references":         "references",
-		"findReferences":          "references",
-		"rename_symbol":           "rename",
-		"renameSymbol":            "rename",
-		"symbol-rename":           "rename",
-		"prepare_rename":          "prepare-rename",
-		"prepareRename":           "prepare-rename",
-		"rename-prepare":          "prepare-rename",
-		"code_action":             "code-action",
-		"codeAction":              "code-action",
-		"quickfix":                "code-action",
-		"quick-fix":               "code-action",
-		"prepare_call_hierarchy":  "prepare-call-hierarchy",
-		"prepareCallHierarchy":    "prepare-call-hierarchy",
-		"call_hierarchy":          "prepare-call-hierarchy",
-		"incoming_calls":          "call-hierarchy-incoming",
-		"incomingCalls":           "call-hierarchy-incoming",
-		"call_hierarchy_incoming": "call-hierarchy-incoming",
-		"outgoing_calls":          "call-hierarchy-outgoing",
-		"outgoingCalls":           "call-hierarchy-outgoing",
-		"call_hierarchy_outgoing": "call-hierarchy-outgoing",
-		"completions":             "completion",
-		"document_highlight":      "document-highlight",
-		"documentHighlight":       "document-highlight",
-		"selection_range":         "selection-range",
-		"selectionRange":          "selection-range",
-		"expand_selection":        "selection-range",
-		"folding_range":           "folding-range",
-		"foldingRange":            "folding-range",
-		"folds":                   "folding-range",
-		"document_link":           "document-link",
-		"documentLink":            "document-link",
-		"document-links":          "document-link",
-		"document_color":          "document-color",
-		"documentColor":           "document-color",
-		"document-colors":         "document-color",
-		"inlay_hint":              "inlay-hint",
-		"inlayHint":               "inlay-hint",
-		"inlay-hints":             "inlay-hint",
-		"linked_editing_range":    "linked-editing-range",
-		"linkedEditingRange":      "linked-editing-range",
-		"linked-editing":          "linked-editing-range",
-		"monikers":                "moniker",
-		"symbol_moniker":          "moniker",
-		"semantic_tokens":         "semantic-tokens",
-		"semanticTokens":          "semantic-tokens",
-		"semantic_tokens_full":    "semantic-tokens",
-		"semanticTokensFull":      "semantic-tokens",
-		"semantic_tokens_range":   "semantic-tokens-range",
-		"semanticTokensRange":     "semantic-tokens-range",
-		"semantic-range":          "semantic-tokens-range",
-		"workspace_symbol":        "workspace-symbol",
-		"workspace_symbols":       "workspace-symbol",
-		"workspaceSymbol":         "workspace-symbol",
-		"symbol-search":           "workspace-symbol",
-		"signature_help":          "signature-help",
-		"signatureHelp":           "signature-help",
-		"signature":               "signature-help",
-		"document_symbols":        "symbols",
-		"document-symbols":        "symbols",
-		"documentSymbols":         "symbols",
-		"document-formatting":     "format",
-		"documentFormatting":      "format",
-		"formatting":              "format",
+		"goto_definition":           "definition",
+		"goto-definition":           "definition",
+		"gotoDefinition":            "definition",
+		"goto_declaration":          "declaration",
+		"gotoDeclaration":           "declaration",
+		"goto_implementation":       "implementation",
+		"gotoImplementation":        "implementation",
+		"type_definition":           "type-definition",
+		"typeDefinition":            "type-definition",
+		"gotoTypeDefinition":        "type-definition",
+		"find_references":           "references",
+		"find-references":           "references",
+		"findReferences":            "references",
+		"rename_symbol":             "rename",
+		"renameSymbol":              "rename",
+		"symbol-rename":             "rename",
+		"prepare_rename":            "prepare-rename",
+		"prepareRename":             "prepare-rename",
+		"rename-prepare":            "prepare-rename",
+		"code_action":               "code-action",
+		"codeAction":                "code-action",
+		"quickfix":                  "code-action",
+		"quick-fix":                 "code-action",
+		"prepare_call_hierarchy":    "prepare-call-hierarchy",
+		"prepareCallHierarchy":      "prepare-call-hierarchy",
+		"call_hierarchy":            "prepare-call-hierarchy",
+		"incoming_calls":            "call-hierarchy-incoming",
+		"incomingCalls":             "call-hierarchy-incoming",
+		"call_hierarchy_incoming":   "call-hierarchy-incoming",
+		"outgoing_calls":            "call-hierarchy-outgoing",
+		"outgoingCalls":             "call-hierarchy-outgoing",
+		"call_hierarchy_outgoing":   "call-hierarchy-outgoing",
+		"prepare_type_hierarchy":    "prepare-type-hierarchy",
+		"prepareTypeHierarchy":      "prepare-type-hierarchy",
+		"type_hierarchy":            "prepare-type-hierarchy",
+		"supertypes":                "type-hierarchy-supertypes",
+		"super_types":               "type-hierarchy-supertypes",
+		"type_hierarchy_supertypes": "type-hierarchy-supertypes",
+		"subtypes":                  "type-hierarchy-subtypes",
+		"sub_types":                 "type-hierarchy-subtypes",
+		"type_hierarchy_subtypes":   "type-hierarchy-subtypes",
+		"completions":               "completion",
+		"document_highlight":        "document-highlight",
+		"documentHighlight":         "document-highlight",
+		"selection_range":           "selection-range",
+		"selectionRange":            "selection-range",
+		"expand_selection":          "selection-range",
+		"folding_range":             "folding-range",
+		"foldingRange":              "folding-range",
+		"folds":                     "folding-range",
+		"document_link":             "document-link",
+		"documentLink":              "document-link",
+		"document-links":            "document-link",
+		"document_color":            "document-color",
+		"documentColor":             "document-color",
+		"document-colors":           "document-color",
+		"inlay_hint":                "inlay-hint",
+		"inlayHint":                 "inlay-hint",
+		"inlay-hints":               "inlay-hint",
+		"linked_editing_range":      "linked-editing-range",
+		"linkedEditingRange":        "linked-editing-range",
+		"linked-editing":            "linked-editing-range",
+		"monikers":                  "moniker",
+		"symbol_moniker":            "moniker",
+		"semantic_tokens":           "semantic-tokens",
+		"semanticTokens":            "semantic-tokens",
+		"semantic_tokens_full":      "semantic-tokens",
+		"semanticTokensFull":        "semantic-tokens",
+		"semantic_tokens_range":     "semantic-tokens-range",
+		"semanticTokensRange":       "semantic-tokens-range",
+		"semantic-range":            "semantic-tokens-range",
+		"workspace_symbol":          "workspace-symbol",
+		"workspace_symbols":         "workspace-symbol",
+		"workspaceSymbol":           "workspace-symbol",
+		"symbol-search":             "workspace-symbol",
+		"signature_help":            "signature-help",
+		"signatureHelp":             "signature-help",
+		"signature":                 "signature-help",
+		"document_symbols":          "symbols",
+		"document-symbols":          "symbols",
+		"documentSymbols":           "symbols",
+		"document-formatting":       "format",
+		"documentFormatting":        "format",
+		"formatting":                "format",
 	}
 	for input, expected := range cases {
 		actual, err := NormalizeLSPAction(input)
@@ -945,6 +1004,52 @@ func TestFakeLSPServer(t *testing.T) {
 					"start": map[string]any{"line": 3, "character": 1},
 					"end":   map[string]any{"line": 3, "character": 12},
 				}},
+			}})})
+		case "textDocument/prepareTypeHierarchy":
+			if currentURI == "" {
+				currentURI = "file:///workspace/main.go"
+			}
+			typeItem := map[string]any{
+				"name": "Widget",
+				"kind": 23,
+				"uri":  currentURI,
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 0},
+					"end":   map[string]any{"line": 2, "character": 20},
+				},
+				"selectionRange": map[string]any{
+					"start": map[string]any{"line": 2, "character": 5},
+					"end":   map[string]any{"line": 2, "character": 11},
+				},
+			}
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{typeItem})})
+		case "typeHierarchy/supertypes":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"name": "BaseWidget",
+				"kind": 23,
+				"uri":  currentURI,
+				"range": map[string]any{
+					"start": map[string]any{"line": 1, "character": 0},
+					"end":   map[string]any{"line": 1, "character": 20},
+				},
+				"selectionRange": map[string]any{
+					"start": map[string]any{"line": 1, "character": 5},
+					"end":   map[string]any{"line": 1, "character": 15},
+				},
+			}})})
+		case "typeHierarchy/subtypes":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"name": "SpecialWidget",
+				"kind": 23,
+				"uri":  currentURI,
+				"range": map[string]any{
+					"start": map[string]any{"line": 5, "character": 0},
+					"end":   map[string]any{"line": 5, "character": 20},
+				},
+				"selectionRange": map[string]any{
+					"start": map[string]any{"line": 5, "character": 5},
+					"end":   map[string]any{"line": 5, "character": 18},
+				},
 			}})})
 		case "textDocument/formatting":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
