@@ -4808,7 +4808,7 @@ func parseCronArgs(args []string) (cronRequest, error) {
 			return req, unexpectedExtraArgsError{
 				Command: command,
 				Args:    append([]string(nil), positionals...),
-				Usage:   "codog cron [list|create|delete|due|mark-run|run-due] [ARGS...] [--json|--output-format text|json]",
+				Usage:   cronUsage,
 			}
 		}
 	case "create":
@@ -4833,11 +4833,13 @@ func parseCronArgs(args []string) (cronRequest, error) {
 		return req, unexpectedExtraArgsError{
 			Command: "cron",
 			Args:    []string{req.Action},
-			Usage:   "codog cron [list|create|delete|due|mark-run|run-due] [ARGS...] [--json|--output-format text|json]",
+			Usage:   cronUsage,
 		}
 	}
 	return req, nil
 }
+
+const cronUsage = "codog cron [list|ls|create|add|new|delete|remove|rm|due|mark-run|mark|touch|run-due|run] [ARGS...] [--json|--output-format text|json]"
 
 func isCronAction(value string) bool {
 	switch normalizeCronAction(value) {

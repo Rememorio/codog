@@ -239,7 +239,7 @@ func Specs() []Spec {
 		{Name: "/tasks", Usage: "/tasks [list|board|heartbeat|status|stop|logs|watch]", Description: "Alias for background task management."},
 		{Name: "/bashes", Usage: "/bashes [list|board|heartbeat|status|stop|logs|watch]", Description: "Alias for background task management."},
 		{Name: "/background", Usage: "/background [run|list|board|heartbeat|status|stop|logs|watch]", Description: "Manage local background tasks."},
-		{Name: "/cron", Usage: "/cron [list|create|delete|due|run-due]", Description: "Manage scheduled recurring Codog prompts."},
+		{Name: "/cron", Usage: "/cron [list|ls|create|add|delete|rm|due|mark-run|mark|run-due|run]", Description: "Manage scheduled recurring Codog prompts."},
 		{Name: "/plugin", Usage: "/plugin [list|health|install|enable|disable|remove]", Description: "Alias for marketplace plugin management."},
 		{Name: "/plugins", Usage: "/plugins [list|health|install|enable|disable|remove]", Description: "Alias for marketplace plugin management."},
 		{Name: "/marketplace", Usage: "/marketplace [list|sources|remote|browse|updates|install|update|settings]", Description: "Manage local plugins and trusted marketplace sources."},

@@ -26076,9 +26076,10 @@ func TestCronCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 	out.Reset()
 
-	require.NoError(t, app.Cron([]string{"create", "@every 1h", "check", "due", "--json"}))
+	require.NoError(t, app.Cron([]string{"add", "@every 1h", "check", "due", "--json"}))
 	var dueCreated cronCommandReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &dueCreated))
+	require.Equal(t, "create", dueCreated.Action)
 	require.NotNil(t, dueCreated.Entry)
 	out.Reset()
 
@@ -26091,7 +26092,7 @@ func TestCronCommandAndSlash(t *testing.T) {
 	require.Equal(t, dueCreated.Entry.ID, due.Entries[0].ID)
 	out.Reset()
 
-	require.NoError(t, app.Cron([]string{"run-due", "--now", now, "--json"}))
+	require.NoError(t, app.Cron([]string{"run", "--now", now, "--json"}))
 	var runDue cronCommandReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &runDue))
 	require.Equal(t, "run-due", runDue.Action)
@@ -26122,7 +26123,7 @@ func TestCronCommandAndSlash(t *testing.T) {
 	require.Equal(t, created.Entry.ID, deleted.Entry.ID)
 	out.Reset()
 
-	require.NoError(t, app.Cron([]string{"delete", dueCreated.Entry.ID, "--json"}))
+	require.NoError(t, app.Cron([]string{"rm", dueCreated.Entry.ID, "--json"}))
 	out.Reset()
 
 	require.NoError(t, app.Cron([]string{"list", "--json"}))
