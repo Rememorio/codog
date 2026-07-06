@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"runtime/pprof"
 	"sort"
@@ -26026,6 +26027,7 @@ type referenceParityAuditReport struct {
 	Kind     string                 `json:"kind"`
 	Action   string                 `json:"action"`
 	Status   string                 `json:"status"`
+	Source   string                 `json:"source,omitempty"`
 	Commands *referenceSurfaceAudit `json:"commands,omitempty"`
 	Tools    *referenceSurfaceAudit `json:"tools,omitempty"`
 }
@@ -26033,6 +26035,7 @@ type referenceParityAuditReport struct {
 type referenceSurfaceAudit struct {
 	Kind              string                 `json:"kind"`
 	SnapshotPath      string                 `json:"snapshot_path"`
+	SourceRoot        string                 `json:"source_root,omitempty"`
 	ReferenceCount    int                    `json:"reference_count"`
 	CoveredCount      int                    `json:"covered_count"`
 	GroupCoveredCount int                    `json:"group_covered_count"`
@@ -26115,6 +26118,7 @@ type capabilitiesRequest struct {
 	Action          string
 	Query           string
 	Format          string
+	ReferenceRoot   string
 	CommandSnapshot string
 	ToolSnapshot    string
 }
@@ -26122,7 +26126,7 @@ type capabilitiesRequest struct {
 func parseCapabilitiesArgs(args []string) (capabilitiesRequest, error) {
 	req := capabilitiesRequest{Action: "show", Format: "text"}
 	positionals := []string{}
-	usage := "codog capabilities [show|list|resolve NAME|audit] [--commands-snapshot PATH] [--tools-snapshot PATH] [--json|--output-format text|json]"
+	usage := "codog capabilities [show|list|resolve NAME|audit] [--reference-root PATH] [--commands-snapshot PATH] [--tools-snapshot PATH] [--json|--output-format text|json]"
 	for index := 0; index < len(args); index++ {
 		arg := strings.TrimSpace(args[index])
 		switch {
@@ -26138,6 +26142,16 @@ func parseCapabilitiesArgs(args []string) (capabilitiesRequest, error) {
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--reference-root" || arg == "--source-root":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "capabilities audit", Flag: arg, Usage: usage}
+			}
+			req.ReferenceRoot = args[index]
+		case strings.HasPrefix(arg, "--reference-root="):
+			req.ReferenceRoot = strings.TrimPrefix(arg, "--reference-root=")
+		case strings.HasPrefix(arg, "--source-root="):
+			req.ReferenceRoot = strings.TrimPrefix(arg, "--source-root=")
 		case arg == "--commands-snapshot" || arg == "--command-snapshot":
 			index++
 			if index >= len(args) {
@@ -26196,8 +26210,9 @@ func parseCapabilitiesArgs(args []string) (capabilitiesRequest, error) {
 	}
 	req.CommandSnapshot = strings.TrimSpace(req.CommandSnapshot)
 	req.ToolSnapshot = strings.TrimSpace(req.ToolSnapshot)
-	if req.Action == "audit" && req.CommandSnapshot == "" && req.ToolSnapshot == "" {
-		return req, requiredArgumentError{Command: "capabilities audit", Argument: "--commands-snapshot or --tools-snapshot", Usage: usage}
+	req.ReferenceRoot = strings.TrimSpace(req.ReferenceRoot)
+	if req.Action == "audit" && req.CommandSnapshot == "" && req.ToolSnapshot == "" && req.ReferenceRoot == "" {
+		return req, requiredArgumentError{Command: "capabilities audit", Argument: "--reference-root, --commands-snapshot, or --tools-snapshot", Usage: usage}
 	}
 	return req, nil
 }
@@ -26276,6 +26291,19 @@ func (a *App) referenceParityAuditReport(req capabilitiesRequest) (referencePari
 		Action: "audit",
 		Status: "ok",
 	}
+	if req.ReferenceRoot != "" {
+		report.Source = "reference_root"
+		commands, tools, err := extractReferenceSurfaces(req.ReferenceRoot)
+		if err != nil {
+			return referenceParityAuditReport{}, err
+		}
+		commandAudit := auditReferenceEntries(commands, "commands", commandCapabilityNames(capabilities))
+		commandAudit.SourceRoot = req.ReferenceRoot
+		toolAudit := auditReferenceEntries(tools, "tools", toolCapabilityNames(capabilities))
+		toolAudit.SourceRoot = req.ReferenceRoot
+		report.Commands = &commandAudit
+		report.Tools = &toolAudit
+	}
 	if req.CommandSnapshot != "" {
 		audit, err := auditReferenceSurface(req.CommandSnapshot, "commands", commandCapabilityNames(capabilities))
 		if err != nil {
@@ -26301,9 +26329,14 @@ func auditReferenceSurface(path string, kind string, available map[string]string
 	if err != nil {
 		return referenceSurfaceAudit{}, err
 	}
+	audit := auditReferenceEntries(entries, kind, available)
+	audit.SnapshotPath = path
+	return audit, nil
+}
+
+func auditReferenceEntries(entries []referenceSnapshotRef, kind string, available map[string]string) referenceSurfaceAudit {
 	audit := referenceSurfaceAudit{
 		Kind:           kind,
-		SnapshotPath:   path,
 		ReferenceCount: len(entries),
 	}
 	coveredGroups := map[string]string{}
@@ -26352,7 +26385,7 @@ func auditReferenceSurface(path string, kind string, available map[string]string
 	audit.UncoveredCount = len(audit.Missing)
 	audit.MissingCount = audit.UncoveredCount
 	audit.MissingGroups = referenceMissingGroups(audit.Missing)
-	return audit, nil
+	return audit
 }
 
 func readReferenceSnapshot(path string) ([]referenceSnapshotRef, error) {
@@ -26365,6 +26398,239 @@ func readReferenceSnapshot(path string) ([]referenceSnapshotRef, error) {
 		return nil, fmt.Errorf("read reference snapshot: %w", err)
 	}
 	return entries, nil
+}
+
+func extractReferenceSurfaces(root string) ([]referenceSnapshotRef, []referenceSnapshotRef, error) {
+	sourceRoot, err := referenceSourceRoot(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	commandRoot := filepath.Join(sourceRoot, "commands")
+	toolRoot := filepath.Join(sourceRoot, "tools")
+	if info, err := os.Stat(commandRoot); err != nil || !info.IsDir() {
+		return nil, nil, fmt.Errorf("reference commands directory not found: %s", commandRoot)
+	}
+	if info, err := os.Stat(toolRoot); err != nil || !info.IsDir() {
+		return nil, nil, fmt.Errorf("reference tools directory not found: %s", toolRoot)
+	}
+	commands, err := extractReferenceCommandEntries(sourceRoot, commandRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	tools, err := extractReferenceToolEntries(sourceRoot, toolRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	return commands, tools, nil
+}
+
+func referenceSourceRoot(root string) (string, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return "", errors.New("reference root is required")
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	absRoot = filepath.Clean(absRoot)
+	if filepath.Base(absRoot) == "src" {
+		return absRoot, nil
+	}
+	if info, err := os.Stat(filepath.Join(absRoot, "src")); err == nil && info.IsDir() {
+		return filepath.Join(absRoot, "src"), nil
+	}
+	return absRoot, nil
+}
+
+func extractReferenceCommandEntries(sourceRoot string, commandRoot string) ([]referenceSnapshotRef, error) {
+	extractor := referenceEntryExtractor{
+		sourceRoot: sourceRoot,
+		kind:       "commands",
+		patterns: []*regexp.Regexp{
+			regexp.MustCompile(`\bname\s*:\s*['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]`),
+			regexp.MustCompile(`\baliases\s*:\s*\[([^\]]*)\]`),
+		},
+	}
+	if err := extractor.walk(commandRoot); err != nil {
+		return nil, err
+	}
+	return extractor.entries(), nil
+}
+
+func extractReferenceToolEntries(sourceRoot string, toolRoot string) ([]referenceSnapshotRef, error) {
+	extractor := referenceEntryExtractor{
+		sourceRoot: sourceRoot,
+		kind:       "tools",
+		patterns: []*regexp.Regexp{
+			regexp.MustCompile(`\bname\s*:\s*['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]`),
+			regexp.MustCompile(`\b(?:export\s+)?const\s+([A-Za-z0-9_]+_TOOL_NAME)\s*=\s*['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]`),
+			regexp.MustCompile(`\b(?:export\s+)?const\s+([A-Za-z0-9_]*Tool)\b`),
+		},
+		includeFileNames: true,
+	}
+	if err := extractor.walk(toolRoot); err != nil {
+		return nil, err
+	}
+	return extractor.entries(), nil
+}
+
+type referenceEntryExtractor struct {
+	sourceRoot        string
+	kind              string
+	patterns          []*regexp.Regexp
+	includeFileNames  bool
+	entriesByIdentity map[string]referenceSnapshotRef
+}
+
+func (e *referenceEntryExtractor) walk(root string) error {
+	e.entriesByIdentity = map[string]referenceSnapshotRef{}
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if shouldSkipReferenceDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if shouldSkipReferenceFile(path) {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		sourceHint := referenceSourceHint(e.sourceRoot, path)
+		text := string(data)
+		if e.kind == "commands" && isReferenceDisabledStub(text) {
+			return nil
+		}
+		if e.includeFileNames {
+			e.add(referenceFileName(path), sourceHint, "")
+		}
+		for _, pattern := range e.patterns {
+			for _, match := range pattern.FindAllStringSubmatch(text, -1) {
+				e.addReferencePatternMatch(match, sourceHint)
+			}
+		}
+		return nil
+	})
+}
+
+func (e *referenceEntryExtractor) addReferencePatternMatch(match []string, sourceHint string) {
+	switch len(match) {
+	case 0, 1:
+		return
+	case 2:
+		if strings.Contains(match[1], "'") || strings.Contains(match[1], `"`) || strings.Contains(match[1], "`") {
+			for _, alias := range parseReferenceAliases(match[1]) {
+				e.add(alias, sourceHint, "")
+			}
+			return
+		}
+		e.add(match[1], sourceHint, "")
+	default:
+		if strings.HasSuffix(match[1], "_TOOL_NAME") && strings.TrimSpace(match[2]) != "" {
+			e.add(match[2], sourceHint, match[1])
+			return
+		}
+		e.add(match[1], sourceHint, "")
+	}
+}
+
+func (e *referenceEntryExtractor) add(name string, sourceHint string, responsibility string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	sourceHint = strings.TrimSpace(sourceHint)
+	key := normalizeReferenceName(name) + "\x00" + sourceHint
+	if key == "\x00"+sourceHint {
+		return
+	}
+	if _, exists := e.entriesByIdentity[key]; exists {
+		return
+	}
+	e.entriesByIdentity[key] = referenceSnapshotRef{
+		Name:           name,
+		SourceHint:     sourceHint,
+		Responsibility: responsibility,
+	}
+}
+
+func (e *referenceEntryExtractor) entries() []referenceSnapshotRef {
+	out := make([]referenceSnapshotRef, 0, len(e.entriesByIdentity))
+	for _, entry := range e.entriesByIdentity {
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SourceHint != out[j].SourceHint {
+			return out[i].SourceHint < out[j].SourceHint
+		}
+		return normalizeReferenceName(out[i].Name) < normalizeReferenceName(out[j].Name)
+	})
+	return out
+}
+
+func parseReferenceAliases(value string) []string {
+	value = strings.TrimSpace(value)
+	pattern := regexp.MustCompile(`['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]`)
+	matches := pattern.FindAllStringSubmatch(value, -1)
+	aliases := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) > 1 && strings.TrimSpace(match[1]) != "" {
+			aliases = append(aliases, strings.TrimSpace(match[1]))
+		}
+	}
+	return aliases
+}
+
+func isReferenceDisabledStub(text string) bool {
+	normalized := strings.Join(strings.Fields(text), " ")
+	return strings.Contains(normalized, "isEnabled: () => false") &&
+		strings.Contains(normalized, "isHidden: true") &&
+		(strings.Contains(normalized, "name: 'stub'") ||
+			strings.Contains(normalized, `name: "stub"`) ||
+			strings.Contains(normalized, "name: `stub`"))
+}
+
+func shouldSkipReferenceDir(name string) bool {
+	switch name {
+	case ".git", "node_modules", "fixtures", "testdata", "__fixtures__", "__tests__":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldSkipReferenceFile(path string) bool {
+	base := filepath.Base(path)
+	if strings.HasPrefix(base, ".") {
+		return true
+	}
+	ext := filepath.Ext(base)
+	switch ext {
+	case ".ts", ".tsx", ".js", ".jsx":
+	default:
+		return true
+	}
+	lower := strings.ToLower(base)
+	return strings.Contains(lower, ".test.") || strings.Contains(lower, ".spec.") || strings.HasSuffix(lower, ".d.ts")
+}
+
+func referenceFileName(path string) string {
+	base := filepath.Base(path)
+	ext := filepath.Ext(base)
+	return strings.TrimSuffix(base, ext)
+}
+
+func referenceSourceHint(sourceRoot string, path string) string {
+	if rel, err := filepath.Rel(sourceRoot, path); err == nil {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(filepath.Clean(path))
 }
 
 func commandCapabilityNames(report capabilitiesReport) map[string]string {
@@ -52159,8 +52425,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"capabilities",
 			"capabilities",
-			"codog capabilities [show|list|resolve NAME|audit] [--commands-snapshot PATH] [--tools-snapshot PATH] [--output-format text|json]",
-			"Capabilities\n\nUsage:\n  codog capabilities [show|list] [--output-format text|json]\n  codog capabilities resolve NAME [--output-format text|json]\n  codog capabilities audit --commands-snapshot PATH --tools-snapshot PATH [--output-format text|json]\n\nReports the commands, slash commands, tools, protocols, MCP resources, and feature flags supported by this build. `resolve` projects the live execution registry for one command, slash command, tool, or Claude-style tool alias. `audit` compares Codog's live command and tool surface against Claude Code reference snapshots.\n",
+			"codog capabilities [show|list|resolve NAME|audit] [--reference-root PATH] [--commands-snapshot PATH] [--tools-snapshot PATH] [--output-format text|json]",
+			"Capabilities\n\nUsage:\n  codog capabilities [show|list] [--output-format text|json]\n  codog capabilities resolve NAME [--output-format text|json]\n  codog capabilities audit --reference-root PATH [--output-format text|json]\n  codog capabilities audit --commands-snapshot PATH --tools-snapshot PATH [--output-format text|json]\n\nReports the commands, slash commands, tools, protocols, MCP resources, and feature flags supported by this build. `resolve` projects the live execution registry for one command, slash command, tool, or Claude-style tool alias. `audit` compares Codog's live command and tool surface against Claude Code reference source or snapshots.\n",
 			[]string{"commands", "slash_commands", "tools", "features", "protocols", "mcp", "matches", "suggestions", "covered_count", "missing_count"},
 			[]string{"ok", "gap", "not_found", "error"},
 			false,
