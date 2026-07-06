@@ -14966,6 +14966,17 @@ func TestUnknownSlashInREPLShowsSuggestions(t *testing.T) {
 	require.Contains(t, errOut.String(), "/team/review")
 }
 
+func TestHelpSlashInREPLRendersHelp(t *testing.T) {
+	var errOut bytes.Buffer
+	app := &App{Err: &errOut}
+
+	require.True(t, app.handleSlash(context.Background(), "/help", &session.Session{ID: "session"}))
+	require.Contains(t, errOut.String(), "/help")
+	require.Contains(t, errOut.String(), "/status")
+	require.Contains(t, errOut.String(), "/mock-parity")
+	require.NotContains(t, errOut.String(), "unknown slash command")
+}
+
 func TestDirectCustomSlashRunsOMCCommand(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()

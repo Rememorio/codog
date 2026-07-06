@@ -34042,6 +34042,8 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		return true
 	}
 	switch fields[0] {
+	case "/help":
+		a.renderSlashHelp(a.Err)
 	case "/status":
 		a.renderStatus("text", sess, "", "default", "", false)
 	case "/statusline":
