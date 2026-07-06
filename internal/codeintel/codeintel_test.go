@@ -374,6 +374,32 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Len(t, linkedEditing.Ranges, 2)
 	require.Equal(t, LSPPosition{Line: 2, Character: 5}, linkedEditing.Ranges[0].Start)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "semantic_tokens", Path: "main.go"})
+	require.NoError(t, err)
+	require.Equal(t, "semantic-tokens", result.Action)
+	require.Equal(t, "textDocument/semanticTokens/full", result.Method)
+	var semanticTokens struct {
+		ResultID string `json:"resultId"`
+		Data     []int  `json:"data"`
+	}
+	encodedSemanticTokens, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedSemanticTokens, &semanticTokens))
+	require.Equal(t, "full-1", semanticTokens.ResultID)
+	require.Equal(t, []int{2, 5, 4, 12, 0}, semanticTokens.Data)
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "semantic_tokens_range", Path: "main.go", Line: 2, Character: 12})
+	require.NoError(t, err)
+	require.Equal(t, "semantic-tokens-range", result.Action)
+	require.Equal(t, "textDocument/semanticTokens/range", result.Method)
+	var semanticTokenRange struct {
+		Data []int `json:"data"`
+	}
+	encodedSemanticTokenRange, err := json.Marshal(result.Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encodedSemanticTokenRange, &semanticTokenRange))
+	require.Equal(t, []int{0, 5, 6, 12, 0}, semanticTokenRange.Data)
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "rename", Path: "main.go", Line: 2, Character: 5, NewName: "Start"})
 	require.NoError(t, err)
 	require.Equal(t, "rename", result.Action)
@@ -472,56 +498,63 @@ func TestApplyLSPTextEdits(t *testing.T) {
 
 func TestNormalizeLSPActionAliases(t *testing.T) {
 	cases := map[string]string{
-		"goto_definition":      "definition",
-		"goto-definition":      "definition",
-		"gotoDefinition":       "definition",
-		"goto_declaration":     "declaration",
-		"gotoDeclaration":      "declaration",
-		"goto_implementation":  "implementation",
-		"gotoImplementation":   "implementation",
-		"type_definition":      "type-definition",
-		"typeDefinition":       "type-definition",
-		"gotoTypeDefinition":   "type-definition",
-		"find_references":      "references",
-		"find-references":      "references",
-		"findReferences":       "references",
-		"rename_symbol":        "rename",
-		"renameSymbol":         "rename",
-		"symbol-rename":        "rename",
-		"prepare_rename":       "prepare-rename",
-		"prepareRename":        "prepare-rename",
-		"rename-prepare":       "prepare-rename",
-		"code_action":          "code-action",
-		"codeAction":           "code-action",
-		"quickfix":             "code-action",
-		"quick-fix":            "code-action",
-		"completions":          "completion",
-		"document_highlight":   "document-highlight",
-		"documentHighlight":    "document-highlight",
-		"selection_range":      "selection-range",
-		"selectionRange":       "selection-range",
-		"expand_selection":     "selection-range",
-		"folding_range":        "folding-range",
-		"foldingRange":         "folding-range",
-		"folds":                "folding-range",
-		"document_link":        "document-link",
-		"documentLink":         "document-link",
-		"document-links":       "document-link",
-		"inlay_hint":           "inlay-hint",
-		"inlayHint":            "inlay-hint",
-		"inlay-hints":          "inlay-hint",
-		"linked_editing_range": "linked-editing-range",
-		"linkedEditingRange":   "linked-editing-range",
-		"linked-editing":       "linked-editing-range",
-		"signature_help":       "signature-help",
-		"signatureHelp":        "signature-help",
-		"signature":            "signature-help",
-		"document_symbols":     "symbols",
-		"document-symbols":     "symbols",
-		"documentSymbols":      "symbols",
-		"document-formatting":  "format",
-		"documentFormatting":   "format",
-		"formatting":           "format",
+		"goto_definition":       "definition",
+		"goto-definition":       "definition",
+		"gotoDefinition":        "definition",
+		"goto_declaration":      "declaration",
+		"gotoDeclaration":       "declaration",
+		"goto_implementation":   "implementation",
+		"gotoImplementation":    "implementation",
+		"type_definition":       "type-definition",
+		"typeDefinition":        "type-definition",
+		"gotoTypeDefinition":    "type-definition",
+		"find_references":       "references",
+		"find-references":       "references",
+		"findReferences":        "references",
+		"rename_symbol":         "rename",
+		"renameSymbol":          "rename",
+		"symbol-rename":         "rename",
+		"prepare_rename":        "prepare-rename",
+		"prepareRename":         "prepare-rename",
+		"rename-prepare":        "prepare-rename",
+		"code_action":           "code-action",
+		"codeAction":            "code-action",
+		"quickfix":              "code-action",
+		"quick-fix":             "code-action",
+		"completions":           "completion",
+		"document_highlight":    "document-highlight",
+		"documentHighlight":     "document-highlight",
+		"selection_range":       "selection-range",
+		"selectionRange":        "selection-range",
+		"expand_selection":      "selection-range",
+		"folding_range":         "folding-range",
+		"foldingRange":          "folding-range",
+		"folds":                 "folding-range",
+		"document_link":         "document-link",
+		"documentLink":          "document-link",
+		"document-links":        "document-link",
+		"inlay_hint":            "inlay-hint",
+		"inlayHint":             "inlay-hint",
+		"inlay-hints":           "inlay-hint",
+		"linked_editing_range":  "linked-editing-range",
+		"linkedEditingRange":    "linked-editing-range",
+		"linked-editing":        "linked-editing-range",
+		"semantic_tokens":       "semantic-tokens",
+		"semanticTokens":        "semantic-tokens",
+		"semantic_tokens_full":  "semantic-tokens",
+		"semanticTokensFull":    "semantic-tokens",
+		"semantic_tokens_range": "semantic-tokens-range",
+		"semanticTokensRange":   "semantic-tokens-range",
+		"semantic-range":        "semantic-tokens-range",
+		"signature_help":        "signature-help",
+		"signatureHelp":         "signature-help",
+		"signature":             "signature-help",
+		"document_symbols":      "symbols",
+		"document-symbols":      "symbols",
+		"documentSymbols":       "symbols",
+		"document-formatting":   "format",
+		"documentFormatting":    "format",
+		"formatting":            "format",
 	}
 	for input, expected := range cases {
 		actual, err := NormalizeLSPAction(input)
@@ -632,6 +665,15 @@ func TestFakeLSPServer(t *testing.T) {
 					{"start": map[string]any{"line": 4, "character": 5}, "end": map[string]any{"line": 4, "character": 10}},
 				},
 				"wordPattern": "[A-Za-z_]+",
+			})})
+		case "textDocument/semanticTokens/full":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+				"resultId": "full-1",
+				"data":     []int{2, 5, 4, 12, 0},
+			})})
+		case "textDocument/semanticTokens/range":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+				"data": []int{0, 5, 6, 12, 0},
 			})})
 		case "textDocument/signatureHelp":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{

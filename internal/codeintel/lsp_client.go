@@ -258,6 +258,21 @@ var lspActionInfos = []LSPActionInfo{
 		Description:      "Return ranges that should be edited together at a document position.",
 	},
 	{
+		Name:             "semantic-tokens",
+		Method:           "textDocument/semanticTokens/full",
+		Aliases:          []string{"semantic_tokens", "semanticTokens", "semantic_tokens_full", "semantic-tokens-full", "semanticTokensFull"},
+		RequiresDocument: true,
+		Description:      "Return full-document semantic tokens for syntax-aware highlighting and code understanding.",
+	},
+	{
+		Name:             "semantic-tokens-range",
+		Method:           "textDocument/semanticTokens/range",
+		Aliases:          []string{"semantic_tokens_range", "semanticTokensRange", "semantic-range", "semantic_range"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return semantic tokens for a document range ending at the requested position.",
+	},
+	{
 		Name:             "signature-help",
 		Method:           "textDocument/signatureHelp",
 		Aliases:          []string{"signature_help", "signatureHelp", "signature", "signatures"},
@@ -655,6 +670,13 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		return "textDocument/inlayHint", map[string]any{"textDocument": textDocument, "range": map[string]any{"start": start, "end": end}}, nil
 	case "linked-editing-range":
 		return "textDocument/linkedEditingRange", map[string]any{"textDocument": textDocument, "position": position}, nil
+	case "semantic-tokens":
+		return "textDocument/semanticTokens/full", map[string]any{"textDocument": textDocument}, nil
+	case "semantic-tokens-range":
+		line = max(0, line)
+		start := map[string]any{"line": line, "character": 0}
+		end := map[string]any{"line": line, "character": max(0, character)}
+		return "textDocument/semanticTokens/range", map[string]any{"textDocument": textDocument, "range": map[string]any{"start": start, "end": end}}, nil
 	case "signature-help":
 		return "textDocument/signatureHelp", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "symbols":

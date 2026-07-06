@@ -373,9 +373,11 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":11,"method":"lsp/query","params":{"language":"go","action":"document_link","path":"main.go"}}`,
 		`{"jsonrpc":"2.0","id":12,"method":"lsp/query","params":{"language":"go","action":"inlay_hint","path":"main.go","line":2,"character":12}}`,
 		`{"jsonrpc":"2.0","id":13,"method":"lsp/query","params":{"language":"go","action":"linked_editing_range","path":"main.go","line":2,"character":5}}`,
-		`{"jsonrpc":"2.0","id":14,"method":"lsp/status","params":{"language":"go"}}`,
-		`{"jsonrpc":"2.0","id":15,"method":"lsp/list"}`,
-		`{"jsonrpc":"2.0","id":16,"method":"lsp/stop","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":14,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens","path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":15,"method":"lsp/query","params":{"language":"go","action":"semantic_tokens_range","path":"main.go","line":2,"character":12}}`,
+		`{"jsonrpc":"2.0","id":16,"method":"lsp/status","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":17,"method":"lsp/list"}`,
+		`{"jsonrpc":"2.0","id":18,"method":"lsp/stop","params":{"language":"go"}}`,
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
@@ -420,6 +422,12 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"action":"linked-editing-range"`)
 	require.Contains(t, out.String(), `"method":"textDocument/linkedEditingRange"`)
 	require.Contains(t, out.String(), `"wordPattern":"[A-Za-z_]+"`)
+	require.Contains(t, out.String(), `"action":"semantic-tokens"`)
+	require.Contains(t, out.String(), `"method":"textDocument/semanticTokens/full"`)
+	require.Contains(t, out.String(), `"resultId":"bridge-full-1"`)
+	require.Contains(t, out.String(), `"action":"semantic-tokens-range"`)
+	require.Contains(t, out.String(), `"method":"textDocument/semanticTokens/range"`)
+	require.Contains(t, out.String(), `"data":[0,5,6,12,0]`)
 	require.Contains(t, out.String(), `"kind":"lsp_status"`)
 	require.Contains(t, out.String(), `"kind":"lsp_list"`)
 	require.Contains(t, out.String(), `"kind":"lsp_stop"`)
@@ -564,6 +572,15 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 					{"start": map[string]any{"line": 4, "character": 5}, "end": map[string]any{"line": 4, "character": 11}},
 				},
 				"wordPattern": "[A-Za-z_]+",
+			}})
+		case "textDocument/semanticTokens/full":
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+				"resultId": "bridge-full-1",
+				"data":     []int{2, 5, 4, 12, 0},
+			}})
+		case "textDocument/semanticTokens/range":
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+				"data": []int{0, 5, 6, 12, 0},
 			}})
 		case "shutdown":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": nil})
