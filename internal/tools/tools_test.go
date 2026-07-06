@@ -2838,6 +2838,20 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, gotoDefinitionOut, `"action": "definition"`)
 	require.Contains(t, gotoDefinitionOut, `"found": true`)
 
+	declarationOut, err := tool.Execute(context.Background(), []byte(`{"action":"declaration","query":"Widget"}`))
+	require.NoError(t, err)
+	require.Contains(t, declarationOut, `"action": "declaration"`)
+	require.Contains(t, declarationOut, `"source": "static"`)
+	require.Contains(t, declarationOut, `"found": true`)
+	require.Contains(t, declarationOut, `"name": "Widget"`)
+
+	typeDefinitionOut, err := tool.Execute(context.Background(), []byte(`{"action":"type_definition","query":"Widget"}`))
+	require.NoError(t, err)
+	require.Contains(t, typeDefinitionOut, `"action": "type-definition"`)
+	require.Contains(t, typeDefinitionOut, `"source": "static"`)
+	require.Contains(t, typeDefinitionOut, `"found": true`)
+	require.Contains(t, typeDefinitionOut, `"name": "Widget"`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -2862,6 +2876,10 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, err.Error(), "config home is required")
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"code_action","path":"demo.go","line":4,"character":6}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires a configured LSP server")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"implementation","query":"Widget"}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "requires a configured LSP server")
 
