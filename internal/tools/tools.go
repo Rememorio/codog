@@ -6216,6 +6216,29 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		return pretty(staticLSPToolReport("completion", fallback, map[string]any{"query": query, "completions": completions, "total": len(completions)})), nil
+	case "completion-item-resolve":
+		query := strings.TrimSpace(payload.Query)
+		if query == "" {
+			return "", errors.New("query is required for lsp completion_resolve")
+		}
+		completions, err := codeintel.Completions(t.Workspace, query, 10)
+		if err != nil {
+			return "", err
+		}
+		var resolved codeintel.Completion
+		found := false
+		for _, completion := range completions {
+			if completion.Label == query {
+				resolved = completion
+				found = true
+				break
+			}
+			if !found && strings.HasPrefix(strings.ToLower(completion.Label), strings.ToLower(query)) {
+				resolved = completion
+				found = true
+			}
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "found": found, "item": resolved})), nil
 	case "format":
 		if strings.TrimSpace(payload.Path) == "" {
 			return "", errors.New("path is required for lsp format")
@@ -6225,6 +6248,45 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		return pretty(staticLSPToolReport("format", fallback, map[string]any{"format": result})), nil
+	case "range-format":
+		if strings.TrimSpace(payload.Path) == "" {
+			return "", errors.New("path is required for lsp range_format")
+		}
+		rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, payload.Path)
+		if err != nil {
+			return "", err
+		}
+		result, err := codeintel.FormatGoFile(t.Workspace, rel, false)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "line": payload.Line, "character": payload.Character, "format": result})), nil
+	case "on-type-format":
+		if strings.TrimSpace(payload.Path) == "" {
+			return "", errors.New("path is required for lsp on_type_format")
+		}
+		rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, payload.Path)
+		if err != nil {
+			return "", err
+		}
+		result, err := codeintel.FormatGoFile(t.Workspace, rel, false)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "line": payload.Line, "character": payload.Character, "format": result})), nil
+	case "will-save":
+		if strings.TrimSpace(payload.Path) == "" {
+			return "", errors.New("path is required for lsp will_save")
+		}
+		rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, payload.Path)
+		if err != nil {
+			return "", err
+		}
+		result, err := codeintel.FormatGoFile(t.Workspace, rel, false)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "format": result, "edits": result.Changed})), nil
 	case "diagnostics":
 		patterns := []string{}
 		if strings.TrimSpace(payload.Path) != "" {
@@ -6244,7 +6306,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 
 func lspActionRequiresServer(action string) bool {
 	switch action {
-	case "document-diagnostic", "workspace-diagnostic", "implementation", "code-action", "code-action-resolve", "completion-item-resolve", "inline-value", "execute-command", "range-format", "on-type-format", "will-save":
+	case "document-diagnostic", "workspace-diagnostic", "implementation", "code-action", "code-action-resolve", "inline-value", "execute-command":
 		return true
 	default:
 		return false

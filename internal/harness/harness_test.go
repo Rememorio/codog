@@ -316,8 +316,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	lspStatic := findScenario(t, report, "lsp_static_roundtrip")
 	require.True(t, lspStatic.OK)
 	require.Equal(t, "code-intelligence", lspStatic.Category)
-	require.Equal(t, 36, lspStatic.ToolCalls)
-	expectedLSPToolUses := make([]string, 36)
+	require.Equal(t, 40, lspStatic.ToolCalls)
+	expectedLSPToolUses := make([]string, 40)
 	for i := range expectedLSPToolUses {
 		expectedLSPToolUses[i] = "lsp"
 	}
@@ -354,6 +354,10 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, lspStatic.Output, `"action": "type-hierarchy-subtypes"`)
 	require.Contains(t, lspStatic.Output, `"name": "RunFast"`)
 	require.Contains(t, lspStatic.Output, `"action": "references"`)
+	require.Contains(t, lspStatic.Output, `"action": "completion-item-resolve"`)
+	require.Contains(t, lspStatic.Output, `"action": "range-format"`)
+	require.Contains(t, lspStatic.Output, `"action": "on-type-format"`)
+	require.Contains(t, lspStatic.Output, `"action": "will-save"`)
 	require.Contains(t, lspStatic.Output, `"action": "diagnostics"`)
 	require.Contains(t, lspStatic.Output, `"path": "pkg/broken.go"`)
 	require.Contains(t, lspStatic.Output, "MissingSymbol")

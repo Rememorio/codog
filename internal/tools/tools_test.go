@@ -3209,6 +3209,22 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"completion_resolve","query":"BuildWidget","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"range_format","path":"messy.go","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"on_type_format","path":"messy.go","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"will_save","path":"messy.go","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"code_action","path":"demo.go","line":4,"character":6}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "requires a configured LSP server")
@@ -3226,6 +3242,35 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, completionOut, `"action": "completion"`)
 	require.Contains(t, completionOut, `"label": "BuildWidget"`)
+
+	completionResolveOut, err := tool.Execute(context.Background(), []byte(`{"action":"completion_resolve","query":"BuildWidget"}`))
+	require.NoError(t, err)
+	require.Contains(t, completionResolveOut, `"action": "completion-item-resolve"`)
+	require.Contains(t, completionResolveOut, `"source": "static"`)
+	require.Contains(t, completionResolveOut, `"found": true`)
+	require.Contains(t, completionResolveOut, `"label": "BuildWidget"`)
+	require.Contains(t, completionResolveOut, `"kind": "function"`)
+
+	rangeFormatOut, err := tool.Execute(context.Background(), []byte(`{"action":"range_format","path":"messy.go","line":2,"character":10}`))
+	require.NoError(t, err)
+	require.Contains(t, rangeFormatOut, `"action": "range-format"`)
+	require.Contains(t, rangeFormatOut, `"source": "static"`)
+	require.Contains(t, rangeFormatOut, `"path": "messy.go"`)
+	require.Contains(t, rangeFormatOut, `"changed": true`)
+	require.Contains(t, rangeFormatOut, `func messy()`)
+
+	onTypeFormatOut, err := tool.Execute(context.Background(), []byte(`{"action":"on_type_format","path":"messy.go","line":2,"character":18}`))
+	require.NoError(t, err)
+	require.Contains(t, onTypeFormatOut, `"action": "on-type-format"`)
+	require.Contains(t, onTypeFormatOut, `"source": "static"`)
+	require.Contains(t, onTypeFormatOut, `"path": "messy.go"`)
+	require.Contains(t, onTypeFormatOut, `"changed": true`)
+
+	willSaveOut, err := tool.Execute(context.Background(), []byte(`{"action":"will_save","path":"messy.go"}`))
+	require.NoError(t, err)
+	require.Contains(t, willSaveOut, `"action": "will-save"`)
+	require.Contains(t, willSaveOut, `"source": "static"`)
+	require.Contains(t, willSaveOut, `"edits": true`)
 
 	formatOut, err := tool.Execute(context.Background(), []byte(`{"action":"format","path":"messy.go"}`))
 	require.NoError(t, err)

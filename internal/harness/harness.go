@@ -1515,8 +1515,8 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 	},
 	"lsp_static_roundtrip": {
 		Category:    "code-intelligence",
-		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, selection ranges, monikers, linked editing ranges, document links, document colors, inlay hints, signature help, code lenses, semantic tokens, rename previews, call hierarchy, type hierarchy, references, hover, completions, diagnostics, and formatting.",
-		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Document links", "Document colors", "Inlay hints", "Signature help", "Code lenses", "Semantic tokens", "Rename previews", "Call hierarchy", "Type hierarchy", "Diagnostics"},
+		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, selection ranges, monikers, linked editing ranges, document links, document colors, inlay hints, signature help, code lenses, semantic tokens, rename previews, call hierarchy, type hierarchy, references, hover, completions, completion item resolve, diagnostics, and formatting.",
+		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Document links", "Document colors", "Inlay hints", "Signature help", "Code lenses", "Semantic tokens", "Rename previews", "Call hierarchy", "Type hierarchy", "Completion item resolve", "Diagnostics"},
 	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
@@ -4703,6 +4703,46 @@ func lspStaticScenario() scenario {
 				}
 			}
 
+			completionResolveOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"completion_resolve","query":"RunFast"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "completion-item-resolve"`, `"source": "static"`, `"found": true`, `"label": "RunFast"`, `"kind": "function"`} {
+				if !strings.Contains(completionResolveOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp completion resolve output missing %s", expected)
+				}
+			}
+
+			rangeFormatOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"range_format","path":"pkg/messy.go","line":2,"character":10}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "range-format"`, `"source": "static"`, `"path": "pkg/messy.go"`, `"changed": true`, "func messy()"} {
+				if !strings.Contains(rangeFormatOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp range format output missing %s", expected)
+				}
+			}
+
+			onTypeFormatOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"on_type_format","path":"pkg/messy.go","line":2,"character":18}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "on-type-format"`, `"source": "static"`, `"path": "pkg/messy.go"`, `"changed": true`} {
+				if !strings.Contains(onTypeFormatOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp on type format output missing %s", expected)
+				}
+			}
+
+			willSaveOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"will_save","path":"pkg/messy.go"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "will-save"`, `"source": "static"`, `"path": "pkg/messy.go"`, `"edits": true`} {
+				if !strings.Contains(willSaveOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp will save output missing %s", expected)
+				}
+			}
+
 			diagnosticsOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"diagnostics"}`))
 			if err != nil {
 				return localScenarioResult{}, err
@@ -4730,16 +4770,16 @@ func lspStaticScenario() scenario {
 				return localScenarioResult{}, fmt.Errorf("lsp format unexpectedly modified file")
 			}
 
-			toolUses := make([]string, 36)
+			toolUses := make([]string, 40)
 			for i := range toolUses {
 				toolUses[i] = "lsp"
 			}
 			return localScenarioResult{
-				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, documentColorOut, colorPresentationOut, inlayHintOut, inlayHintResolveOut, signatureHelpOut, codeLensOut, codeLensResolveOut, semanticTokensOut, semanticTokensRangeOut, semanticTokensDeltaOut, prepareRenameOut, renameOut, callHierarchyOut, incomingCallsOut, outgoingCallsOut, typeHierarchyOut, typeHierarchySupertypesOut, typeHierarchySubtypesOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
+				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, documentColorOut, colorPresentationOut, inlayHintOut, inlayHintResolveOut, signatureHelpOut, codeLensOut, codeLensResolveOut, semanticTokensOut, semanticTokensRangeOut, semanticTokensDeltaOut, prepareRenameOut, renameOut, callHierarchyOut, incomingCallsOut, outgoingCallsOut, typeHierarchyOut, typeHierarchySupertypesOut, typeHierarchySubtypesOut, referencesOut, hoverOut, completionOut, completionResolveOut, rangeFormatOut, onTypeFormatOut, willSaveOut, diagnosticsOut, formatOut}, "\n"),
 				FinalMessage: "lsp static harness ok",
-				ToolCalls:    36,
+				ToolCalls:    40,
 				ToolUses:     toolUses,
-				RequestCount: 36,
+				RequestCount: 40,
 			}, nil
 		},
 	}
