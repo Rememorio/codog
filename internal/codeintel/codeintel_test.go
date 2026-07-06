@@ -281,6 +281,17 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "textDocument/signatureHelp", result.Method)
 	require.NotNil(t, result.Result)
 
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "rename", Path: "main.go", Line: 2, Character: 5, NewName: "Start"})
+	require.NoError(t, err)
+	require.Equal(t, "rename", result.Action)
+	require.Equal(t, "textDocument/rename", result.Method)
+	require.Equal(t, 1, result.FileEdits)
+	require.Equal(t, 1, result.TextEdits)
+	require.True(t, result.Changed)
+	require.Len(t, result.Edits, 1)
+	require.Equal(t, "main.go", result.Edits[0].Path)
+	require.Contains(t, result.Edits[0].Content, "func Start()")
+
 	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "diagnostics", Path: "main.go"})
 	require.NoError(t, err)
 	require.Equal(t, "diagnostics", result.Action)
@@ -316,6 +327,9 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		"find_references":     "references",
 		"find-references":     "references",
 		"findReferences":      "references",
+		"rename_symbol":       "rename",
+		"renameSymbol":        "rename",
+		"symbol-rename":       "rename",
 		"completions":         "completion",
 		"document_highlight":  "document-highlight",
 		"documentHighlight":   "document-highlight",
@@ -346,6 +360,7 @@ func TestFakeLSPServer(t *testing.T) {
 	}
 	defer os.Exit(0)
 	reader := bufio.NewReader(os.Stdin)
+	currentURI := ""
 	for {
 		raw, err := readLSPMessage(reader)
 		if err != nil {
@@ -366,6 +381,7 @@ func TestFakeLSPServer(t *testing.T) {
 					} `json:"textDocument"`
 				}
 				_ = decodeLSPParams(msg.Params, &params)
+				currentURI = params.TextDocument.URI
 				_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "textDocument/publishDiagnostics", Params: map[string]any{
 					"uri": params.TextDocument.URI,
 					"diagnostics": []map[string]any{{
@@ -402,6 +418,25 @@ func TestFakeLSPServer(t *testing.T) {
 				"signatures": []map[string]any{{
 					"label": "main()",
 				}},
+			})})
+		case "textDocument/rename":
+			if currentURI == "" {
+				currentURI = "file:///workspace/main.go"
+			}
+			var params struct {
+				NewName string `json:"newName"`
+			}
+			_ = decodeLSPParams(msg.Params, &params)
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+				"changes": map[string]any{
+					currentURI: []map[string]any{{
+						"range": map[string]any{
+							"start": map[string]any{"line": 2, "character": 5},
+							"end":   map[string]any{"line": 2, "character": 9},
+						},
+						"newText": params.NewName,
+					}},
+				},
 			})})
 		case "textDocument/formatting":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{

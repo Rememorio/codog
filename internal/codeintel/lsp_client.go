@@ -25,6 +25,7 @@ type LSPQueryRequest struct {
 	Path      string `json:"path"`
 	Line      int    `json:"line,omitempty"`
 	Character int    `json:"character,omitempty"`
+	NewName   string `json:"new_name,omitempty"`
 }
 
 // LSPQueryResult is the normalized result of an LSP JSON-RPC request.
@@ -37,8 +38,18 @@ type LSPQueryResult struct {
 	Result      any             `json:"result,omitempty"`
 	Diagnostics []LSPDiagnostic `json:"diagnostics,omitempty"`
 	TextEdits   int             `json:"text_edits,omitempty"`
+	FileEdits   int             `json:"file_edits,omitempty"`
+	Edits       []LSPFileEdit   `json:"edits,omitempty"`
 	Changed     bool            `json:"changed,omitempty"`
 	Content     string          `json:"content,omitempty"`
+}
+
+// LSPFileEdit previews the text edits a language server returned for one file.
+type LSPFileEdit struct {
+	Path      string `json:"path"`
+	TextEdits int    `json:"text_edits"`
+	Changed   bool   `json:"changed"`
+	Content   string `json:"content,omitempty"`
 }
 
 type lspClient struct {
@@ -68,6 +79,11 @@ type lspTextEdit struct {
 		End   LSPPosition `json:"end"`
 	} `json:"range"`
 	NewText string `json:"newText"`
+}
+
+type lspWorkspaceEdit struct {
+	Changes         map[string][]lspTextEdit `json:"changes,omitempty"`
+	DocumentChanges []json.RawMessage        `json:"documentChanges,omitempty"`
 }
 
 // LSPPosition is a zero-based language-server document position.
@@ -156,6 +172,14 @@ var lspActionInfos = []LSPActionInfo{
 		RequiresDocument: true,
 		RequiresPosition: true,
 		Description:      "Return references for the symbol at a document position.",
+	},
+	{
+		Name:             "rename",
+		Method:           "textDocument/rename",
+		Aliases:          []string{"rename_symbol", "rename-symbol", "renameSymbol", "symbol-rename", "symbol_rename"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return a workspace edit preview for renaming the symbol at a document position.",
 	},
 	{
 		Name:             "completion",
@@ -369,7 +393,7 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 			Diagnostics: diagnostics,
 		}, nil
 	}
-	method, params, err := lspMethodParams(action, uri, request.Line, request.Character)
+	method, params, err := lspMethodParams(action, uri, request.Line, request.Character, request.NewName)
 	if err != nil {
 		return LSPQueryResult{}, err
 	}
@@ -403,6 +427,20 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 		result.TextEdits = len(edits)
 		result.Content = formatted
 		result.Changed = formatted != string(data)
+	}
+	if action == "rename" && len(raw) > 0 && string(raw) != "null" {
+		var edit lspWorkspaceEdit
+		if err := json.Unmarshal(raw, &edit); err != nil {
+			return LSPQueryResult{}, err
+		}
+		fileEdits, textEdits, err := summarizeLSPWorkspaceEdit(workspace, edit)
+		if err != nil {
+			return LSPQueryResult{}, err
+		}
+		result.FileEdits = len(fileEdits)
+		result.TextEdits = textEdits
+		result.Edits = fileEdits
+		result.Changed = textEdits > 0
 	}
 	return result, nil
 }
@@ -485,7 +523,7 @@ func decodeLSPParams(params any, out any) error {
 	return json.Unmarshal(data, out)
 }
 
-func lspMethodParams(action string, uri string, line int, character int) (string, any, error) {
+func lspMethodParams(action string, uri string, line int, character int, newName string) (string, any, error) {
 	position := map[string]any{"line": max(0, line), "character": max(0, character)}
 	textDocument := map[string]any{"uri": uri}
 	switch action {
@@ -501,6 +539,12 @@ func lspMethodParams(action string, uri string, line int, character int) (string
 		return "textDocument/typeDefinition", map[string]any{"textDocument": textDocument, "position": position}, nil
 	case "references":
 		return "textDocument/references", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"includeDeclaration": true}}, nil
+	case "rename":
+		newName = strings.TrimSpace(newName)
+		if newName == "" {
+			return "", nil, errors.New("new_name is required for lsp rename")
+		}
+		return "textDocument/rename", map[string]any{"textDocument": textDocument, "position": position, "newName": newName}, nil
 	case "completion":
 		return "textDocument/completion", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
 	case "document-highlight":
@@ -572,6 +616,85 @@ func sameLSPID(value any, id int) bool {
 	default:
 		return false
 	}
+}
+
+func summarizeLSPWorkspaceEdit(workspace string, edit lspWorkspaceEdit) ([]LSPFileEdit, int, error) {
+	editsByURI := collectLSPWorkspaceEdits(edit)
+	uris := make([]string, 0, len(editsByURI))
+	for uri := range editsByURI {
+		uris = append(uris, uri)
+	}
+	sort.Strings(uris)
+	out := make([]LSPFileEdit, 0, len(uris))
+	totalTextEdits := 0
+	for _, uri := range uris {
+		path, err := lspFileURIPath(uri)
+		if err != nil {
+			return nil, 0, err
+		}
+		abs, rel, err := resolveWorkspaceFile(workspace, path)
+		if err != nil {
+			return nil, 0, err
+		}
+		data, err := os.ReadFile(abs)
+		if err != nil {
+			return nil, 0, err
+		}
+		textEdits := editsByURI[uri]
+		content, err := applyLSPTextEdits(string(data), textEdits)
+		if err != nil {
+			return nil, 0, err
+		}
+		totalTextEdits += len(textEdits)
+		out = append(out, LSPFileEdit{
+			Path:      rel,
+			TextEdits: len(textEdits),
+			Changed:   content != string(data),
+			Content:   content,
+		})
+	}
+	return out, totalTextEdits, nil
+}
+
+func collectLSPWorkspaceEdits(edit lspWorkspaceEdit) map[string][]lspTextEdit {
+	out := map[string][]lspTextEdit{}
+	for uri, edits := range edit.Changes {
+		if strings.TrimSpace(uri) == "" || len(edits) == 0 {
+			continue
+		}
+		out[uri] = append(out[uri], edits...)
+	}
+	for _, raw := range edit.DocumentChanges {
+		var textDocumentEdit struct {
+			TextDocument struct {
+				URI string `json:"uri"`
+			} `json:"textDocument"`
+			Edits []lspTextEdit `json:"edits"`
+		}
+		if err := json.Unmarshal(raw, &textDocumentEdit); err != nil {
+			continue
+		}
+		uri := strings.TrimSpace(textDocumentEdit.TextDocument.URI)
+		if uri == "" || len(textDocumentEdit.Edits) == 0 {
+			continue
+		}
+		out[uri] = append(out[uri], textDocumentEdit.Edits...)
+	}
+	return out
+}
+
+func lspFileURIPath(uri string) (string, error) {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Scheme != "file" {
+		return "", fmt.Errorf("unsupported lsp workspace edit URI scheme %q", parsed.Scheme)
+	}
+	if parsed.Path == "" {
+		return "", fmt.Errorf("lsp workspace edit URI has no path: %s", uri)
+	}
+	return filepath.FromSlash(parsed.Path), nil
 }
 
 func applyLSPTextEdits(source string, edits []lspTextEdit) (string, error) {

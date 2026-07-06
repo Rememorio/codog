@@ -23799,6 +23799,7 @@ func (a *App) serveACP(ctx context.Context) error {
 				Path:      firstNonEmpty(req.Path, req.FilePath),
 				Line:      req.Line,
 				Character: req.Character,
+				NewName:   req.NewName,
 			})
 		},
 		BackgroundList: func(_ context.Context, req acpserver.BackgroundListRequest) (any, error) {
@@ -34328,10 +34329,11 @@ func (a *App) CodeIntelLSP(args []string) error {
 		payload = status
 	case "query", "request":
 		if len(args) < 4 {
-			return errors.New("usage: codog code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]")
+			return errors.New("usage: codog code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER [NEW_NAME]]")
 		}
 		line := 0
 		character := 0
+		newName := ""
 		if len(args) > 4 {
 			var err error
 			line, err = strconv.Atoi(args[4])
@@ -34346,11 +34348,15 @@ func (a *App) CodeIntelLSP(args []string) error {
 				return fmt.Errorf("lsp query character must be an integer")
 			}
 		}
+		if len(args) > 6 {
+			newName = args[6]
+		}
 		result, err := store.Query(context.Background(), args[1], codeintel.LSPQueryRequest{
 			Action:    args[2],
 			Path:      args[3],
 			Line:      line,
 			Character: character,
+			NewName:   newName,
 		})
 		if err != nil {
 			return err

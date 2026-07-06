@@ -925,6 +925,7 @@ func (s Server) lspQuery(params json.RawMessage) (any, error) {
 		FilePath  string `json:"file_path"`
 		Line      int    `json:"line"`
 		Character int    `json:"character"`
+		NewName   string `json:"new_name"`
 		TimeoutMS int    `json:"timeout_ms"`
 	}
 	if err := json.Unmarshal(params, &payload); err != nil {
@@ -954,6 +955,7 @@ func (s Server) lspQuery(params json.RawMessage) (any, error) {
 		Path:      firstNonEmpty(payload.Path, payload.FilePath),
 		Line:      payload.Line,
 		Character: payload.Character,
+		NewName:   payload.NewName,
 	})
 }
 

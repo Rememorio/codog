@@ -5767,11 +5767,12 @@ func (LSPTool) Definition() anthropic.ToolDefinition {
 			"properties": map[string]any{
 				"action": map[string]any{
 					"type": "string",
-					"enum": []string{"symbols", "document_symbols", "references", "find_references", "diagnostics", "definition", "goto_definition", "hover", "completion", "completions", "format", "formatting"},
+					"enum": []string{"symbols", "document_symbols", "references", "find_references", "diagnostics", "definition", "goto_definition", "declaration", "goto_declaration", "implementation", "goto_implementation", "type_definition", "goto_type_definition", "rename", "rename_symbol", "hover", "completion", "completions", "document_highlight", "signature_help", "format", "formatting"},
 				},
 				"path":      map[string]any{"type": "string"},
 				"line":      map[string]any{"type": "integer", "minimum": 0},
 				"character": map[string]any{"type": "integer", "minimum": 0},
+				"new_name":  map[string]any{"type": "string"},
 				"query":     map[string]any{"type": "string"},
 				"limit":     map[string]any{"type": "integer", "minimum": 1},
 				"language":  map[string]any{"type": "string"},
@@ -5797,6 +5798,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		Line      int    `json:"line"`
 		Character int    `json:"character"`
 		Query     string `json:"query"`
+		NewName   string `json:"new_name"`
 		Limit     int    `json:"limit"`
 		Language  string `json:"language"`
 		UseServer bool   `json:"use_server"`
@@ -5810,7 +5812,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 	}
 	var fallback any
 	if payload.UseServer || strings.TrimSpace(payload.Language) != "" {
-		result, err := t.executeServerLSP(ctx, action, payload.Language, payload.Path, payload.Line, payload.Character)
+		result, err := t.executeServerLSP(ctx, action, payload.Language, payload.Path, payload.Line, payload.Character, payload.NewName)
 		if err == nil {
 			return pretty(map[string]any{"action": action, "source": "lsp", "lsp": result}), nil
 		}
@@ -5936,7 +5938,7 @@ func (t LSPTool) lspQuery(query string, path string, line int, character int) (s
 	return symbolAtPosition(t.Workspace, t.AdditionalDirs, path, line, character)
 }
 
-func (t LSPTool) executeServerLSP(ctx context.Context, action string, language string, path string, line int, character int) (codeintel.LSPQueryResult, error) {
+func (t LSPTool) executeServerLSP(ctx context.Context, action string, language string, path string, line int, character int, newName string) (codeintel.LSPQueryResult, error) {
 	if strings.TrimSpace(t.ConfigHome) == "" {
 		return codeintel.LSPQueryResult{}, errors.New("config home is required for lsp server queries")
 	}
@@ -5952,6 +5954,7 @@ func (t LSPTool) executeServerLSP(ctx context.Context, action string, language s
 		Path:      path,
 		Line:      line,
 		Character: character,
+		NewName:   newName,
 	})
 }
 

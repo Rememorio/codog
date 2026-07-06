@@ -365,9 +365,10 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":3,"method":"lsp/start","params":{"language":"go","command":"` + jsonEscape(fakeCommand) + `"}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"lsp/query","params":{"language":"go","action":"hover","path":"main.go","line":2,"character":5}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"lsp/query","params":{"language":"go","action":"diagnostics","file_path":"main.go","timeout_ms":1000}}`,
-		`{"jsonrpc":"2.0","id":6,"method":"lsp/status","params":{"language":"go"}}`,
-		`{"jsonrpc":"2.0","id":7,"method":"lsp/list"}`,
-		`{"jsonrpc":"2.0","id":8,"method":"lsp/stop","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"lsp/query","params":{"language":"go","action":"rename","path":"main.go","line":2,"character":5,"new_name":"Start"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"lsp/status","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"lsp/list"}`,
+		`{"jsonrpc":"2.0","id":9,"method":"lsp/stop","params":{"language":"go"}}`,
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
@@ -384,6 +385,9 @@ func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
 	require.Contains(t, out.String(), `"value":"bridge fake hover"`)
 	require.Contains(t, out.String(), `"action":"diagnostics"`)
 	require.Contains(t, out.String(), `"message":"bridge fake diagnostic"`)
+	require.Contains(t, out.String(), `"action":"rename"`)
+	require.Contains(t, out.String(), `"file_edits":1`)
+	require.Contains(t, out.String(), `func Start()`)
 	require.Contains(t, out.String(), `"kind":"lsp_status"`)
 	require.Contains(t, out.String(), `"kind":"lsp_list"`)
 	require.Contains(t, out.String(), `"kind":"lsp_stop"`)
@@ -412,6 +416,7 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 		return
 	}
 	reader := bufio.NewReader(os.Stdin)
+	currentURI := ""
 	for {
 		raw, err := readBridgeTestLSPMessage(reader)
 		if err != nil {
@@ -431,6 +436,7 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"capabilities": map[string]any{}}})
 		case "textDocument/didOpen":
 			uri := bridgeTestLSPDocumentURI(msg.Params)
+			currentURI = uri
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{
 				"jsonrpc": "2.0",
 				"method":  "textDocument/publishDiagnostics",
@@ -449,6 +455,25 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 			})
 		case "textDocument/hover":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"contents": map[string]any{"kind": "markdown", "value": "bridge fake hover"}}})
+		case "textDocument/rename":
+			var params struct {
+				NewName string `json:"newName"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			if currentURI == "" {
+				currentURI = "file:///workspace/main.go"
+			}
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+				"changes": map[string]any{
+					currentURI: []map[string]any{{
+						"range": map[string]any{
+							"start": map[string]any{"line": 2, "character": 5},
+							"end":   map[string]any{"line": 2, "character": 9},
+						},
+						"newText": params.NewName,
+					}},
+				},
+			}})
 		case "shutdown":
 			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": nil})
 			return

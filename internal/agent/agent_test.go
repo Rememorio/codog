@@ -8931,10 +8931,11 @@ func TestACPServeExposesLSPLifecycleAndQuery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"lsp/start","params":{"language":"go","command":` + strconv.Quote(fakeCommand) + `}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"lsp/query","params":{"language":"go","action":"hover","path":"main.go","line":2,"character":5}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"lsp/query","params":{"language":"go","action":"diagnostics","file_path":"main.go","timeout_ms":1000}}`,
-		`{"jsonrpc":"2.0","id":4,"method":"lsp/status","params":{"language":"go"}}`,
-		`{"jsonrpc":"2.0","id":5,"method":"lsp/list","params":{}}`,
-		`{"jsonrpc":"2.0","id":6,"method":"lsp/stop","params":{"language":"go"}}`,
-		`{"jsonrpc":"2.0","id":7,"method":"shutdown","params":{}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"lsp/query","params":{"language":"go","action":"rename","path":"main.go","line":2,"character":5,"new_name":"Start"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"lsp/status","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"lsp/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"lsp/stop","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"shutdown","params":{}}`,
 		"",
 	}, "\n")
 	var out bytes.Buffer
@@ -8949,7 +8950,7 @@ func TestACPServeExposesLSPLifecycleAndQuery(t *testing.T) {
 
 	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
 	responses := decodeJSONRPCResponses(t, out.String())
-	require.Len(t, responses, 7)
+	require.Len(t, responses, 8)
 	start := responses[0]["result"].(map[string]any)
 	require.Equal(t, "lsp_start", start["kind"])
 	require.Equal(t, "ok", start["status"])
@@ -8965,14 +8966,21 @@ func TestACPServeExposesLSPLifecycleAndQuery(t *testing.T) {
 	diagnostics := responses[2]["result"].(map[string]any)
 	require.Equal(t, "diagnostics", diagnostics["action"])
 	require.Len(t, diagnostics["diagnostics"].([]any), 1)
-	status := responses[3]["result"].(map[string]any)
+	rename := responses[3]["result"].(map[string]any)
+	require.Equal(t, "rename", rename["action"])
+	require.Equal(t, "textDocument/rename", rename["method"])
+	require.EqualValues(t, 1, rename["file_edits"])
+	require.EqualValues(t, 1, rename["text_edits"])
+	renameEdits := rename["edits"].([]any)
+	require.Contains(t, renameEdits[0].(map[string]any)["content"], "func Start()")
+	status := responses[4]["result"].(map[string]any)
 	require.Equal(t, "lsp_status", status["kind"])
 	statusServer := status["server"].(map[string]any)
 	require.Equal(t, "go", statusServer["language"])
-	list := responses[4]["result"].(map[string]any)
+	list := responses[5]["result"].(map[string]any)
 	require.Equal(t, "lsp_list", list["kind"])
 	require.EqualValues(t, 1, list["count"])
-	stop := responses[5]["result"].(map[string]any)
+	stop := responses[6]["result"].(map[string]any)
 	require.Equal(t, "lsp_stop", stop["kind"])
 	require.Equal(t, "ok", stop["status"])
 }
@@ -9461,6 +9469,7 @@ func TestACPFakeLSPServer(t *testing.T) {
 		return
 	}
 	reader := bufio.NewReader(os.Stdin)
+	currentURI := ""
 	for {
 		raw, err := readACPTestLSPMessage(reader)
 		if err != nil {
@@ -9480,6 +9489,7 @@ func TestACPFakeLSPServer(t *testing.T) {
 			_ = writeACPTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"capabilities": map[string]any{}}})
 		case "textDocument/didOpen":
 			uri := acpTestLSPDocumentURI(msg.Params)
+			currentURI = uri
 			_ = writeACPTestLSPMessage(os.Stdout, map[string]any{
 				"jsonrpc": "2.0",
 				"method":  "textDocument/publishDiagnostics",
@@ -9498,6 +9508,25 @@ func TestACPFakeLSPServer(t *testing.T) {
 			})
 		case "textDocument/hover":
 			_ = writeACPTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"contents": map[string]any{"kind": "markdown", "value": "agent fake hover"}}})
+		case "textDocument/rename":
+			var params struct {
+				NewName string `json:"newName"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			if currentURI == "" {
+				currentURI = "file:///workspace/main.go"
+			}
+			_ = writeACPTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+				"changes": map[string]any{
+					currentURI: []map[string]any{{
+						"range": map[string]any{
+							"start": map[string]any{"line": 2, "character": 5},
+							"end":   map[string]any{"line": 2, "character": 9},
+						},
+						"newText": params.NewName,
+					}},
+				},
+			}})
 		case "shutdown":
 			_ = writeACPTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": nil})
 			return

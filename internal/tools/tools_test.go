@@ -2757,6 +2757,12 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "demo.go"), []byte(source), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "messy.go"), []byte("package demo\n\nfunc messy(){return}\n"), 0o644))
 	tool := LSPTool{Workspace: workspace}
+	definition := tool.Definition()
+	properties := definition.InputSchema["properties"].(map[string]any)
+	actionSchema := properties["action"].(map[string]any)
+	require.Contains(t, actionSchema["enum"], "rename")
+	require.Contains(t, actionSchema["enum"], "implementation")
+	require.Contains(t, properties, "new_name")
 
 	symbolsOut, err := tool.Execute(context.Background(), []byte(`{"action":"symbols","path":"demo.go"}`))
 	require.NoError(t, err)
