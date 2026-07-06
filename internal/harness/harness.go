@@ -1515,8 +1515,8 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 	},
 	"lsp_static_roundtrip": {
 		Category:    "code-intelligence",
-		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, selection ranges, monikers, linked editing ranges, document links, document colors, inlay hints, signature help, code lenses, semantic tokens, rename previews, references, hover, completions, diagnostics, and formatting.",
-		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Document links", "Document colors", "Inlay hints", "Signature help", "Code lenses", "Semantic tokens", "Rename previews", "Diagnostics"},
+		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, highlights, folding ranges, selection ranges, monikers, linked editing ranges, document links, document colors, inlay hints, signature help, code lenses, semantic tokens, rename previews, call hierarchy, references, hover, completions, diagnostics, and formatting.",
+		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Document links", "Document colors", "Inlay hints", "Signature help", "Code lenses", "Semantic tokens", "Rename previews", "Call hierarchy", "Diagnostics"},
 	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
@@ -4609,6 +4609,36 @@ func lspStaticScenario() scenario {
 				}
 			}
 
+			callHierarchyOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"prepare_call_hierarchy","query":"Build"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "prepare-call-hierarchy"`, `"source": "static"`, `"name": "Build"`, `"kind": "function"`, `"total": 1`} {
+				if !strings.Contains(callHierarchyOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp prepare call hierarchy output missing %s", expected)
+				}
+			}
+
+			incomingCallsOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"incoming_calls","query":"Build","limit":5}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "call-hierarchy-incoming"`, `"source": "static"`, `"query": "Build"`, `"name": "UseBuild"`, `"name": "Build"`, `"total": 1`} {
+				if !strings.Contains(incomingCallsOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp incoming calls output missing %s", expected)
+				}
+			}
+
+			outgoingCallsOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"outgoing_calls","query":"UseBuild","limit":5}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "call-hierarchy-outgoing"`, `"source": "static"`, `"query": "UseBuild"`, `"name": "Build"`, `"total": 1`} {
+				if !strings.Contains(outgoingCallsOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp outgoing calls output missing %s", expected)
+				}
+			}
+
 			referencesOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"references","query":"Runner","limit":10}`))
 			if err != nil {
 				return localScenarioResult{}, err
@@ -4667,11 +4697,11 @@ func lspStaticScenario() scenario {
 			}
 
 			return localScenarioResult{
-				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, documentColorOut, colorPresentationOut, inlayHintOut, inlayHintResolveOut, signatureHelpOut, codeLensOut, codeLensResolveOut, semanticTokensOut, semanticTokensRangeOut, semanticTokensDeltaOut, prepareRenameOut, renameOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
+				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, documentColorOut, colorPresentationOut, inlayHintOut, inlayHintResolveOut, signatureHelpOut, codeLensOut, codeLensResolveOut, semanticTokensOut, semanticTokensRangeOut, semanticTokensDeltaOut, prepareRenameOut, renameOut, callHierarchyOut, incomingCallsOut, outgoingCallsOut, referencesOut, hoverOut, completionOut, diagnosticsOut, formatOut}, "\n"),
 				FinalMessage: "lsp static harness ok",
-				ToolCalls:    30,
-				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
-				RequestCount: 30,
+				ToolCalls:    33,
+				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
+				RequestCount: 33,
 			}, nil
 		},
 	}

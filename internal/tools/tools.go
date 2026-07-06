@@ -6140,6 +6140,32 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "rename": renamed, "text_edits": renamed.TextEdits, "file_edits": renamed.FileEdits})), nil
+	case "prepare-call-hierarchy":
+		items, err := codeintel.PrepareCallHierarchy(t.Workspace, payload.Query, payload.Path, payload.Line, payload.Character)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": strings.TrimSpace(payload.Query), "items": items, "total": len(items)})), nil
+	case "call-hierarchy-incoming":
+		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
+		if err != nil {
+			return "", err
+		}
+		calls, err := codeintel.IncomingCalls(t.Workspace, query, payload.Limit)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "calls": calls, "total": len(calls)})), nil
+	case "call-hierarchy-outgoing":
+		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
+		if err != nil {
+			return "", err
+		}
+		calls, err := codeintel.OutgoingCalls(t.Workspace, query, payload.Limit)
+		if err != nil {
+			return "", err
+		}
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "calls": calls, "total": len(calls)})), nil
 	case "hover":
 		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
 		if err != nil {
@@ -6192,7 +6218,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 
 func lspActionRequiresServer(action string) bool {
 	switch action {
-	case "document-diagnostic", "workspace-diagnostic", "implementation", "code-action", "code-action-resolve", "prepare-call-hierarchy", "call-hierarchy-incoming", "call-hierarchy-outgoing", "prepare-type-hierarchy", "type-hierarchy-supertypes", "type-hierarchy-subtypes", "completion-item-resolve", "inline-value", "execute-command", "range-format", "on-type-format", "will-save":
+	case "document-diagnostic", "workspace-diagnostic", "implementation", "code-action", "code-action-resolve", "prepare-type-hierarchy", "type-hierarchy-supertypes", "type-hierarchy-subtypes", "completion-item-resolve", "inline-value", "execute-command", "range-format", "on-type-format", "will-save":
 		return true
 	default:
 		return false

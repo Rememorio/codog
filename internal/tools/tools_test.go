@@ -3027,6 +3027,31 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, renameOut, `"file_edits": 1`)
 	require.Contains(t, renameOut, `type Gadget struct{}`)
 
+	callHierarchyOut, err := tool.Execute(context.Background(), []byte(`{"action":"prepare_call_hierarchy","query":"Build"}`))
+	require.NoError(t, err)
+	require.Contains(t, callHierarchyOut, `"action": "prepare-call-hierarchy"`)
+	require.Contains(t, callHierarchyOut, `"source": "static"`)
+	require.Contains(t, callHierarchyOut, `"name": "Build"`)
+	require.Contains(t, callHierarchyOut, `"kind": "function"`)
+	require.Contains(t, callHierarchyOut, `"total": 1`)
+
+	incomingCallsOut, err := tool.Execute(context.Background(), []byte(`{"action":"incoming_calls","query":"Build","limit":5}`))
+	require.NoError(t, err)
+	require.Contains(t, incomingCallsOut, `"action": "call-hierarchy-incoming"`)
+	require.Contains(t, incomingCallsOut, `"source": "static"`)
+	require.Contains(t, incomingCallsOut, `"query": "Build"`)
+	require.Contains(t, incomingCallsOut, `"name": "UseBuild"`)
+	require.Contains(t, incomingCallsOut, `"name": "Build"`)
+	require.Contains(t, incomingCallsOut, `"total": 1`)
+
+	outgoingCallsOut, err := tool.Execute(context.Background(), []byte(`{"action":"outgoing_calls","query":"UseBuild","limit":5}`))
+	require.NoError(t, err)
+	require.Contains(t, outgoingCallsOut, `"action": "call-hierarchy-outgoing"`)
+	require.Contains(t, outgoingCallsOut, `"source": "static"`)
+	require.Contains(t, outgoingCallsOut, `"query": "UseBuild"`)
+	require.Contains(t, outgoingCallsOut, `"name": "Build"`)
+	require.Contains(t, outgoingCallsOut, `"total": 1`)
+
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
@@ -3125,6 +3150,18 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, err.Error(), "config home is required")
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"rename","query":"Widget","new_name":"Gadget","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"prepare_call_hierarchy","query":"Build","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"incoming_calls","query":"Build","use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"outgoing_calls","query":"UseBuild","use_server":true}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "config home is required")
 

@@ -293,6 +293,27 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "valid Go identifier")
 
+	callItems, err := PrepareCallHierarchy(workspace, "Build", "", 0, 0)
+	require.NoError(t, err)
+	require.Len(t, callItems, 1)
+	require.Equal(t, "Build", callItems[0].Name)
+	require.Equal(t, "function", callItems[0].Kind)
+	require.Equal(t, "pkg/hints.go", callItems[0].Path)
+
+	incoming, err := IncomingCalls(workspace, "Build", 10)
+	require.NoError(t, err)
+	require.Len(t, incoming, 1)
+	require.Equal(t, "UseBuild", incoming[0].From.Name)
+	require.Equal(t, "Build", incoming[0].To.Name)
+	require.NotEmpty(t, incoming[0].FromRanges)
+
+	outgoing, err := OutgoingCalls(workspace, "UseBuild", 10)
+	require.NoError(t, err)
+	require.Len(t, outgoing, 1)
+	require.Equal(t, "UseBuild", outgoing[0].From.Name)
+	require.Equal(t, "Build", outgoing[0].To.Name)
+	require.NotEmpty(t, outgoing[0].FromRanges)
+
 	hover, err := HoverInfo(workspace, "Run", 1)
 	require.NoError(t, err)
 	require.True(t, hover.Found)

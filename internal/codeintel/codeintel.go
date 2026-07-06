@@ -224,6 +224,23 @@ type RenameTextEdit struct {
 	NewText string   `json:"newText"`
 }
 
+// CallHierarchyItem describes a static call hierarchy node.
+type CallHierarchyItem struct {
+	Name           string   `json:"name"`
+	Kind           string   `json:"kind"`
+	Path           string   `json:"path"`
+	Range          LSPRange `json:"range"`
+	SelectionRange LSPRange `json:"selectionRange"`
+}
+
+// CallHierarchyCall describes a static relationship between two call hierarchy
+// nodes.
+type CallHierarchyCall struct {
+	From       CallHierarchyItem `json:"from,omitempty"`
+	To         CallHierarchyItem `json:"to,omitempty"`
+	FromRanges []LSPRange        `json:"fromRanges"`
+}
+
 // Hover contains static hover context for a discovered symbol.
 type Hover struct {
 	Symbol  string   `json:"symbol"`
@@ -1693,6 +1710,248 @@ func isGoIdentifier(value string) bool {
 
 func isGoIdentifierByte(c byte) bool {
 	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// PrepareCallHierarchy returns the static call hierarchy item for a symbol or
+// document position.
+func PrepareCallHierarchy(workspace string, symbol string, relPath string, line int, character int) ([]CallHierarchyItem, error) {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		if strings.TrimSpace(relPath) == "" {
+			return nil, errors.New("symbol or path position is required")
+		}
+		path, _, err := resolveWorkspaceFile(workspace, relPath)
+		if err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		var ok bool
+		symbol, _, ok = identifierAtLineCharacter(data, line, character)
+		if !ok {
+			return []CallHierarchyItem{}, nil
+		}
+	}
+	items, err := callHierarchyItems(workspace)
+	if err != nil {
+		return nil, err
+	}
+	if item, ok := items[symbol]; ok {
+		return []CallHierarchyItem{item}, nil
+	}
+	return []CallHierarchyItem{}, nil
+}
+
+// IncomingCalls returns static callers for a function.
+func IncomingCalls(workspace string, symbol string, limit int) ([]CallHierarchyCall, error) {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return nil, errors.New("symbol is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	items, err := callHierarchyItems(workspace)
+	if err != nil {
+		return nil, err
+	}
+	target, ok := items[symbol]
+	if !ok {
+		return []CallHierarchyCall{}, nil
+	}
+	calls := []CallHierarchyCall{}
+	err = walkFunctionDecls(workspace, func(fset *token.FileSet, _ string, _ string, fn *ast.FuncDecl) error {
+		if len(calls) >= limit || fn.Body == nil || fn.Name == nil || fn.Name.Name == symbol {
+			return nil
+		}
+		from, ok := items[fn.Name.Name]
+		if !ok {
+			return nil
+		}
+		ranges := callRangesInBody(fset, fn.Body, symbol, limit-len(calls))
+		if len(ranges) == 0 {
+			return nil
+		}
+		calls = append(calls, CallHierarchyCall{From: from, To: target, FromRanges: ranges})
+		return nil
+	})
+	return calls, err
+}
+
+// OutgoingCalls returns static callees from a function.
+func OutgoingCalls(workspace string, symbol string, limit int) ([]CallHierarchyCall, error) {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return nil, errors.New("symbol is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	items, err := callHierarchyItems(workspace)
+	if err != nil {
+		return nil, err
+	}
+	from, ok := items[symbol]
+	if !ok {
+		return []CallHierarchyCall{}, nil
+	}
+	callsByName := map[string][]LSPRange{}
+	err = walkFunctionDecls(workspace, func(fset *token.FileSet, _ string, _ string, fn *ast.FuncDecl) error {
+		if fn.Name == nil || fn.Name.Name != symbol || fn.Body == nil {
+			return nil
+		}
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			if len(callsByName) >= limit {
+				return false
+			}
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			name := callName(call.Fun)
+			if name == "" || name == symbol {
+				return true
+			}
+			if _, ok := items[name]; !ok {
+				return true
+			}
+			callsByName[name] = append(callsByName[name], nodeRange(fset, call.Fun))
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(callsByName))
+	for name := range callsByName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	calls := make([]CallHierarchyCall, 0, len(names))
+	for _, name := range names {
+		calls = append(calls, CallHierarchyCall{From: from, To: items[name], FromRanges: callsByName[name]})
+		if len(calls) >= limit {
+			break
+		}
+	}
+	return calls, nil
+}
+
+func callHierarchyItems(workspace string) (map[string]CallHierarchyItem, error) {
+	items := map[string]CallHierarchyItem{}
+	err := walkFunctionDecls(workspace, func(fset *token.FileSet, rel string, _ string, fn *ast.FuncDecl) error {
+		if fn.Name == nil {
+			return nil
+		}
+		items[fn.Name.Name] = CallHierarchyItem{
+			Name:           fn.Name.Name,
+			Kind:           "function",
+			Path:           rel,
+			Range:          nodeRange(fset, fn),
+			SelectionRange: nodeRange(fset, fn.Name),
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	fset := token.NewFileSet()
+	err = filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if ignoredDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(workspace, path)
+		rel = filepath.ToSlash(rel)
+		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if err != nil {
+			return err
+		}
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				typ, ok := spec.(*ast.TypeSpec)
+				if !ok || typ.Name == nil {
+					continue
+				}
+				items[typ.Name.Name] = CallHierarchyItem{
+					Name:           typ.Name.Name,
+					Kind:           "type",
+					Path:           rel,
+					Range:          nodeRange(fset, typ),
+					SelectionRange: nodeRange(fset, typ.Name),
+				}
+			}
+		}
+		return nil
+	})
+	return items, err
+}
+
+func callRangesInBody(fset *token.FileSet, body *ast.BlockStmt, target string, limit int) []LSPRange {
+	ranges := []LSPRange{}
+	ast.Inspect(body, func(node ast.Node) bool {
+		if len(ranges) >= limit {
+			return false
+		}
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if callName(call.Fun) == target {
+			ranges = append(ranges, nodeRange(fset, call.Fun))
+		}
+		return true
+	})
+	return ranges
+}
+
+func walkFunctionDecls(workspace string, visit func(*token.FileSet, string, string, *ast.FuncDecl) error) error {
+	fset := token.NewFileSet()
+	return filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if ignoredDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(workspace, path)
+		rel = filepath.ToSlash(rel)
+		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if err != nil {
+			return err
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			if err := visit(fset, rel, path, fn); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // HoverInfo returns static hover context around a symbol definition.
