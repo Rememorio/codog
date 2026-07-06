@@ -50642,6 +50642,11 @@ func (a *App) validateGlobalToolRules(overrides config.FlagOverrides, format str
 	if err := a.validateGlobalToolRuleList("--disallowed-tools", overrides.DisallowedTools, format); err != nil {
 		return err
 	}
+	if overrides.ToolNamesSet {
+		if err := a.validateGlobalToolRuleList("--tools", overrides.ToolNames, format); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -51289,6 +51294,46 @@ func (v *stringListFlag) String() string {
 	return strings.Join(*v, ",")
 }
 
+type toolSelectionFlag struct {
+	values *[]string
+	set    *bool
+}
+
+func (f toolSelectionFlag) Set(value string) error {
+	if f.set != nil {
+		*f.set = true
+	}
+	if f.values == nil {
+		return nil
+	}
+	if strings.TrimSpace(value) == "" {
+		*f.values = nil
+		return nil
+	}
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.EqualFold(part, "default") {
+			*f.values = nil
+			if f.set != nil {
+				*f.set = false
+			}
+			continue
+		}
+		*f.values = append(*f.values, part)
+	}
+	return nil
+}
+
+func (f toolSelectionFlag) String() string {
+	if f.values == nil {
+		return ""
+	}
+	return strings.Join(*f.values, ",")
+}
+
 type optionalFloatFlag struct {
 	value **float64
 }
@@ -51324,6 +51369,8 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	outputFormat := ""
 	allowedTools := stringListFlag(base.AllowedTools)
 	disallowedTools := stringListFlag(base.DisallowedTools)
+	toolNames := append([]string(nil), base.ToolNames...)
+	toolSelection := toolSelectionFlag{values: &toolNames, set: &base.ToolNamesSet}
 	promptAttachments := stringListFlag{}
 	flags.StringVar(&base.ConfigPath, "config", base.ConfigPath, "config path")
 	flags.StringVar(&base.CWD, "cwd", base.CWD, "run as if Codog was started in this directory")
@@ -51349,6 +51396,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.Var(&allowedTools, "allowedTools", "allow a tool or tool rule; repeat or comma-separate")
 	flags.Var(&disallowedTools, "disallowed-tools", "deny a tool; repeat or comma-separate")
 	flags.Var(&disallowedTools, "disallowedTools", "deny a tool; repeat or comma-separate")
+	flags.Var(&toolSelection, "tools", "restrict tools exposed to the model; use default for all or empty string for none")
 	flags.Var(&promptAttachments, "attach", "attach a local text, image, or PDF file to a prompt; repeat or comma-separate")
 	flags.Var(&promptAttachments, "attachment", "alias for --attach")
 	flags.Var(&promptAttachments, "file", "alias for --attach")
@@ -51361,6 +51409,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	base.OutputFormatSource, base.OutputFormatRaw, base.OutputFormatOverridden = globalOutputFormatProvenance(outputFormat, jsonOutput)
 	base.AllowedTools = []string(allowedTools)
 	base.DisallowedTools = []string(disallowedTools)
+	base.ToolNames = append([]string(nil), toolNames...)
 	rest := flags.Args()
 	if compactPromptMode && len(rest) > 0 && !strings.EqualFold(rest[0], "prompt") && isKnownNonPromptCommand(rest[0]) {
 		return base, "", nil, invalidFlagValueError{
@@ -51515,6 +51564,7 @@ func globalFlagConsumesNext(arg string) bool {
 		"--resume", "-resume", "--output-format", "-output-format", "-o", "--o",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
 		"--max-tokens", "-max-tokens", "--temperature", "-temperature",
+		"--tools", "-tools",
 		"--attach", "-attach", "--attachment", "-attachment", "--file", "-file":
 		return true
 	default:
@@ -51548,7 +51598,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--append-system-prompt", "--session", "--resume", "--output-format", "-o", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--append-system-prompt", "--session", "--resume", "--output-format", "-o", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--tools", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
@@ -51591,6 +51641,22 @@ func isKnownNonPromptCommand(value string) bool {
 
 func missingToolFlagArgument(args []string) (missingArgumentError, bool) {
 	for index := 0; index < len(args); index++ {
+		if argument, inlineValue, inline, ok := parseToolSelectionFlag(args[index]); ok {
+			if inline {
+				_ = inlineValue
+				continue
+			}
+			nextIndex := index + 1
+			if nextIndex >= len(args) {
+				return missingArgumentError{Argument: argument, Example: toolRuleFlagExample(argument)}, true
+			}
+			next := strings.TrimSpace(args[nextIndex])
+			if strings.HasPrefix(next, "-") || looksLikeCommandName(next) {
+				return missingArgumentError{Argument: argument, Example: toolRuleFlagExample(argument)}, true
+			}
+			index = nextIndex
+			continue
+		}
 		argument, inlineValue, inline, ok := parseToolRuleFlag(args[index])
 		if !ok {
 			continue
@@ -51612,6 +51678,17 @@ func missingToolFlagArgument(args []string) (missingArgumentError, bool) {
 		index = nextIndex
 	}
 	return missingArgumentError{}, false
+}
+
+func parseToolSelectionFlag(arg string) (argument string, value string, inline bool, ok bool) {
+	if arg == "--tools" {
+		return "--tools", "", false, true
+	}
+	const prefix = "--tools="
+	if strings.HasPrefix(arg, prefix) {
+		return "--tools", strings.TrimPrefix(arg, prefix), true, true
+	}
+	return "", "", false, false
 }
 
 func parseToolRuleFlag(arg string) (argument string, value string, inline bool, ok bool) {
@@ -51645,6 +51722,8 @@ func looksLikeCommandName(value string) bool {
 
 func toolRuleFlagExample(argument string) string {
 	switch argument {
+	case "--tools":
+		return argument + " read_file,grep"
 	case "--allowedTools", "--disallowedTools":
 		return argument + " read,glob"
 	default:
@@ -53295,6 +53374,7 @@ Flags:
   --allow-broad-cwd
   --allowed-tools TOOL[,TOOL]
   --disallowed-tools TOOL[,TOOL]
+  --tools TOOL[,TOOL]
   --max-turns N
   --max-tokens N
   --temperature VALUE

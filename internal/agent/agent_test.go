@@ -9271,11 +9271,28 @@ func TestParseFlagsSupportsToolRuleOverrides(t *testing.T) {
 		"--allowedTools", "glob",
 		"--disallowed-tools", "bash",
 		"--disallowedTools", "write_file,edit_file",
+		"--tools", "Read,Glob",
 		"prompt", "hello",
 	}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"read_file", "grep", "glob"}, overrides.AllowedTools)
 	require.Equal(t, []string{"bash", "write_file", "edit_file"}, overrides.DisallowedTools)
+	require.True(t, overrides.ToolNamesSet)
+	require.Equal(t, []string{"Read", "Glob"}, overrides.ToolNames)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--tools=", "prompt", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.True(t, overrides.ToolNamesSet)
+	require.Empty(t, overrides.ToolNames)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--tools", "default", "prompt", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.False(t, overrides.ToolNamesSet)
+	require.Empty(t, overrides.ToolNames)
 	require.Equal(t, "prompt", command)
 	require.Equal(t, []string{"hello"}, rest)
 }
@@ -9313,6 +9330,24 @@ func TestGlobalToolRuleValidationContracts(t *testing.T) {
 		return RunCLI(context.Background(), []string{
 			"--config", configPath,
 			"--output-format", "json",
+			"--tools", "not_a_tool",
+			"status",
+		}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "invalid_tool_name", report.ErrorKind)
+	require.Equal(t, "not_a_tool", report.ToolName)
+	require.Equal(t, "--tools", report.Argument)
+	require.Contains(t, report.Available, "read_file")
+	require.Equal(t, "read_file", report.ToolAliases["Read"])
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--output-format", "json",
 			"--allowed-tools", "Read,Bash(go test:*),mcp__playwright__*",
 			"status",
 		}, config.FlagOverrides{})
@@ -9336,6 +9371,22 @@ func TestGlobalToolRuleValidationContracts(t *testing.T) {
 	require.Equal(t, "missing_argument", report.ErrorKind)
 	require.Equal(t, "--allowedTools", report.Argument)
 	require.Contains(t, report.Hint, "read,glob")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--output-format", "json",
+			"--tools",
+			"status",
+		}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "missing_argument", report.ErrorKind)
+	require.Equal(t, "--tools", report.Argument)
+	require.Contains(t, report.Hint, "read_file,grep")
 }
 
 func TestLocalRouteGuardContracts(t *testing.T) {

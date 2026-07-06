@@ -200,6 +200,14 @@ func (r Runner) RunWithUserContent(ctx context.Context, previous []anthropic.Mes
 				Name:  block.Name,
 				Input: string(effectiveInput),
 			}
+			if !r.toolSelectionAllows(block.Name) {
+				call.Output = fmt.Sprintf("tool %s is not available because it was not included by --tools", block.Name)
+				call.IsError = true
+				toolCalls = append(toolCalls, call)
+				r.emitToolUse(call)
+				messages = append(messages, anthropic.ToolResultMessage(block.ID, call.Output, true))
+				continue
+			}
 			_, preToolOutput, err := hookRunner.PreToolUseReport(ctx, block.Name, effectiveInput)
 			if err != nil {
 				call.Output = preToolUseErrorMessage(err, preToolOutput)
@@ -348,10 +356,113 @@ func (r Runner) RunWithUserContent(ctx context.Context, previous []anthropic.Mes
 }
 
 func (r Runner) toolDefinitions() []anthropic.ToolDefinition {
+	definitions := r.allToolDefinitions()
+	if !r.Config.ToolNamesSet {
+		return definitions
+	}
+	return filterToolDefinitions(definitions, r.Config.ToolNames)
+}
+
+func (r Runner) allToolDefinitions() []anthropic.ToolDefinition {
 	if r.Config.PlanMode {
 		return r.Tools.DefinitionsForPlanMode()
 	}
 	return r.Tools.Definitions()
+}
+
+func (r Runner) toolSelectionAllows(name string) bool {
+	if !r.Config.ToolNamesSet {
+		return true
+	}
+	canonical := tools.CanonicalToolName(name)
+	for _, selected := range r.Config.ToolNames {
+		if toolSelectionNameMatches(selected, canonical, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func filterToolDefinitions(definitions []anthropic.ToolDefinition, selected []string) []anthropic.ToolDefinition {
+	if len(selected) == 0 {
+		return nil
+	}
+	out := make([]anthropic.ToolDefinition, 0, len(definitions))
+	for _, definition := range definitions {
+		if toolSelectionAllowsName(selected, definition.Name) {
+			out = append(out, definition)
+		}
+	}
+	return out
+}
+
+func toolSelectionAllowsName(selected []string, name string) bool {
+	canonical := tools.CanonicalToolName(name)
+	for _, candidate := range selected {
+		if toolSelectionNameMatches(candidate, canonical, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func toolSelectionNameMatches(selected string, canonical string, original string) bool {
+	selected = toolSelectionBaseName(selected)
+	if selected == "" {
+		return false
+	}
+	if strings.EqualFold(selected, "default") {
+		return true
+	}
+	selectedCanonical := tools.CanonicalToolName(selected)
+	if strings.Contains(selected, "*") {
+		return toolSelectionPatternMatches(selected, original) ||
+			toolSelectionPatternMatches(selected, canonical)
+	}
+	return strings.EqualFold(selected, original) ||
+		strings.EqualFold(selected, canonical) ||
+		strings.EqualFold(selectedCanonical, canonical)
+}
+
+func toolSelectionBaseName(selected string) string {
+	selected = strings.TrimSpace(selected)
+	if before, _, ok := strings.Cut(selected, "("); ok {
+		return strings.TrimSpace(before)
+	}
+	return selected
+}
+
+func toolSelectionPatternMatches(pattern string, value string) bool {
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	value = strings.ToLower(strings.TrimSpace(value))
+	if pattern == "" || value == "" {
+		return false
+	}
+	if pattern == "*" || pattern == value {
+		return true
+	}
+	parts := strings.Split(pattern, "*")
+	position := 0
+	for index, part := range parts {
+		if part == "" {
+			continue
+		}
+		next := strings.Index(value[position:], part)
+		if next < 0 {
+			return false
+		}
+		if index == 0 && !strings.HasPrefix(pattern, "*") && next != 0 {
+			return false
+		}
+		position += next + len(part)
+	}
+	if !strings.HasSuffix(pattern, "*") && len(parts) > 0 {
+		last := parts[len(parts)-1]
+		if last != "" && !strings.HasSuffix(value, last) {
+			return false
+		}
+	}
+	return true
 }
 
 func hasHookConfig(cfg config.HookConfig) bool {

@@ -930,6 +930,8 @@ type Config struct {
 	PermissionModeSource       string                     `json:"-"`
 	PermissionModeEnvVar       string                     `json:"-"`
 	PlanMode                   bool                       `json:"-"`
+	ToolNames                  []string                   `json:"-"`
+	ToolNamesSet               bool                       `json:"-"`
 	Privacy                    PrivacyConfig              `json:"privacy_settings,omitempty"`
 	PermissionRules            PermissionRules            `json:"permission_rules,omitempty"`
 	ConfigHome                 string                     `json:"config_home,omitempty"`
@@ -1095,6 +1097,8 @@ type FlagOverrides struct {
 	AllowBroadCWD                  bool
 	AllowedTools                   []string
 	DisallowedTools                []string
+	ToolNames                      []string
+	ToolNamesSet                   bool
 	OutputFormatSource             string
 	OutputFormatRaw                string
 	OutputFormatOverridden         bool
@@ -2882,6 +2886,10 @@ func applyFlags(cfg *Config, overrides FlagOverrides) {
 	}
 	if len(overrides.DisallowedTools) > 0 {
 		cfg.PermissionRules.DeniedTools = append(cfg.PermissionRules.DeniedTools, overrides.DisallowedTools...)
+	}
+	if overrides.ToolNamesSet {
+		cfg.ToolNames = append([]string(nil), overrides.ToolNames...)
+		cfg.ToolNamesSet = true
 	}
 	if overrides.MaxTurns != 0 {
 		cfg.MaxTurns = overrides.MaxTurns

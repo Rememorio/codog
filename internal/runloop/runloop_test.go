@@ -163,6 +163,60 @@ func TestRunnerPlanModeFiltersToolsAndEnforcesReadOnly(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(workspace, "blocked.txt"))
 }
 
+func TestRunnerToolSelectionFiltersDefinitionsAndExecution(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "allowed.txt"), []byte("ok\n"), 0o644))
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{
+			{
+				Blocks: []anthropic.ContentBlock{
+					{
+						Type:  "tool_use",
+						ID:    "tool-1",
+						Name:  "bash",
+						Input: []byte(`{"command":"touch blocked.txt"}`),
+					},
+					{
+						Type:  "tool_use",
+						ID:    "tool-2",
+						Name:  "Read",
+						Input: []byte(`{"file_path":"allowed.txt"}`),
+					},
+				},
+			},
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type: "text",
+					Text: "done",
+				}},
+			},
+		},
+	}
+	result, err := Runner{
+		Config: config.Config{
+			Model:        "mock",
+			MaxTokens:    128,
+			MaxTurns:     2,
+			ToolNames:    []string{"Read"},
+			ToolNamesSet: true,
+		},
+		Client:    client,
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+	}.Run(context.Background(), nil, "read only")
+	require.NoError(t, err)
+	require.Len(t, client.requests, 2)
+	require.True(t, requestHasTool(client.requests[0], "read_file"))
+	require.False(t, requestHasTool(client.requests[0], "bash"))
+	require.False(t, requestHasTool(client.requests[0], "write_file"))
+	require.Len(t, result.ToolCalls, 2)
+	require.True(t, result.ToolCalls[0].IsError)
+	require.Contains(t, result.ToolCalls[0].Output, "not available because it was not included by --tools")
+	require.False(t, result.ToolCalls[1].IsError)
+	require.Contains(t, result.ToolCalls[1].Output, "ok")
+	require.NoFileExists(t, filepath.Join(workspace, "blocked.txt"))
+}
+
 func TestRunnerAppliesPreToolUseHookDecisionAndUpdatedInput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")
