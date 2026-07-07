@@ -29862,13 +29862,14 @@ func copyStringMap(values map[string]string) map[string]string {
 }
 
 type commandNotFoundReport struct {
-	Kind      string   `json:"kind"`
-	ErrorKind string   `json:"error_kind"`
-	Status    string   `json:"status"`
-	Command   string   `json:"command"`
-	Args      []string `json:"args,omitempty"`
-	Message   string   `json:"message"`
-	Hint      string   `json:"hint"`
+	Kind      string           `json:"kind"`
+	ErrorKind string           `json:"error_kind"`
+	Error     cliErrorEnvelope `json:"error"`
+	Status    string           `json:"status"`
+	Command   string           `json:"command"`
+	Args      []string         `json:"args,omitempty"`
+	Message   string           `json:"message"`
+	Hint      string           `json:"hint"`
 }
 
 type slashErrorReport struct {
@@ -31133,7 +31134,7 @@ func classifyCLIErrorEnvelopeKind(err error, report cliErrorReport) string {
 		return "session"
 	case "json_schema_validation_failed":
 		return "parse"
-	case "missing_argument", "missing_prompt", "empty_prompt", "missing_flag_value", "duplicate_flag", "invalid_flag_value", "invalid_output_format", "invalid_resume_argument", "invalid_tool_name", "missing_tool_name", "unknown_option", "unexpected_extra_args":
+	case "command_not_found", "missing_argument", "missing_prompt", "empty_prompt", "missing_flag_value", "duplicate_flag", "invalid_flag_value", "invalid_output_format", "invalid_resume_argument", "invalid_tool_name", "missing_tool_name", "unknown_option", "unexpected_extra_args":
 		return "usage"
 	case "invalid_permission_mode":
 		return "policy"
@@ -33157,7 +33158,7 @@ func buildCommandNotFoundReport(command string, args []string) commandNotFoundRe
 	} else if len(suggestions) > 0 {
 		hint = fmt.Sprintf("Did you mean: %s? Run `codog --help` to list commands.", strings.Join(suggestions, ", "))
 	}
-	return commandNotFoundReport{
+	report := commandNotFoundReport{
 		Kind:      "command_not_found",
 		ErrorKind: "command_not_found",
 		Status:    "error",
@@ -33166,6 +33167,21 @@ func buildCommandNotFoundReport(command string, args []string) commandNotFoundRe
 		Message:   message,
 		Hint:      hint,
 	}
+	report.Error = buildCommandNotFoundErrorEnvelope(report)
+	return report
+}
+
+func buildCommandNotFoundErrorEnvelope(report commandNotFoundReport) cliErrorEnvelope {
+	cliReport := cliErrorReport{
+		Kind:      report.ErrorKind,
+		ErrorKind: report.ErrorKind,
+		Status:    report.Status,
+		Command:   report.Command,
+		Args:      append([]string(nil), report.Args...),
+		Message:   report.Message,
+		Hint:      report.Hint,
+	}
+	return buildCLIErrorEnvelope(errors.New(report.ErrorKind+": "+report.Message), cliReport)
 }
 
 func requestedOutputFormat(args []string) string {

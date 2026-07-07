@@ -2569,6 +2569,10 @@ func TestUnknownCommandOutputContract(t *testing.T) {
 	require.Equal(t, "command_not_found", report.ErrorKind)
 	require.Equal(t, "error", report.Status)
 	require.Equal(t, "statuz", report.Command)
+	require.Equal(t, "usage", report.Error.Kind)
+	require.Equal(t, "parse_args", report.Error.Operation)
+	require.Equal(t, "statuz", report.Error.Target)
+	require.False(t, report.Error.Retryable)
 	require.Contains(t, report.Hint, "status")
 
 	out, err = captureStdout(t, func() error {
@@ -2591,6 +2595,9 @@ func TestUnknownCommandOutputContract(t *testing.T) {
 	require.Equal(t, "command_not_found", report.Kind)
 	require.Equal(t, "no", report.Command)
 	require.Equal(t, []string{"thanks"}, report.Args)
+	require.Equal(t, "usage", report.Error.Kind)
+	require.Equal(t, "parse_args", report.Error.Operation)
+	require.Equal(t, "no", report.Error.Target)
 	require.Contains(t, report.Hint, "codog prompt")
 }
 
