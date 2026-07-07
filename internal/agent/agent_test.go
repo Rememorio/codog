@@ -25050,6 +25050,10 @@ func TestPromptExpandsFileReferencesForModelInput(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.md"), []byte("note body"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "docs", "nested"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "docs", "README.md"), []byte("# Docs\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "docs", "nested", "guide.txt"), []byte("guide body\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "docs", "binary.bin"), []byte{0xff, 0x00, 0x01}, 0o644))
 	var out bytes.Buffer
 	app := &App{
 		Config: config.Config{
@@ -25071,16 +25075,22 @@ func TestPromptExpandsFileReferencesForModelInput(t *testing.T) {
 		Err:       io.Discard,
 	}
 
-	require.NoError(t, app.Prompt(context.Background(), "summarize @notes.md", config.FlagOverrides{SessionID: "prompt-refs"}))
+	originalPrompt := "summarize @notes.md and @docs"
+	require.NoError(t, app.Prompt(context.Background(), originalPrompt, config.FlagOverrides{SessionID: "prompt-refs"}))
 	loaded, err := app.Sessions.Open("prompt-refs")
 	require.NoError(t, err)
 	require.Len(t, loaded.Messages, 2)
 	require.Contains(t, loaded.Messages[0].Content[0].Text, "<codog_file_references>")
 	require.Contains(t, loaded.Messages[0].Content[0].Text, "note body")
+	require.Contains(t, loaded.Messages[0].Content[0].Text, `<directory path="docs" files="2"`)
+	require.Contains(t, loaded.Messages[0].Content[0].Text, `<file path="README.md"`)
+	require.Contains(t, loaded.Messages[0].Content[0].Text, `<file path="nested/guide.txt"`)
+	require.Contains(t, loaded.Messages[0].Content[0].Text, "guide body")
+	require.Contains(t, loaded.Messages[0].Content[0].Text, "binary.bin")
 	history, err := app.Sessions.PromptHistory("prompt-refs")
 	require.NoError(t, err)
 	require.Len(t, history, 1)
-	require.Equal(t, "summarize @notes.md", history[0].Text)
+	require.Equal(t, originalPrompt, history[0].Text)
 }
 
 func TestSystemPromptIncludesProjectMemory(t *testing.T) {

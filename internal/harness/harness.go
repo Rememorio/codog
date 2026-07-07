@@ -223,6 +223,7 @@ var scenarioOrder = []string{
 	"skill_activation_roundtrip",
 	"onboarding_bookmarks_roundtrip",
 	"memory_lifecycle_roundtrip",
+	"prompt_directory_reference_roundtrip",
 	"session_summary_roundtrip",
 	"context_view_roundtrip",
 	"theme_lifecycle_roundtrip",
@@ -781,6 +782,7 @@ func Run(ctx context.Context) (Report, error) {
 		skillActivationScenario(),
 		onboardingBookmarksScenario(),
 		memoryLifecycleScenario(),
+		promptDirectoryReferenceScenario(),
 		sessionSummaryScenario(),
 		contextViewScenario(),
 		themeLifecycleScenario(),
@@ -1214,7 +1216,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "interactive question handling", RequiredRefs: []string{"AskUserQuestion tool", "Interactive questions"}},
 	{Capability: "runtime utility tools", RequiredRefs: []string{"Brief tool", "SendUserMessage tool", "StructuredOutput tool", "Sleep tool", "REPL tool"}},
 	{Capability: "setup and diagnostics", RequiredRefs: []string{"Doctor", "Status diagnostics", "Terminal setup"}},
-	{Capability: "context view and focus", RequiredRefs: []string{"Context view", "Focused paths", "Context signals"}},
+	{Capability: "context view and focus", RequiredRefs: []string{"Context view", "Focused paths", "Context signals", "Prompt references"}},
 	{Capability: "statusline rendering", RequiredRefs: []string{"Statusline", "Statusline JSON", "Statusline text"}},
 	{Capability: "appearance and preferences", RequiredRefs: []string{"Theme", "Theme persistence", "Theme reset", "Language preference", "Vim mode", "Privacy settings", "Keybindings", "Chrome integration", "Notifications", "Telemetry", "Preference persistence"}},
 	{Capability: "model runtime controls", RequiredRefs: []string{"Model preference", "Model persistence", "Model routing detail", "Reasoning effort", "Fast mode", "Temperature preference", "Token budget", "Turn limit", "Preference persistence"}},
@@ -1479,6 +1481,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "context-management",
 		Description: "Discovers, appends, searches, selects, and resets project memory instruction files.",
 		ParityRefs:  []string{"Project memory", "Session context management", "Slash commands", "Workspace state"},
+	},
+	"prompt_directory_reference_roundtrip": {
+		Category:    "context-management",
+		Description: "Runs the real prompt CLI with an @directory reference and verifies recursive text context expansion plus skip metadata.",
+		ParityRefs:  []string{"Prompt references", "Directory references", "Session context management", "Workspace state"},
 	},
 	"session_summary_roundtrip": {
 		Category:    "context-management",
@@ -2615,6 +2622,123 @@ func memoryLifecycleScenario() scenario {
 				Output:       string(data),
 				FinalMessage: "memory lifecycle harness ok",
 				RequestCount: 6,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+func promptDirectoryReferenceScenario() scenario {
+	return scenario{
+		name: "prompt_directory_reference_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			captured := make(chan json.RawMessage, 1)
+			server := httptest.NewServer(mockanthropic.Server{
+				Text: "directory reference harness ok",
+				OnRequest: func(raw json.RawMessage) {
+					select {
+					case captured <- append(json.RawMessage(nil), raw...):
+					default:
+					}
+				},
+			}.Handler())
+			defer server.Close()
+
+			configHome := filepath.Join(workspace, "config-home")
+			docsDir := filepath.Join(workspace, "docs", "nested")
+			if err := os.MkdirAll(docsDir, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "docs", "README.md"), []byte("# Reference Docs\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(docsDir, "guide.txt"), []byte("reference guide\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "docs", "binary.bin"), []byte{0xff, 0x00, 0x01}, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			configPath := filepath.Join(workspace, "codog-config.json")
+			configData, err := json.Marshal(map[string]any{
+				"config_home":     configHome,
+				"base_url":        server.URL,
+				"api_key":         "test-key",
+				"model":           "mock",
+				"max_turns":       1,
+				"permission_mode": "read-only",
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			out, err := runHarnessCodog(ctx, workspace, "--config", configPath, "prompt", "Summarize @docs", "--output-format", "json")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var promptReport struct {
+				Response string `json:"response"`
+			}
+			if err := json.Unmarshal([]byte(out), &promptReport); err != nil {
+				return localScenarioResult{}, err
+			}
+			if promptReport.Response != "directory reference harness ok" {
+				return localScenarioResult{}, fmt.Errorf("unexpected directory reference response: %q", promptReport.Response)
+			}
+			var raw json.RawMessage
+			select {
+			case raw = <-captured:
+			default:
+				return localScenarioResult{}, fmt.Errorf("expected provider request for directory reference")
+			}
+			var body struct {
+				Messages []struct {
+					Content []struct {
+						Text string `json:"text"`
+					} `json:"content"`
+				} `json:"messages"`
+			}
+			if err := json.Unmarshal(raw, &body); err != nil {
+				return localScenarioResult{}, err
+			}
+			if len(body.Messages) != 1 || len(body.Messages[0].Content) == 0 {
+				return localScenarioResult{}, fmt.Errorf("unexpected directory reference content: %s", string(raw))
+			}
+			text := body.Messages[0].Content[0].Text
+			for _, expected := range []string{
+				"Summarize @docs",
+				"<codog_file_references>",
+				`<directory path="docs" files="2"`,
+				`<file path="README.md"`,
+				"# Reference Docs",
+				`<file path="nested/guide.txt"`,
+				"reference guide",
+				"<skipped>",
+				"binary.bin",
+			} {
+				if !strings.Contains(text, expected) {
+					return localScenarioResult{}, fmt.Errorf("directory reference missing %s: %s", expected, text)
+				}
+			}
+			report := map[string]any{
+				"kind": "prompt_directory_reference",
+				"reference": map[string]any{
+					"files":          2,
+					"has_directory":  strings.Contains(text, `<directory path="docs"`),
+					"has_nested":     strings.Contains(text, `nested/guide.txt`),
+					"skipped_binary": strings.Contains(text, "binary.bin"),
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "directory reference harness ok",
+				RequestCount: 1,
 				MessageCount: 1,
 			}, nil
 		},

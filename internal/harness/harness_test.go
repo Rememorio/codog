@@ -463,6 +463,18 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, memoryLifecycle.Output, `"created":true`)
 	require.Contains(t, memoryLifecycle.Output, `"reset_count":1`)
 
+	directoryReference := findScenario(t, report, "prompt_directory_reference_roundtrip")
+	require.True(t, directoryReference.OK)
+	require.Equal(t, "context-management", directoryReference.Category)
+	require.Equal(t, 0, directoryReference.ToolCalls)
+	require.Equal(t, 1, directoryReference.RequestCount)
+	require.Equal(t, "directory reference harness ok", directoryReference.FinalMessage)
+	require.Contains(t, directoryReference.Output, `"kind":"prompt_directory_reference"`)
+	require.Contains(t, directoryReference.Output, `"files":2`)
+	require.Contains(t, directoryReference.Output, `"has_directory":true`)
+	require.Contains(t, directoryReference.Output, `"has_nested":true`)
+	require.Contains(t, directoryReference.Output, `"skipped_binary":true`)
+
 	sessionSummary := findScenario(t, report, "session_summary_roundtrip")
 	require.True(t, sessionSummary.OK)
 	require.Equal(t, "context-management", sessionSummary.Category)
@@ -500,8 +512,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, contextView.Output, `"warning_preserved":true`)
 	memoryCategory := findCategory(t, report, "context-management")
 	require.True(t, memoryCategory.OK)
-	require.Equal(t, 3, memoryCategory.Total)
-	require.ElementsMatch(t, []string{"context_view_roundtrip", "memory_lifecycle_roundtrip", "session_summary_roundtrip"}, memoryCategory.Scenarios)
+	require.Equal(t, 4, memoryCategory.Total)
+	require.ElementsMatch(t, []string{"context_view_roundtrip", "memory_lifecycle_roundtrip", "prompt_directory_reference_roundtrip", "session_summary_roundtrip"}, memoryCategory.Scenarios)
 
 	themeLifecycle := findScenario(t, report, "theme_lifecycle_roundtrip")
 	require.True(t, themeLifecycle.OK)
@@ -1209,6 +1221,12 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Equal(t, "context-management", memoryLifecycle.Category)
 	require.Contains(t, memoryLifecycle.ParityRefs, "Project memory")
 	require.Contains(t, memoryLifecycle.ParityRefs, "Session context management")
+
+	directoryReference := findManifestScenario(t, manifest, "prompt_directory_reference_roundtrip")
+	require.Equal(t, "context-management", directoryReference.Category)
+	require.Contains(t, directoryReference.ParityRefs, "Prompt references")
+	require.Contains(t, directoryReference.ParityRefs, "Directory references")
+	require.Contains(t, directoryReference.ParityRefs, "Workspace state")
 
 	sessionSummary := findManifestScenario(t, manifest, "session_summary_roundtrip")
 	require.Equal(t, "context-management", sessionSummary.Category)

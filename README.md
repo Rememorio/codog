@@ -77,8 +77,8 @@ The strongest surfaces are:
   preferences, keybindings, output styles, browser and notification
   preferences, telemetry controls, skill activation, model selection
   persistence, model runtime controls, token and turn budget persistence, LSP
-  metadata, directory attachments, onboarding, bookmarks, statusline rendering,
-  command validation, and setup diagnostics.
+  metadata, directory attachments and references, onboarding, bookmarks,
+  statusline rendering, command validation, and setup diagnostics.
 
 The broad integration surfaces still need real deployment hardening before they
 should be relied on for multi-user or enterprise use, especially around hosted
