@@ -290,11 +290,12 @@ func NewStore(configHome string) *Store {
 
 func NewWorkspaceStore(configHome string, workspace string) *Store {
 	canonical := canonicalWorkspace(workspace)
+	projectRoot := projectWorkspaceRoot(canonical)
 	root := filepath.Join(configHome, "sessions")
 	return &Store{
-		Dir:       filepath.Join(root, WorkspaceFingerprint(canonical)),
+		Dir:       filepath.Join(root, WorkspaceFingerprint(projectRoot)),
 		LegacyDir: root,
-		Workspace: canonical,
+		Workspace: projectRoot,
 	}
 }
 
@@ -2075,6 +2076,32 @@ func canonicalWorkspace(workspace string) string {
 		return filepath.Clean(workspace)
 	}
 	return canonical
+}
+
+func projectWorkspaceRoot(workspace string) string {
+	workspace = canonicalWorkspace(workspace)
+	if workspace == "" {
+		return ""
+	}
+	current := workspace
+	for {
+		if isGitProjectRoot(current) {
+			return current
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return workspace
+		}
+		current = parent
+	}
+}
+
+func isGitProjectRoot(path string) bool {
+	info, err := os.Stat(filepath.Join(path, ".git"))
+	if err != nil {
+		return false
+	}
+	return info.IsDir() || info.Mode().IsRegular()
 }
 
 func WorkspaceFingerprint(workspace string) string {

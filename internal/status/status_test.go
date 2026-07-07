@@ -484,19 +484,22 @@ func TestBuildParsesInitialBranch(t *testing.T) {
 
 func TestRenderText(t *testing.T) {
 	snapshot := Build(Options{
-		Version:                "test-version",
-		Workspace:              "/repo/codog",
-		Model:                  "claude-test",
-		PermissionMode:         "read-only",
-		AuthConfigured:         true,
-		SessionID:              "session-1",
-		SessionMessages:        3,
-		SessionParentSessionID: "parent-1",
-		SessionBranchName:      "investigation",
-		ToolNames:              []string{"bash"},
-		LaneBoard:              &background.LaneBoard{},
-		GitStatus:              "## main",
-		SandboxDefault:         "sandbox-exec",
+		Version:                     "test-version",
+		Workspace:                   "/repo/codog",
+		Model:                       "claude-test",
+		PermissionMode:              "read-only",
+		AuthConfigured:              true,
+		SessionID:                   "session-1",
+		SessionNamespacePath:        "/config/sessions/fp123",
+		SessionWorkspace:            "/repo/codog",
+		SessionWorkspaceFingerprint: "fp123",
+		SessionMessages:             3,
+		SessionParentSessionID:      "parent-1",
+		SessionBranchName:           "investigation",
+		ToolNames:                   []string{"bash"},
+		LaneBoard:                   &background.LaneBoard{},
+		GitStatus:                   "## main",
+		SandboxDefault:              "sandbox-exec",
 	})
 
 	var out bytes.Buffer
@@ -510,9 +513,13 @@ func TestRenderText(t *testing.T) {
 	require.Contains(t, out.String(), "Session state    saved only")
 	require.Contains(t, out.String(), "Session parent   parent-1")
 	require.Contains(t, out.String(), "Session branch   investigation")
+	require.Contains(t, out.String(), "Session scope    /config/sessions/fp123 workspace=/repo/codog fingerprint=fp123")
 	require.Contains(t, out.String(), "Git              branch=main")
 	require.Contains(t, out.String(), "Task lanes       active=0 blocked=0 finished=0")
 	require.Contains(t, out.String(), "Tools            1")
+	require.Equal(t, "/config/sessions/fp123", snapshot.Session.NamespacePath)
+	require.Equal(t, "/repo/codog", snapshot.Session.Workspace)
+	require.Equal(t, "fp123", snapshot.Session.WorkspaceFingerprint)
 }
 
 func stringsJoinLines(lines ...string) string {

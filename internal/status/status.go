@@ -86,6 +86,9 @@ type Options struct {
 	ToolAliases                 map[string]string
 	SessionID                   string
 	SessionPath                 string
+	SessionNamespacePath        string
+	SessionWorkspace            string
+	SessionWorkspaceFingerprint string
 	SessionMessages             int
 	SessionCount                int
 	SessionCreatedAtMS          int64
@@ -231,17 +234,20 @@ type PermissionRuleStatus struct {
 
 // SessionStatus summarizes the active session and saved session ledger.
 type SessionStatus struct {
-	Active              bool                    `json:"active"`
-	ID                  string                  `json:"id,omitempty"`
-	Path                string                  `json:"path,omitempty"`
-	MessageCount        int                     `json:"message_count"`
-	SavedCount          int                     `json:"saved_count"`
-	CreatedAtMS         int64                   `json:"created_at_ms,omitempty"`
-	UpdatedAtMS         int64                   `json:"updated_at_ms,omitempty"`
-	ModifiedEpochMillis int64                   `json:"modified_epoch_millis,omitempty"`
-	ParentSessionID     string                  `json:"parent_session_id,omitempty"`
-	BranchName          string                  `json:"branch_name,omitempty"`
-	Lifecycle           *SessionLifecycleStatus `json:"lifecycle,omitempty"`
+	Active               bool                    `json:"active"`
+	ID                   string                  `json:"id,omitempty"`
+	Path                 string                  `json:"path,omitempty"`
+	NamespacePath        string                  `json:"namespace_path,omitempty"`
+	Workspace            string                  `json:"workspace,omitempty"`
+	WorkspaceFingerprint string                  `json:"workspace_fingerprint,omitempty"`
+	MessageCount         int                     `json:"message_count"`
+	SavedCount           int                     `json:"saved_count"`
+	CreatedAtMS          int64                   `json:"created_at_ms,omitempty"`
+	UpdatedAtMS          int64                   `json:"updated_at_ms,omitempty"`
+	ModifiedEpochMillis  int64                   `json:"modified_epoch_millis,omitempty"`
+	ParentSessionID      string                  `json:"parent_session_id,omitempty"`
+	BranchName           string                  `json:"branch_name,omitempty"`
+	Lifecycle            *SessionLifecycleStatus `json:"lifecycle,omitempty"`
 }
 
 // SessionLifecycleStatus describes whether a saved session is complete or abandoned.
@@ -525,17 +531,20 @@ func Build(opts Options) Snapshot {
 			EnabledSkillCount:           opts.EnabledSkillCount,
 		},
 		Session: SessionStatus{
-			Active:              opts.SessionID != "",
-			ID:                  opts.SessionID,
-			Path:                opts.SessionPath,
-			MessageCount:        opts.SessionMessages,
-			SavedCount:          opts.SessionCount,
-			CreatedAtMS:         opts.SessionCreatedAtMS,
-			UpdatedAtMS:         opts.SessionUpdatedAtMS,
-			ModifiedEpochMillis: opts.SessionModifiedEpochMillis,
-			ParentSessionID:     strings.TrimSpace(opts.SessionParentSessionID),
-			BranchName:          strings.TrimSpace(opts.SessionBranchName),
-			Lifecycle:           buildSessionLifecycleStatus(opts),
+			Active:               opts.SessionID != "",
+			ID:                   opts.SessionID,
+			Path:                 opts.SessionPath,
+			NamespacePath:        opts.SessionNamespacePath,
+			Workspace:            opts.SessionWorkspace,
+			WorkspaceFingerprint: opts.SessionWorkspaceFingerprint,
+			MessageCount:         opts.SessionMessages,
+			SavedCount:           opts.SessionCount,
+			CreatedAtMS:          opts.SessionCreatedAtMS,
+			UpdatedAtMS:          opts.SessionUpdatedAtMS,
+			ModifiedEpochMillis:  opts.SessionModifiedEpochMillis,
+			ParentSessionID:      strings.TrimSpace(opts.SessionParentSessionID),
+			BranchName:           strings.TrimSpace(opts.SessionBranchName),
+			Lifecycle:            buildSessionLifecycleStatus(opts),
 		},
 		Plan: PlanStatus{
 			Active:    opts.PlanActive,
@@ -985,6 +994,16 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 		}
 	} else {
 		fmt.Fprintf(w, "  Session          none (%d saved)\n", snapshot.Session.SavedCount)
+	}
+	if snapshot.Session.NamespacePath != "" {
+		scope := snapshot.Session.NamespacePath
+		if snapshot.Session.Workspace != "" {
+			scope += " workspace=" + snapshot.Session.Workspace
+		}
+		if snapshot.Session.WorkspaceFingerprint != "" {
+			scope += " fingerprint=" + snapshot.Session.WorkspaceFingerprint
+		}
+		fmt.Fprintf(w, "  Session scope    %s\n", scope)
 	}
 	if snapshot.Git.Available {
 		fmt.Fprintf(w, "  Git              branch=%s clean=%t staged=%d unstaged=%d untracked=%d conflicts=%d\n",

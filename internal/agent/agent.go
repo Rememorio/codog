@@ -27875,7 +27875,15 @@ type statusSnapshotOptions struct {
 
 func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnapshotOptions) localstatus.Snapshot {
 	sessionCount := -1
+	sessionNamespacePath := ""
+	sessionWorkspace := ""
+	sessionWorkspaceFingerprint := ""
 	if a.Sessions != nil {
+		sessionNamespacePath = a.Sessions.Dir
+		sessionWorkspace = a.Sessions.Workspace
+		if strings.TrimSpace(sessionWorkspace) != "" {
+			sessionWorkspaceFingerprint = session.WorkspaceFingerprint(sessionWorkspace)
+		}
 		sessions, err := a.Sessions.List()
 		if err == nil {
 			sessionCount = len(sessions)
@@ -28010,6 +28018,9 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 		ToolAliases:                 tools.ClaudeToolAliases(),
 		SessionID:                   sessionID,
 		SessionPath:                 sessionPath,
+		SessionNamespacePath:        sessionNamespacePath,
+		SessionWorkspace:            sessionWorkspace,
+		SessionWorkspaceFingerprint: sessionWorkspaceFingerprint,
 		SessionMessages:             sessionMessages,
 		SessionCount:                sessionCount,
 		SessionCreatedAtMS:          timeMillis(sessionMetadata.CreatedAt),

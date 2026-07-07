@@ -26,6 +26,29 @@ func TestWorkspaceStoreUsesCanonicalFingerprint(t *testing.T) {
 	require.FileExists(t, filepath.Join(store.Dir, "session-a.jsonl"))
 }
 
+func TestWorkspaceStoreUsesProjectRootForSessionNamespace(t *testing.T) {
+	configHome := t.TempDir()
+	root := filepath.Join(t.TempDir(), "repo")
+	subdir := filepath.Join(root, "pkg", "service")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	require.NoError(t, os.MkdirAll(subdir, 0o755))
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	require.NoError(t, err)
+
+	rootStore := NewWorkspaceStore(configHome, root)
+	subdirStore := NewWorkspaceStore(configHome, subdir)
+	require.Equal(t, canonicalRoot, rootStore.Workspace)
+	require.Equal(t, canonicalRoot, subdirStore.Workspace)
+	require.Equal(t, rootStore.Dir, subdirStore.Dir)
+	require.Equal(t, filepath.Join(configHome, "sessions", WorkspaceFingerprint(canonicalRoot)), subdirStore.Dir)
+
+	require.NoError(t, rootStore.Append("shared-project-session", anthropic.TextMessage("user", "from root")))
+	opened, err := subdirStore.OpenExisting("shared-project-session")
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 1)
+	require.Equal(t, "from root", opened.Messages[0].Content[0].Text)
+}
+
 func TestWorkspaceStoresIsolateSameSessionID(t *testing.T) {
 	configHome := t.TempDir()
 	workspaceA := filepath.Join(t.TempDir(), "repo-a")
