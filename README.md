@@ -74,8 +74,9 @@ The strongest surfaces are:
   MCP auth recovery, policy checks, updater manifests, background agents,
   project memory, session summaries, compaction summaries, context views,
   focused paths, theme, privacy, interface preferences, keybindings, output
-  styles, onboarding, bookmarks, statusline rendering, command validation, and
-  setup diagnostics.
+  styles, browser and notification preferences, telemetry controls,
+  onboarding, bookmarks, statusline rendering, command validation, and setup
+  diagnostics.
 
 The broad integration surfaces still need real deployment hardening before they
 should be relied on for multi-user or enterprise use, especially around hosted

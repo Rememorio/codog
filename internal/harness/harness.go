@@ -225,6 +225,7 @@ var scenarioOrder = []string{
 	"theme_lifecycle_roundtrip",
 	"interface_preferences_roundtrip",
 	"privacy_keybindings_roundtrip",
+	"browser_notifications_roundtrip",
 	"output_style_lifecycle_roundtrip",
 	"diagnostics_status_roundtrip",
 	"statusline_cli_roundtrip",
@@ -775,6 +776,7 @@ func Run(ctx context.Context) (Report, error) {
 		themeLifecycleScenario(),
 		interfacePreferencesScenario(),
 		privacyKeybindingsScenario(),
+		browserNotificationsScenario(),
 		outputStyleLifecycleScenario(),
 		diagnosticsStatusScenario(),
 		statuslineCLIScenario(),
@@ -1199,7 +1201,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "setup and diagnostics", RequiredRefs: []string{"Doctor", "Status diagnostics", "Terminal setup"}},
 	{Capability: "context view and focus", RequiredRefs: []string{"Context view", "Focused paths", "Context signals"}},
 	{Capability: "statusline rendering", RequiredRefs: []string{"Statusline", "Statusline JSON", "Statusline text"}},
-	{Capability: "appearance and preferences", RequiredRefs: []string{"Theme", "Theme persistence", "Theme reset", "Language preference", "Vim mode", "Privacy settings", "Keybindings", "Preference persistence"}},
+	{Capability: "appearance and preferences", RequiredRefs: []string{"Theme", "Theme persistence", "Theme reset", "Language preference", "Vim mode", "Privacy settings", "Keybindings", "Chrome integration", "Notifications", "Telemetry", "Preference persistence"}},
 }
 
 func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
@@ -1476,6 +1478,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "preferences",
 		Description: "Runs privacy settings and keybindings CLI commands through persisted configuration, validation, resolution, and text rendering.",
 		ParityRefs:  []string{"Privacy settings", "Prompt history", "Keybindings", "Preference persistence", "Configuration", "Interactive rendering"},
+	},
+	"browser_notifications_roundtrip": {
+		Category:    "preferences",
+		Description: "Runs Chrome, notifications, and telemetry preference CLI commands through persisted configuration, status, text rendering, and reset operations.",
+		ParityRefs:  []string{"Chrome integration", "Notifications", "Telemetry", "Preference persistence", "Configuration", "Interactive rendering"},
 	},
 	"output_style_lifecycle_roundtrip": {
 		Category:    "interactive-ui",
@@ -3309,6 +3316,301 @@ func decodeKeybindingsResolveHarnessReport(output string) (keybindingsResolveHar
 	var report keybindingsResolveHarnessReport
 	if err := json.Unmarshal([]byte(output), &report); err != nil {
 		return keybindingsResolveHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func browserNotificationsScenario() scenario {
+	return scenario{
+		name: "browser_notifications_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, ".codog-home")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			configPath := filepath.Join(workspace, "codog-config.json")
+			configData, err := json.Marshal(map[string]any{"config_home": configHome})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			initialChromeOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "chrome")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initialChrome, err := decodeChromeHarnessReport(initialChromeOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initialChrome.Kind != "chrome" || initialChrome.Action != "status" || initialChrome.Enabled || initialChrome.Configured {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial chrome report: %#v", initialChrome)
+			}
+
+			setChromeOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "chrome", "on", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			setChrome, err := decodeChromeHarnessReport(setChromeOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if setChrome.Action != "set" || !setChrome.Enabled || !setChrome.Configured || setChrome.MCPServer == "" {
+				return localScenarioResult{}, fmt.Errorf("unexpected set chrome report: %#v", setChrome)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(configData), `"chrome_default_enabled": true`) && !strings.Contains(string(configData), `"chrome_default_enabled":true`) {
+				return localScenarioResult{}, fmt.Errorf("chrome config did not persist enabled state: %s", string(configData))
+			}
+
+			statusChromeOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "chrome", "status")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			statusChrome, err := decodeChromeHarnessReport(statusChromeOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if statusChrome.Action != "status" || !statusChrome.Enabled || !statusChrome.Configured {
+				return localScenarioResult{}, fmt.Errorf("unexpected persisted chrome report: %#v", statusChrome)
+			}
+
+			chromeText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "chrome", "permissions")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(chromeText, "Chrome") || !strings.Contains(chromeText, "Permissions URL") || !strings.Contains(chromeText, "https://clau.de/chrome/permissions") {
+				return localScenarioResult{}, fmt.Errorf("chrome text output missing expected values: %s", chromeText)
+			}
+
+			clearChromeOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "chrome", "clear", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			clearChrome, err := decodeChromeHarnessReport(clearChromeOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if clearChrome.Action != "clear" || clearChrome.Enabled || clearChrome.Configured || !clearChrome.Previous {
+				return localScenarioResult{}, fmt.Errorf("unexpected clear chrome report: %#v", clearChrome)
+			}
+
+			initialNotificationsOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "notifications")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initialNotifications, err := decodeNotificationsHarnessReport(initialNotificationsOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initialNotifications.Kind != "notifications" || initialNotifications.Action != "status" || !initialNotifications.Enabled || initialNotifications.Configured {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial notifications report: %#v", initialNotifications)
+			}
+
+			setNotificationsOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "notifications", "off", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			setNotifications, err := decodeNotificationsHarnessReport(setNotificationsOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if setNotifications.Action != "set" || setNotifications.Enabled || !setNotifications.Configured || !setNotifications.Previous {
+				return localScenarioResult{}, fmt.Errorf("unexpected set notifications report: %#v", setNotifications)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(configData), `"notifications_enabled": false`) && !strings.Contains(string(configData), `"notifications_enabled":false`) {
+				return localScenarioResult{}, fmt.Errorf("notifications config did not persist disabled state: %s", string(configData))
+			}
+
+			notificationsText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "notifications")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(notificationsText, "Notifications") || !strings.Contains(notificationsText, "Enabled          false") {
+				return localScenarioResult{}, fmt.Errorf("notifications text output missing expected values: %s", notificationsText)
+			}
+
+			clearNotificationsOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "notifications", "clear", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			clearNotifications, err := decodeNotificationsHarnessReport(clearNotificationsOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if clearNotifications.Action != "clear" || !clearNotifications.Enabled || clearNotifications.Configured || clearNotifications.Previous {
+				return localScenarioResult{}, fmt.Errorf("unexpected clear notifications report: %#v", clearNotifications)
+			}
+
+			initialTelemetryOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "telemetry")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initialTelemetry, err := decodeTelemetryHarnessReport(initialTelemetryOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initialTelemetry.Kind != "telemetry" || initialTelemetry.Action != "status" || initialTelemetry.Enabled || initialTelemetry.Configured {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial telemetry report: %#v", initialTelemetry)
+			}
+
+			setTelemetryOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "telemetry", "on", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			setTelemetry, err := decodeTelemetryHarnessReport(setTelemetryOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if setTelemetry.Action != "set" || !setTelemetry.Enabled || !setTelemetry.Configured {
+				return localScenarioResult{}, fmt.Errorf("unexpected set telemetry report: %#v", setTelemetry)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(configData), `"telemetry_enabled": true`) && !strings.Contains(string(configData), `"telemetry_enabled":true`) {
+				return localScenarioResult{}, fmt.Errorf("telemetry config did not persist enabled state: %s", string(configData))
+			}
+
+			telemetryText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "telemetry")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(telemetryText, "Telemetry") || !strings.Contains(telemetryText, "Enabled          true") {
+				return localScenarioResult{}, fmt.Errorf("telemetry text output missing expected values: %s", telemetryText)
+			}
+
+			clearTelemetryOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "telemetry", "clear", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			clearTelemetry, err := decodeTelemetryHarnessReport(clearTelemetryOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if clearTelemetry.Action != "clear" || clearTelemetry.Enabled || clearTelemetry.Configured || !clearTelemetry.Previous {
+				return localScenarioResult{}, fmt.Errorf("unexpected clear telemetry report: %#v", clearTelemetry)
+			}
+
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, clearedKey := range []string{`"chrome_default_enabled"`, `"notifications_enabled"`, `"telemetry_enabled"`} {
+				if strings.Contains(string(configData), clearedKey) {
+					return localScenarioResult{}, fmt.Errorf("config still contains %s after clear: %s", clearedKey, string(configData))
+				}
+			}
+
+			report := map[string]any{
+				"kind": "browser_notifications",
+				"chrome": map[string]any{
+					"initial_enabled": initialChrome.Enabled,
+					"set":             setChrome.Enabled,
+					"status":          statusChrome.Enabled,
+					"cleared":         clearChrome.Enabled,
+					"mcp_server":      setChrome.MCPServer,
+					"path_persisted":  setChrome.Path != "" && strings.HasSuffix(setChrome.Path, "codog-config.json"),
+					"text_rendered":   strings.Contains(chromeText, "Permissions URL"),
+				},
+				"notifications": map[string]any{
+					"initial_enabled": initialNotifications.Enabled,
+					"set":             setNotifications.Enabled,
+					"cleared":         clearNotifications.Enabled,
+					"path_persisted":  setNotifications.Path != "" && strings.HasSuffix(setNotifications.Path, "codog-config.json"),
+					"text_rendered":   strings.Contains(notificationsText, "Enabled          false"),
+				},
+				"telemetry": map[string]any{
+					"initial_enabled": initialTelemetry.Enabled,
+					"set":             setTelemetry.Enabled,
+					"cleared":         clearTelemetry.Enabled,
+					"path_persisted":  setTelemetry.Path != "" && strings.HasSuffix(setTelemetry.Path, "codog-config.json"),
+					"text_rendered":   strings.Contains(telemetryText, "Enabled          true"),
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "browser notifications harness ok",
+				RequestCount: 13,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+type chromeHarnessReport struct {
+	Kind           string `json:"kind"`
+	Action         string `json:"action"`
+	Status         string `json:"status"`
+	Enabled        bool   `json:"enabled"`
+	Previous       bool   `json:"previous,omitempty"`
+	Configured     bool   `json:"configured"`
+	MCPServer      string `json:"mcp_server"`
+	InstallURL     string `json:"install_url"`
+	PermissionsURL string `json:"permissions_url"`
+	ReconnectURL   string `json:"reconnect_url"`
+	RecommendedURL string `json:"recommended_url,omitempty"`
+	Path           string `json:"path,omitempty"`
+	Message        string `json:"message,omitempty"`
+}
+
+type notificationsHarnessReport struct {
+	Kind       string `json:"kind"`
+	Action     string `json:"action"`
+	Status     string `json:"status"`
+	Enabled    bool   `json:"enabled"`
+	Configured bool   `json:"configured"`
+	Previous   bool   `json:"previous,omitempty"`
+	HookCount  int    `json:"hook_count"`
+	Path       string `json:"path,omitempty"`
+	Message    string `json:"message,omitempty"`
+}
+
+type telemetryHarnessReport struct {
+	Kind       string `json:"kind"`
+	Action     string `json:"action"`
+	Status     string `json:"status"`
+	Enabled    bool   `json:"enabled"`
+	Configured bool   `json:"configured"`
+	Previous   bool   `json:"previous,omitempty"`
+	Path       string `json:"path,omitempty"`
+	Message    string `json:"message,omitempty"`
+}
+
+func decodeChromeHarnessReport(output string) (chromeHarnessReport, error) {
+	var report chromeHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return chromeHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func decodeNotificationsHarnessReport(output string) (notificationsHarnessReport, error) {
+	var report notificationsHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return notificationsHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func decodeTelemetryHarnessReport(output string) (telemetryHarnessReport, error) {
+	var report telemetryHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return telemetryHarnessReport{}, err
 	}
 	return report, nil
 }
