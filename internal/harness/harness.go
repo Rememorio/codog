@@ -252,6 +252,7 @@ var scenarioOrder = []string{
 	"team_cron_lifecycle_roundtrip",
 	"worker_lifecycle_roundtrip",
 	"recovery_lifecycle_roundtrip",
+	"agent_markdown_definition_roundtrip",
 	"background_agent_run_roundtrip",
 	"remote_trigger_roundtrip",
 	"remote_api_listener_roundtrip",
@@ -812,6 +813,7 @@ func Run(ctx context.Context) (Report, error) {
 		teamCronLifecycleScenario(),
 		workerLifecycleScenario(),
 		recoveryLifecycleScenario(),
+		agentMarkdownDefinitionScenario(),
 		backgroundAgentRunScenario(),
 		remoteTriggerScenario(),
 		remoteAPIListenerScenario(),
@@ -1708,6 +1710,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "background-agents",
 		Description: "Runs, watches, heartbeats, restarts, supervises, and summarizes a background agent lane.",
 		ParityRefs:  []string{"Background tasks", "Agent runs", "Lane board", "Supervisor restarts"},
+	},
+	"agent_markdown_definition_roundtrip": {
+		Category:    "background-agents",
+		Description: "Loads Claude Code-style Markdown agent definitions through the real agents CLI.",
+		ParityRefs:  []string{"Agent definitions", "Markdown agents", "Claude Code migration", "Agent runs"},
 	},
 	"remote_trigger_roundtrip": {
 		Category:    "remote-control",
@@ -9398,6 +9405,66 @@ func recoveryLifecycleScenario() scenario {
 					"recovery_attempt",
 					"recovery_status",
 				},
+			}, nil
+		},
+	}
+}
+
+func agentMarkdownDefinitionScenario() scenario {
+	return scenario{
+		name: "agent_markdown_definition_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			configPath := filepath.Join(workspace, "config.json")
+			if err := os.WriteFile(configPath, []byte(fmt.Sprintf(`{"config_home":%q}`, configHome)), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			agentsDir := filepath.Join(workspace, ".claude", "agents")
+			if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(agentsDir, "reviewer.md"), []byte(`---
+description: Claude-style review agent
+model: openai/gpt-4.1-mini
+tools:
+  - read_file
+  - grep
+---
+# Reviewer
+Review changes and report verification.
+`), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			listOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "agents", "list")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"kind": "agents"`, `"accepted_formats"`, `".md"`, `"name": "reviewer"`, `"source": "claude"`, `"format": "markdown"`} {
+				if !strings.Contains(listOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("agent markdown list output missing %s", expected)
+				}
+			}
+			showOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "agents", "show", "reviewer")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "show"`, `"model": "openai/gpt-4.1-mini"`, `"tools": [`, `"read_file"`, "Review changes and report verification"} {
+				if !strings.Contains(showOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("agent markdown show output missing %s", expected)
+				}
+			}
+			helpOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "agents", "help")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "help"`, `".claude/agents"`, `".markdown"`} {
+				if !strings.Contains(helpOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("agent markdown help output missing %s", expected)
+				}
+			}
+			return localScenarioResult{
+				Output:       strings.Join([]string{listOut, showOut, helpOut}, "\n"),
+				FinalMessage: "agent markdown definition harness ok",
 			}, nil
 		},
 	}

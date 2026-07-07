@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Rememorio/codog/internal/frontmatter"
 	"github.com/Rememorio/codog/internal/plugins"
 )
 
@@ -19,6 +20,12 @@ type Definition struct {
 	Path        string   `json:"path,omitempty"`
 	Source      string   `json:"source,omitempty"`
 	Plugin      string   `json:"plugin,omitempty"`
+	Format      string   `json:"format,omitempty"`
+}
+
+// AcceptedFormats returns the agent definition file extensions Codog loads.
+func AcceptedFormats() []string {
+	return []string{".json", ".md", ".markdown"}
 }
 
 type root struct {
@@ -38,20 +45,16 @@ func Load(workspace string) ([]Definition, error) {
 			return nil, err
 		}
 		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			if entry.IsDir() || !supportedAgentFile(entry.Name()) {
 				continue
 			}
 			path := filepath.Join(root.path, entry.Name())
-			data, err := os.ReadFile(path)
+			def, err := loadDefinitionFile(path)
 			if err != nil {
 				return nil, err
 			}
-			var def Definition
-			if err := json.Unmarshal(data, &def); err != nil {
-				return nil, err
-			}
 			if def.Name == "" {
-				def.Name = strings.TrimSuffix(entry.Name(), ".json")
+				def.Name = strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 			}
 			def.Name = namespacePluginName(root.prefix, def.Name)
 			def.Path = path
@@ -67,7 +70,12 @@ func Load(workspace string) ([]Definition, error) {
 }
 
 func roots(workspace string) []root {
-	out := []root{{path: filepath.Join(workspace, ".codog", "agents"), source: "workspace"}}
+	out := []root{
+		{path: filepath.Join(workspace, ".codog", "agents"), source: "workspace"},
+		{path: filepath.Join(workspace, ".claude", "agents"), source: "claude"},
+		{path: filepath.Join(workspace, ".claw", "agents"), source: "claw"},
+		{path: filepath.Join(workspace, ".omc", "agents"), source: "omc"},
+	}
 	manifests, err := plugins.Load(workspace)
 	if err != nil {
 		return out
@@ -99,7 +107,7 @@ func agentRootsForPlugin(manifest plugins.Manifest) []root {
 		}
 		rootPath := path
 		if !info.IsDir() {
-			if !strings.EqualFold(filepath.Ext(path), ".json") {
+			if !supportedAgentFile(path) {
 				continue
 			}
 			rootPath = filepath.Dir(path)
@@ -112,6 +120,51 @@ func agentRootsForPlugin(manifest plugins.Manifest) []root {
 		out = append(out, root{path: rootPath, source: "plugin:" + manifest.ID, prefix: manifest.ID})
 	}
 	return out
+}
+
+func supportedAgentFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".json" || ext == ".md" || ext == ".markdown"
+}
+
+func loadDefinitionFile(path string) (Definition, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Definition{}, err
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".markdown":
+		return parseMarkdownDefinition(string(data), path)
+	default:
+		var def Definition
+		if err := json.Unmarshal(data, &def); err != nil {
+			return Definition{}, err
+		}
+		def.Format = "json"
+		return def, nil
+	}
+}
+
+func parseMarkdownDefinition(text string, path string) (Definition, error) {
+	body, values, err := frontmatter.Parse(text)
+	if err != nil {
+		return Definition{}, err
+	}
+	def := Definition{
+		Name:        frontmatter.String(values, "name"),
+		Description: frontmatter.FirstString(values, "description", "summary"),
+		Model:       frontmatter.String(values, "model"),
+		Tools:       frontmatter.StringList(values["tools"]),
+		Prompt:      strings.TrimSpace(body),
+		Format:      "markdown",
+	}
+	if def.Description == "" {
+		def.Description = frontmatter.DescriptionFromMarkdown(body)
+	}
+	if def.Name == "" {
+		def.Name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	}
+	return def, nil
 }
 
 func namespacePluginName(prefix string, name string) string {

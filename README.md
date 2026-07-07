@@ -68,8 +68,9 @@ The strongest surfaces are:
   and compaction;
 - permission modes, allow and deny rules, hooks, audit events, and basic sandbox
   toggles;
-- slash commands, skills, templates, MCP client/server paths, provider profiles,
-  background tasks, and bridge surfaces;
+- slash commands, skills, templates, Markdown agent definitions, MCP
+  client/server paths, provider profiles, background tasks, and bridge
+  surfaces;
 - deterministic mock parity scenarios for remote control, IDE bridge commands,
   MCP auth recovery, policy checks, updater manifests, background agents,
   auth credential lifecycle, project memory, session summaries, compaction
@@ -78,8 +79,8 @@ The strongest surfaces are:
   preferences, telemetry controls, skill activation, model selection
   persistence, model runtime controls, token and turn budget persistence, LSP
   metadata, directory attachments and references, onboarding, bookmarks,
-  statusline rendering, command validation, config validation status, and setup
-  diagnostics.
+  Markdown agent discovery, statusline rendering, command validation, config
+  validation status, and setup diagnostics.
 
 The broad integration surfaces still need real deployment hardening before they
 should be relied on for multi-user or enterprise use, especially around hosted

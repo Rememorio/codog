@@ -26877,6 +26877,14 @@ func TestAgentsCommandAcceptsOutputFormatFlags(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "agents"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "agents", "planner.json"), []byte(`{"name":"planner","description":"plans work","prompt":"plan"}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "agents", "reviewer.json"), []byte(`{"name":"reviewer","description":"reviews code","prompt":"review"}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "agents"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "agents", "migrated.md"), []byte(`---
+description: migrated markdown agent
+tools: read_file, grep
+---
+# Migrated
+Use Claude Code-style markdown agent definitions.
+`), 0o644))
 	var out bytes.Buffer
 	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
 
@@ -26890,7 +26898,26 @@ func TestAgentsCommandAcceptsOutputFormatFlags(t *testing.T) {
 	require.Equal(t, "agents", listReport.Kind)
 	require.Equal(t, "list", listReport.Action)
 	require.Equal(t, 1, listReport.Count)
+	require.Equal(t, []string{".json", ".md", ".markdown"}, listReport.AcceptedFormats)
 	require.Equal(t, "reviewer", listReport.Agents[0].Name)
+	out.Reset()
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"show", "migrated", "--json"}, config.FlagOverrides{}))
+	var migratedReport agentShowReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &migratedReport))
+	require.Equal(t, "migrated", migratedReport.Agent.Name)
+	require.Equal(t, "claude", migratedReport.Agent.Source)
+	require.Equal(t, "markdown", migratedReport.Agent.Format)
+	require.Equal(t, []string{"read_file", "grep"}, migratedReport.Agent.Tools)
+	require.Contains(t, migratedReport.Agent.Prompt, "Claude Code-style")
+	out.Reset()
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"help", "--json"}, config.FlagOverrides{}))
+	var helpReport agentsHelpReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &helpReport))
+	require.Equal(t, "help", helpReport.Action)
+	require.Contains(t, helpReport.AcceptedFormats, ".md")
+	require.Contains(t, helpReport.Sources, ".claude/agents")
 	out.Reset()
 
 	require.NoError(t, app.AgentsWithOverrides([]string{"show", "planner", "--json"}, config.FlagOverrides{}))

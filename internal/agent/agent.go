@@ -7600,11 +7600,12 @@ func (a *App) ListAgents() error {
 }
 
 type agentsListReport struct {
-	Kind   string                 `json:"kind"`
-	Action string                 `json:"action"`
-	Status string                 `json:"status"`
-	Count  int                    `json:"count"`
-	Agents []agentdefs.Definition `json:"agents"`
+	Kind            string                 `json:"kind"`
+	Action          string                 `json:"action"`
+	Status          string                 `json:"status"`
+	Count           int                    `json:"count"`
+	AcceptedFormats []string               `json:"accepted_formats"`
+	Agents          []agentdefs.Definition `json:"agents"`
 }
 
 type agentShowReport struct {
@@ -7612,6 +7613,16 @@ type agentShowReport struct {
 	Action string               `json:"action"`
 	Status string               `json:"status"`
 	Agent  agentdefs.Definition `json:"agent"`
+}
+
+type agentsHelpReport struct {
+	Kind            string   `json:"kind"`
+	Action          string   `json:"action"`
+	Status          string   `json:"status"`
+	Usage           string   `json:"usage"`
+	AcceptedFormats []string `json:"accepted_formats"`
+	Sources         []string `json:"sources"`
+	Examples        []string `json:"examples"`
 }
 
 type agentCreateReport struct {
@@ -7690,11 +7701,12 @@ func (a *App) listAgents(format string, filter string) error {
 	}
 	if format == "json" {
 		data, _ := json.MarshalIndent(agentsListReport{
-			Kind:   "agents",
-			Action: "list",
-			Status: "ok",
-			Count:  len(defs),
-			Agents: defs,
+			Kind:            "agents",
+			Action:          "list",
+			Status:          "ok",
+			Count:           len(defs),
+			AcceptedFormats: agentdefs.AcceptedFormats(),
+			Agents:          defs,
 		}, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
@@ -7833,6 +7845,33 @@ func renderAgentCreateReport(out io.Writer, report agentCreateReport) {
 	fmt.Fprintf(out, "  Path             %s\n", report.Path)
 	fmt.Fprintf(out, "  Format           %s\n", report.Format)
 	fmt.Fprintf(out, "  Next             codog agents show %s\n", report.Name)
+}
+
+func renderAgentsHelp(out io.Writer, format string) error {
+	report := agentsHelpReport{
+		Kind:            "agents",
+		Action:          "help",
+		Status:          "ok",
+		Usage:           "codog agents [list|show NAME|create NAME|run NAME PROMPT|runs|board|help] [--json|--output-format text|json]",
+		AcceptedFormats: agentdefs.AcceptedFormats(),
+		Sources:         []string{".codog/agents", ".claude/agents", ".claw/agents", ".omc/agents", "enabled plugin agents"},
+		Examples: []string{
+			"codog agents list --json",
+			"codog agents show reviewer",
+			"codog agents run reviewer \"review this change\"",
+		},
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Agents")
+	fmt.Fprintf(out, "  Usage            %s\n", report.Usage)
+	fmt.Fprintf(out, "  Formats          %s\n", strings.Join(report.AcceptedFormats, ", "))
+	fmt.Fprintf(out, "  Sources          %s\n", strings.Join(report.Sources, ", "))
+	fmt.Fprintf(out, "  Examples         %s\n", strings.Join(report.Examples, "; "))
+	return nil
 }
 
 func filterAgentDefinitions(defs []agentdefs.Definition, filter string) []agentdefs.Definition {
@@ -8253,6 +8292,16 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 	if len(args) == 0 {
 		return a.listAgents(format, "")
 	}
+	if args[0] == "help" {
+		if len(args) > 1 {
+			return renderCLIError(a.Out, unexpectedExtraArgsError{
+				Command: "agents help",
+				Args:    append([]string(nil), args[1:]...),
+				Usage:   "codog agents help [--json|--output-format text|json]",
+			}, format)
+		}
+		return renderAgentsHelp(a.Out, format)
+	}
 	if args[0] == "list" {
 		filter, err := parseListFilterArgs("agents list", args[1:], "codog agents list [FILTER] [--json|--output-format text|json]", "unknown_option")
 		if err != nil {
@@ -8591,6 +8640,8 @@ func (a *App) Subagent(args []string, overrides config.FlagOverrides) error {
 
 func normalizeAgentsAction(action string) string {
 	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "help", "-h", "--help":
+		return "help"
 	case "", "list", "ls":
 		return "list"
 	case "show", "info", "describe", "details":

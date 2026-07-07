@@ -903,6 +903,14 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, recoveryCategory.Total)
 	require.Equal(t, []string{"recovery_lifecycle_roundtrip"}, recoveryCategory.Scenarios)
 
+	agentMarkdown := findScenario(t, report, "agent_markdown_definition_roundtrip")
+	require.True(t, agentMarkdown.OK)
+	require.Equal(t, "background-agents", agentMarkdown.Category)
+	require.Equal(t, 0, agentMarkdown.ToolCalls)
+	require.Equal(t, "agent markdown definition harness ok", agentMarkdown.FinalMessage)
+	require.Contains(t, agentMarkdown.Output, `"format": "markdown"`)
+	require.Contains(t, agentMarkdown.Output, `"source": "claude"`)
+
 	backgroundAgent := findScenario(t, report, "background_agent_run_roundtrip")
 	require.True(t, backgroundAgent.OK)
 	require.Equal(t, "background-agents", backgroundAgent.Category)
@@ -918,8 +926,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, backgroundAgent.Output, `"failed_exit_code":7`)
 	backgroundAgents := findCategory(t, report, "background-agents")
 	require.True(t, backgroundAgents.OK)
-	require.Equal(t, 2, backgroundAgents.Total)
-	require.ElementsMatch(t, []string{"task_lifecycle_roundtrip", "background_agent_run_roundtrip"}, backgroundAgents.Scenarios)
+	require.Equal(t, 3, backgroundAgents.Total)
+	require.ElementsMatch(t, []string{"task_lifecycle_roundtrip", "agent_markdown_definition_roundtrip", "background_agent_run_roundtrip"}, backgroundAgents.Scenarios)
 
 	remoteTrigger := findScenario(t, report, "remote_trigger_roundtrip")
 	require.True(t, remoteTrigger.OK)
@@ -1307,6 +1315,12 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Contains(t, backgroundAgent.ParityRefs, "Background tasks")
 	require.Contains(t, backgroundAgent.ParityRefs, "Agent runs")
 	require.Contains(t, backgroundAgent.ParityRefs, "Supervisor restarts")
+
+	agentMarkdown := findManifestScenario(t, manifest, "agent_markdown_definition_roundtrip")
+	require.Equal(t, "background-agents", agentMarkdown.Category)
+	require.Contains(t, agentMarkdown.ParityRefs, "Agent definitions")
+	require.Contains(t, agentMarkdown.ParityRefs, "Markdown agents")
+	require.Contains(t, agentMarkdown.ParityRefs, "Claude Code migration")
 
 	taskLifecycle := findManifestScenario(t, manifest, "task_lifecycle_roundtrip")
 	require.Equal(t, "background-agents", taskLifecycle.Category)
