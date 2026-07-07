@@ -27913,6 +27913,7 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 	var gitFreshness *gitops.BranchFreshness
 	var gitIdentity *gitops.Identity
 	var gitBaseCommit *gitops.BaseCommitCheck
+	var gitOperation *gitops.Operation
 	if gitErr == nil {
 		if freshness, err := gitops.CheckBranchFreshness(a.Workspace, "", "main"); err == nil {
 			gitFreshness = &freshness
@@ -27922,6 +27923,9 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 		}
 		if check, err := gitops.CheckBaseCommitForWorkspace(a.Workspace, ""); err == nil {
 			gitBaseCommit = &check
+		}
+		if operation, err := gitops.InspectOperation(a.Workspace); err == nil {
+			gitOperation = operation
 		}
 	}
 	var laneBoard *background.LaneBoard
@@ -28033,6 +28037,7 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 		GitFreshness:                gitFreshness,
 		GitIdentity:                 gitIdentity,
 		GitBaseCommit:               gitBaseCommit,
+		GitOperation:                gitOperation,
 		LaneBoard:                   laneBoard,
 		LaneBoardError:              laneBoardError,
 		SandboxOS:                   sandboxStatus.OS,
@@ -33658,6 +33663,10 @@ func (a *App) Doctor(args []string) error {
 		return err
 	}
 	sandboxRuntime, _, _ := sandbox.ResolveSandboxExecutionStatusFor(sandboxStrategy, a.Workspace, sandboxOptions, sandboxStatus)
+	var gitOperation *gitops.Operation
+	if operation, err := gitops.InspectOperation(a.Workspace); err == nil {
+		gitOperation = operation
+	}
 	report := doctor.Run(doctor.Options{
 		Workspace:             a.Workspace,
 		ConfigHome:            a.Config.ConfigHome,
@@ -33710,6 +33719,7 @@ func (a *App) Doctor(args []string) error {
 		SandboxFallback:       sandboxStatus.FallbackReason,
 		SandboxInContainer:    sandboxStatus.Container.InContainer,
 		SandboxRuntime:        &sandboxRuntime,
+		GitOperation:          gitOperation,
 	})
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")

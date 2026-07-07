@@ -103,6 +103,7 @@ type Options struct {
 	GitFreshness                *gitops.BranchFreshness
 	GitIdentity                 *gitops.Identity
 	GitBaseCommit               *gitops.BaseCommitCheck
+	GitOperation                *gitops.Operation
 	LaneBoard                   *background.LaneBoard
 	LaneBoardError              string
 	SandboxOS                   string
@@ -301,6 +302,7 @@ type GitStatus struct {
 	Conflicts    int                     `json:"conflicts"`
 	Freshness    *gitops.BranchFreshness `json:"freshness,omitempty"`
 	BaseCommit   *gitops.BaseCommitCheck `json:"base_commit,omitempty"`
+	Operation    *gitops.Operation       `json:"operation,omitempty"`
 	Raw          string                  `json:"raw,omitempty"`
 }
 
@@ -448,6 +450,10 @@ func Build(opts Options) Snapshot {
 		}
 		git.BaseCommit = &baseCommit
 	}
+	if opts.GitOperation != nil {
+		operation := *opts.GitOperation
+		git.Operation = &operation
+	}
 	bootPreflight := buildBootPreflightStatus(opts, git)
 	status := "ok"
 	if !git.Available {
@@ -463,6 +469,8 @@ func Build(opts Options) Snapshot {
 	} else if opts.ConfigValidation.WarningCount > 0 {
 		status = "warn"
 	} else if strings.TrimSpace(auth.Warning) != "" {
+		status = "warn"
+	} else if git.Operation != nil {
 		status = "warn"
 	} else if git.Freshness != nil && !git.Freshness.Fresh {
 		status = "warn"
@@ -1048,6 +1056,15 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 				check.Matches,
 				check.Expected,
 				check.Actual,
+			)
+		}
+		if snapshot.Git.Operation != nil {
+			operation := snapshot.Git.Operation
+			fmt.Fprintf(w, "  Git operation    kind=%s paused=%t resume=%s abort=%s\n",
+				operation.Kind,
+				operation.Paused,
+				operation.ResumeHint,
+				operation.AbortHint,
 			)
 		}
 	} else {

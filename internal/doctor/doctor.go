@@ -83,6 +83,7 @@ type Options struct {
 	SandboxFallback       string
 	SandboxInContainer    bool
 	SandboxRuntime        *sandbox.SandboxExecutionStatus
+	GitOperation          *gitops.Operation
 }
 
 // ToolPermission describes the minimum permission a registered tool needs.
@@ -126,6 +127,12 @@ type Report struct {
 // Run evaluates local Codog configuration, workspace, hooks, MCP, sandbox, and
 // developer-toolchain health.
 func Run(opts Options) Report {
+	gitOperation := opts.GitOperation
+	if gitOperation == nil {
+		if operation, err := gitops.InspectOperation(opts.Workspace); err == nil {
+			gitOperation = operation
+		}
+	}
 	checks := []Check{
 		checkAuth(opts),
 		checkBaseURL(opts.BaseURL),
@@ -143,7 +150,7 @@ func Run(opts Options) Report {
 		checkSessions(opts.SessionCount),
 		checkHooks(opts),
 		checkHookValidation(opts.HookValidation),
-		checkGit(opts.Workspace),
+		checkGit(opts.Workspace, gitOperation),
 		checkSandbox(opts),
 		checkDeveloperToolchain(),
 		checkRuntime(),
@@ -956,7 +963,7 @@ func compactHookCommands(commands []string) []string {
 	return out
 }
 
-func checkGit(workspace string) Check {
+func checkGit(workspace string, operation *gitops.Operation) Check {
 	if _, err := exec.LookPath("git"); err != nil {
 		return Check{Name: "Git", Status: StatusWarn, Summary: "git is not available on PATH.", Hint: "Install git to enable diff, commit, workspace, and worktree features."}
 	}
@@ -981,6 +988,29 @@ func checkGit(workspace string) Check {
 		}
 		if value.IsWorktree {
 			details = append(details, "Linked worktree: true")
+		}
+	}
+	if operation != nil {
+		description := strings.TrimSpace(operation.Description)
+		if description == "" {
+			description = operation.Kind + " in progress"
+		}
+		details = append(details,
+			"Operation: "+operation.Kind,
+			fmt.Sprintf("Paused: %t", operation.Paused),
+			"Resume: "+operation.ResumeHint,
+			"Abort: "+operation.AbortHint,
+		)
+		if operation.MarkerPath != "" {
+			details = append(details, "Marker: "+operation.MarkerPath)
+		}
+		return Check{
+			Name:    "Git",
+			Status:  StatusWarn,
+			Summary: description + "; workspace is not safe for unrelated work.",
+			Details: details,
+			Hint:    fmt.Sprintf("Resolve the %s with `%s` or abort it with `%s` before starting unrelated lane work.", operation.Kind, operation.ResumeHint, operation.AbortHint),
+			Data:    gitCheckData(identity, nil, nil, operation),
 		}
 	}
 	var baseCommit *gitops.BaseCommitCheck
@@ -1013,7 +1043,7 @@ func checkGit(workspace string) Check {
 				Summary: "Current branch is behind or diverged from base.",
 				Details: details,
 				Hint:    "Review `codog branch freshness` and update the branch before risky edits or PR work.",
-				Data:    gitCheckData(identity, branchFreshness, baseCommit),
+				Data:    gitCheckData(identity, branchFreshness, baseCommit, nil),
 			}
 		}
 	}
@@ -1024,13 +1054,13 @@ func checkGit(workspace string) Check {
 			Summary: "Worktree HEAD does not match the expected base commit.",
 			Details: details,
 			Hint:    "Review `codog stale-base --json` and refresh the worktree before risky edits or PR work.",
-			Data:    gitCheckData(identity, branchFreshness, baseCommit),
+			Data:    gitCheckData(identity, branchFreshness, baseCommit, nil),
 		}
 	}
-	return Check{Name: "Git", Status: StatusOK, Summary: "git worktree is available.", Details: details, Data: gitCheckData(identity, branchFreshness, baseCommit)}
+	return Check{Name: "Git", Status: StatusOK, Summary: "git worktree is available.", Details: details, Data: gitCheckData(identity, branchFreshness, baseCommit, nil)}
 }
 
-func gitCheckData(identity *gitops.Identity, freshness *gitops.BranchFreshness, baseCommit *gitops.BaseCommitCheck) map[string]any {
+func gitCheckData(identity *gitops.Identity, freshness *gitops.BranchFreshness, baseCommit *gitops.BaseCommitCheck, operation *gitops.Operation) map[string]any {
 	data := map[string]any{}
 	if identity != nil {
 		data["identity"] = *identity
@@ -1040,6 +1070,9 @@ func gitCheckData(identity *gitops.Identity, freshness *gitops.BranchFreshness, 
 	}
 	if baseCommit != nil {
 		data["base_commit"] = *baseCommit
+	}
+	if operation != nil {
+		data["operation"] = *operation
 	}
 	if len(data) == 0 {
 		return nil

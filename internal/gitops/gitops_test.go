@@ -106,6 +106,38 @@ func TestInspectIdentityReportsHeadAndDetachedState(t *testing.T) {
 	require.NotEmpty(t, identity.HeadShortSHA)
 }
 
+func TestInspectOperationDetectsPausedGitOperation(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runGit(t, workspace, "init", "-b", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".git", "MERGE_HEAD"), []byte("abc123\n"), 0o644))
+
+	operation, err := InspectOperation(workspace)
+	require.NoError(t, err)
+	require.NotNil(t, operation)
+	require.Equal(t, "merge", operation.Kind)
+	require.True(t, operation.Paused)
+	require.Equal(t, filepath.Join(workspace, ".git"), operation.GitDir)
+	require.Equal(t, filepath.Join(workspace, ".git", "MERGE_HEAD"), operation.MarkerPath)
+	require.Equal(t, "git merge --continue", operation.ResumeHint)
+	require.Equal(t, "git merge --abort", operation.AbortHint)
+	require.Equal(t, "merge in progress", operation.Description)
+}
+
+func TestInspectOperationReturnsNilWhenGitIsIdle(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runGit(t, workspace, "init", "-b", "main")
+
+	operation, err := InspectOperation(workspace)
+	require.NoError(t, err)
+	require.Nil(t, operation)
+}
+
 func TestPreserveStateForIssueFallsBackWithoutRemote(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not available")

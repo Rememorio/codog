@@ -261,6 +261,35 @@ func TestBuildWarnsOnDivergedBaseCommit(t *testing.T) {
 	require.Contains(t, out.String(), "Git base         status=diverged matches=false expected=abc123 actual=def456")
 }
 
+func TestBuildWarnsOnPausedGitOperation(t *testing.T) {
+	snapshot := Build(Options{
+		Version:   "test-version",
+		GitStatus: "## main",
+		GitOperation: &gitops.Operation{
+			Kind:        "rebase",
+			Paused:      true,
+			ResumeHint:  "git rebase --continue",
+			AbortHint:   "git rebase --abort",
+			Description: "rebase in progress",
+		},
+		GitFreshness: &gitops.BranchFreshness{
+			Branch: "main",
+			Base:   "main",
+			Status: "fresh",
+			Fresh:  true,
+		},
+	})
+
+	require.Equal(t, "warn", snapshot.Status)
+	require.NotNil(t, snapshot.Git.Operation)
+	require.Equal(t, "rebase", snapshot.Git.Operation.Kind)
+	require.True(t, snapshot.Git.Operation.Paused)
+
+	var out bytes.Buffer
+	RenderText(&out, snapshot)
+	require.Contains(t, out.String(), "Git operation    kind=rebase paused=true resume=git rebase --continue abort=git rebase --abort")
+}
+
 func TestBuildMarksInvalidValidationDegraded(t *testing.T) {
 	index := 0
 	snapshot := Build(Options{

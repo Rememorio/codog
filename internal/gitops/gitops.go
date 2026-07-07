@@ -65,6 +65,18 @@ type Identity struct {
 	GitDir       string `json:"git_dir,omitempty"`
 }
 
+// Operation describes an in-progress git operation that makes the workspace
+// unsafe for unrelated lane work.
+type Operation struct {
+	Kind        string `json:"kind"`
+	Paused      bool   `json:"paused"`
+	GitDir      string `json:"git_dir,omitempty"`
+	MarkerPath  string `json:"marker_path,omitempty"`
+	ResumeHint  string `json:"resume_hint,omitempty"`
+	AbortHint   string `json:"abort_hint,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
 type BaseCommitSource struct {
 	Kind  string `json:"kind"`
 	Value string `json:"value"`
@@ -177,6 +189,76 @@ func InspectIdentity(workspace string) (Identity, error) {
 		identity.IsDetached = true
 	}
 	return identity, nil
+}
+
+// InspectOperation reports whether git is paused in a merge, rebase,
+// cherry-pick, revert, or bisect operation.
+func InspectOperation(workspace string) (*Operation, error) {
+	gitDir, err := git(workspace, "rev-parse", "--git-dir")
+	if err != nil {
+		return nil, err
+	}
+	gitDir = normalizeGitDir(workspace, gitDir)
+	markers := []struct {
+		kind        string
+		paths       []string
+		resumeHint  string
+		abortHint   string
+		description string
+	}{
+		{
+			kind:        "rebase",
+			paths:       []string{"rebase-merge", "rebase-apply"},
+			resumeHint:  "git rebase --continue",
+			abortHint:   "git rebase --abort",
+			description: "rebase in progress",
+		},
+		{
+			kind:        "merge",
+			paths:       []string{"MERGE_HEAD"},
+			resumeHint:  "git merge --continue",
+			abortHint:   "git merge --abort",
+			description: "merge in progress",
+		},
+		{
+			kind:        "cherry_pick",
+			paths:       []string{"CHERRY_PICK_HEAD"},
+			resumeHint:  "git cherry-pick --continue",
+			abortHint:   "git cherry-pick --abort",
+			description: "cherry-pick in progress",
+		},
+		{
+			kind:        "revert",
+			paths:       []string{"REVERT_HEAD"},
+			resumeHint:  "git revert --continue",
+			abortHint:   "git revert --abort",
+			description: "revert in progress",
+		},
+		{
+			kind:        "bisect",
+			paths:       []string{"BISECT_LOG"},
+			resumeHint:  "git bisect good|bad",
+			abortHint:   "git bisect reset",
+			description: "bisect in progress",
+		},
+	}
+	for _, marker := range markers {
+		for _, relative := range marker.paths {
+			path := filepath.Join(gitDir, relative)
+			if _, err := os.Stat(path); err == nil {
+				return &Operation{
+					Kind:        marker.kind,
+					Paused:      true,
+					GitDir:      gitDir,
+					MarkerPath:  path,
+					ResumeHint:  marker.resumeHint,
+					AbortHint:   marker.abortHint,
+					Description: marker.description,
+				}, nil
+			}
+		}
+	}
+	return nil, nil
 }
 
 func Run(workspace string, args ...string) (string, error) {

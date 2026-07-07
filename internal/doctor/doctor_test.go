@@ -608,6 +608,48 @@ func TestRunWarnsForStaleBranchFreshness(t *testing.T) {
 	require.Contains(t, strings.Join(git.Details, "\n"), "Missing: fix: main update")
 }
 
+func TestRunWarnsForPausedGitOperation(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runTestGit(t, workspace, "init", "-b", "main")
+	runTestGit(t, workspace, "config", "user.email", "codog@example.test")
+	runTestGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "base.txt"), []byte("base\n"), 0o644))
+	runTestGit(t, workspace, "add", ".")
+	runTestGit(t, workspace, "commit", "-m", "chore: base")
+
+	report := Run(Options{
+		Workspace:      workspace,
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+		GitOperation: &gitops.Operation{
+			Kind:       "rebase",
+			Paused:     true,
+			ResumeHint: "git rebase --continue",
+			AbortHint:  "git rebase --abort",
+		},
+	})
+
+	git := findCheck(t, report, "Git")
+	require.Equal(t, StatusWarn, git.Status)
+	require.Contains(t, git.Summary, "rebase in progress")
+	require.Contains(t, git.Hint, "git rebase --continue")
+	require.Contains(t, strings.Join(git.Details, "\n"), "Operation: rebase")
+	operation, ok := git.Data["operation"].(gitops.Operation)
+	require.True(t, ok)
+	require.Equal(t, "rebase", operation.Kind)
+	require.True(t, operation.Paused)
+}
+
 func TestRunReportsGitIdentityData(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not available")
