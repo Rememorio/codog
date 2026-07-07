@@ -1,6 +1,7 @@
 package reporting
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -438,6 +439,75 @@ func TestProjectReportRedactsBySensitivityPolicy(t *testing.T) {
 	require.NotContains(t, item, "implementation")
 	require.Contains(t, claimByID(t, projection.CanonicalReport.Claims, "claim-"+filed.ItemID+"-root-cause").Text, "operator trace")
 	require.NotNil(t, projection.CanonicalReport.NewItems[0].Handoff)
+}
+
+func TestProjectReportRecordsDeterministicIdentityInputs(t *testing.T) {
+	configHome := t.TempDir()
+	roadmapStore := roadmap.NewStore(configHome)
+	reportStore := NewStore(configHome)
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	_, err := roadmapStore.File(roadmap.Filing{
+		Title:    "deterministic projection",
+		Priority: roadmap.PriorityP1,
+		Evidence: []roadmap.EvidenceAttachment{{
+			Role:      roadmap.EvidenceRootCauseHint,
+			Type:      "log",
+			Reference: "log:deterministic",
+			Preview:   "internal render detail",
+		}},
+		Now: now,
+	})
+	require.NoError(t, err)
+	report, err := reportStore.Generate("dogfood", now.Add(time.Minute))
+	require.NoError(t, err)
+	capabilities := reportschema.ConsumerCapabilities{
+		Consumer:       "public-viewer",
+		SchemaVersions: []string{reportschema.ReportingReportSchemaV1},
+		MaxSensitivity: reportschema.SensitivityPublic,
+	}
+
+	first, err := ProjectReport(report, capabilities, "full", "verbose")
+	require.NoError(t, err)
+	second, err := ProjectReport(report, capabilities, "full", "verbose")
+	require.NoError(t, err)
+
+	require.Equal(t, first.ProjectionID, second.ProjectionID)
+	require.Equal(t, first.Provenance.IdentityInputHash, second.Provenance.IdentityInputHash)
+	require.Equal(t, first.Provenance.PayloadHash, second.Provenance.PayloadHash)
+	require.Equal(t, first.Provenance.CanonicalEquivalenceHash, second.Provenance.CanonicalEquivalenceHash)
+	require.Equal(t, first.ProjectionID, first.Provenance.CanonicalEquivalenceHash)
+	require.Equal(t, reportschema.ReportingReportSchemaV1, first.Provenance.IdentityInputs.ProjectionSchemaVersion)
+	require.Equal(t, report.SchemaVersion, first.Provenance.IdentityInputs.SourceSchemaVersion)
+	require.Equal(t, report.Identity.ContentHash, first.Provenance.IdentityInputs.SourceContentHash)
+	require.Equal(t, reportschema.ReportingProjectionPolicyV1, first.Provenance.IdentityInputs.ProjectionPolicyID)
+	require.Equal(t, "public-viewer", first.Provenance.IdentityInputs.Consumer.Consumer)
+	require.Equal(t, reportschema.SensitivityPublic, first.Provenance.IdentityInputs.Consumer.MaxSensitivity)
+	require.Equal(t, "full", first.Provenance.IdentityInputs.View)
+	require.Equal(t, "verbose", first.Provenance.IdentityInputs.Verbosity)
+	require.True(t, first.Provenance.RenderingChanged)
+
+	canonicalHash, err := ProjectionCanonicalHash(first)
+	require.NoError(t, err)
+	require.Equal(t, first.Provenance.CanonicalEquivalenceHash, canonicalHash)
+	data, err := json.MarshalIndent(first, "", "  ")
+	require.NoError(t, err)
+	var roundTripped ReportProjection
+	require.NoError(t, json.Unmarshal(data, &roundTripped))
+	roundTripHash, err := ProjectionCanonicalHash(roundTripped)
+	require.NoError(t, err)
+	require.Equal(t, canonicalHash, roundTripHash)
+
+	internal, err := ProjectReport(report, reportschema.ConsumerCapabilities{
+		Consumer:       "public-viewer",
+		SchemaVersions: []string{reportschema.ReportingReportSchemaV1},
+		MaxSensitivity: reportschema.SensitivityInternal,
+	}, "full", "verbose")
+	require.NoError(t, err)
+	require.Equal(t, first.Provenance.SourceContentHash, internal.Provenance.SourceContentHash)
+	require.NotEqual(t, first.Provenance.IdentityInputHash, internal.Provenance.IdentityInputHash)
+	require.NotEqual(t, first.Provenance.PayloadHash, internal.Provenance.PayloadHash)
+	require.NotEqual(t, first.ProjectionID, internal.ProjectionID)
 }
 
 func TestProjectReportOmitNegativeEvidenceForPublicPolicy(t *testing.T) {

@@ -77,6 +77,10 @@ func TestRegistryV1IsSelfDescribing(t *testing.T) {
 	require.Contains(t, fieldIDs(registry), "atomic_update.message_parts[]")
 	require.Contains(t, fieldIDs(registry), "projection.provenance.redactions[]")
 	require.Contains(t, fieldIDs(registry), "projection.provenance.redactions[].original_hash")
+	require.Contains(t, fieldIDs(registry), "projection.provenance.identity_inputs")
+	require.Contains(t, fieldIDs(registry), "projection.provenance.identity_input_hash")
+	require.Contains(t, fieldIDs(registry), "projection.provenance.payload_hash")
+	require.Contains(t, fieldIDs(registry), "projection.provenance.canonical_equivalence_hash")
 	require.Contains(t, reportSchemaVersions(registry), SchemaV1)
 	require.Contains(t, reportSchemaVersions(registry), ReportingReportSchemaV1)
 	require.Contains(t, reportSchemaVersions(registry), ReportingSnapshotSchemaV1)
@@ -93,6 +97,7 @@ func TestRegistryV1IsSelfDescribing(t *testing.T) {
 	require.Contains(t, projection.Fields, "canonical_report")
 	require.Contains(t, projection.Fields, "view")
 	require.Contains(t, projection.Fields, "projection.provenance.redactions[]")
+	require.Contains(t, projection.Fields, "projection.provenance.canonical_equivalence_hash")
 
 	mockParity := registryReportByID(t, registry, "mock_parity_report")
 	require.Equal(t, "codog mock-parity --json", mockParity.Command)

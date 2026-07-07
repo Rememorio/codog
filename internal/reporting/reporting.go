@@ -118,24 +118,38 @@ type ReportProjection struct {
 }
 
 type ReportProjectionProvenance struct {
-	PolicyID                string                             `json:"policy_id"`
-	CacheKey                string                             `json:"cache_key,omitempty"`
-	SourceSchemaVersion     string                             `json:"source_schema_version"`
-	SourceReportID          string                             `json:"source_report_id"`
-	SourceSnapshotID        string                             `json:"source_snapshot_id"`
-	SourceContentHash       string                             `json:"source_content_hash"`
-	Consumer                reportschema.ConsumerCapabilities  `json:"consumer"`
-	View                    string                             `json:"view"`
-	Verbosity               string                             `json:"verbosity"`
-	SourceChanged           bool                               `json:"source_changed"`
-	RenderingChanged        bool                               `json:"rendering_changed"`
-	DuplicateOfProjectionID string                             `json:"duplicate_of_projection_id,omitempty"`
-	SupersedesProjectionID  string                             `json:"supersedes_projection_id,omitempty"`
-	LatestCompatible        bool                               `json:"latest_compatible"`
-	StaleCached             bool                               `json:"stale_cached"`
-	Downgraded              bool                               `json:"downgraded"`
-	OmittedFieldFamilies    []string                           `json:"omitted_field_families,omitempty"`
-	Redactions              []reportschema.RedactionProvenance `json:"redactions,omitempty"`
+	PolicyID                 string                             `json:"policy_id"`
+	CacheKey                 string                             `json:"cache_key,omitempty"`
+	IdentityInputs           ReportProjectionIdentityInputs     `json:"identity_inputs"`
+	IdentityInputHash        string                             `json:"identity_input_hash"`
+	PayloadHash              string                             `json:"payload_hash"`
+	CanonicalEquivalenceHash string                             `json:"canonical_equivalence_hash"`
+	SourceSchemaVersion      string                             `json:"source_schema_version"`
+	SourceReportID           string                             `json:"source_report_id"`
+	SourceSnapshotID         string                             `json:"source_snapshot_id"`
+	SourceContentHash        string                             `json:"source_content_hash"`
+	Consumer                 reportschema.ConsumerCapabilities  `json:"consumer"`
+	View                     string                             `json:"view"`
+	Verbosity                string                             `json:"verbosity"`
+	SourceChanged            bool                               `json:"source_changed"`
+	RenderingChanged         bool                               `json:"rendering_changed"`
+	DuplicateOfProjectionID  string                             `json:"duplicate_of_projection_id,omitempty"`
+	SupersedesProjectionID   string                             `json:"supersedes_projection_id,omitempty"`
+	LatestCompatible         bool                               `json:"latest_compatible"`
+	StaleCached              bool                               `json:"stale_cached"`
+	Downgraded               bool                               `json:"downgraded"`
+	OmittedFieldFamilies     []string                           `json:"omitted_field_families,omitempty"`
+	Redactions               []reportschema.RedactionProvenance `json:"redactions,omitempty"`
+}
+
+type ReportProjectionIdentityInputs struct {
+	ProjectionSchemaVersion string                            `json:"projection_schema_version"`
+	SourceSchemaVersion     string                            `json:"source_schema_version"`
+	SourceContentHash       string                            `json:"source_content_hash"`
+	ProjectionPolicyID      string                            `json:"projection_policy_id"`
+	Consumer                reportschema.ConsumerCapabilities `json:"consumer"`
+	View                    string                            `json:"view"`
+	Verbosity               string                            `json:"verbosity"`
 }
 
 type ReportProjectionCacheEntry struct {
@@ -283,42 +297,115 @@ func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities
 		return ReportProjection{}, err
 	}
 	sourceHash := identity.ContentHash
-	renderingChanged := isAudienceReportView(view) || restrictFamilies
+	inputs := ReportProjectionIdentityInputs{
+		ProjectionSchemaVersion: reportschema.ReportingReportSchemaV1,
+		SourceSchemaVersion:     report.SchemaVersion,
+		SourceContentHash:       sourceHash,
+		ProjectionPolicyID:      reportschema.ReportingProjectionPolicyV1,
+		Consumer:                capabilities,
+		View:                    view,
+		Verbosity:               verbosity,
+	}
+	identityInputHash, err := stableHash(inputs)
+	if err != nil {
+		return ReportProjection{}, err
+	}
+	payloadHash, err := stableHash(payload)
+	if err != nil {
+		return ReportProjection{}, err
+	}
+	equivalenceHash, err := projectionEquivalenceHash(
+		reportschema.ReportingReportSchemaV1,
+		inputs,
+		identityInputHash,
+		payloadHash,
+		redactions,
+		omitted,
+	)
+	if err != nil {
+		return ReportProjection{}, err
+	}
+	renderingChanged := isAudienceReportView(view) || restrictFamilies || len(redactions) > 0
 	projection := ReportProjection{
 		SchemaVersion: reportschema.ReportingReportSchemaV1,
+		ProjectionID:  equivalenceHash,
 		View:          view,
 		Verbosity:     verbosity,
 		Provenance: ReportProjectionProvenance{
-			PolicyID:             reportschema.ReportingProjectionPolicyV1,
-			SourceSchemaVersion:  report.SchemaVersion,
-			SourceReportID:       report.ReportID,
-			SourceSnapshotID:     report.SnapshotID,
-			SourceContentHash:    sourceHash,
-			Consumer:             capabilities,
-			View:                 view,
-			Verbosity:            verbosity,
-			SourceChanged:        false,
-			RenderingChanged:     renderingChanged,
-			LatestCompatible:     true,
-			StaleCached:          false,
-			Downgraded:           !supportsSchema || len(omitted) > 0 || isAudienceReportView(view),
-			OmittedFieldFamilies: omitted,
-			Redactions:           redactions,
+			PolicyID:                 reportschema.ReportingProjectionPolicyV1,
+			IdentityInputs:           inputs,
+			IdentityInputHash:        identityInputHash,
+			PayloadHash:              payloadHash,
+			CanonicalEquivalenceHash: equivalenceHash,
+			SourceSchemaVersion:      report.SchemaVersion,
+			SourceReportID:           report.ReportID,
+			SourceSnapshotID:         report.SnapshotID,
+			SourceContentHash:        sourceHash,
+			Consumer:                 capabilities,
+			View:                     view,
+			Verbosity:                verbosity,
+			SourceChanged:            false,
+			RenderingChanged:         renderingChanged,
+			LatestCompatible:         true,
+			StaleCached:              false,
+			Downgraded:               !supportsSchema || len(omitted) > 0 || isAudienceReportView(view),
+			OmittedFieldFamilies:     omitted,
+			Redactions:               redactions,
 		},
 		Payload:         payload,
 		CanonicalReport: report,
 	}
-	projectionID, err := stableHash(map[string]any{
-		"view":       projection.View,
-		"verbosity":  projection.Verbosity,
-		"provenance": projection.Provenance,
-		"payload":    projection.Payload,
-	})
-	if err != nil {
-		return ReportProjection{}, err
-	}
-	projection.ProjectionID = projectionID
 	return projection, nil
+}
+
+// ProjectionCanonicalHash returns the stable canonical-equivalence hash for a projection.
+func ProjectionCanonicalHash(projection ReportProjection) (string, error) {
+	inputs := projection.Provenance.IdentityInputs
+	identityInputHash := projection.Provenance.IdentityInputHash
+	if identityInputHash == "" {
+		var err error
+		identityInputHash, err = stableHash(inputs)
+		if err != nil {
+			return "", err
+		}
+	}
+	payloadHash := projection.Provenance.PayloadHash
+	if payloadHash == "" {
+		var err error
+		payloadHash, err = stableHash(projection.Payload)
+		if err != nil {
+			return "", err
+		}
+	}
+	schemaVersion := projection.SchemaVersion
+	if schemaVersion == "" {
+		schemaVersion = reportschema.ReportingReportSchemaV1
+	}
+	return projectionEquivalenceHash(
+		schemaVersion,
+		inputs,
+		identityInputHash,
+		payloadHash,
+		projection.Provenance.Redactions,
+		projection.Provenance.OmittedFieldFamilies,
+	)
+}
+
+func projectionEquivalenceHash(schemaVersion string, inputs ReportProjectionIdentityInputs, identityInputHash string, payloadHash string, redactions []reportschema.RedactionProvenance, omitted []string) (string, error) {
+	if redactions == nil {
+		redactions = []reportschema.RedactionProvenance{}
+	}
+	if omitted == nil {
+		omitted = []string{}
+	}
+	return stableHash(map[string]any{
+		"schema_version":         schemaVersion,
+		"identity_inputs_hash":   identityInputHash,
+		"identity_inputs":        inputs,
+		"payload_hash":           payloadHash,
+		"redactions":             redactions,
+		"omitted_field_families": omitted,
+	})
 }
 
 func (s Store) GenerateWithOptions(channel string, now time.Time, options GenerateOptions) (Report, error) {
