@@ -42827,11 +42827,17 @@ func parseStaleBaseArgs(args []string) (staleBaseRequest, error) {
 			if i >= len(args) {
 				return req, errors.New("stale-base base commit is required")
 			}
-			req.BaseCommit = args[i]
+			if err := setStaleBaseCommit(&req, args[i]); err != nil {
+				return req, err
+			}
 		case strings.HasPrefix(arg, "--base-commit="):
-			req.BaseCommit = strings.TrimPrefix(arg, "--base-commit=")
+			if err := setStaleBaseCommit(&req, strings.TrimPrefix(arg, "--base-commit=")); err != nil {
+				return req, err
+			}
 		case strings.HasPrefix(arg, "--base="):
-			req.BaseCommit = strings.TrimPrefix(arg, "--base=")
+			if err := setStaleBaseCommit(&req, strings.TrimPrefix(arg, "--base=")); err != nil {
+				return req, err
+			}
 		case strings.HasPrefix(arg, "-"):
 			return req, fmt.Errorf("unknown stale-base flag %q", arg)
 		default:
@@ -42862,9 +42868,20 @@ func parseStaleBaseArgs(args []string) (staleBaseRequest, error) {
 		if strings.TrimSpace(req.BaseCommit) != "" {
 			return req, errors.New("stale-base accepts only one base commit")
 		}
-		req.BaseCommit = rest[0]
+		if err := setStaleBaseCommit(&req, rest[0]); err != nil {
+			return req, err
+		}
 	}
 	return req, nil
+}
+
+func setStaleBaseCommit(req *staleBaseRequest, value string) error {
+	value = strings.TrimSpace(value)
+	if err := gitops.ValidateBaseCommitValue(value); err != nil {
+		return err
+	}
+	req.BaseCommit = value
+	return nil
 }
 
 func renderStaleBaseReport(out io.Writer, report staleBaseReport) {

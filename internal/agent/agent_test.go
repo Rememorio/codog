@@ -14365,6 +14365,16 @@ func TestStaleBaseCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestStaleBaseRejectsInvalidBaseCommit(t *testing.T) {
+	workspace := initGitRepo(t)
+	var out bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
+
+	require.ErrorContains(t, app.StaleBase([]string{"--base-commit", "not-a-sha", "--json"}), "hexadecimal")
+	require.Empty(t, out.String())
+	require.ErrorContains(t, app.StaleBase([]string{"--base-commit", "--json"}), "cannot start")
+}
+
 func TestTrustCommandAndSlash(t *testing.T) {
 	parent := t.TempDir()
 	workspace := filepath.Join(parent, "repo-a")

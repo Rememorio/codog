@@ -600,6 +600,12 @@ func CheckBaseCommit(workspace string, source *BaseCommitSource) BaseCommitCheck
 	if source == nil || strings.TrimSpace(source.Value) == "" {
 		return BaseCommitCheck{Status: "no_expected_base", Matches: true}
 	}
+	expectedRaw := strings.TrimSpace(source.Value)
+	if err := ValidateBaseCommitValue(expectedRaw); err != nil {
+		check := BaseCommitCheck{Status: "invalid_expected_base", Matches: false, Source: source, Expected: expectedRaw}
+		check.Warning = FormatStaleBaseWarning(check)
+		return check
+	}
 	head, err := resolveRev(workspace, "HEAD")
 	if err != nil {
 		return BaseCommitCheck{
@@ -609,13 +615,9 @@ func CheckBaseCommit(workspace string, source *BaseCommitSource) BaseCommitCheck
 			Warning: "warning: stale-base check skipped; not inside a git repository.",
 		}
 	}
-	expectedRaw := strings.TrimSpace(source.Value)
-	expected, err := resolveRev(workspace, expectedRaw)
+	expected, err := resolveCommitRev(workspace, expectedRaw)
 	if err != nil {
-		if headMatchesRawExpected(head, expectedRaw) {
-			return BaseCommitCheck{Status: "matches", Matches: true, Source: source, Expected: expectedRaw, Actual: head}
-		}
-		check := BaseCommitCheck{Status: "diverged", Matches: false, Source: source, Expected: expectedRaw, Actual: head}
+		check := BaseCommitCheck{Status: "invalid_expected_base", Matches: false, Source: source, Expected: expectedRaw, Actual: head}
 		check.Warning = FormatStaleBaseWarning(check)
 		return check
 	}
@@ -635,21 +637,40 @@ func CheckBaseCommitForWorkspace(workspace string, flagValue string) (BaseCommit
 	return CheckBaseCommit(workspace, source), nil
 }
 
+func ValidateBaseCommitValue(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("base commit is required")
+	}
+	if strings.HasPrefix(value, "-") {
+		return fmt.Errorf("base commit %q cannot start with '-'", value)
+	}
+	if len(value) < 7 || len(value) > 40 {
+		return fmt.Errorf("base commit %q must be a 7 to 40 character hexadecimal commit id", value)
+	}
+	for _, r := range value {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
+			continue
+		}
+		return fmt.Errorf("base commit %q must be a 7 to 40 character hexadecimal commit id", value)
+	}
+	return nil
+}
+
 func FormatStaleBaseWarning(check BaseCommitCheck) string {
 	switch check.Status {
 	case "diverged":
 		return fmt.Sprintf("warning: worktree HEAD (%s) does not match expected base commit (%s). Session may run against a stale codebase.", check.Actual, check.Expected)
+	case "invalid_expected_base":
+		if check.Actual != "" {
+			return fmt.Sprintf("warning: expected base commit (%s) is not a valid reachable commit. Session may run without a trustworthy base check.", check.Expected)
+		}
+		return fmt.Sprintf("warning: expected base commit (%s) is not a valid commit id.", check.Expected)
 	case "not_git_repo":
 		return "warning: stale-base check skipped; not inside a git repository."
 	default:
 		return ""
 	}
-}
-
-func headMatchesRawExpected(head string, expected string) bool {
-	head = strings.TrimSpace(head)
-	expected = strings.TrimSpace(expected)
-	return head != "" && expected != "" && (strings.HasPrefix(head, expected) || strings.HasPrefix(expected, head))
 }
 
 func annotateBranchFreshness(freshness BranchFreshness) BranchFreshness {
@@ -830,6 +851,14 @@ func resolveRev(workspace string, rev string) (string, error) {
 		return "", errors.New("git revision is required")
 	}
 	return git(workspace, "rev-parse", rev)
+}
+
+func resolveCommitRev(workspace string, rev string) (string, error) {
+	rev = strings.TrimSpace(rev)
+	if rev == "" {
+		return "", errors.New("git revision is required")
+	}
+	return git(workspace, "rev-parse", "--verify", rev+"^{commit}")
 }
 
 func Blame(workspace string, path string, line int) (string, error) {

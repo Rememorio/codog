@@ -399,6 +399,21 @@ func TestCheckBaseCommit(t *testing.T) {
 	require.Equal(t, baseSHA, check.Expected)
 	require.Equal(t, nextSHA, check.Actual)
 	require.Contains(t, check.Warning, "stale codebase")
+
+	check, err = CheckBaseCommitForWorkspace(workspace, "not-a-sha")
+	require.NoError(t, err)
+	require.Equal(t, "invalid_expected_base", check.Status)
+	require.False(t, check.Matches)
+	require.Equal(t, "not-a-sha", check.Expected)
+	require.Contains(t, check.Warning, "not a valid commit id")
+
+	check, err = CheckBaseCommitForWorkspace(workspace, "0123456789abcdef0123456789abcdef01234567")
+	require.NoError(t, err)
+	require.Equal(t, "invalid_expected_base", check.Status)
+	require.False(t, check.Matches)
+	require.Equal(t, "0123456789abcdef0123456789abcdef01234567", check.Expected)
+	require.Equal(t, nextSHA, check.Actual)
+	require.Contains(t, check.Warning, "not a valid reachable commit")
 }
 
 func TestResolveExpectedBasePrefersFlagThenCodogThenClaw(t *testing.T) {
@@ -422,6 +437,14 @@ func TestResolveExpectedBasePrefersFlagThenCodogThenClaw(t *testing.T) {
 	require.Equal(t, "claw_file", source.Kind)
 	require.Equal(t, "claw-base", source.Value)
 	require.Equal(t, filepath.Join(workspace, ".claw-base"), source.Path)
+}
+
+func TestValidateBaseCommitValue(t *testing.T) {
+	require.NoError(t, ValidateBaseCommitValue("abcdef1"))
+	require.NoError(t, ValidateBaseCommitValue("ABCDEF1234567890ABCDEF1234567890ABCDEF12"))
+	require.ErrorContains(t, ValidateBaseCommitValue("abc123"), "7 to 40")
+	require.ErrorContains(t, ValidateBaseCommitValue("not-a-sha"), "hexadecimal")
+	require.ErrorContains(t, ValidateBaseCommitValue("--json"), "cannot start")
 }
 
 func TestCheckBaseCommitNoExpectedBaseAndNotGitRepo(t *testing.T) {
