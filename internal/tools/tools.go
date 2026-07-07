@@ -48,6 +48,7 @@ import (
 	"github.com/Rememorio/codog/internal/policyengine"
 	"github.com/Rememorio/codog/internal/powershellvalidation"
 	"github.com/Rememorio/codog/internal/recovery"
+	"github.com/Rememorio/codog/internal/reporting"
 	"github.com/Rememorio/codog/internal/roadmap"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/shellstate"
@@ -175,6 +176,8 @@ var claudeToolAliases = map[string]string{
 	"nudgetool":                    "nudge",
 	"roadmappinpoint":              "roadmap_pinpoint",
 	"roadmappinpointtool":          "roadmap_pinpoint",
+	"reportbackpressure":           "report_backpressure",
+	"reportbackpressuretool":       "report_backpressure",
 	"edit":                         "edit_file",
 	"editfile":                     "edit_file",
 	"edittool":                     "edit_file",
@@ -450,6 +453,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"RecoveryStatusTool":           "recovery_status",
 	"RoadmapPinpoint":              "roadmap_pinpoint",
 	"RoadmapPinpointTool":          "roadmap_pinpoint",
+	"ReportBackpressure":           "report_backpressure",
+	"ReportBackpressureTool":       "report_backpressure",
 	"RemoteTrigger":                "remote_trigger",
 	"RemoteTriggerTool":            "remote_trigger",
 	"RunTaskPacket":                "run_task_packet",
@@ -687,6 +692,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(RecoveryAttemptTool{ConfigHome: opts.ConfigHome})
 	r.Register(RecoveryStatusTool{ConfigHome: opts.ConfigHome})
 	r.Register(RoadmapPinpointTool{ConfigHome: opts.ConfigHome})
+	r.Register(ReportBackpressureTool{ConfigHome: opts.ConfigHome})
 	r.Register(NudgeTool{ConfigHome: opts.ConfigHome})
 	r.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
 	r.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
@@ -9052,6 +9058,66 @@ func roadmapEvidenceFromPayload(values []roadmapEvidencePayload, defaultTime tim
 		evidence = append(evidence, attachment)
 	}
 	return evidence, nil
+}
+
+type ReportBackpressureTool struct {
+	ConfigHome string
+}
+
+func (ReportBackpressureTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "report_backpressure",
+		Description: "Generate delta-first dogfood reports with per-channel cursors and stored full snapshots.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"action":      map[string]any{"type": "string", "enum": []string{"generate", "snapshot"}},
+				"channel":     map[string]any{"type": "string"},
+				"snapshot_id": map[string]any{"type": "string"},
+				"now":         map[string]any{"type": "string", "format": "date-time"},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (ReportBackpressureTool) Permission() Permission { return PermissionReadOnly }
+
+func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Action     string `json:"action"`
+		Channel    string `json:"channel"`
+		SnapshotID string `json:"snapshot_id"`
+		Now        string `json:"now"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	action := strings.ToLower(strings.TrimSpace(payload.Action))
+	if action == "" {
+		action = "generate"
+	}
+	store := reporting.NewStore(t.ConfigHome)
+	switch action {
+	case "generate":
+		now, err := parseOptionalRFC3339(payload.Now)
+		if err != nil {
+			return "", err
+		}
+		report, err := store.Generate(payload.Channel, now)
+		if err != nil {
+			return "", err
+		}
+		return pretty(report), nil
+	case "snapshot":
+		snapshot, err := store.GetSnapshot(payload.SnapshotID)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"kind": "report_backpressure_snapshot", "snapshot": snapshot}), nil
+	default:
+		return "", fmt.Errorf("unknown report_backpressure action %q", payload.Action)
+	}
 }
 
 func parseOptionalRFC3339(value string) (time.Time, error) {

@@ -1157,6 +1157,7 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "mcp", CanonicalToolName("MCP"))
 	require.Equal(t, "read_file", CanonicalToolName("ReadFile"))
 	require.Equal(t, "structured_output", CanonicalToolName("StructuredOutputTool"))
+	require.Equal(t, "report_backpressure", CanonicalToolName("ReportBackpressureTool"))
 	require.Equal(t, "tool_search", CanonicalToolName("ToolSearch"))
 	require.Equal(t, "sleep", CanonicalToolName("SleepTool"))
 	require.Equal(t, "repl", CanonicalToolName("REPLTool"))
@@ -1182,6 +1183,7 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "send_user_message", aliases["SendUserMessageTool"])
 	require.Equal(t, "skill", aliases["Skill"])
 	require.Equal(t, "structured_output", aliases["StructuredOutputTool"])
+	require.Equal(t, "report_backpressure", aliases["ReportBackpressureTool"])
 	require.Equal(t, "testing_permission", aliases["TestingPermission"])
 	require.Equal(t, "tool_search", aliases["ToolSearch"])
 	require.Equal(t, "sleep", aliases["SleepTool"])
@@ -1452,7 +1454,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 84)
+	require.Len(t, infos, 85)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -1890,6 +1892,8 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"ReadMcpResourceTool":          "read_mcp_resource",
 		"RemoteTrigger":                "remote_trigger",
 		"RemoteTriggerTool":            "remote_trigger",
+		"ReportBackpressure":           "report_backpressure",
+		"ReportBackpressureTool":       "report_backpressure",
 		"RunTaskPacket":                "run_task_packet",
 		"RunTaskPacketTool":            "run_task_packet",
 		"SendMessage":                  "send_user_message",
@@ -4201,6 +4205,51 @@ func TestRoadmapPinpointToolFilesAndUpdatesLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, listOut, `"kind": "roadmap_pinpoint_list"`)
 	require.Contains(t, listOut, `"count": 1`)
+}
+
+func TestReportBackpressureToolCollapsesRepeatedRoadmapReports(t *testing.T) {
+	configHome := t.TempDir()
+	roadmapTool := RoadmapPinpointTool{ConfigHome: configHome}
+	reportTool := ReportBackpressureTool{ConfigHome: configHome}
+
+	fileOut, err := roadmapTool.Execute(context.Background(), []byte(`{"action":"file","title":"collapse unchanged reports","description":"avoid repeated backlog spam","priority":"p1","severity":"high","impact":"observability_debt","now":"2026-07-07T13:00:00Z"}`))
+	require.NoError(t, err)
+	var filed struct {
+		ItemID string `json:"item_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(fileOut), &filed))
+
+	firstOut, err := reportTool.Execute(context.Background(), []byte(`{"action":"generate","channel":"dogfood","now":"2026-07-07T13:01:00Z"}`))
+	require.NoError(t, err)
+	require.Contains(t, firstOut, `"kind": "report_backpressure"`)
+	require.Contains(t, firstOut, `"new_items": [`)
+	require.Contains(t, firstOut, `"unchanged_count": 0`)
+	require.Contains(t, firstOut, `"full_snapshot_stored": true`)
+	var first struct {
+		SnapshotID string `json:"snapshot_id"`
+		ReportID   string `json:"report_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(firstOut), &first))
+	require.NotEmpty(t, first.SnapshotID)
+
+	secondOut, err := reportTool.Execute(context.Background(), []byte(`{"action":"generate","channel":"dogfood","now":"2026-07-07T13:02:00Z"}`))
+	require.NoError(t, err)
+	require.Contains(t, secondOut, `"unchanged_count": 1`)
+	require.Contains(t, secondOut, `"collapsed": true`)
+	require.NotContains(t, secondOut, `"new_items"`)
+	require.Contains(t, secondOut, `"previous_report_id": "`+first.ReportID+`"`)
+
+	_, err = roadmapTool.Execute(context.Background(), []byte(`{"action":"update","id":"`+filed.ItemID+`","priority":"p0","severity":"critical","now":"2026-07-07T13:03:00Z"}`))
+	require.NoError(t, err)
+	thirdOut, err := reportTool.Execute(context.Background(), []byte(`{"action":"generate","channel":"dogfood","now":"2026-07-07T13:04:00Z"}`))
+	require.NoError(t, err)
+	require.Contains(t, thirdOut, `"changed_items": [`)
+	require.Contains(t, thirdOut, `"priority": "p0"`)
+
+	snapshotOut, err := reportTool.Execute(context.Background(), []byte(`{"action":"snapshot","snapshot_id":"`+first.SnapshotID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, snapshotOut, `"kind": "report_backpressure_snapshot"`)
+	require.Contains(t, snapshotOut, `"schema_version": "codog.reporting.snapshot.v1"`)
 }
 
 func TestTaskSuperviseToolRestartsEligibleTasks(t *testing.T) {

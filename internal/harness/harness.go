@@ -259,6 +259,7 @@ var scenarioOrder = []string{
 	"nudge_ack_dedupe_roundtrip",
 	"roadmap_pinpoint_lifecycle_roundtrip",
 	"report_atomic_update_roundtrip",
+	"report_backpressure_roundtrip",
 	"agent_markdown_definition_roundtrip",
 	"background_agent_run_roundtrip",
 	"remote_trigger_roundtrip",
@@ -825,6 +826,7 @@ func Run(ctx context.Context) (Report, error) {
 		nudgeAckDedupeScenario(),
 		roadmapPinpointLifecycleScenario(),
 		reportAtomicUpdateScenario(),
+		reportBackpressureScenario(),
 		agentMarkdownDefinitionScenario(),
 		backgroundAgentRunScenario(),
 		remoteTriggerScenario(),
@@ -1742,6 +1744,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "roadmap",
 		Description: "Canonicalizes one logical dogfood update across misordered and partial chat transport fragments.",
 		ParityRefs:  []string{"Atomic dogfood report", "Message part ordering", "Pinpoint update", "Mock parity report"},
+	},
+	"report_backpressure_roundtrip": {
+		Category:    "roadmap",
+		Description: "Generates delta-first dogfood reports, collapses unchanged backlog items, and preserves full snapshots.",
+		ParityRefs:  []string{"Report backpressure", "Per-channel cursor", "Full snapshot", "Delta-first summary"},
 	},
 	"background_agent_run_roundtrip": {
 		Category:    "background-agents",
@@ -9951,6 +9958,83 @@ func reportAtomicUpdateScenario() scenario {
 				RequestCount: 2,
 				MessageCount: 2,
 				ToolCalls:    0,
+			}, nil
+		},
+	}
+}
+
+func reportBackpressureScenario() scenario {
+	return scenario{
+		name: "report_backpressure_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
+			call := func(tool string, input string) (map[string]any, error) {
+				out, err := registry.Execute(ctx, tool, json.RawMessage(input), nil)
+				if err != nil {
+					return nil, err
+				}
+				var report map[string]any
+				if err := json.Unmarshal([]byte(out), &report); err != nil {
+					return nil, err
+				}
+				return report, nil
+			}
+
+			filed, err := call("RoadmapPinpointTool", `{"action":"file","title":"backpressure report","description":"collapse unchanged backlog","priority":"p1","severity":"high","impact":"observability_debt","now":"2026-07-07T16:00:00Z"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			itemID, _ := filed["item_id"].(string)
+			first, err := call("ReportBackpressureTool", `{"action":"generate","channel":"dogfood","now":"2026-07-07T16:01:00Z"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			second, err := call("ReportBackpressureTool", `{"action":"generate","channel":"dogfood","now":"2026-07-07T16:02:00Z"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			_, err = call("RoadmapPinpointTool", `{"action":"update","id":"`+itemID+`","priority":"p0","severity":"critical","now":"2026-07-07T16:03:00Z"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			third, err := call("ReportBackpressureTool", `{"action":"generate","channel":"dogfood","now":"2026-07-07T16:04:00Z"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			snapshotID, _ := first["snapshot_id"].(string)
+			snapshot, err := call("ReportBackpressureTool", `{"action":"snapshot","snapshot_id":"`+snapshotID+`"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			firstNew, _ := first["new_items"].([]any)
+			thirdChanged, _ := third["changed_items"].([]any)
+			secondUnchanged, _ := second["unchanged_count"].(float64)
+			secondCollapsed, _ := second["collapsed"].(bool)
+			snapshotBody, _ := snapshot["snapshot"].(map[string]any)
+			if itemID == "" || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
+				return localScenarioResult{}, fmt.Errorf("unexpected backpressure report: filed=%#v first=%#v second=%#v third=%#v snapshot=%#v", filed, first, second, third, snapshot)
+			}
+			output := map[string]any{
+				"kind":             "report_backpressure_roundtrip",
+				"item_id":          itemID,
+				"first_new":        len(firstNew),
+				"second_unchanged": int(secondUnchanged),
+				"second_collapsed": secondCollapsed,
+				"third_changed":    len(thirdChanged),
+				"snapshot_id":      snapshotID,
+			}
+			data, err := json.Marshal(output)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "report backpressure harness ok",
+				RequestCount: 6,
+				MessageCount: 1,
+				ToolCalls:    6,
+				ToolUses:     []string{"roadmap_pinpoint", "report_backpressure", "report_backpressure", "roadmap_pinpoint", "report_backpressure", "report_backpressure"},
 			}, nil
 		},
 	}
