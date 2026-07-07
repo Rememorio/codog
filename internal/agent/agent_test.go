@@ -14681,8 +14681,16 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.Contains(t, string(data), `"permission_mode": "read-only"`)
 	out.Reset()
 
+	require.True(t, app.handleSlash(context.Background(), "/permissions acceptEdits", sess))
+	require.Equal(t, "workspace-write", app.Config.PermissionMode)
+	require.Contains(t, out.String(), "Active mode      workspace-write")
+	data, err = os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"permission_mode": "workspace-write"`)
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/permissions invalid", sess))
-	require.Equal(t, "read-only", app.Config.PermissionMode)
+	require.Equal(t, "workspace-write", app.Config.PermissionMode)
 	require.Contains(t, errOut.String(), "unknown permission mode: invalid")
 	errOut.Reset()
 
@@ -14704,11 +14712,19 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.NoError(t, app.Permissions([]string{"workspace-write"}))
 	require.Equal(t, "workspace-write", app.Config.PermissionMode)
 	require.Contains(t, out.String(), "Permissions updated")
-	require.Contains(t, out.String(), "Previous mode    read-only")
+	require.Contains(t, out.String(), "Previous mode    workspace-write")
 	require.Contains(t, out.String(), "Active mode      workspace-write")
 	data, err = os.ReadFile(filepath.Join(configHome, "config.json"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"permission_mode": "workspace-write"`)
+	out.Reset()
+
+	require.NoError(t, app.Permissions([]string{"plan"}))
+	require.Equal(t, "read-only", app.Config.PermissionMode)
+	require.Contains(t, out.String(), "Active mode      read-only")
+	data, err = os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"permission_mode": "read-only"`)
 	out.Reset()
 
 	require.NoError(t, app.Permissions([]string{"clear", "--json"}))

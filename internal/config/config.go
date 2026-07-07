@@ -3402,14 +3402,16 @@ func permissionRank(mode string) int {
 }
 
 func validatePermissionMode(cfg *Config) error {
-	mode := strings.ToLower(strings.TrimSpace(cfg.PermissionMode))
-	switch mode {
-	case "read-only", "workspace-write", "danger-full-access", "prompt", "allow":
+	raw := strings.TrimSpace(cfg.PermissionMode)
+	mode, ok := NormalizePermissionModeLabel(raw)
+	if ok {
 		cfg.PermissionMode = mode
+		if strings.TrimSpace(cfg.PermissionModeRaw) == "" {
+			cfg.PermissionModeRaw = raw
+		}
 		return nil
-	default:
-		return fmt.Errorf("invalid_permission_mode: unknown permission mode %q", cfg.PermissionMode)
 	}
+	return fmt.Errorf("invalid_permission_mode: unknown permission mode %q", cfg.PermissionMode)
 }
 
 func validatePermissionRulesDefaultMode(cfg *Config) error {
@@ -3440,6 +3442,18 @@ func mapClaudePermissionDefaultMode(mode string) (string, bool, string, bool) {
 		return "prompt", false, "auto", true
 	default:
 		return "", false, "", false
+	}
+}
+
+// NormalizePermissionModeLabel resolves canonical Codog permission modes and
+// Claude-compatible defaultMode aliases to canonical Codog modes.
+func NormalizePermissionModeLabel(mode string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "read-only", "workspace-write", "danger-full-access", "prompt", "allow":
+		return strings.ToLower(strings.TrimSpace(mode)), true
+	default:
+		canonical, _, _, ok := mapClaudePermissionDefaultMode(mode)
+		return canonical, ok
 	}
 }
 

@@ -40660,6 +40660,9 @@ func parsePermissionsArgs(args []string) (permissionsRequest, error) {
 			Usage:   "codog permissions [show|MODE|set MODE|clear] [--target user|project|local] [--json|--output-format text|json]",
 		}
 	}
+	if req.Action == "set" {
+		req.Mode, _ = config.NormalizePermissionModeLabel(req.Mode)
+	}
 	if req.Format == "" {
 		if req.Action == "show" {
 			req.Format = "json"
@@ -41978,12 +41981,8 @@ func redactStringMapValues(values map[string]string) map[string]string {
 }
 
 func validPermissionMode(mode string) bool {
-	switch tools.Permission(mode) {
-	case tools.PermissionReadOnly, tools.PermissionWorkspace, tools.PermissionDanger, tools.PermissionPrompt, tools.PermissionAllow:
-		return true
-	default:
-		return false
-	}
+	_, ok := config.NormalizePermissionModeLabel(mode)
+	return ok
 }
 
 func (a *App) Git(args []string) error {

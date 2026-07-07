@@ -350,6 +350,33 @@ func TestLoadPermissionsDefaultModeAliases(t *testing.T) {
 	}
 }
 
+func TestLoadTopLevelPermissionModeAliases(t *testing.T) {
+	tests := []struct {
+		name           string
+		raw            string
+		permissionMode string
+	}{
+		{name: "plan", raw: "plan", permissionMode: "read-only"},
+		{name: "accept edits", raw: "acceptEdits", permissionMode: "workspace-write"},
+		{name: "default", raw: "default", permissionMode: "prompt"},
+		{name: "bypass permissions", raw: "bypassPermissions", permissionMode: "allow"},
+		{name: "dont ask", raw: "dontAsk", permissionMode: "read-only"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			require.NoError(t, os.WriteFile(configPath, []byte(`{"permission_mode":"`+tt.raw+`"}`), 0o644))
+
+			cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+			require.NoError(t, err)
+			require.Equal(t, tt.permissionMode, cfg.PermissionMode)
+			require.Equal(t, tt.raw, cfg.PermissionModeRaw)
+			require.Equal(t, "config", cfg.PermissionModeSource)
+		})
+	}
+}
+
 func TestLoadPermissionModeOverridesDefaultModeAlias(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
