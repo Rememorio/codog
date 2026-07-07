@@ -7077,17 +7077,18 @@ func policyApprovalScenario() scenario {
 				Action string `json:"action"`
 				Status string `json:"status"`
 				Grant  struct {
-					Token            string `json:"token"`
-					Status           string `json:"status"`
-					ApprovingActor   string `json:"approving_actor"`
-					ApprovedExecutor string `json:"approved_executor"`
-					MaxUses          int    `json:"max_uses"`
+					Token                 string `json:"token"`
+					ReplayPreventionNonce string `json:"replay_prevention_nonce"`
+					Status                string `json:"status"`
+					ApprovingActor        string `json:"approving_actor"`
+					ApprovedExecutor      string `json:"approved_executor"`
+					MaxUses               int    `json:"max_uses"`
 				} `json:"grant"`
 			}
 			if err := json.Unmarshal([]byte(grantOut), &grant); err != nil {
 				return localScenarioResult{}, err
 			}
-			if grant.Kind != "approval_token" || grant.Action != "approve" || grant.Status != "ok" || grant.Grant.Token != "tok-main" || grant.Grant.Status != "approval_granted" || grant.Grant.ApprovingActor != "owner" || grant.Grant.ApprovedExecutor != "release-bot" || grant.Grant.MaxUses != 1 {
+			if grant.Kind != "approval_token" || grant.Action != "approve" || grant.Status != "ok" || grant.Grant.Token != "tok-main" || grant.Grant.ReplayPreventionNonce == "" || grant.Grant.Status != "approval_granted" || grant.Grant.ApprovingActor != "owner" || grant.Grant.ApprovedExecutor != "release-bot" || grant.Grant.MaxUses != 1 {
 				return localScenarioResult{}, fmt.Errorf("unexpected approval approve output: %s", grantOut)
 			}
 
@@ -7103,9 +7104,10 @@ func policyApprovalScenario() scenario {
 			var verify struct {
 				Status string `json:"status"`
 				Audit  struct {
-					Kind  string `json:"kind"`
-					Token string `json:"token"`
-					Scope struct {
+					Kind                  string `json:"kind"`
+					Token                 string `json:"token"`
+					ReplayPreventionNonce string `json:"replay_prevention_nonce"`
+					Scope                 struct {
 						Commit string `json:"commit"`
 					} `json:"scope"`
 					RequestingActor    string `json:"requesting_actor"`
@@ -7121,7 +7123,7 @@ func policyApprovalScenario() scenario {
 			if err := json.Unmarshal([]byte(verifyOut), &verify); err != nil {
 				return localScenarioResult{}, err
 			}
-			if verify.Status != "ok" || verify.Audit.Kind != "approval_token_audit" || verify.Audit.Token != "tok-main" || verify.Audit.Scope.Commit != "abc123" || verify.Audit.RequestingActor != "release-lead" || verify.Audit.ExecutingActor != "release-bot" || verify.Audit.ExecutionMode != "delegated_execution" || verify.Audit.Status != "approval_granted" || !verify.Audit.DelegatedExecution || len(verify.Audit.DelegationChain) != 4 || verify.Audit.DelegationChain[1].Actor != "orchestrator" || verify.Audit.DelegationChain[2].Actor != "release-lead" || verify.Audit.DelegationChain[3].Actor != "release-bot" {
+			if verify.Status != "ok" || verify.Audit.Kind != "approval_token_audit" || verify.Audit.Token != "tok-main" || verify.Audit.ReplayPreventionNonce != grant.Grant.ReplayPreventionNonce || verify.Audit.Scope.Commit != "abc123" || verify.Audit.RequestingActor != "release-lead" || verify.Audit.ExecutingActor != "release-bot" || verify.Audit.ExecutionMode != "delegated_execution" || verify.Audit.Status != "approval_granted" || !verify.Audit.DelegatedExecution || len(verify.Audit.DelegationChain) != 4 || verify.Audit.DelegationChain[1].Actor != "orchestrator" || verify.Audit.DelegationChain[2].Actor != "release-lead" || verify.Audit.DelegationChain[3].Actor != "release-bot" {
 				return localScenarioResult{}, fmt.Errorf("unexpected approval verify output: %s", verifyOut)
 			}
 
@@ -7177,20 +7179,21 @@ func policyApprovalScenario() scenario {
 				Ledger struct {
 					Kind   string `json:"kind"`
 					Grants []struct {
-						Token              string `json:"token"`
-						Status             string `json:"status"`
-						State              string `json:"state"`
-						Usable             bool   `json:"usable"`
-						Uses               int    `json:"uses"`
-						RemainingUses      int    `json:"remaining_uses"`
-						LastAuditErrorKind string `json:"last_audit_error_kind"`
+						Token                 string `json:"token"`
+						ReplayPreventionNonce string `json:"replay_prevention_nonce"`
+						Status                string `json:"status"`
+						State                 string `json:"state"`
+						Usable                bool   `json:"usable"`
+						Uses                  int    `json:"uses"`
+						RemainingUses         int    `json:"remaining_uses"`
+						LastAuditErrorKind    string `json:"last_audit_error_kind"`
 					} `json:"grants"`
 				} `json:"ledger"`
 			}
 			if err := json.Unmarshal([]byte(listOut), &list); err != nil {
 				return localScenarioResult{}, err
 			}
-			if list.Status != "ok" || list.Ledger.Kind != "approval_token_ledger" || len(list.Ledger.Grants) != 1 || list.Ledger.Grants[0].Token != "tok-main" || list.Ledger.Grants[0].Status != "approval_consumed" || list.Ledger.Grants[0].State != "consumed" || list.Ledger.Grants[0].Usable || list.Ledger.Grants[0].Uses != 1 || list.Ledger.Grants[0].RemainingUses != 0 || list.Ledger.Grants[0].LastAuditErrorKind != "approval_already_consumed" {
+			if list.Status != "ok" || list.Ledger.Kind != "approval_token_ledger" || len(list.Ledger.Grants) != 1 || list.Ledger.Grants[0].Token != "tok-main" || list.Ledger.Grants[0].ReplayPreventionNonce != grant.Grant.ReplayPreventionNonce || list.Ledger.Grants[0].Status != "approval_consumed" || list.Ledger.Grants[0].State != "consumed" || list.Ledger.Grants[0].Usable || list.Ledger.Grants[0].Uses != 1 || list.Ledger.Grants[0].RemainingUses != 0 || list.Ledger.Grants[0].LastAuditErrorKind != "approval_already_consumed" {
 				return localScenarioResult{}, fmt.Errorf("unexpected approval token ledger output: %s", listOut)
 			}
 
@@ -7205,6 +7208,8 @@ func policyApprovalScenario() scenario {
 				},
 				"approval": map[string]any{
 					"token":                grant.Grant.Token,
+					"replay_nonce":         verify.Audit.ReplayPreventionNonce,
+					"ledger_replay_nonce":  list.Ledger.Grants[0].ReplayPreventionNonce,
 					"scope_commit":         verify.Audit.Scope.Commit,
 					"requesting_actor":     verify.Audit.RequestingActor,
 					"executing_actor":      verify.Audit.ExecutingActor,

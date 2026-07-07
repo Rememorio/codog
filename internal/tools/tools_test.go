@@ -4988,6 +4988,7 @@ func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 	require.Contains(t, grantOut, `"kind": "approval_token"`)
 	require.Contains(t, grantOut, `"status": "approval_granted"`)
 	require.Contains(t, grantOut, `"commit": "abc123"`)
+	require.Contains(t, grantOut, `"replay_prevention_nonce": "codog-replay-`)
 
 	verifyOut, err := tool.Execute(context.Background(), []byte(`{
 		"action":"verify",
@@ -5001,6 +5002,7 @@ func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 	require.Contains(t, verifyOut, `"executing_actor": "release-bot"`)
 	require.Contains(t, verifyOut, `"execution_mode": "delegated_execution"`)
 	require.Contains(t, verifyOut, `"delegated_execution": true`)
+	require.Contains(t, verifyOut, `"replay_prevention_nonce": "codog-replay-`)
 
 	consumeOut, err := tool.Execute(context.Background(), []byte(`{
 		"action":"consume",
@@ -5030,6 +5032,7 @@ func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 	require.Contains(t, listOut, `"state": "consumed"`)
 	require.Contains(t, listOut, `"usable": false`)
 	require.Contains(t, listOut, `"remaining_uses": 0`)
+	require.Contains(t, listOut, `"replay_prevention_nonce": "codog-replay-`)
 }
 
 func TestApprovalTokenToolApprovesPendingGrant(t *testing.T) {

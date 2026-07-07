@@ -42,10 +42,12 @@ func TestApprovalTokenBlocksUntilGranted(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, StatusGranted, granted.Status)
+	require.NotEmpty(t, granted.ReplayPreventionNonce)
 
 	audit, err := store.Verify("tok-granted", scope, "release-bot", now)
 	require.NoError(t, err)
 	require.Equal(t, "approval_token_audit", audit.Kind)
+	require.Equal(t, granted.ReplayPreventionNonce, audit.ReplayPreventionNonce)
 	require.Equal(t, "repo-owner", audit.ApprovingActor)
 	require.Equal(t, "release-bot", audit.RequestingActor)
 	require.Equal(t, "release-bot", audit.ExecutingActor)
@@ -122,6 +124,7 @@ func TestApprovalTokenAuditRecordsRequesterAndExecutionMode(t *testing.T) {
 
 	audit, err := store.Verify("tok-delegated", scope, "release-bot", now.Add(time.Second))
 	require.NoError(t, err)
+	require.NotEmpty(t, audit.ReplayPreventionNonce)
 	require.Equal(t, "owner", audit.ApprovingActor)
 	require.Equal(t, "release-lead", audit.RequestingActor)
 	require.Equal(t, "release-bot", audit.ExecutingActor)
@@ -323,6 +326,39 @@ func TestApprovalTokenPersistsLedger(t *testing.T) {
 	require.Len(t, ledger.Grants, 1)
 	require.Equal(t, 1, ledger.Grants[0].Uses)
 	require.Equal(t, StatusGranted, ledger.Grants[0].Status)
+	require.NotEmpty(t, ledger.Grants[0].ReplayPreventionNonce)
+}
+
+func TestApprovalTokenDecoratesLegacyLedgerWithDerivedReplayNonce(t *testing.T) {
+	configHome := t.TempDir()
+	scope := Scope{Policy: "main_push_forbidden", Action: "git push", Repository: "owner/repo", Branch: "main"}
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	data := `{
+  "kind": "approval_token_ledger",
+  "grants": [{
+    "token": "legacy-token",
+    "scope": {"policy": "main_push_forbidden", "action": "git push", "repository": "owner/repo", "branch": "main"},
+    "approving_actor": "owner",
+    "requesting_actor": "lead",
+    "approved_executor": "bot",
+    "status": "approval_granted",
+    "max_uses": 1,
+    "created_at": "2026-01-02T03:04:05Z",
+    "updated_at": "2026-01-02T03:04:05Z"
+  }]
+}`
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "approval-tokens.json"), []byte(data), 0o644))
+
+	store := NewStore(configHome)
+	ledger, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, ledger.Grants, 1)
+	require.NotEmpty(t, ledger.Grants[0].ReplayPreventionNonce)
+	require.Contains(t, ledger.Grants[0].ReplayPreventionNonce, "codog-replay-derived-")
+
+	audit, err := store.Verify("legacy-token", scope, "bot", now)
+	require.NoError(t, err)
+	require.Equal(t, ledger.Grants[0].ReplayPreventionNonce, audit.ReplayPreventionNonce)
 }
 
 func requireApprovalError(t *testing.T, err error, kind string) {

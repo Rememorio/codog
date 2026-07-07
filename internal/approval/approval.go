@@ -2,6 +2,7 @@ package approval
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -56,38 +57,40 @@ type DelegationHop struct {
 }
 
 type Grant struct {
-	Token              string          `json:"token"`
-	Scope              Scope           `json:"scope"`
-	ApprovingActor     string          `json:"approving_actor"`
-	RequestingActor    string          `json:"requesting_actor"`
-	ApprovedExecutor   string          `json:"approved_executor"`
-	Status             Status          `json:"status"`
-	State              UsageState      `json:"state"`
-	Usable             bool            `json:"usable"`
-	ExpiresAt          *time.Time      `json:"expires_at,omitempty"`
-	MaxUses            int             `json:"max_uses"`
-	Uses               int             `json:"uses"`
-	RemainingUses      int             `json:"remaining_uses"`
-	DelegationChain    []DelegationHop `json:"delegation_chain,omitempty"`
-	CreatedAt          time.Time       `json:"created_at"`
-	UpdatedAt          time.Time       `json:"updated_at"`
-	LastAuditErrorKind string          `json:"last_audit_error_kind,omitempty"`
+	Token                 string          `json:"token"`
+	ReplayPreventionNonce string          `json:"replay_prevention_nonce"`
+	Scope                 Scope           `json:"scope"`
+	ApprovingActor        string          `json:"approving_actor"`
+	RequestingActor       string          `json:"requesting_actor"`
+	ApprovedExecutor      string          `json:"approved_executor"`
+	Status                Status          `json:"status"`
+	State                 UsageState      `json:"state"`
+	Usable                bool            `json:"usable"`
+	ExpiresAt             *time.Time      `json:"expires_at,omitempty"`
+	MaxUses               int             `json:"max_uses"`
+	Uses                  int             `json:"uses"`
+	RemainingUses         int             `json:"remaining_uses"`
+	DelegationChain       []DelegationHop `json:"delegation_chain,omitempty"`
+	CreatedAt             time.Time       `json:"created_at"`
+	UpdatedAt             time.Time       `json:"updated_at"`
+	LastAuditErrorKind    string          `json:"last_audit_error_kind,omitempty"`
 }
 
 type Audit struct {
-	Kind               string          `json:"kind"`
-	Token              string          `json:"token"`
-	Scope              Scope           `json:"scope"`
-	ApprovingActor     string          `json:"approving_actor"`
-	RequestingActor    string          `json:"requesting_actor"`
-	ExecutingActor     string          `json:"executing_actor"`
-	ExecutionMode      string          `json:"execution_mode"`
-	Status             Status          `json:"status"`
-	DelegatedExecution bool            `json:"delegated_execution"`
-	DelegationChain    []DelegationHop `json:"delegation_chain"`
-	Uses               int             `json:"uses"`
-	MaxUses            int             `json:"max_uses"`
-	VerifiedAt         time.Time       `json:"verified_at"`
+	Kind                  string          `json:"kind"`
+	Token                 string          `json:"token"`
+	ReplayPreventionNonce string          `json:"replay_prevention_nonce"`
+	Scope                 Scope           `json:"scope"`
+	ApprovingActor        string          `json:"approving_actor"`
+	RequestingActor       string          `json:"requesting_actor"`
+	ExecutingActor        string          `json:"executing_actor"`
+	ExecutionMode         string          `json:"execution_mode"`
+	Status                Status          `json:"status"`
+	DelegatedExecution    bool            `json:"delegated_execution"`
+	DelegationChain       []DelegationHop `json:"delegation_chain"`
+	Uses                  int             `json:"uses"`
+	MaxUses               int             `json:"max_uses"`
+	VerifiedAt            time.Time       `json:"verified_at"`
 }
 
 type Error struct {
@@ -161,6 +164,10 @@ func (s Store) Grant(opts GrantOptions) (Grant, error) {
 		}
 		token = generated
 	}
+	nonce, err := GenerateReplayPreventionNonce()
+	if err != nil {
+		return Grant{}, err
+	}
 	now := opts.Now.UTC()
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -177,17 +184,18 @@ func (s Store) Grant(opts GrantOptions) (Grant, error) {
 		return Grant{}, fmt.Errorf("approval token %q already exists", token)
 	}
 	grant := Grant{
-		Token:            token,
-		Scope:            normalizeScope(opts.Scope),
-		ApprovingActor:   approvingActor,
-		RequestingActor:  requestingActor,
-		ApprovedExecutor: approvedExecutor,
-		Status:           status,
-		ExpiresAt:        normalizeExpiry(opts.ExpiresAt),
-		MaxUses:          maxUses,
-		DelegationChain:  normalizeDelegation(opts.DelegationChain),
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		Token:                 token,
+		ReplayPreventionNonce: nonce,
+		Scope:                 normalizeScope(opts.Scope),
+		ApprovingActor:        approvingActor,
+		RequestingActor:       requestingActor,
+		ApprovedExecutor:      approvedExecutor,
+		Status:                status,
+		ExpiresAt:             normalizeExpiry(opts.ExpiresAt),
+		MaxUses:               maxUses,
+		DelegationChain:       normalizeDelegation(opts.DelegationChain),
+		CreatedAt:             now,
+		UpdatedAt:             now,
 	}
 	grant = decorateGrant(grant, now)
 	ledger[token] = grant
@@ -347,8 +355,20 @@ func GenerateToken() (string, error) {
 	return "codog-approval-" + hex.EncodeToString(bytes[:]), nil
 }
 
+func GenerateReplayPreventionNonce() (string, error) {
+	var bytes [16]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return "", err
+	}
+	return "codog-replay-" + hex.EncodeToString(bytes[:]), nil
+}
+
 func decorateGrant(grant Grant, now time.Time) Grant {
 	now = normalizedNow(now)
+	grant.Scope = normalizeScope(grant.Scope)
+	if strings.TrimSpace(grant.ReplayPreventionNonce) == "" {
+		grant.ReplayPreventionNonce = derivedReplayPreventionNonce(grant)
+	}
 	if grant.MaxUses <= 0 {
 		grant.MaxUses = 1
 	}
@@ -423,6 +443,7 @@ func validateGrant(grant Grant, scope Scope, executingActor string, now time.Tim
 }
 
 func auditFor(grant Grant, executingActor string, now time.Time) Audit {
+	grant = decorateGrant(grant, now)
 	requestingActor := strings.TrimSpace(grant.RequestingActor)
 	if requestingActor == "" {
 		requestingActor = grant.ApprovedExecutor
@@ -443,20 +464,34 @@ func auditFor(grant Grant, executingActor string, now time.Time) Audit {
 		mode = "delegated_execution"
 	}
 	return Audit{
-		Kind:               "approval_token_audit",
-		Token:              grant.Token,
-		Scope:              grant.Scope,
-		ApprovingActor:     grant.ApprovingActor,
-		RequestingActor:    requestingActor,
-		ExecutingActor:     executingActor,
-		ExecutionMode:      mode,
-		Status:             grant.Status,
-		DelegatedExecution: delegated,
-		DelegationChain:    chain,
-		Uses:               grant.Uses,
-		MaxUses:            grant.MaxUses,
-		VerifiedAt:         normalizedNow(now),
+		Kind:                  "approval_token_audit",
+		Token:                 grant.Token,
+		ReplayPreventionNonce: grant.ReplayPreventionNonce,
+		Scope:                 grant.Scope,
+		ApprovingActor:        grant.ApprovingActor,
+		RequestingActor:       requestingActor,
+		ExecutingActor:        executingActor,
+		ExecutionMode:         mode,
+		Status:                grant.Status,
+		DelegatedExecution:    delegated,
+		DelegationChain:       chain,
+		Uses:                  grant.Uses,
+		MaxUses:               grant.MaxUses,
+		VerifiedAt:            normalizedNow(now),
 	}
+}
+
+func derivedReplayPreventionNonce(grant Grant) string {
+	normalized := normalizeScope(grant.Scope)
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		strings.TrimSpace(grant.Token),
+		normalized.Policy,
+		normalized.Action,
+		normalized.Repository,
+		normalized.Branch,
+		normalized.Commit,
+	}, "\x00")))
+	return "codog-replay-derived-" + hex.EncodeToString(sum[:12])
 }
 
 func delegationContains(chain []DelegationHop, actor string) bool {

@@ -244,6 +244,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, policyApproval.Output, `"requesting_actor":"release-lead"`)
 	require.Contains(t, policyApproval.Output, `"executing_actor":"release-bot"`)
 	require.Contains(t, policyApproval.Output, `"execution_mode":"delegated_execution"`)
+	require.Contains(t, policyApproval.Output, `"replay_nonce":"codog-replay-`)
+	require.Contains(t, policyApproval.Output, `"ledger_replay_nonce":"codog-replay-`)
 	require.Contains(t, policyApproval.Output, `"verified":"approval_granted"`)
 	require.Contains(t, policyApproval.Output, `"delegated":true`)
 	require.Contains(t, policyApproval.Output, `"consumed":"approval_consumed"`)
