@@ -6979,6 +6979,38 @@ func policyApprovalScenario() scenario {
 				return localScenarioResult{}, fmt.Errorf("unexpected escalation policy evaluation: %s", escalateOut)
 			}
 
+			blockedOut, err := registry.Execute(ctx, "policy_evaluate", json.RawMessage(`{
+				"lane_id": "lane-main",
+				"requested_action": "git push origin main",
+				"repository": "owner/repo",
+				"branch": "main",
+				"actor": "release-bot",
+				"actor_scope": "automation",
+				"policy_source": "AGENTS.md"
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var blocked struct {
+				BlockedHandoff struct {
+					Kind             string `json:"kind"`
+					Status           string `json:"status"`
+					Reason           string `json:"reason"`
+					PolicySource     string `json:"policy_source"`
+					ActorScope       string `json:"actor_scope"`
+					TechnicalFailure bool   `json:"technical_failure"`
+					Fallback         []struct {
+						Kind string `json:"kind"`
+					} `json:"fallback"`
+				} `json:"blocked_handoff"`
+			}
+			if err := json.Unmarshal([]byte(blockedOut), &blocked); err != nil {
+				return localScenarioResult{}, err
+			}
+			if blocked.BlockedHandoff.Kind != "policy_blocked_handoff" || blocked.BlockedHandoff.Status != "blocked_by_policy" || blocked.BlockedHandoff.Reason != "main_push_forbidden" || blocked.BlockedHandoff.PolicySource != "AGENTS.md" || blocked.BlockedHandoff.ActorScope != "automation" || blocked.BlockedHandoff.TechnicalFailure || len(blocked.BlockedHandoff.Fallback) != 2 || blocked.BlockedHandoff.Fallback[0].Kind != "create_branch" || blocked.BlockedHandoff.Fallback[1].Kind != "open_pr" {
+				return localScenarioResult{}, fmt.Errorf("unexpected policy-blocked handoff: %s", blockedOut)
+			}
+
 			scope := `"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"}`
 			grantOut, err := registry.Execute(ctx, "ApprovalTokenTool", json.RawMessage(`{
 				"action": "grant",
@@ -7110,6 +7142,9 @@ func policyApprovalScenario() scenario {
 				"policy": map[string]any{
 					"stale_actions":     []string{staleEval.Actions[0].Kind, staleEval.Actions[1].Kind, staleEval.Actions[2].Kind},
 					"escalation_action": escalateEval.Actions[0].Kind,
+					"blocked_status":    blocked.BlockedHandoff.Status,
+					"blocked_reason":    blocked.BlockedHandoff.Reason,
+					"fallback":          []string{blocked.BlockedHandoff.Fallback[0].Kind, blocked.BlockedHandoff.Fallback[1].Kind},
 				},
 				"approval": map[string]any{
 					"token":                grant.Grant.Token,
@@ -7129,10 +7164,11 @@ func policyApprovalScenario() scenario {
 			return localScenarioResult{
 				Output:       string(data),
 				FinalMessage: "policy approval harness ok",
-				RequestCount: 7,
+				RequestCount: 8,
 				MessageCount: 1,
-				ToolCalls:    7,
+				ToolCalls:    8,
 				ToolUses: []string{
+					"policy_evaluate",
 					"policy_evaluate",
 					"policy_evaluate",
 					"approval_token",

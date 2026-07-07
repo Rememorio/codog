@@ -4944,6 +4944,32 @@ func TestPolicyEvaluateToolReturnsActions(t *testing.T) {
 	require.NotContains(t, out, `"kind": "merge_to_dev"`)
 }
 
+func TestPolicyEvaluateToolReturnsPolicyBlockedHandoff(t *testing.T) {
+	out, err := PolicyEvaluateTool{}.Execute(context.Background(), []byte(`{
+		"lane_id":"lane-main",
+		"requested_action":"git push origin main",
+		"repository":"owner/repo",
+		"branch":"main",
+		"actor":"release-bot",
+		"actor_scope":"automation",
+		"policy_source":"AGENTS.md"
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "policy_evaluation"`)
+	require.Contains(t, out, `"kind": "block"`)
+	require.Contains(t, out, `"rule_id": "policy-blocked-handoff"`)
+	require.Contains(t, out, `"blocked_handoff": {`)
+	require.Contains(t, out, `"kind": "policy_blocked_handoff"`)
+	require.Contains(t, out, `"status": "blocked_by_policy"`)
+	require.Contains(t, out, `"reason": "main_push_forbidden"`)
+	require.Contains(t, out, `"policy_source": "AGENTS.md"`)
+	require.Contains(t, out, `"actor_scope": "automation"`)
+	require.Contains(t, out, `"technical_failure": false`)
+	require.Contains(t, out, `"kind": "create_branch"`)
+	require.Contains(t, out, `"kind": "open_pr"`)
+	require.NotContains(t, out, `"kind": "merge_to_dev"`)
+}
+
 func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 	configHome := t.TempDir()
 	tool := ApprovalTokenTool{ConfigHome: configHome}

@@ -40,6 +40,13 @@ type LaneContext struct {
 	Blocker                string `json:"blocker,omitempty"`
 	ReviewStatus           string `json:"review_status,omitempty"`
 	DiffScope              string `json:"diff_scope,omitempty"`
+	RequestedAction        string `json:"requested_action,omitempty"`
+	Repository             string `json:"repository,omitempty"`
+	Branch                 string `json:"branch,omitempty"`
+	Actor                  string `json:"actor,omitempty"`
+	ActorScope             string `json:"actor_scope,omitempty"`
+	PolicySource           string `json:"policy_source,omitempty"`
+	PolicyBlockReason      string `json:"policy_block_reason,omitempty"`
 	Completed              bool   `json:"completed"`
 	RetryCount             int    `json:"retry_count"`
 	RetryLimit             int    `json:"retry_limit"`
@@ -50,6 +57,30 @@ type Action struct {
 	Reason           string     `json:"reason,omitempty"`
 	RecoveryScenario string     `json:"recovery_scenario,omitempty"`
 	Commands         []string   `json:"commands,omitempty"`
+}
+
+// FallbackStep describes one safe next step after a policy block.
+type FallbackStep struct {
+	Kind             string   `json:"kind"`
+	Description      string   `json:"description"`
+	Commands         []string `json:"commands,omitempty"`
+	RequiresApproval bool     `json:"requires_approval,omitempty"`
+}
+
+// PolicyBlockedHandoff exposes a structured refusal plus safe execution path.
+type PolicyBlockedHandoff struct {
+	Kind             string         `json:"kind"`
+	Status           string         `json:"status"`
+	Reason           string         `json:"reason"`
+	PolicySource     string         `json:"policy_source"`
+	ActorScope       string         `json:"actor_scope"`
+	Actor            string         `json:"actor,omitempty"`
+	RequestedAction  string         `json:"requested_action"`
+	Repository       string         `json:"repository,omitempty"`
+	Branch           string         `json:"branch,omitempty"`
+	TechnicalFailure bool           `json:"technical_failure"`
+	ApprovalRequired bool           `json:"approval_required"`
+	Fallback         []FallbackStep `json:"fallback"`
 }
 
 type Rule struct {
@@ -70,10 +101,11 @@ type DecisionEvent struct {
 }
 
 type Evaluation struct {
-	Kind    string          `json:"kind"`
-	Context LaneContext     `json:"context"`
-	Actions []Action        `json:"actions"`
-	Events  []DecisionEvent `json:"events"`
+	Kind           string                `json:"kind"`
+	Context        LaneContext           `json:"context"`
+	Actions        []Action              `json:"actions"`
+	Events         []DecisionEvent       `json:"events"`
+	BlockedHandoff *PolicyBlockedHandoff `json:"blocked_handoff,omitempty"`
 }
 
 type Engine struct {
@@ -82,6 +114,20 @@ type Engine struct {
 
 func DefaultEngine() Engine {
 	return NewEngine([]Rule{
+		{
+			ID:       "policy-blocked-handoff",
+			Priority: 5,
+			When: func(ctx LaneContext) bool {
+				return classifyPolicyBlock(ctx) != ""
+			},
+			Actions: func(ctx LaneContext) []Action {
+				reason := classifyPolicyBlock(ctx)
+				return []Action{{
+					Kind:   ActionBlock,
+					Reason: "requested action is blocked by policy: " + reason,
+				}}
+			},
+		},
 		{
 			ID:       "stale-branch-merge-forward",
 			Priority: 10,
@@ -186,7 +232,7 @@ func (e Engine) Evaluate(ctx LaneContext) Evaluation {
 			events = append(events, decisionEvent(ctx, rule, action, now))
 		}
 	}
-	return Evaluation{Kind: "policy_evaluation", Context: ctx, Actions: actions, Events: events}
+	return Evaluation{Kind: "policy_evaluation", Context: ctx, Actions: actions, Events: events, BlockedHandoff: buildBlockedHandoff(ctx)}
 }
 
 func NormalizeContext(ctx LaneContext) LaneContext {
@@ -198,6 +244,13 @@ func NormalizeContext(ctx LaneContext) LaneContext {
 	ctx.Blocker = normalize(ctx.Blocker)
 	ctx.ReviewStatus = normalize(ctx.ReviewStatus)
 	ctx.DiffScope = normalize(ctx.DiffScope)
+	ctx.RequestedAction = strings.TrimSpace(ctx.RequestedAction)
+	ctx.Repository = strings.TrimSpace(ctx.Repository)
+	ctx.Branch = strings.TrimSpace(ctx.Branch)
+	ctx.Actor = strings.TrimSpace(ctx.Actor)
+	ctx.ActorScope = strings.TrimSpace(ctx.ActorScope)
+	ctx.PolicySource = strings.TrimSpace(ctx.PolicySource)
+	ctx.PolicyBlockReason = normalize(ctx.PolicyBlockReason)
 	if ctx.RetryLimit <= 0 {
 		ctx.RetryLimit = 1
 	}
@@ -254,6 +307,130 @@ func effectiveRetryLimit(ctx LaneContext) int {
 		return 1
 	}
 	return ctx.RetryLimit
+}
+
+func buildBlockedHandoff(ctx LaneContext) *PolicyBlockedHandoff {
+	reason := classifyPolicyBlock(ctx)
+	if reason == "" {
+		return nil
+	}
+	source := ctx.PolicySource
+	if source == "" {
+		source = defaultPolicySource(reason)
+	}
+	actorScope := ctx.ActorScope
+	if actorScope == "" {
+		actorScope = defaultActorScope(reason)
+	}
+	action := ctx.RequestedAction
+	if action == "" {
+		action = defaultRequestedAction(reason)
+	}
+	return &PolicyBlockedHandoff{
+		Kind:             "policy_blocked_handoff",
+		Status:           "blocked_by_policy",
+		Reason:           reason,
+		PolicySource:     source,
+		ActorScope:       actorScope,
+		Actor:            ctx.Actor,
+		RequestedAction:  action,
+		Repository:       ctx.Repository,
+		Branch:           ctx.Branch,
+		TechnicalFailure: false,
+		ApprovalRequired: approvalRequired(reason),
+		Fallback:         fallbackForPolicyBlock(reason, ctx),
+	}
+}
+
+func classifyPolicyBlock(ctx LaneContext) string {
+	if ctx.PolicyBlockReason != "" {
+		return ctx.PolicyBlockReason
+	}
+	action := normalize(ctx.RequestedAction)
+	branch := normalize(ctx.Branch)
+	if (action == "git_push" || strings.Contains(action, "push")) && branch == "main" {
+		return "main_push_forbidden"
+	}
+	if strings.Contains(action, "release") && normalize(ctx.ActorScope) != "owner" {
+		return "release_requires_owner"
+	}
+	return ""
+}
+
+func defaultPolicySource(reason string) string {
+	switch reason {
+	case "main_push_forbidden":
+		return "branch_protection"
+	case "release_requires_owner":
+		return "release_policy"
+	default:
+		return "automation_policy"
+	}
+}
+
+func defaultActorScope(reason string) string {
+	switch reason {
+	case "release_requires_owner":
+		return "non_owner"
+	default:
+		return "automation"
+	}
+}
+
+func defaultRequestedAction(reason string) string {
+	switch reason {
+	case "main_push_forbidden":
+		return "git push"
+	case "release_requires_owner":
+		return "release"
+	default:
+		return "policy-controlled action"
+	}
+}
+
+func approvalRequired(reason string) bool {
+	return reason == "release_requires_owner"
+}
+
+func fallbackForPolicyBlock(reason string, ctx LaneContext) []FallbackStep {
+	switch reason {
+	case "main_push_forbidden":
+		return []FallbackStep{
+			{
+				Kind:        "create_branch",
+				Description: "Move the change to a non-main working branch.",
+				Commands:    []string{"git switch -c <work_branch>"},
+			},
+			{
+				Kind:        "open_pr",
+				Description: "Push the branch and open a pull request against main.",
+				Commands:    []string{"git push origin <work_branch>", "gh pr create --base main"},
+			},
+		}
+	case "release_requires_owner":
+		return []FallbackStep{
+			{
+				Kind:             "request_owner_approval",
+				Description:      "Request a scoped approval token from a repository or release owner.",
+				Commands:         []string{"approval_token grant"},
+				RequiresApproval: true,
+			},
+			{
+				Kind:        "verify_approval",
+				Description: "Verify the approval token exactly matches the action scope before execution.",
+				Commands:    []string{"approval_token verify"},
+			},
+		}
+	default:
+		fallback := []FallbackStep{{
+			Kind:        "escalate",
+			Description: "Escalate the blocked request with policy source, actor scope, and requested action.",
+		}}
+		if ctx.PolicySource != "" {
+			fallback[0].Description = "Escalate the blocked request to the policy owner."
+		}
+		return fallback
+	}
 }
 
 func normalize(value string) string {

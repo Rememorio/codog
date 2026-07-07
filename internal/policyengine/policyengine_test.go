@@ -31,6 +31,56 @@ func TestDefaultPolicyBlocksMergeWithoutGreenContract(t *testing.T) {
 	require.Empty(t, evaluation.Events)
 }
 
+func TestDefaultPolicyReturnsBlockedHandoffForMainPush(t *testing.T) {
+	evaluation := DefaultEngine().Evaluate(LaneContext{
+		LaneID:          "lane-7",
+		RequestedAction: "git push origin main",
+		Repository:      "owner/repo",
+		Branch:          "main",
+		Actor:           "release-bot",
+		ActorScope:      "automation",
+		PolicySource:    "AGENTS.md",
+	})
+	require.Len(t, evaluation.Actions, 1)
+	require.Equal(t, ActionBlock, evaluation.Actions[0].Kind)
+	require.Equal(t, DecisionBlock, evaluation.Events[0].Kind)
+	require.Equal(t, "policy-blocked-handoff", evaluation.Events[0].RuleID)
+	require.NotNil(t, evaluation.BlockedHandoff)
+	require.Equal(t, "policy_blocked_handoff", evaluation.BlockedHandoff.Kind)
+	require.Equal(t, "blocked_by_policy", evaluation.BlockedHandoff.Status)
+	require.Equal(t, "main_push_forbidden", evaluation.BlockedHandoff.Reason)
+	require.Equal(t, "AGENTS.md", evaluation.BlockedHandoff.PolicySource)
+	require.Equal(t, "automation", evaluation.BlockedHandoff.ActorScope)
+	require.Equal(t, "release-bot", evaluation.BlockedHandoff.Actor)
+	require.Equal(t, "git push origin main", evaluation.BlockedHandoff.RequestedAction)
+	require.Equal(t, "owner/repo", evaluation.BlockedHandoff.Repository)
+	require.Equal(t, "main", evaluation.BlockedHandoff.Branch)
+	require.False(t, evaluation.BlockedHandoff.TechnicalFailure)
+	require.False(t, evaluation.BlockedHandoff.ApprovalRequired)
+	require.Len(t, evaluation.BlockedHandoff.Fallback, 2)
+	require.Equal(t, "create_branch", evaluation.BlockedHandoff.Fallback[0].Kind)
+	require.Equal(t, "open_pr", evaluation.BlockedHandoff.Fallback[1].Kind)
+}
+
+func TestDefaultPolicyReturnsOwnerApprovalFallbackForReleaseBlock(t *testing.T) {
+	evaluation := DefaultEngine().Evaluate(LaneContext{
+		LaneID:          "lane-release",
+		RequestedAction: "release production",
+		Repository:      "owner/repo",
+		Branch:          "release",
+		Actor:           "release-bot",
+		ActorScope:      "automation",
+	})
+	require.NotNil(t, evaluation.BlockedHandoff)
+	require.Equal(t, "release_requires_owner", evaluation.BlockedHandoff.Reason)
+	require.Equal(t, "release_policy", evaluation.BlockedHandoff.PolicySource)
+	require.True(t, evaluation.BlockedHandoff.ApprovalRequired)
+	require.Len(t, evaluation.BlockedHandoff.Fallback, 2)
+	require.Equal(t, "request_owner_approval", evaluation.BlockedHandoff.Fallback[0].Kind)
+	require.True(t, evaluation.BlockedHandoff.Fallback[0].RequiresApproval)
+	require.Equal(t, "verify_approval", evaluation.BlockedHandoff.Fallback[1].Kind)
+}
+
 func TestDefaultPolicyBlocksMergeWhenBranchIsStale(t *testing.T) {
 	evaluation := DefaultEngine().Evaluate(LaneContext{
 		LaneID:                 "lane-7",
