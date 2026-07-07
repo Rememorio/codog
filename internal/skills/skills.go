@@ -12,6 +12,7 @@ import (
 	"github.com/Rememorio/codog/internal/argsub"
 	"github.com/Rememorio/codog/internal/frontmatter"
 	"github.com/Rememorio/codog/internal/plugins"
+	"github.com/Rememorio/codog/internal/projectscope"
 )
 
 type Skill struct {
@@ -726,23 +727,7 @@ func compatibilityProjectRoots(workspace string) []root {
 }
 
 func workspaceAncestors(workspace string) []string {
-	workspace = strings.TrimSpace(workspace)
-	if workspace == "" {
-		workspace = "."
-	}
-	abs, err := filepath.Abs(workspace)
-	if err != nil {
-		abs = filepath.Clean(workspace)
-	}
-	out := []string{}
-	for current := abs; ; current = filepath.Dir(current) {
-		out = append(out, current)
-		parent := filepath.Dir(current)
-		if parent == current {
-			break
-		}
-	}
-	return out
+	return projectscope.Ancestors(workspace)
 }
 
 func existingDir(path string) bool {

@@ -1,6 +1,7 @@
 package customcommands
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -116,6 +117,33 @@ func TestRenderWithSessionSubstitutesSessionID(t *testing.T) {
 
 	require.Equal(t, "session=${CLAUDE_SESSION_ID} args=target", Render(command, "target").Rendered)
 	require.Equal(t, "session=session-123 args=target", RenderWithSession(command, "target", "session-123").Rendered)
+}
+
+func TestCompatibilityCommandRootsStopAtProjectBoundary(t *testing.T) {
+	configHome := t.TempDir()
+	parent := t.TempDir()
+	repo := filepath.Join(parent, "repo")
+	workspace := filepath.Join(repo, "app")
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".codex", "commands"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(parent, ".agents", "commands"), 0o755))
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".codex", "commands", "port.md"), []byte("Project command $ARGUMENTS"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(parent, ".agents", "commands", "rogue.md"), []byte("Parent command"), 0o644))
+
+	command, err := Find(configHome, workspace, "port")
+	require.NoError(t, err)
+	require.Equal(t, "codex", command.Source)
+	require.Equal(t, "Project command ok", Render(command, "ok").Rendered)
+
+	_, err = Find(configHome, workspace, "rogue")
+	require.True(t, errors.Is(err, ErrNotFound))
+
+	sources := Sources(configHome, workspace)
+	codexSource := commandSourceByPath(sources, filepath.Join(repo, ".codex", "commands"))
+	require.Equal(t, "codex", codexSource.Source)
+	require.True(t, codexSource.Exists)
+	require.Equal(t, DiscoveryRoot{}, commandSourceByPath(sources, filepath.Join(parent, ".agents", "commands")))
 }
 
 func commandNames(commands []Command) []string {

@@ -11,6 +11,7 @@ import (
 	"github.com/Rememorio/codog/internal/argsub"
 	"github.com/Rememorio/codog/internal/frontmatter"
 	"github.com/Rememorio/codog/internal/plugins"
+	"github.com/Rememorio/codog/internal/projectscope"
 )
 
 type Command struct {
@@ -390,24 +391,7 @@ func compatibilityRoots(workspace string, precedence bool) []root {
 }
 
 func workspaceAncestors(workspace string) []string {
-	workspace = strings.TrimSpace(workspace)
-	if workspace == "" {
-		return nil
-	}
-	current, err := filepath.Abs(workspace)
-	if err != nil {
-		current = filepath.Clean(workspace)
-	}
-	out := []string{}
-	for {
-		out = append(out, current)
-		next := filepath.Dir(current)
-		if next == current {
-			break
-		}
-		current = next
-	}
-	return out
+	return projectscope.Ancestors(workspace)
 }
 
 func commandRootsForPlugin(manifest plugins.Manifest) []root {
