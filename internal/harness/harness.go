@@ -1704,8 +1704,8 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
-		Description: "Exercises plugin lifecycle metadata loading without invoking a tool.",
-		ParityRefs:  []string{"Plugin lifecycle", "Plugin manifest loading"},
+		Description: "Installs a plugin, executes init and shutdown lifecycle commands, and verifies enable/disable/remove state.",
+		ParityRefs:  []string{"Plugin lifecycle", "Plugin manifest loading", "Plugin command execution"},
 	},
 	"task_lifecycle_roundtrip": {
 		Category:    "background-agents",
@@ -8644,7 +8644,7 @@ func pluginLifecycleScenario() scenario {
 			if err := os.MkdirAll(source, 0o755); err != nil {
 				return err
 			}
-			manifest := `{"id":"lifecycle","name":"lifecycle","version":"1.0.0","description":"Lifecycle harness plugin","tools":[{"name":"lifecycle_tool","command":"cat","permission":"read-only"}]}`
+			manifest := `{"id":"lifecycle","name":"lifecycle","version":"1.0.0","description":"Lifecycle harness plugin","lifecycle":{"init":["echo init-ok > lifecycle-init.txt"],"shutdown":["echo shutdown-ok > lifecycle-shutdown.txt"]},"tools":[{"name":"lifecycle_tool","command":"cat","permission":"read-only"}]}`
 			if err := os.WriteFile(filepath.Join(source, "plugin.json"), []byte(manifest), 0o644); err != nil {
 				return err
 			}
@@ -8658,6 +8658,28 @@ func pluginLifecycleScenario() scenario {
 			installedRoot = installed.Root
 			if !installed.Enabled {
 				return fmt.Errorf("installed plugin is disabled")
+			}
+			initRun := plugins.RunLifecycle(context.Background(), installed, "init", 5*time.Second)
+			if initRun.Status != "ok" {
+				return fmt.Errorf("init lifecycle failed: %s", initRun.Message)
+			}
+			initMarker, err := os.ReadFile(filepath.Join(installed.Root, "lifecycle-init.txt"))
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(string(initMarker), "init-ok") {
+				return fmt.Errorf("init lifecycle marker mismatch: %q", string(initMarker))
+			}
+			shutdownRun := plugins.RunLifecycle(context.Background(), installed, "shutdown", 5*time.Second)
+			if shutdownRun.Status != "ok" {
+				return fmt.Errorf("shutdown lifecycle failed: %s", shutdownRun.Message)
+			}
+			shutdownMarker, err := os.ReadFile(filepath.Join(installed.Root, "lifecycle-shutdown.txt"))
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(string(shutdownMarker), "shutdown-ok") {
+				return fmt.Errorf("shutdown lifecycle marker mismatch: %q", string(shutdownMarker))
 			}
 			disabled, err := plugins.Disable(workspace, installed.ID)
 			if err != nil {

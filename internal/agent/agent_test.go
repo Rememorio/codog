@@ -30418,6 +30418,61 @@ func TestMarketplacePluginHealthReportsLifecycle(t *testing.T) {
 	require.Contains(t, out.String(), "lifecycle=ready")
 }
 
+func TestMarketplacePluginLifecycleRunExecutesConfiguredCommand(t *testing.T) {
+	workspace := t.TempDir()
+	root := filepath.Join(workspace, ".codog", "plugins", "runner")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "plugin.json"), []byte(`{
+		"id":"runner",
+		"name":"runner",
+		"version":"1.0.0",
+		"lifecycle":{"init":["echo init-ok > lifecycle.txt"],"shutdown":["echo shutdown-ok > shutdown.txt"]}
+	}`), 0o644))
+
+	var out bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
+
+	require.NoError(t, app.Marketplace([]string{"lifecycle", "run", "init", "runner", "--json"}))
+	var report pluginLifecycleRunReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "plugin_lifecycle", report.Kind)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "init", report.Phase)
+	require.Equal(t, "runner", report.PluginID)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, "ok", report.Results[0].Status)
+	require.Len(t, report.Results[0].Commands, 1)
+	require.Equal(t, 0, report.Results[0].Commands[0].ExitCode)
+	contents, err := os.ReadFile(filepath.Join(root, "lifecycle.txt"))
+	require.NoError(t, err)
+	require.Contains(t, string(contents), "init-ok")
+}
+
+func TestMarketplacePluginLifecycleRunReportsCommandFailure(t *testing.T) {
+	workspace := t.TempDir()
+	root := filepath.Join(workspace, ".codog", "plugins", "runner")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "plugin.json"), []byte(`{
+		"id":"runner",
+		"name":"runner",
+		"version":"1.0.0",
+		"lifecycle":{"init":["exit 7"]}
+	}`), 0o644))
+
+	var out bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
+
+	err := app.Marketplace([]string{"lifecycle", "run", "init", "runner", "--json"})
+	require.Error(t, err)
+	var report pluginLifecycleRunReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "failed", report.Status)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, "failed", report.Results[0].Status)
+	require.Len(t, report.Results[0].Commands, 1)
+	require.Equal(t, 7, report.Results[0].Commands[0].ExitCode)
+}
+
 func pluginHealthcheckByID(checks []pluginHealthcheck, id string) *pluginHealthcheck {
 	for index := range checks {
 		if checks[index].PluginID == id {

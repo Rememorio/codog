@@ -9136,6 +9136,9 @@ func (a *App) Marketplace(args []string) error {
 	case "settings":
 		return a.marketplaceSettings(format)
 	case "health", "healthcheck", "lifecycle":
+		if args[0] == "lifecycle" && len(args) > 1 {
+			return a.pluginLifecycleRun(context.Background(), args[1:], format)
+		}
 		report := a.pluginHealthReport(args[0])
 		return renderPluginHealthReport(a.Out, report, format)
 	case "remote", "browse", "discover":
@@ -9676,6 +9679,177 @@ func renderPluginHealthReport(out io.Writer, report pluginHealthReport, format s
 		fmt.Fprintf(out, "  Message          %s\n", report.Message)
 	}
 	return nil
+}
+
+type pluginLifecycleRunRequest struct {
+	Phase     string
+	PluginID  string
+	TimeoutMS int
+}
+
+type pluginLifecycleRunReport struct {
+	Kind      string                       `json:"kind"`
+	Action    string                       `json:"action"`
+	Status    string                       `json:"status"`
+	Phase     string                       `json:"phase"`
+	PluginID  string                       `json:"plugin_id,omitempty"`
+	TimeoutMS int                          `json:"timeout_ms"`
+	Results   []plugins.LifecycleRunResult `json:"results"`
+	Message   string                       `json:"message,omitempty"`
+}
+
+func (a *App) pluginLifecycleRun(ctx context.Context, args []string, format string) error {
+	req, err := parsePluginLifecycleRunArgs(args)
+	if err != nil {
+		return renderCLIError(a.Out, err, format)
+	}
+	report, runErr := a.buildPluginLifecycleRunReport(ctx, req)
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+	} else {
+		renderPluginLifecycleRunReport(a.Out, report)
+	}
+	return runErr
+}
+
+func parsePluginLifecycleRunArgs(args []string) (pluginLifecycleRunRequest, error) {
+	const usage = "codog plugins lifecycle run init|shutdown [PLUGIN_ID] [--timeout-ms N] [--json|--output-format text|json]"
+	req := pluginLifecycleRunRequest{TimeoutMS: int(plugins.LifecycleDefaultTimeout / time.Millisecond)}
+	rest := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--timeout-ms":
+			index++
+			if index >= len(args) {
+				return req, requiredArgumentError{Command: "plugins lifecycle run", Argument: "--timeout-ms", Usage: usage}
+			}
+			timeout, err := strconv.Atoi(args[index])
+			if err != nil || timeout < 0 {
+				return req, fmt.Errorf("plugins lifecycle --timeout-ms must be a non-negative integer")
+			}
+			req.TimeoutMS = timeout
+		case strings.HasPrefix(arg, "--timeout-ms="):
+			timeout, err := strconv.Atoi(strings.TrimPrefix(arg, "--timeout-ms="))
+			if err != nil || timeout < 0 {
+				return req, fmt.Errorf("plugins lifecycle --timeout-ms must be a non-negative integer")
+			}
+			req.TimeoutMS = timeout
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if len(rest) > 0 && strings.EqualFold(rest[0], "run") {
+		rest = rest[1:]
+	}
+	if len(rest) == 0 {
+		return req, requiredArgumentError{Command: "plugins lifecycle run", Argument: "init|shutdown", Usage: usage}
+	}
+	phase := pluginsLifecyclePhase(rest[0])
+	if phase == "" {
+		return req, fmt.Errorf("unsupported plugin lifecycle phase %q", rest[0])
+	}
+	req.Phase = phase
+	if len(rest) > 1 {
+		req.PluginID = strings.TrimSpace(rest[1])
+	}
+	if len(rest) > 2 {
+		return req, unexpectedExtraArgsError{Command: "plugins lifecycle run", Args: append([]string(nil), rest[2:]...), Usage: usage}
+	}
+	return req, nil
+}
+
+func pluginsLifecyclePhase(phase string) string {
+	switch strings.ToLower(strings.TrimSpace(phase)) {
+	case "init", "start", "startup":
+		return "init"
+	case "shutdown", "stop", "teardown":
+		return "shutdown"
+	default:
+		return ""
+	}
+}
+
+func (a *App) buildPluginLifecycleRunReport(ctx context.Context, req pluginLifecycleRunRequest) (pluginLifecycleRunReport, error) {
+	report := pluginLifecycleRunReport{
+		Kind:      "plugin_lifecycle",
+		Action:    "run",
+		Status:    "ok",
+		Phase:     req.Phase,
+		PluginID:  req.PluginID,
+		TimeoutMS: req.TimeoutMS,
+	}
+	manifests, err := plugins.Load(a.Workspace)
+	if err != nil {
+		report.Status = "failed"
+		report.Message = err.Error()
+		return report, err
+	}
+	selected := make([]plugins.Manifest, 0, len(manifests))
+	for _, manifest := range manifests {
+		if req.PluginID == "" || strings.EqualFold(manifest.ID, req.PluginID) || strings.EqualFold(manifest.Name, req.PluginID) {
+			selected = append(selected, manifest)
+		}
+	}
+	if req.PluginID != "" && len(selected) == 0 {
+		report.Status = "failed"
+		report.Message = fmt.Sprintf("plugin %q was not found", req.PluginID)
+		return report, &ExitError{Code: 1, Err: errors.New(report.Message), Silent: true}
+	}
+	timeout := time.Duration(req.TimeoutMS) * time.Millisecond
+	for _, manifest := range selected {
+		result := plugins.RunLifecycle(ctx, manifest, req.Phase, timeout)
+		report.Results = append(report.Results, result)
+		if result.Status == "failed" {
+			report.Status = "failed"
+		}
+	}
+	if len(report.Results) == 0 {
+		report.Status = "skipped"
+		report.Message = "no installed plugins were found"
+		return report, nil
+	}
+	if report.Status == "failed" {
+		report.Message = "one or more plugin lifecycle commands failed"
+		return report, &ExitError{Code: 1, Err: errors.New(report.Message), Silent: true}
+	}
+	allSkipped := true
+	for _, result := range report.Results {
+		if result.Status != "skipped" {
+			allSkipped = false
+			break
+		}
+	}
+	if allSkipped {
+		report.Status = "skipped"
+		report.Message = "no lifecycle commands were executed"
+	}
+	return report, nil
+}
+
+func renderPluginLifecycleRunReport(out io.Writer, report pluginLifecycleRunReport) {
+	fmt.Fprintln(out, "Plugin Lifecycle")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Phase            %s\n", report.Phase)
+	if report.PluginID != "" {
+		fmt.Fprintf(out, "  Plugin           %s\n", report.PluginID)
+	}
+	for _, result := range report.Results {
+		fmt.Fprintf(out, "  - %s %s commands=%d\n", result.PluginID, result.Status, result.CommandCount)
+		if result.Message != "" {
+			fmt.Fprintf(out, "    message=%s\n", result.Message)
+		}
+		for _, command := range result.Commands {
+			fmt.Fprintf(out, "    [%d] %s exit=%d duration=%dms\n", command.Index, command.Status, command.ExitCode, command.DurationMS)
+			if command.Error != "" {
+				fmt.Fprintf(out, "        error=%s\n", command.Error)
+			}
+		}
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
 }
 
 func renderPluginValidation(out io.Writer, source string, result plugins.ValidationResult, format string) error {
