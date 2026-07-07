@@ -22,6 +22,7 @@ import (
 	"github.com/Rememorio/codog/internal/hookenv"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/planmode"
+	"github.com/Rememorio/codog/internal/reportconformance"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/undo"
 	"github.com/stretchr/testify/require"
@@ -4433,6 +4434,85 @@ func TestReportSchemaToolFiltersRegistry(t *testing.T) {
 	require.Equal(t, "field_deltas[].state", response.Registry.Fields[1].ID)
 	require.Contains(t, response.Registry.Fields[1].EnumValues, "carried_forward")
 	require.False(t, response.Registry.Fields[1].Deprecated)
+
+	out, err = ReportSchemaTool{}.Execute(context.Background(), []byte(`{"action":"conformance_fixtures"}`))
+	require.NoError(t, err)
+	var fixtures struct {
+		Kind       string                           `json:"kind"`
+		Action     string                           `json:"action"`
+		Status     string                           `json:"status"`
+		FixtureSet string                           `json:"fixture_set"`
+		Cases      []reportconformance.RequiredCase `json:"cases"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &fixtures))
+	require.Equal(t, "report_schema", fixtures.Kind)
+	require.Equal(t, "conformance_fixtures", fixtures.Action)
+	require.Equal(t, "ok", fixtures.Status)
+	require.Equal(t, reportconformance.FixtureSetVersion, fixtures.FixtureSet)
+	require.Len(t, fixtures.Cases, len(reportconformance.RequiredCases()))
+
+	input, err := json.Marshal(map[string]string{
+		"action": "conformance",
+		"input":  reportSchemaToolConformanceBundleJSON(t),
+	})
+	require.NoError(t, err)
+	out, err = ReportSchemaTool{}.Execute(context.Background(), input)
+	require.NoError(t, err)
+	var conformance struct {
+		Kind        string `json:"kind"`
+		Action      string `json:"action"`
+		Status      string `json:"status"`
+		Conformance struct {
+			Valid          bool `json:"valid"`
+			ParsePassed    bool `json:"parse_passed"`
+			SemanticPassed bool `json:"semantic_passed"`
+			LastPassed     *struct {
+				Consumer string `json:"consumer"`
+				Version  string `json:"version"`
+			} `json:"last_passed"`
+		} `json:"conformance"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &conformance))
+	require.Equal(t, "report_schema", conformance.Kind)
+	require.Equal(t, "conformance", conformance.Action)
+	require.Equal(t, "ok", conformance.Status)
+	require.True(t, conformance.Conformance.Valid)
+	require.True(t, conformance.Conformance.ParsePassed)
+	require.True(t, conformance.Conformance.SemanticPassed)
+	require.NotNil(t, conformance.Conformance.LastPassed)
+	require.Equal(t, "tool-consumer", conformance.Conformance.LastPassed.Consumer)
+}
+
+func reportSchemaToolConformanceBundleJSON(t *testing.T) string {
+	t.Helper()
+	cases := make([]reportconformance.CaseResult, 0, len(reportconformance.RequiredCases()))
+	for _, required := range reportconformance.RequiredCases() {
+		cases = append(cases, reportconformance.CaseResult{
+			Name:         required.Name,
+			ProjectionID: required.ProjectionID,
+			Parsed:       true,
+			SemanticChecks: reportconformance.SemanticChecks{
+				CanonicalIdentityCorrelated: true,
+				RedactedFieldsHandled:       true,
+				MissingFieldsDistinguished:  true,
+				DowngradeHandled:            true,
+				NoChangeHandled:             true,
+				FreshnessHandled:            true,
+			},
+		})
+	}
+	data, err := json.Marshal(reportconformance.Bundle{
+		SchemaVersion: reportconformance.BundleSchemaVersion,
+		FixtureSet:    reportconformance.FixtureSetVersion,
+		Consumer: reportconformance.ConsumerIdentity{
+			Name:    "tool-consumer",
+			Version: "1.0.0",
+		},
+		PassedAt: "2026-07-07T16:30:00Z",
+		Cases:    cases,
+	})
+	require.NoError(t, err)
+	return string(data)
 }
 
 func TestTaskSuperviseToolRestartsEligibleTasks(t *testing.T) {

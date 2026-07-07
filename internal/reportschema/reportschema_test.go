@@ -81,9 +81,12 @@ func TestRegistryV1IsSelfDescribing(t *testing.T) {
 	require.Contains(t, fieldIDs(registry), "projection.provenance.identity_input_hash")
 	require.Contains(t, fieldIDs(registry), "projection.provenance.payload_hash")
 	require.Contains(t, fieldIDs(registry), "projection.provenance.canonical_equivalence_hash")
+	require.Contains(t, fieldIDs(registry), "consumer_conformance.cases[].semantic_checks")
+	require.Contains(t, fieldIDs(registry), "consumer_conformance.last_passed")
 	require.Contains(t, reportSchemaVersions(registry), SchemaV1)
 	require.Contains(t, reportSchemaVersions(registry), ReportingReportSchemaV1)
 	require.Contains(t, reportSchemaVersions(registry), ReportingSnapshotSchemaV1)
+	require.Contains(t, reportSchemaVersions(registry), ReportingConsumerConformanceResultV1)
 	require.Contains(t, reportSchemaVersions(registry), MockParityReportSchemaV1)
 	require.Contains(t, reportSchemaVersions(registry), MockParityManifestSchemaV1)
 
@@ -103,6 +106,9 @@ func TestRegistryV1IsSelfDescribing(t *testing.T) {
 	require.Equal(t, "codog mock-parity --json", mockParity.Command)
 	require.Contains(t, mockParity.Fields, "coverage")
 	require.Contains(t, mockParity.Fields, "usage_summary")
+	conformance := registryReportByID(t, registry, "report_consumer_conformance")
+	require.Equal(t, ReportingConsumerConformanceResultV1, conformance.SchemaVersion)
+	require.Contains(t, conformance.Fields, "consumer_conformance.last_passed")
 }
 
 func TestFilterRegistryForReportVersionAndCapabilities(t *testing.T) {

@@ -48,6 +48,7 @@ import (
 	"github.com/Rememorio/codog/internal/policyengine"
 	"github.com/Rememorio/codog/internal/powershellvalidation"
 	"github.com/Rememorio/codog/internal/recovery"
+	"github.com/Rememorio/codog/internal/reportconformance"
 	"github.com/Rememorio/codog/internal/reporting"
 	"github.com/Rememorio/codog/internal/reportschema"
 	"github.com/Rememorio/codog/internal/roadmap"
@@ -9102,11 +9103,12 @@ func (s flexibleStrings) Values() []string {
 func (ReportSchemaTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "report_schema",
-		Description: "Fetch the machine-readable structured report schema registry, optionally filtered by report, schema version, or field family.",
+		Description: "Fetch structured report schemas or validate reporting consumer conformance bundles.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action": map[string]any{"type": "string", "enum": []string{"registry"}},
+				"action": map[string]any{"type": "string", "enum": []string{"registry", "conformance", "conformance_fixtures"}},
+				"input":  map[string]any{"type": "string"},
 				"report": map[string]any{
 					"oneOf": []any{
 						map[string]any{"type": "string"},
@@ -9136,6 +9138,7 @@ func (ReportSchemaTool) Permission() Permission { return PermissionReadOnly }
 func (ReportSchemaTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		Action        string          `json:"action"`
+		Input         string          `json:"input"`
 		Report        flexibleStrings `json:"report"`
 		SchemaVersion flexibleStrings `json:"schema_version"`
 		FieldFamily   flexibleStrings `json:"field_family"`
@@ -9147,15 +9150,32 @@ func (ReportSchemaTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if action == "" {
 		action = "registry"
 	}
-	if action != "registry" {
+	switch action {
+	case "registry":
+		registry := reportschema.FilterRegistry(reportschema.RegistryV1(), reportschema.RegistryFilter{
+			ReportIDs:      payload.Report.Values(),
+			SchemaVersions: payload.SchemaVersion.Values(),
+			FieldFamilies:  payload.FieldFamily.Values(),
+		})
+		return pretty(map[string]any{"kind": "report_schema", "action": "registry", "status": "ok", "registry": registry}), nil
+	case "conformance":
+		if strings.TrimSpace(payload.Input) == "" {
+			return "", errors.New("report_schema conformance input is required")
+		}
+		result, err := reportconformance.ValidateJSON([]byte(payload.Input))
+		if err != nil {
+			return "", err
+		}
+		status := "ok"
+		if !result.Valid {
+			status = "invalid"
+		}
+		return pretty(map[string]any{"kind": "report_schema", "action": "conformance", "status": status, "conformance": result}), nil
+	case "conformance_fixtures":
+		return pretty(map[string]any{"kind": "report_schema", "action": "conformance_fixtures", "status": "ok", "fixture_set": reportconformance.FixtureSetVersion, "cases": reportconformance.RequiredCases()}), nil
+	default:
 		return "", fmt.Errorf("unknown report_schema action %q", payload.Action)
 	}
-	registry := reportschema.FilterRegistry(reportschema.RegistryV1(), reportschema.RegistryFilter{
-		ReportIDs:      payload.Report.Values(),
-		SchemaVersions: payload.SchemaVersion.Values(),
-		FieldFamilies:  payload.FieldFamily.Values(),
-	})
-	return pretty(map[string]any{"kind": "report_schema", "action": "registry", "status": "ok", "registry": registry}), nil
 }
 
 func (ReportBackpressureTool) Definition() anthropic.ToolDefinition {

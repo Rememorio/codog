@@ -85,6 +85,7 @@ import (
 	"github.com/Rememorio/codog/internal/prworkflow"
 	"github.com/Rememorio/codog/internal/releasenotes"
 	remoteruntime "github.com/Rememorio/codog/internal/remote"
+	"github.com/Rememorio/codog/internal/reportconformance"
 	"github.com/Rememorio/codog/internal/reportschema"
 	localreview "github.com/Rememorio/codog/internal/review"
 	"github.com/Rememorio/codog/internal/runloop"
@@ -42793,12 +42794,14 @@ type reportSchemaRequest struct {
 }
 
 type reportSchemaReport struct {
-	Kind       string                        `json:"kind"`
-	Action     string                        `json:"action"`
-	Status     string                        `json:"status"`
-	Registry   *reportschema.Registry        `json:"registry,omitempty"`
-	Report     *reportschema.CanonicalReport `json:"report,omitempty"`
-	Projection *reportschema.Projection      `json:"projection,omitempty"`
+	Kind             string                           `json:"kind"`
+	Action           string                           `json:"action"`
+	Status           string                           `json:"status"`
+	Registry         *reportschema.Registry           `json:"registry,omitempty"`
+	Report           *reportschema.CanonicalReport    `json:"report,omitempty"`
+	Projection       *reportschema.Projection         `json:"projection,omitempty"`
+	Conformance      *reportconformance.Result        `json:"conformance,omitempty"`
+	ConformanceCases []reportconformance.RequiredCase `json:"conformance_cases,omitempty"`
 }
 
 func (a *App) ReportSchema(args []string) error {
@@ -42841,6 +42844,21 @@ func (a *App) ReportSchema(args []string) error {
 			return err
 		}
 		out.Projection = &projection
+	case "conformance":
+		data, err := readReportSchemaRawInput(req, a.In)
+		if err != nil {
+			return err
+		}
+		result, err := reportconformance.ValidateJSON(data)
+		if err != nil {
+			return err
+		}
+		if !result.Valid {
+			out.Status = "invalid"
+		}
+		out.Conformance = &result
+	case "conformance-fixtures":
+		out.ConformanceCases = reportconformance.RequiredCases()
 	default:
 		return fmt.Errorf("unknown report-schema action %q", req.Action)
 	}
@@ -42964,13 +42982,17 @@ func parseReportSchemaArgs(args []string) (reportSchemaRequest, error) {
 			req.Action = "canonicalize"
 		case "project", "projection":
 			req.Action = "project"
+		case "conformance", "consumer-conformance", "validate-consumer":
+			req.Action = "conformance"
+		case "conformance-fixtures", "fixtures", "consumer-fixtures":
+			req.Action = "conformance-fixtures"
 		default:
 			return req, fmt.Errorf("unknown report-schema action %q", positionals[0])
 		}
 		positionals = positionals[1:]
 	}
 	if len(positionals) > 0 {
-		return req, errors.New("usage: codog report-schema [registry|canonicalize|project] [--input JSON|--file PATH|--stdin] [--report ID] [--schema-version VERSION] [--consumer NAME] [--field-family NAME] [--max-sensitivity public|internal|operator_only|secret] [--output-format text|json]")
+		return req, errors.New("usage: codog report-schema [registry|canonicalize|project|conformance|conformance-fixtures] [--input JSON|--file PATH|--stdin] [--report ID] [--schema-version VERSION] [--consumer NAME] [--field-family NAME] [--max-sensitivity public|internal|operator_only|secret] [--output-format text|json]")
 	}
 	if strings.TrimSpace(req.Input) != "" && strings.TrimSpace(req.File) != "" {
 		return req, errors.New("report-schema accepts only one of --input or --file")
@@ -42978,8 +43000,8 @@ func parseReportSchemaArgs(args []string) (reportSchemaRequest, error) {
 	if req.Stdin && (strings.TrimSpace(req.Input) != "" || strings.TrimSpace(req.File) != "") {
 		return req, errors.New("report-schema accepts --stdin only without --input or --file")
 	}
-	if (req.Action == "canonicalize" || req.Action == "project") && strings.TrimSpace(req.Input) == "" && strings.TrimSpace(req.File) == "" && !req.Stdin {
-		return req, errors.New("report-schema input is required for canonicalize and project")
+	if (req.Action == "canonicalize" || req.Action == "project" || req.Action == "conformance") && strings.TrimSpace(req.Input) == "" && strings.TrimSpace(req.File) == "" && !req.Stdin {
+		return req, errors.New("report-schema input is required for canonicalize, project, and conformance")
 	}
 	return req, nil
 }
@@ -43000,6 +43022,22 @@ func schemaFilterValues(req reportSchemaRequest) []string {
 		return nil
 	}
 	return append([]string(nil), req.SchemaVersions...)
+}
+
+func readReportSchemaRawInput(req reportSchemaRequest, stdin io.Reader) ([]byte, error) {
+	switch {
+	case strings.TrimSpace(req.Input) != "":
+		return []byte(req.Input), nil
+	case strings.TrimSpace(req.File) != "":
+		return os.ReadFile(req.File)
+	case req.Stdin:
+		if stdin == nil {
+			return nil, errors.New("report-schema stdin is not available")
+		}
+		return io.ReadAll(stdin)
+	default:
+		return nil, errors.New("report-schema input is required")
+	}
 }
 
 func readReportSchemaInput(req reportSchemaRequest, stdin io.Reader) (reportschema.CanonicalReport, error) {
@@ -43079,6 +43117,28 @@ func renderReportSchemaReport(out io.Writer, report reportSchemaReport) {
 			for _, redaction := range report.Projection.Provenance.Redactions {
 				fmt.Fprintf(out, "    - %s %s\n", redaction.FieldPath, redaction.Reason)
 			}
+		}
+	}
+	if report.Conformance != nil {
+		fmt.Fprintf(out, "  Schema           %s\n", report.Conformance.SchemaVersion)
+		fmt.Fprintf(out, "  Fixture set      %s\n", report.Conformance.FixtureSet)
+		fmt.Fprintf(out, "  Consumer         %s %s\n", report.Conformance.Consumer.Name, report.Conformance.Consumer.Version)
+		fmt.Fprintf(out, "  Valid            %t\n", report.Conformance.Valid)
+		fmt.Fprintf(out, "  Parse passed     %t\n", report.Conformance.ParsePassed)
+		fmt.Fprintf(out, "  Semantic passed  %t\n", report.Conformance.SemanticPassed)
+		fmt.Fprintf(out, "  Cases            %d/%d\n", report.Conformance.PassedCaseCount, report.Conformance.RequiredCaseCount)
+		if report.Conformance.LastPassed != nil {
+			fmt.Fprintf(out, "  Last passed      %s %s %s\n", report.Conformance.LastPassed.Consumer, report.Conformance.LastPassed.Version, report.Conformance.LastPassed.PassedAt)
+		}
+		for _, err := range report.Conformance.Errors {
+			fmt.Fprintf(out, "  - %s [%s] %s\n", err.Path, err.Kind, err.Message)
+		}
+	}
+	if len(report.ConformanceCases) > 0 {
+		fmt.Fprintf(out, "  Fixture set      %s\n", reportconformance.FixtureSetVersion)
+		fmt.Fprintf(out, "  Conformance cases %d\n", len(report.ConformanceCases))
+		for _, candidate := range report.ConformanceCases {
+			fmt.Fprintf(out, "    - %s %s %s\n", candidate.Name, candidate.View, candidate.ProjectionID)
 		}
 	}
 }

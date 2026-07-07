@@ -121,7 +121,7 @@ func Specs() []Spec {
 		{Name: "/green", Usage: "/green [check]", Description: "Alias for /green-contract."},
 		{Name: "/g004-conformance", Usage: "/g004-conformance [validate]", Description: "Validate a G004 event, report, and approval-token contract bundle."},
 		{Name: "/g004", Usage: "/g004 [validate]", Description: "Alias for /g004-conformance."},
-		{Name: "/report-schema", Usage: "/report-schema [registry|canonicalize|project]", Description: "Inspect and project canonical report schema payloads."},
+		{Name: "/report-schema", Usage: "/report-schema [registry|canonicalize|project|conformance|conformance-fixtures]", Description: "Inspect report schemas and validate reporting consumer conformance."},
 		{Name: "/trust", Usage: "/trust [resolve] [SCREEN_TEXT]", Description: "Resolve a workspace trust prompt against allow and deny rules."},
 		{Name: "/tag", Usage: "/tag [list|create|show|delete]", Description: "Manage local git tags."},
 		{Name: "/git", Usage: "/git status|diff|log|blame", Description: "Run a supported git workflow."},

@@ -61,6 +61,7 @@ import (
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/prworkflow"
+	"github.com/Rememorio/codog/internal/reportconformance"
 	"github.com/Rememorio/codog/internal/reportschema"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/sandbox"
@@ -14261,6 +14262,61 @@ func TestReportSchemaCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "enum=changed|unchanged|cleared|carried_forward")
 	require.NotContains(t, out.String(), "claims[].kind")
 	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.NoError(t, app.ReportSchema([]string{"conformance-fixtures", "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &registryReport))
+	require.Len(t, registryReport.ConformanceCases, len(reportconformance.RequiredCases()))
+	require.Equal(t, reportconformance.RequiredCases()[0].ProjectionID, registryReport.ConformanceCases[0].ProjectionID)
+	out.Reset()
+
+	require.NoError(t, app.ReportSchema([]string{"conformance", "--input", reportSchemaConformanceBundleJSON(t), "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &registryReport))
+	require.NotNil(t, registryReport.Conformance)
+	require.Equal(t, "ok", registryReport.Status)
+	require.True(t, registryReport.Conformance.Valid)
+	require.True(t, registryReport.Conformance.ParsePassed)
+	require.True(t, registryReport.Conformance.SemanticPassed)
+	require.NotNil(t, registryReport.Conformance.LastPassed)
+	require.Equal(t, "test-consumer", registryReport.Conformance.LastPassed.Consumer)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/report-schema conformance-fixtures", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Fixture set      reporting-projection-golden-v1")
+	require.Contains(t, out.String(), "public_full_redacts_internal_claims_and_item_detail")
+	require.Empty(t, errOut.String())
+}
+
+func reportSchemaConformanceBundleJSON(t *testing.T) string {
+	t.Helper()
+	cases := make([]reportconformance.CaseResult, 0, len(reportconformance.RequiredCases()))
+	for _, required := range reportconformance.RequiredCases() {
+		cases = append(cases, reportconformance.CaseResult{
+			Name:         required.Name,
+			ProjectionID: required.ProjectionID,
+			Parsed:       true,
+			SemanticChecks: reportconformance.SemanticChecks{
+				CanonicalIdentityCorrelated: true,
+				RedactedFieldsHandled:       true,
+				MissingFieldsDistinguished:  true,
+				DowngradeHandled:            true,
+				NoChangeHandled:             true,
+				FreshnessHandled:            true,
+			},
+		})
+	}
+	data, err := json.Marshal(reportconformance.Bundle{
+		SchemaVersion: reportconformance.BundleSchemaVersion,
+		FixtureSet:    reportconformance.FixtureSetVersion,
+		Consumer: reportconformance.ConsumerIdentity{
+			Name:    "test-consumer",
+			Version: "1.0.0",
+		},
+		PassedAt: "2026-07-07T16:30:00Z",
+		Cases:    cases,
+	})
+	require.NoError(t, err)
+	return string(data)
 }
 
 func TestG004ConformanceCommandAndSlash(t *testing.T) {

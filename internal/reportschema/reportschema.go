@@ -10,14 +10,16 @@ import (
 )
 
 const (
-	SchemaV1                    = "claw.report.v1"
-	DefaultProjectionPolicyV1   = "claw.report.projection.v1"
-	ReportingReportSchemaV1     = "codog.reporting.report.v1"
-	ReportingSnapshotSchemaV1   = "codog.reporting.snapshot.v1"
-	ReportingCompatibilityV1    = "codog.reporting.compatibility.v1"
-	ReportingProjectionPolicyV1 = "codog.reporting.projection.v1"
-	MockParityReportSchemaV1    = "codog.mock_parity.v1"
-	MockParityManifestSchemaV1  = "codog.mock_parity_manifest.v1"
+	SchemaV1                             = "claw.report.v1"
+	DefaultProjectionPolicyV1            = "claw.report.projection.v1"
+	ReportingReportSchemaV1              = "codog.reporting.report.v1"
+	ReportingSnapshotSchemaV1            = "codog.reporting.snapshot.v1"
+	ReportingCompatibilityV1             = "codog.reporting.compatibility.v1"
+	ReportingProjectionPolicyV1          = "codog.reporting.projection.v1"
+	ReportingConsumerConformanceSchemaV1 = "codog.reporting.consumer_conformance.v1"
+	ReportingConsumerConformanceResultV1 = "codog.reporting.consumer_conformance.result.v1"
+	MockParityReportSchemaV1             = "codog.mock_parity.v1"
+	MockParityManifestSchemaV1           = "codog.mock_parity_manifest.v1"
 
 	ClaimObservedFact   = "observed_fact"
 	ClaimInference      = "inference"
@@ -219,6 +221,12 @@ func RegistryV1() Registry {
 			field("projection.provenance.latest_compatible", "whether the emitted projection is the latest compatible view for its cache key", false, "projection"),
 			field("projection.provenance.stale_cached", "whether the emitted projection is a stale cached view", false, "projection"),
 			field("projection.provenance.supersedes_projection_id", "previous projection id superseded by this projection when the source changes", false, "projection"),
+			field("consumer_conformance.fixture_set", "projection fixture set validated by a downstream consumer", false, "consumer_conformance"),
+			field("consumer_conformance.consumer.name", "downstream consumer name that ran the conformance suite", true, "consumer_conformance"),
+			field("consumer_conformance.consumer.version", "downstream consumer version that ran the conformance suite", true, "consumer_conformance"),
+			field("consumer_conformance.cases[].parsed", "whether a consumer parsed a projection fixture without transport/schema errors", true, "consumer_conformance"),
+			field("consumer_conformance.cases[].semantic_checks", "semantic correctness checks such as redacted-vs-missing, no-change, freshness, and downgrade handling", true, "consumer_conformance"),
+			field("consumer_conformance.last_passed", "consumer/version/fixture-set tuple that last passed every required conformance case", false, "consumer_conformance"),
 			field("schema_version", "structured payload schema version", true, "identity"),
 			field("projection_id", "stable projection id derived from source, view, verbosity, and payload", false, "projection"),
 			enumField("view", "audience-specific projection view", false, "projection", []string{"default", "full", "delta_brief", "ops_audit", "human_readable", "roadmap_sync"}),
@@ -282,6 +290,15 @@ func RegistryV1() Registry {
 				"channel",
 				"generated_at",
 				"items",
+			}),
+			report("report_consumer_conformance", ReportingConsumerConformanceResultV1, "Consumer-submitted reporting projection conformance result distinguishing parse and semantic correctness.", "codog report-schema conformance", "codog report-schema conformance", []string{
+				"schema_version",
+				"consumer_conformance.fixture_set",
+				"consumer_conformance.consumer.name",
+				"consumer_conformance.consumer.version",
+				"consumer_conformance.cases[].parsed",
+				"consumer_conformance.cases[].semantic_checks",
+				"consumer_conformance.last_passed",
 			}),
 			report("mock_parity_report", MockParityReportSchemaV1, "Deterministic mock provider parity harness execution report.", "codog mock-parity", "codog mock-parity --json", []string{
 				"schema_version",
