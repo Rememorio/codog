@@ -9206,6 +9206,10 @@ func (ReportBackpressureTool) Definition() anthropic.ToolDefinition {
 					"type": "string",
 					"enum": []string{"brief", "normal", "verbose"},
 				},
+				"max_sensitivity": map[string]any{
+					"type": "string",
+					"enum": []string{"public", "internal", "operator_only", "secret"},
+				},
 			},
 			"additionalProperties": false,
 		},
@@ -9235,6 +9239,7 @@ func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage
 		FieldFamilies       []string `json:"field_families"`
 		ProjectionView      string   `json:"projection_view"`
 		ProjectionVerbosity string   `json:"projection_verbosity"`
+		MaxSensitivity      string   `json:"max_sensitivity"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -9274,6 +9279,7 @@ func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage
 				Consumer:       payload.Consumer,
 				SchemaVersions: payload.SchemaVersions,
 				FieldFamilies:  payload.FieldFamilies,
+				MaxSensitivity: payload.MaxSensitivity,
 			}, payload.ProjectionView, payload.ProjectionVerbosity)
 			if err != nil {
 				return "", err

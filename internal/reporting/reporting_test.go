@@ -1,6 +1,7 @@
 package reporting
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +59,9 @@ func TestGenerateCollapsesUnchangedItemsAndStoresSnapshot(t *testing.T) {
 	require.Equal(t, "carried_forward", first.NewItems[0].ObservationSource)
 	require.False(t, first.MixedFreshness)
 	require.Equal(t, map[string]int{"current": 1}, first.FreshnessCounts)
+	require.Equal(t, reportschema.SensitivityInternal, first.FieldSensitivity["claims"])
+	require.Equal(t, reportschema.SensitivityInternal, first.FieldSensitivity["new_items"])
+	require.Equal(t, reportschema.SensitivityInternal, first.NewItems[0].Sensitivity)
 	require.Empty(t, first.ChangedItems)
 	require.Zero(t, first.UnchangedCount)
 	require.Equal(t, 1, first.TotalCount)
@@ -68,6 +72,8 @@ func TestGenerateCollapsesUnchangedItemsAndStoresSnapshot(t *testing.T) {
 	require.Equal(t, []string{firstItem.ItemID}, first.LastMeaningfulItemIDs)
 	require.NotEmpty(t, first.Claims)
 	require.Contains(t, claimKinds(first.Claims), reportschema.ClaimObservedFact)
+	statusClaim := claimByID(t, first.Claims, "claim-"+firstItem.ItemID+"-status")
+	require.Equal(t, reportschema.SensitivityPublic, statusClaim.Sensitivity)
 	firstPriorityDelta := fieldDeltaByField(t, first.FieldDeltas, "pinpoint."+firstItem.ItemID+".priority")
 	require.Equal(t, reportschema.FieldChanged, firstPriorityDelta.State)
 	require.Nil(t, firstPriorityDelta.PreviousHash)
@@ -102,6 +108,7 @@ func TestGenerateCollapsesUnchangedItemsAndStoresSnapshot(t *testing.T) {
 	require.Len(t, second.NegativeEvidence, 2)
 	noDelta := negativeEvidenceByQuery(t, second.NegativeEvidence, "no_new_delta")
 	require.Equal(t, reportschema.NegativeNotObservedInCheckedScope, noDelta.Status)
+	require.Equal(t, reportschema.SensitivityInternal, noDelta.Sensitivity)
 	require.Equal(t, []string{"roadmap", "sessions", "logs"}, noDelta.CheckedSurfaces)
 	require.Equal(t, "2026-07-07T13:01:00Z/2026-07-07T13:02:00Z", noDelta.Window)
 	noBlocker := negativeEvidenceByQuery(t, second.NegativeEvidence, "no_new_blocker")
@@ -178,6 +185,7 @@ func TestGenerateLabelsAndPromotesClaims(t *testing.T) {
 	rootClaim := claimByID(t, first.Claims, "claim-"+filed.ItemID+"-root-cause")
 	require.Equal(t, reportschema.ClaimHypothesis, rootClaim.Kind)
 	require.Equal(t, reportschema.ConfidenceMedium, rootClaim.Confidence)
+	require.Equal(t, reportschema.SensitivityInternal, rootClaim.Sensitivity)
 	require.Empty(t, rootClaim.PromotedFrom)
 	require.Contains(t, rootClaim.Text, "startup timeout")
 	require.Len(t, rootClaim.Evidence, 1)
@@ -361,6 +369,109 @@ func TestProjectReportBuildsAudienceViews(t *testing.T) {
 	require.Equal(t, brief.Provenance.SourceContentHash, briefAgain.Provenance.SourceContentHash)
 }
 
+func TestProjectReportRedactsBySensitivityPolicy(t *testing.T) {
+	configHome := t.TempDir()
+	roadmapStore := roadmap.NewStore(configHome)
+	reportStore := NewStore(configHome)
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	filed, err := roadmapStore.File(roadmap.Filing{
+		Title:    "redacted projection",
+		Priority: roadmap.PriorityP1,
+		Evidence: []roadmap.EvidenceAttachment{{
+			Role:      roadmap.EvidenceRootCauseHint,
+			Type:      "log",
+			Reference: "log:redaction",
+			Preview:   "operator trace includes internal queue names",
+		}},
+		Handoff: &roadmap.HandoffPacket{
+			SuggestedVerification: []string{"go test ./internal/reporting"},
+		},
+		Now: now,
+	})
+	require.NoError(t, err)
+	report, err := reportStore.Generate("dogfood", now.Add(time.Minute))
+	require.NoError(t, err)
+
+	projection, err := ProjectReport(report, reportschema.ConsumerCapabilities{
+		Consumer:       "public-viewer",
+		SchemaVersions: []string{reportschema.ReportingReportSchemaV1},
+		MaxSensitivity: reportschema.SensitivityPublic,
+	}, "full", "verbose")
+	require.NoError(t, err)
+
+	require.Equal(t, report.ReportID, projection.Provenance.SourceReportID)
+	require.Equal(t, report.SnapshotID, projection.Provenance.SourceSnapshotID)
+	require.Equal(t, report.Identity.ContentHash, projection.Provenance.SourceContentHash)
+	require.NotEmpty(t, projection.Provenance.Redactions)
+	require.True(t, hasRedactionPath(projection.Provenance.Redactions, func(path string) bool {
+		return strings.HasPrefix(path, "claims[") && strings.HasSuffix(path, "].text")
+	}))
+	require.Contains(t, redactionPaths(projection.Provenance.Redactions), "new_items[0].claims")
+	require.Contains(t, redactionPaths(projection.Provenance.Redactions), "new_items[0].handoff")
+
+	claims, ok := projection.Payload["claims"].([]ClaimSummary)
+	require.True(t, ok)
+	require.Len(t, claims, len(report.Claims))
+	publicClaimSeen := false
+	redactedClaimSeen := false
+	for _, claim := range claims {
+		if claim.Sensitivity == reportschema.SensitivityPublic && strings.Contains(claim.Text, filed.ItemID) {
+			publicClaimSeen = true
+		}
+		if claim.Sensitivity == reportschema.SensitivityInternal && claim.Text == "<redacted>" && len(claim.Evidence) == 0 {
+			redactedClaimSeen = true
+		}
+	}
+	require.True(t, publicClaimSeen)
+	require.True(t, redactedClaimSeen)
+
+	items, ok := projection.Payload["new_items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, 1)
+	item, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, filed.ItemID, item["id"])
+	require.NotContains(t, item, "claims")
+	require.NotContains(t, item, "handoff")
+	require.NotContains(t, item, "evidence_refs")
+	require.NotContains(t, item, "implementation")
+	require.Contains(t, claimByID(t, projection.CanonicalReport.Claims, "claim-"+filed.ItemID+"-root-cause").Text, "operator trace")
+	require.NotNil(t, projection.CanonicalReport.NewItems[0].Handoff)
+}
+
+func TestProjectReportOmitNegativeEvidenceForPublicPolicy(t *testing.T) {
+	configHome := t.TempDir()
+	roadmapStore := roadmap.NewStore(configHome)
+	reportStore := NewStore(configHome)
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	_, err := roadmapStore.File(roadmap.Filing{
+		Title: "negative evidence projection",
+		Now:   now,
+	})
+	require.NoError(t, err)
+	_, err = reportStore.Generate("dogfood", now.Add(time.Minute))
+	require.NoError(t, err)
+	report, err := reportStore.GenerateWithOptions("dogfood", now.Add(2*time.Minute), GenerateOptions{
+		CheckedSurfaces: []string{"roadmap", "sessions"},
+	})
+	require.NoError(t, err)
+	require.Len(t, report.NegativeEvidence, 2)
+
+	projection, err := ProjectReport(report, reportschema.ConsumerCapabilities{
+		Consumer:       "public-audit",
+		SchemaVersions: []string{reportschema.ReportingReportSchemaV1},
+		MaxSensitivity: reportschema.SensitivityPublic,
+	}, "ops_audit", "normal")
+	require.NoError(t, err)
+
+	require.NotContains(t, projection.Payload, "negative_evidence")
+	require.Contains(t, redactionPaths(projection.Provenance.Redactions), "negative_evidence")
+	require.Len(t, projection.CanonicalReport.NegativeEvidence, 2)
+	require.Equal(t, reportschema.SensitivityInternal, projection.CanonicalReport.NegativeEvidence[0].Sensitivity)
+}
+
 func TestProjectReportCacheMarksDuplicatesAndSupersededViews(t *testing.T) {
 	configHome := t.TempDir()
 	roadmapStore := roadmap.NewStore(configHome)
@@ -455,6 +566,23 @@ func fieldDeltaByField(t *testing.T, values []reportschema.FieldDelta, field str
 	}
 	t.Fatalf("missing field delta %q in %#v", field, values)
 	return reportschema.FieldDelta{}
+}
+
+func redactionPaths(values []reportschema.RedactionProvenance) []string {
+	paths := make([]string, 0, len(values))
+	for _, value := range values {
+		paths = append(paths, value.FieldPath)
+	}
+	return paths
+}
+
+func hasRedactionPath(values []reportschema.RedactionProvenance, matches func(string) bool) bool {
+	for _, value := range values {
+		if matches(value.FieldPath) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestGenerateMarksStaleAndMixedFreshness(t *testing.T) {

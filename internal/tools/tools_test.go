@@ -4256,7 +4256,7 @@ func TestReportBackpressureToolCollapsesRepeatedRoadmapReports(t *testing.T) {
 	require.Contains(t, secondOut, `"last_meaningful_report_id": "`+first.ReportID+`"`)
 	require.Contains(t, secondOut, `"unchanged_count": 1`)
 	require.Contains(t, secondOut, `"collapsed": true`)
-	require.NotContains(t, secondOut, `"new_items"`)
+	require.NotContains(t, secondOut, `"new_items": [`)
 	require.Contains(t, secondOut, `"previous_report_id": "`+first.ReportID+`"`)
 	require.Contains(t, secondOut, `"negative_evidence": [`)
 	require.Contains(t, secondOut, `"query": "no_new_delta"`)
@@ -4290,7 +4290,7 @@ func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
 	_, err := roadmapTool.Execute(context.Background(), []byte(`{"action":"file","title":"project consumer report","priority":"p1","evidence":[{"role":"root_cause_hint","type":"log","reference":"log:projection","preview":"legacy consumer needs reduced payload"}],"now":"2026-07-07T14:00:00Z"}`))
 	require.NoError(t, err)
 
-	out, err := reportTool.Execute(context.Background(), []byte(`{"action":"generate","channel":"dogfood","consumer":"legacy-claw","schema_versions":["legacy.report.v1"],"field_families":["claims","field_deltas"],"projection_view":"legacy","now":"2026-07-07T14:01:00Z"}`))
+	out, err := reportTool.Execute(context.Background(), []byte(`{"action":"generate","channel":"dogfood","consumer":"legacy-claw","schema_versions":["legacy.report.v1"],"field_families":["claims","field_deltas"],"projection_view":"legacy","max_sensitivity":"public","now":"2026-07-07T14:01:00Z"}`))
 	require.NoError(t, err)
 	var projection struct {
 		SchemaVersion string `json:"schema_version"`
@@ -4303,8 +4303,13 @@ func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
 			LatestCompatible     bool     `json:"latest_compatible"`
 			StaleCached          bool     `json:"stale_cached"`
 			CacheKey             string   `json:"cache_key"`
-			Consumer             struct {
-				Consumer string `json:"consumer"`
+			Redactions           []struct {
+				FieldPath string `json:"field_path"`
+				Reason    string `json:"reason"`
+			} `json:"redactions"`
+			Consumer struct {
+				Consumer       string `json:"consumer"`
+				MaxSensitivity string `json:"max_sensitivity"`
 			} `json:"consumer"`
 		} `json:"provenance"`
 		Payload         map[string]any `json:"payload"`
@@ -4321,12 +4326,36 @@ func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
 	require.False(t, projection.Provenance.StaleCached)
 	require.NotEmpty(t, projection.Provenance.CacheKey)
 	require.Equal(t, "legacy-claw", projection.Provenance.Consumer.Consumer)
+	require.Equal(t, "public", projection.Provenance.Consumer.MaxSensitivity)
+	require.NotEmpty(t, projection.Provenance.Redactions)
+	require.Contains(t, projection.Provenance.Redactions[0].Reason, "sensitivity")
+	hasClaimRedaction := false
+	for _, redaction := range projection.Provenance.Redactions {
+		if strings.HasPrefix(redaction.FieldPath, "claims[") && strings.HasSuffix(redaction.FieldPath, "].text") {
+			hasClaimRedaction = true
+		}
+	}
+	require.True(t, hasClaimRedaction)
 	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "items")
 	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "negative_evidence")
 	require.Contains(t, projection.Payload, "claims")
 	require.Contains(t, projection.Payload, "field_deltas")
 	require.NotContains(t, projection.Payload, "new_items")
 	require.NotContains(t, projection.Payload, "negative_evidence")
+	claims, ok := projection.Payload["claims"].([]any)
+	require.True(t, ok)
+	require.GreaterOrEqual(t, len(claims), 2)
+	redactedClaimSeen := false
+	for _, claimValue := range claims {
+		claim, ok := claimValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		if claim["text"] == "<redacted>" && claim["sensitivity"] == "internal" && claim["evidence"] == nil {
+			redactedClaimSeen = true
+		}
+	}
+	require.True(t, redactedClaimSeen)
 	require.Contains(t, projection.CanonicalReport, "new_items")
 	require.Contains(t, projection.CanonicalReport, "schema_compatibility")
 

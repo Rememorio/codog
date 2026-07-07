@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,6 +50,7 @@ type ItemSummary struct {
 	Freshness           string                       `json:"freshness"`
 	ObservationSource   string                       `json:"observation_source"`
 	Fingerprint         string                       `json:"fingerprint"`
+	Sensitivity         string                       `json:"sensitivity"`
 	EvidenceRefs        []string                     `json:"evidence_refs,omitempty"`
 	Claims              []ClaimSummary               `json:"claims,omitempty"`
 	Handoff             *roadmap.HandoffPacket       `json:"handoff,omitempty"`
@@ -63,6 +65,7 @@ type ClaimSummary struct {
 	Confidence   string   `json:"confidence"`
 	Evidence     []string `json:"evidence,omitempty"`
 	PromotedFrom string   `json:"promoted_from,omitempty"`
+	Sensitivity  string   `json:"sensitivity"`
 }
 
 type Report struct {
@@ -81,6 +84,7 @@ type Report struct {
 	NoChange                    bool                               `json:"no_change"`
 	MixedFreshness              bool                               `json:"mixed_freshness"`
 	FreshnessCounts             map[string]int                     `json:"freshness_counts,omitempty"`
+	FieldSensitivity            map[string]string                  `json:"field_sensitivity,omitempty"`
 	Claims                      []ClaimSummary                     `json:"claims,omitempty"`
 	NegativeEvidence            []reportschema.NegativeEvidence    `json:"negative_evidence,omitempty"`
 	InvalidatesNegativeEvidence []string                           `json:"invalidates_negative_evidence,omitempty"`
@@ -114,23 +118,24 @@ type ReportProjection struct {
 }
 
 type ReportProjectionProvenance struct {
-	PolicyID                string                            `json:"policy_id"`
-	CacheKey                string                            `json:"cache_key,omitempty"`
-	SourceSchemaVersion     string                            `json:"source_schema_version"`
-	SourceReportID          string                            `json:"source_report_id"`
-	SourceSnapshotID        string                            `json:"source_snapshot_id"`
-	SourceContentHash       string                            `json:"source_content_hash"`
-	Consumer                reportschema.ConsumerCapabilities `json:"consumer"`
-	View                    string                            `json:"view"`
-	Verbosity               string                            `json:"verbosity"`
-	SourceChanged           bool                              `json:"source_changed"`
-	RenderingChanged        bool                              `json:"rendering_changed"`
-	DuplicateOfProjectionID string                            `json:"duplicate_of_projection_id,omitempty"`
-	SupersedesProjectionID  string                            `json:"supersedes_projection_id,omitempty"`
-	LatestCompatible        bool                              `json:"latest_compatible"`
-	StaleCached             bool                              `json:"stale_cached"`
-	Downgraded              bool                              `json:"downgraded"`
-	OmittedFieldFamilies    []string                          `json:"omitted_field_families,omitempty"`
+	PolicyID                string                             `json:"policy_id"`
+	CacheKey                string                             `json:"cache_key,omitempty"`
+	SourceSchemaVersion     string                             `json:"source_schema_version"`
+	SourceReportID          string                             `json:"source_report_id"`
+	SourceSnapshotID        string                             `json:"source_snapshot_id"`
+	SourceContentHash       string                             `json:"source_content_hash"`
+	Consumer                reportschema.ConsumerCapabilities  `json:"consumer"`
+	View                    string                             `json:"view"`
+	Verbosity               string                             `json:"verbosity"`
+	SourceChanged           bool                               `json:"source_changed"`
+	RenderingChanged        bool                               `json:"rendering_changed"`
+	DuplicateOfProjectionID string                             `json:"duplicate_of_projection_id,omitempty"`
+	SupersedesProjectionID  string                             `json:"supersedes_projection_id,omitempty"`
+	LatestCompatible        bool                               `json:"latest_compatible"`
+	StaleCached             bool                               `json:"stale_cached"`
+	Downgraded              bool                               `json:"downgraded"`
+	OmittedFieldFamilies    []string                           `json:"omitted_field_families,omitempty"`
+	Redactions              []reportschema.RedactionProvenance `json:"redactions,omitempty"`
 }
 
 type ReportProjectionCacheEntry struct {
@@ -243,6 +248,9 @@ func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities
 	capabilities.SchemaVersions = cleanStrings(capabilities.SchemaVersions)
 	capabilities.FieldFamilies = cleanStrings(capabilities.FieldFamilies)
 	capabilities.MaxSensitivity = strings.TrimSpace(capabilities.MaxSensitivity)
+	if capabilities.MaxSensitivity == "" {
+		capabilities.MaxSensitivity = reportschema.SensitivityInternal
+	}
 	view = strings.TrimSpace(view)
 	if view == "" {
 		view = "default"
@@ -270,6 +278,10 @@ func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities
 	} else if restrictFamilies {
 		payload, omitted = projectedReportPayload(report, capabilities)
 	}
+	redactions, err := redactProjectionPayload(payload, capabilities)
+	if err != nil {
+		return ReportProjection{}, err
+	}
 	sourceHash := identity.ContentHash
 	renderingChanged := isAudienceReportView(view) || restrictFamilies
 	projection := ReportProjection{
@@ -291,6 +303,7 @@ func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities
 			StaleCached:          false,
 			Downgraded:           !supportsSchema || len(omitted) > 0 || isAudienceReportView(view),
 			OmittedFieldFamilies: omitted,
+			Redactions:           redactions,
 		},
 		Payload:         payload,
 		CanonicalReport: report,
@@ -434,6 +447,7 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 		NoChange:                    noChange,
 		MixedFreshness:              len(freshnessCounts) > 1,
 		FreshnessCounts:             freshnessCounts,
+		FieldSensitivity:            reportFieldSensitivity(),
 		Claims:                      claims,
 		NegativeEvidence:            negativeEvidence,
 		InvalidatesNegativeEvidence: invalidatesNegativeEvidence,
@@ -510,6 +524,27 @@ func reportSchemaCompatibility() reportschema.CompatibilityGuidance {
 			"unchanged_count",
 		},
 		OlderConsumerGuidance: "Consumers that do not support this version should parse only minimal_stable_core, ignore unknown fields, and fetch the snapshot for full audit context.",
+	}
+}
+
+func reportFieldSensitivity() map[string]string {
+	return map[string]string{
+		"identity":             reportschema.SensitivityPublic,
+		"schema_version":       reportschema.SensitivityPublic,
+		"kind":                 reportschema.SensitivityPublic,
+		"channel":              reportschema.SensitivityInternal,
+		"report_id":            reportschema.SensitivityPublic,
+		"snapshot_id":          reportschema.SensitivityInternal,
+		"outcome":              reportschema.SensitivityPublic,
+		"checked":              reportschema.SensitivityPublic,
+		"no_change":            reportschema.SensitivityPublic,
+		"claims":               reportschema.SensitivityInternal,
+		"negative_evidence":    reportschema.SensitivityInternal,
+		"field_deltas":         reportschema.SensitivityInternal,
+		"new_items":            reportschema.SensitivityInternal,
+		"changed_items":        reportschema.SensitivityInternal,
+		"freshness_counts":     reportschema.SensitivityInternal,
+		"schema_compatibility": reportschema.SensitivityPublic,
 	}
 }
 
@@ -772,6 +807,175 @@ func addReportFamily(payload map[string]any, report Report, family string) {
 	}
 }
 
+func redactProjectionPayload(payload map[string]any, capabilities reportschema.ConsumerCapabilities) ([]reportschema.RedactionProvenance, error) {
+	maxRank, err := reportingSensitivityRank(capabilities.MaxSensitivity)
+	if err != nil {
+		return nil, err
+	}
+	redactions := []reportschema.RedactionProvenance{}
+	if raw, ok := payload["claims"]; ok {
+		claims, changed, err := redactProjectedClaims(raw, maxRank, &redactions)
+		if err != nil {
+			return nil, err
+		}
+		if changed {
+			payload["claims"] = claims
+		}
+	}
+	if raw, ok := payload["negative_evidence"]; ok && maxRank < mustSensitivityRank(reportschema.SensitivityInternal) {
+		hash, err := stableHash(raw)
+		if err != nil {
+			return nil, err
+		}
+		delete(payload, "negative_evidence")
+		redactions = append(redactions, reportschema.RedactionProvenance{
+			FieldPath:    "negative_evidence",
+			Reason:       "omitted: sensitivity exceeds consumer policy",
+			PolicyID:     reportschema.ReportingProjectionPolicyV1,
+			OriginalHash: hash,
+		})
+	}
+	if raw, ok := payload["top_items"]; ok {
+		if err := redactProjectedItems(raw, "top_items", maxRank, &redactions); err != nil {
+			return nil, err
+		}
+	}
+	if raw, ok := payload["roadmap_items"]; ok {
+		if err := redactProjectedItems(raw, "roadmap_items", maxRank, &redactions); err != nil {
+			return nil, err
+		}
+	}
+	if raw, ok := payload["items"]; ok {
+		if err := redactProjectedItems(raw, "items", maxRank, &redactions); err != nil {
+			return nil, err
+		}
+	}
+	if raw, ok := payload["new_items"]; ok {
+		if err := redactProjectedItems(raw, "new_items", maxRank, &redactions); err != nil {
+			return nil, err
+		}
+	}
+	if raw, ok := payload["changed_items"]; ok {
+		if err := redactProjectedItems(raw, "changed_items", maxRank, &redactions); err != nil {
+			return nil, err
+		}
+	}
+	sort.Slice(redactions, func(i, j int) bool { return redactions[i].FieldPath < redactions[j].FieldPath })
+	return redactions, nil
+}
+
+func redactProjectedClaims(raw any, maxRank int, redactions *[]reportschema.RedactionProvenance) (any, bool, error) {
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return raw, false, err
+	}
+	var claims []ClaimSummary
+	if err := json.Unmarshal(data, &claims); err != nil {
+		return raw, false, nil
+	}
+	changed := false
+	out := make([]ClaimSummary, 0, len(claims))
+	for i, claim := range claims {
+		rank, err := reportingSensitivityRank(claim.Sensitivity)
+		if err != nil {
+			return raw, false, err
+		}
+		if rank <= maxRank {
+			out = append(out, claim)
+			continue
+		}
+		hash, err := stableHash(claim)
+		if err != nil {
+			return raw, false, err
+		}
+		changed = true
+		if claim.Sensitivity == reportschema.SensitivitySecret {
+			*redactions = append(*redactions, reportschema.RedactionProvenance{
+				FieldPath:    fmt.Sprintf("claims[%d]", i),
+				Reason:       "omitted: sensitivity exceeds consumer policy",
+				PolicyID:     reportschema.ReportingProjectionPolicyV1,
+				OriginalHash: hash,
+			})
+			continue
+		}
+		claim.Text = "<redacted>"
+		claim.Evidence = nil
+		out = append(out, claim)
+		*redactions = append(*redactions, reportschema.RedactionProvenance{
+			FieldPath:    fmt.Sprintf("claims[%d].text", i),
+			Reason:       "transformed: sensitivity exceeds consumer policy",
+			PolicyID:     reportschema.ReportingProjectionPolicyV1,
+			OriginalHash: hash,
+		})
+	}
+	return out, changed, nil
+}
+
+func redactProjectedItems(raw any, path string, maxRank int, redactions *[]reportschema.RedactionProvenance) error {
+	if maxRank >= mustSensitivityRank(reportschema.SensitivityInternal) {
+		return nil
+	}
+	items := []map[string]any{}
+	switch values := raw.(type) {
+	case []map[string]any:
+		items = values
+	case []any:
+		for _, value := range values {
+			item, ok := value.(map[string]any)
+			if ok {
+				items = append(items, item)
+			}
+		}
+	default:
+		return nil
+	}
+	for i, item := range items {
+		for _, field := range []string{"evidence_refs", "handoff", "claims", "implementation"} {
+			value, ok := item[field]
+			if !ok {
+				continue
+			}
+			hash, err := stableHash(value)
+			if err != nil {
+				return err
+			}
+			delete(item, field)
+			*redactions = append(*redactions, reportschema.RedactionProvenance{
+				FieldPath:    fmt.Sprintf("%s[%d].%s", path, i, field),
+				Reason:       "omitted: sensitivity exceeds consumer policy",
+				PolicyID:     reportschema.ReportingProjectionPolicyV1,
+				OriginalHash: hash,
+			})
+		}
+	}
+	return nil
+}
+
+func reportingSensitivityRank(value string) (int, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return 2, nil
+	case reportschema.SensitivityPublic:
+		return 1, nil
+	case reportschema.SensitivityInternal:
+		return 2, nil
+	case reportschema.SensitivityOperatorOnly:
+		return 3, nil
+	case reportschema.SensitivitySecret:
+		return 4, nil
+	default:
+		return 0, fmt.Errorf("unknown sensitivity %q", value)
+	}
+}
+
+func mustSensitivityRank(value string) int {
+	rank, err := reportingSensitivityRank(value)
+	if err != nil {
+		panic(err)
+	}
+	return rank
+}
+
 func reportMap(report Report) (map[string]any, error) {
 	data, err := json.Marshal(report)
 	if err != nil {
@@ -812,11 +1016,16 @@ func projectionCacheKey(report Report, capabilities reportschema.ConsumerCapabil
 	capabilities.Consumer = strings.TrimSpace(capabilities.Consumer)
 	capabilities.SchemaVersions = cleanStrings(capabilities.SchemaVersions)
 	capabilities.FieldFamilies = cleanStrings(capabilities.FieldFamilies)
+	capabilities.MaxSensitivity = strings.TrimSpace(capabilities.MaxSensitivity)
+	if capabilities.MaxSensitivity == "" {
+		capabilities.MaxSensitivity = reportschema.SensitivityInternal
+	}
 	hash, err := stableHash(map[string]any{
 		"channel":         report.Channel,
 		"consumer":        capabilities.Consumer,
 		"schema_versions": capabilities.SchemaVersions,
 		"field_families":  capabilities.FieldFamilies,
+		"max_sensitivity": capabilities.MaxSensitivity,
 		"view":            view,
 		"verbosity":       verbosity,
 	})
@@ -1137,6 +1346,7 @@ func summarizeItem(item roadmap.Item, now time.Time, freshnessTTL time.Duration)
 		Freshness:           freshness,
 		ObservationSource:   observationSource,
 		EvidenceRefs:        evidenceRefs(item.Evidence),
+		Sensitivity:         reportschema.SensitivityInternal,
 		Claims:              claimsForItem(item),
 		Handoff:             item.Handoff,
 		Implementation:      append([]roadmap.ImplementationLink(nil), item.Implementation...),
@@ -1166,24 +1376,26 @@ func summarizeItem(item roadmap.Item, now time.Time, freshnessTTL time.Duration)
 func claimsForItem(item roadmap.Item) []ClaimSummary {
 	refs := evidenceRefs(item.Evidence)
 	claims := []ClaimSummary{{
-		ID:         "claim-" + item.ID + "-status",
-		ItemID:     item.ID,
-		Kind:       reportschema.ClaimObservedFact,
-		Text:       "Pinpoint " + item.ID + " is " + string(item.State),
-		Confidence: reportschema.ConfidenceHigh,
-		Evidence:   refs,
+		ID:          "claim-" + item.ID + "-status",
+		ItemID:      item.ID,
+		Kind:        reportschema.ClaimObservedFact,
+		Text:        "Pinpoint " + item.ID + " is " + string(item.State),
+		Confidence:  reportschema.ConfidenceHigh,
+		Evidence:    refs,
+		Sensitivity: reportschema.SensitivityPublic,
 	}}
 	if claim, ok := rootCauseClaim(item); ok {
 		claims = append(claims, claim)
 	}
 	if item.Handoff != nil && len(item.Handoff.SuggestedVerification) > 0 {
 		claims = append(claims, ClaimSummary{
-			ID:         "claim-" + item.ID + "-verification-recommendation",
-			ItemID:     item.ID,
-			Kind:       reportschema.ClaimRecommendation,
-			Text:       strings.Join(item.Handoff.SuggestedVerification, "; "),
-			Confidence: reportschema.ConfidenceMedium,
-			Evidence:   refs,
+			ID:          "claim-" + item.ID + "-verification-recommendation",
+			ItemID:      item.ID,
+			Kind:        reportschema.ClaimRecommendation,
+			Text:        strings.Join(item.Handoff.SuggestedVerification, "; "),
+			Confidence:  reportschema.ConfidenceMedium,
+			Evidence:    refs,
+			Sensitivity: reportschema.SensitivityInternal,
 		})
 	}
 	sort.Slice(claims, func(i, j int) bool { return claims[i].ID < claims[j].ID })
@@ -1221,12 +1433,13 @@ func rootCauseClaim(item roadmap.Item) (ClaimSummary, bool) {
 		text = "Root cause hint: " + hint.Reference
 	}
 	claim := ClaimSummary{
-		ID:         "claim-" + item.ID + "-root-cause",
-		ItemID:     item.ID,
-		Kind:       reportschema.ClaimHypothesis,
-		Text:       text,
-		Confidence: reportschema.ConfidenceMedium,
-		Evidence:   cleanStrings(evidence),
+		ID:          "claim-" + item.ID + "-root-cause",
+		ItemID:      item.ID,
+		Kind:        reportschema.ClaimHypothesis,
+		Text:        text,
+		Confidence:  reportschema.ConfidenceMedium,
+		Evidence:    cleanStrings(evidence),
+		Sensitivity: reportschema.SensitivityInternal,
 	}
 	if len(confirmingRefs) > 0 {
 		claim.Kind = reportschema.ClaimObservedFact
