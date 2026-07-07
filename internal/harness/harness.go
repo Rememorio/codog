@@ -228,6 +228,7 @@ var scenarioOrder = []string{
 	"browser_notifications_roundtrip",
 	"model_runtime_preferences_roundtrip",
 	"model_selection_roundtrip",
+	"budget_lifecycle_roundtrip",
 	"auth_credentials_roundtrip",
 	"output_style_lifecycle_roundtrip",
 	"diagnostics_status_roundtrip",
@@ -782,6 +783,7 @@ func Run(ctx context.Context) (Report, error) {
 		browserNotificationsScenario(),
 		modelRuntimePreferencesScenario(),
 		modelSelectionScenario(),
+		budgetLifecycleScenario(),
 		authCredentialsScenario(),
 		outputStyleLifecycleScenario(),
 		diagnosticsStatusScenario(),
@@ -1209,7 +1211,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "context view and focus", RequiredRefs: []string{"Context view", "Focused paths", "Context signals"}},
 	{Capability: "statusline rendering", RequiredRefs: []string{"Statusline", "Statusline JSON", "Statusline text"}},
 	{Capability: "appearance and preferences", RequiredRefs: []string{"Theme", "Theme persistence", "Theme reset", "Language preference", "Vim mode", "Privacy settings", "Keybindings", "Chrome integration", "Notifications", "Telemetry", "Preference persistence"}},
-	{Capability: "model runtime controls", RequiredRefs: []string{"Model preference", "Model persistence", "Model routing detail", "Reasoning effort", "Fast mode", "Temperature preference", "Preference persistence"}},
+	{Capability: "model runtime controls", RequiredRefs: []string{"Model preference", "Model persistence", "Model routing detail", "Reasoning effort", "Fast mode", "Temperature preference", "Token budget", "Turn limit", "Preference persistence"}},
 }
 
 func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
@@ -1501,6 +1503,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "model-runtime",
 		Description: "Runs the real model CLI through persisted model selection, status, model detail routing, and text rendering.",
 		ParityRefs:  []string{"Model preference", "Model persistence", "Model routing detail", "Configuration", "Interactive rendering"},
+	},
+	"budget_lifecycle_roundtrip": {
+		Category:    "model-runtime",
+		Description: "Runs the real budget CLI through token and turn limit persistence, status, text rendering, and reset operations.",
+		ParityRefs:  []string{"Token budget", "Turn limit", "Preference persistence", "Configuration", "Interactive rendering"},
 	},
 	"auth_credentials_roundtrip": {
 		Category:    "auth",
@@ -4074,6 +4081,147 @@ func decodeModelDetailHarnessReport(output string) (modelDetailHarnessReport, er
 	var report modelDetailHarnessReport
 	if err := json.Unmarshal([]byte(output), &report); err != nil {
 		return modelDetailHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func budgetLifecycleScenario() scenario {
+	return scenario{
+		name: "budget_lifecycle_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, ".codog-home")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			configPath := filepath.Join(workspace, "codog-config.json")
+			configData, err := json.Marshal(map[string]any{"config_home": configHome})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			initialOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "budget")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initial, err := decodeBudgetHarnessReport(initialOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initial.Kind != "budget" || initial.Action != "show" || initial.MaxTokens != 4096 || initial.MaxTurns != 8 {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial budget report: %#v", initial)
+			}
+
+			setOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "budget", "use", "--path", configPath, "--max-tokens", "8192", "--max-turns", "12")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			setReport, err := decodeBudgetHarnessReport(setOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if setReport.Action != "set" || setReport.MaxTokens != 8192 || setReport.MaxTurns != 12 || setReport.Previous == nil || setReport.Previous.MaxTokens != 4096 || setReport.Previous.MaxTurns != 8 {
+				return localScenarioResult{}, fmt.Errorf("unexpected set budget report: %#v", setReport)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(configData), `"max_tokens": 8192`) || !strings.Contains(string(configData), `"max_turns": 12`) {
+				return localScenarioResult{}, fmt.Errorf("budget config did not persist limits: %s", string(configData))
+			}
+
+			statusOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "budget", "current")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			status, err := decodeBudgetHarnessReport(statusOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if status.Action != "show" || status.MaxTokens != 8192 || status.MaxTurns != 12 {
+				return localScenarioResult{}, fmt.Errorf("unexpected persisted budget status: %#v", status)
+			}
+
+			textOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "budget")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(textOut, "Budget") || !strings.Contains(textOut, "Max tokens       8192") || !strings.Contains(textOut, "Max turns        12") {
+				return localScenarioResult{}, fmt.Errorf("budget text output missing expected values: %s", textOut)
+			}
+
+			resetOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "budget", "off", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			reset, err := decodeBudgetHarnessReport(resetOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if reset.Action != "reset" || reset.MaxTokens != 4096 || reset.MaxTurns != 8 || reset.Previous == nil || reset.Previous.MaxTokens != 8192 || reset.Previous.MaxTurns != 12 {
+				return localScenarioResult{}, fmt.Errorf("unexpected reset budget report: %#v", reset)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if strings.Contains(string(configData), `"max_tokens"`) || strings.Contains(string(configData), `"max_turns"`) {
+				return localScenarioResult{}, fmt.Errorf("budget config still contains limits after reset: %s", string(configData))
+			}
+
+			report := map[string]any{
+				"kind": "budget_lifecycle",
+				"budget": map[string]any{
+					"initial_tokens": initial.MaxTokens,
+					"initial_turns":  initial.MaxTurns,
+					"set_tokens":     setReport.MaxTokens,
+					"set_turns":      setReport.MaxTurns,
+					"status_tokens":  status.MaxTokens,
+					"status_turns":   status.MaxTurns,
+					"reset_tokens":   reset.MaxTokens,
+					"reset_turns":    reset.MaxTurns,
+					"path_persisted": setReport.Path != "" && strings.HasSuffix(setReport.Path, "codog-config.json"),
+					"text_rendered":  strings.Contains(textOut, "Max tokens       8192"),
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "budget lifecycle harness ok",
+				RequestCount: 5,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+type budgetHarnessSnapshot struct {
+	MaxTokens int `json:"max_tokens"`
+	MaxTurns  int `json:"max_turns"`
+}
+
+type budgetHarnessReport struct {
+	Kind      string                 `json:"kind"`
+	Action    string                 `json:"action"`
+	Status    string                 `json:"status"`
+	MaxTokens int                    `json:"max_tokens"`
+	MaxTurns  int                    `json:"max_turns"`
+	Path      string                 `json:"path,omitempty"`
+	Target    string                 `json:"target,omitempty"`
+	Previous  *budgetHarnessSnapshot `json:"previous,omitempty"`
+	Message   string                 `json:"message,omitempty"`
+}
+
+func decodeBudgetHarnessReport(output string) (budgetHarnessReport, error) {
+	var report budgetHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return budgetHarnessReport{}, err
 	}
 	return report, nil
 }
