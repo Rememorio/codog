@@ -417,6 +417,14 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.OutputFields, "scope_risk")
 
 	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"scope", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "scope", report.Topic)
+	require.Contains(t, report.Help, "reversible actions")
+	require.Contains(t, report.Help, ".codogignore")
+	require.Contains(t, report.OutputFields, "restore_command")
+
+	out.Reset()
 	require.NoError(t, renderHelpCommand(&out, []string{"api", "--output-format", "json"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "api", report.Topic)
@@ -6221,6 +6229,13 @@ func risky(value any) {
 	require.True(t, resumedWorkspaceSet.Changed)
 	require.True(t, resumedWorkspaceSet.Exists)
 	require.True(t, resumedWorkspaceSet.IsDir)
+
+	out, err = runResumedJSON("/scope", "preview")
+	require.NoError(t, err)
+	var resumedScope map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedScope))
+	require.Equal(t, "safer_scope", resumedScope["kind"])
+	require.Equal(t, "preview", resumedScope["action"])
 
 	out, err = runResumedJSON("/focus")
 	require.NoError(t, err)
@@ -16543,6 +16558,45 @@ func TestFilesCommandAndSlash(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/files --glob=*.md", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Files")
 	require.Contains(t, out.String(), "README.md")
+	require.Empty(t, errOut.String())
+}
+
+func TestScopeCommandAppliesAndRestoresSaferWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	resolvedWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	workspace = resolvedWorkspace
+	configHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "app"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "node_modules"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "dist"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "app", "main.go"), []byte("package app\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "debug.log"), []byte("trace\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Scope([]string{"preview", "--json"}))
+	require.Contains(t, out.String(), `"kind": "safer_scope"`)
+	require.Contains(t, out.String(), `"status": "actionable"`)
+	require.Contains(t, out.String(), `"id": "workspace"`)
+	out.Reset()
+
+	require.NoError(t, app.Scope([]string{"apply", "--json"}))
+	require.Equal(t, filepath.Join(workspace, "app"), app.Workspace)
+	require.Contains(t, out.String(), `"confirmed": true`)
+	require.Contains(t, out.String(), `"active_workspace":`)
+	out.Reset()
+
+	require.NoError(t, app.Scope([]string{"restore", "--json"}))
+	require.Equal(t, workspace, app.Workspace)
+	require.Contains(t, out.String(), `"restored": true`)
 	require.Empty(t, errOut.String())
 }
 

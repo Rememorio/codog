@@ -89,6 +89,7 @@ import (
 	"github.com/Rememorio/codog/internal/reportschema"
 	localreview "github.com/Rememorio/codog/internal/review"
 	"github.com/Rememorio/codog/internal/runloop"
+	"github.com/Rememorio/codog/internal/saferscope"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/securityreview"
 	"github.com/Rememorio/codog/internal/session"
@@ -571,6 +572,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.Validation(rest))
 	case "workspace", "cwd":
 		return wrapStructured(app.WorkspaceCommand(rest))
+	case "scope", "safer-scope":
+		return wrapStructured(app.Scope(rest))
 	case "output-style":
 		if err := app.OutputStyle(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -15764,6 +15767,131 @@ type workspaceReport struct {
 	Message                 string   `json:"message,omitempty"`
 }
 
+type scopeRequest struct {
+	Action string
+	Choice string
+	Target string
+	Format string
+}
+
+func (a *App) Scope(args []string) error {
+	req, err := parseScopeArgs(args)
+	if err != nil {
+		return err
+	}
+	var report saferscope.Report
+	switch req.Action {
+	case "preview":
+		report, err = saferscope.Preview(a.Workspace, saferscope.Options{
+			Choice:           req.Choice,
+			Target:           req.Target,
+			RespectGitignore: a.Config.EffectiveRespectGitignore(),
+		})
+	case "apply":
+		report, err = saferscope.Apply(a.Workspace, saferscope.Options{
+			Choice:           req.Choice,
+			Target:           req.Target,
+			RespectGitignore: a.Config.EffectiveRespectGitignore(),
+		})
+		if err == nil && strings.TrimSpace(report.ActiveWorkspace) != "" && report.ActiveWorkspace != a.Workspace {
+			if err = a.switchRuntimeWorkspace(report.ActiveWorkspace); err != nil {
+				return err
+			}
+		}
+	case "restore":
+		report, err = saferscope.Restore(a.Workspace)
+		if err == nil && strings.TrimSpace(report.ActiveWorkspace) != "" && report.ActiveWorkspace != a.Workspace {
+			if err = a.switchRuntimeWorkspace(report.ActiveWorkspace); err != nil {
+				return err
+			}
+		}
+	default:
+		err = fmt.Errorf("unknown scope action %q", req.Action)
+	}
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	saferscope.RenderText(a.Out, report)
+	return nil
+}
+
+func parseScopeArgs(args []string) (scopeRequest, error) {
+	const usage = "codog scope [preview|apply|restore] [--choice auto|workspace|ignore|both] [--target PATH] [--json|--output-format text|json]"
+	req := scopeRequest{Action: "preview", Choice: "auto", Format: "text"}
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "scope", Flag: arg, Usage: usage}
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--choice":
+			index++
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "scope", Flag: arg, Usage: usage}
+			}
+			req.Choice = args[index]
+		case strings.HasPrefix(arg, "--choice="):
+			req.Choice = strings.TrimPrefix(arg, "--choice=")
+		case arg == "--target":
+			index++
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "scope", Flag: arg, Usage: usage}
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "scope", Option: arg, Usage: usage}
+			}
+			positionals = append(positionals, arg)
+		}
+	}
+	normalizedFormat, err := normalizeOutputFormat("scope", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalizedFormat
+	if len(positionals) > 0 {
+		switch strings.ToLower(positionals[0]) {
+		case "preview", "plan", "show":
+			req.Action = "preview"
+		case "apply", "use":
+			req.Action = "apply"
+		case "restore", "back", "reset":
+			req.Action = "restore"
+		default:
+			return req, unexpectedExtraArgsError{Command: "scope", Args: []string{positionals[0]}, Usage: usage}
+		}
+	}
+	if len(positionals) > 1 {
+		return req, unexpectedExtraArgsError{Command: "scope " + req.Action, Args: positionals[1:], Usage: usage}
+	}
+	choice := strings.ToLower(strings.TrimSpace(req.Choice))
+	switch choice {
+	case "", "auto", "workspace", "switch_workspace", "ignore", "write_ignore_stub", "both", "all":
+	default:
+		return req, invalidFlagValueError{Flag: "--choice", Value: req.Choice, Message: "scope choice must be auto, workspace, ignore, or both", Usage: usage}
+	}
+	if choice == "" {
+		req.Choice = "auto"
+	}
+	return req, nil
+}
+
 func (a *App) WorkspaceCommand(args []string) error {
 	req, err := parseWorkspaceArgs(args)
 	if err != nil {
@@ -15777,13 +15905,7 @@ func (a *App) WorkspaceCommand(args []string) error {
 		if err != nil {
 			return err
 		}
-		a.Workspace = next
-		store, err := session.NewWorkspaceStoreWithCleanup(a.Config.ConfigHome, next, a.Config.EffectiveCleanupPeriodDays())
-		if err != nil {
-			return err
-		}
-		a.Sessions = store
-		if err := a.refreshBuiltinToolScope(); err != nil {
+		if err := a.switchRuntimeWorkspace(next); err != nil {
 			return err
 		}
 	default:
@@ -15916,6 +16038,20 @@ func (a *App) workspaceReport(action string, previous string) workspaceReport {
 		report.PreviousWorkspace = ""
 	}
 	return report
+}
+
+func (a *App) switchRuntimeWorkspace(next string) error {
+	next, err := a.resolveWorkspacePath(next)
+	if err != nil {
+		return err
+	}
+	a.Workspace = next
+	store, err := session.NewWorkspaceStoreWithCleanup(a.Config.ConfigHome, next, a.Config.EffectiveCleanupPeriodDays())
+	if err != nil {
+		return err
+	}
+	a.Sessions = store
+	return a.refreshBuiltinToolScope()
 }
 
 func workspaceIsGitWorktree(workspace string) bool {
@@ -29350,6 +29486,7 @@ func codogCapabilityFeatures() []string {
 		"sandbox",
 		"sandbox_config_defaults",
 		"sandbox_runtime_status_report",
+		"safer_scope_quick_apply",
 		"session_identity_metadata",
 		"session_identity_reconciliation",
 		"session_resume",
@@ -29591,8 +29728,10 @@ func builtInCommandNames() []string {
 		"rewind",
 		"rc",
 		"run",
+		"safer-scope",
 		"sandbox",
 		"sandbox-toggle",
+		"scope",
 		"search",
 		"security-review",
 		"self-test",
@@ -30905,6 +31044,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedTerminalSetupSlash(resumeSlashArgs("terminal-setup", args, format), format)
 	case "/files":
 		return a.Files(resumeSlashArgs("files", args, format))
+	case "/scope":
+		return a.Scope(resumeSlashArgs("scope", args, format))
 	case "/search":
 		return a.Search(ctx, resumeSlashArgs("search", args, format))
 	case "/security-review":
@@ -32241,6 +32382,8 @@ func slashCommandName(name string) string {
 		return "reviewRemote"
 	case "/cwd":
 		return "workspace"
+	case "/safer-scope":
+		return "scope"
 	}
 	spec, ok := slash.Lookup(name)
 	if !ok {
@@ -36907,6 +37050,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/files":
 		if err := a.Files(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/scope":
+		if err := a.Scope(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/search":
@@ -56247,8 +56394,8 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"help", "ide", "init", "init-verifiers", "insights", "install", "ios", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "open", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "pr_comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
-		"remote-control", "remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "sandbox-toggle",
-		"search", "security-review", "self-test", "server", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "ssh", "state", "status", "statusline",
+		"remote-control", "remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "safer-scope", "sandbox-toggle",
+		"scope", "search", "security-review", "self-test", "server", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "ssh", "state", "status", "statusline",
 		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "terminalsetup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"teleport", "ultraplan", "ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "unpin", "upgrade", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
@@ -56956,6 +57103,23 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "scope", "safer-scope":
+		spec := localCommandHelpSpec(
+			"scope",
+			"scope",
+			"codog scope [preview|apply|restore] [--choice auto|workspace|ignore|both] [--target PATH] [--output-format text|json]",
+			"Scope\n\nUsage:\n  codog scope [preview|apply|restore] [--choice auto|workspace|ignore|both] [--target PATH] [--output-format text|json]\n  codog safer-scope [same flags]\n  /scope [preview|apply|restore]\n\nTurns workspace token-risk warnings into reversible actions. `preview` lists actionable safer-scope choices with included and excluded paths. `apply` records the broader workspace, then either switches the current runtime workspace to the safer source subdirectory, appends a reversible `.codogignore` block, or does both. `restore` returns to the recorded broader workspace and removes the generated ignore block when one was applied.\n",
+			[]string{"status", "workspace", "active_workspace", "scope_risk", "choices", "applied", "restore_command"},
+			[]string{"clean", "actionable", "applied", "restored", "no_action", "error"},
+			true,
+		)
+		spec.Aliases = []string{"safer-scope", "/scope", "/safer-scope"}
+		if topic == "safer-scope" {
+			spec.Topic = "safer-scope"
+			spec.Command = "safer-scope"
+			spec.Usage = "codog safer-scope [preview|apply|restore] [--choice auto|workspace|ignore|both] [--target PATH] [--output-format text|json]"
+		}
+		return spec, true
 	case "search":
 		return localCommandHelpSpec(
 			"search",
@@ -57821,6 +57985,7 @@ Usage:
   %s [flags] project [--json|--output-format text|json]
   %s [flags] env [--json|--output-format text|json]
   %s [flags] files [PATH] [--glob GLOB] [--limit N] [--hidden] [--json|--output-format text|json]
+  %s [flags] scope [preview|apply|restore] [--choice auto|workspace|ignore|both] [--target PATH] [--json|--output-format text|json]
   %s [flags] search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json|--output-format text|json]
   %s [flags] security-review [--limit N] [--json|--output-format text|json]
   %s [flags] bughunter [PATH] [--limit N] [--json|--output-format text|json]

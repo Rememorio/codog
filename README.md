@@ -170,6 +170,11 @@ preview before a broad prompt. The `scope_risk` section distinguishes a clean
 workspace from trees likely to burn tokens quickly, lists concrete token sinks,
 and recommends narrower scope choices or ignore/cleanup targets.
 
+Use `codog scope preview` to turn those findings into actionable choices.
+`codog scope apply` can switch the current runtime workspace to a safer source
+subdirectory or append a reversible `.codogignore` block; `codog scope restore`
+returns to the broader workspace.
+
 Ignore-file behavior:
 
 - `.gitignore` is honored by `grep` and `glob` when `respectGitignore` is
