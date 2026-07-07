@@ -29,6 +29,7 @@ type Manifest struct {
 	Name        string                            `json:"name"`
 	Version     string                            `json:"version,omitempty"`
 	Description string                            `json:"description,omitempty"`
+	Lifecycle   LifecycleConfig                   `json:"lifecycle,omitempty"`
 	Tools       []ToolManifest                    `json:"tools,omitempty"`
 	Commands    []string                          `json:"commands,omitempty"`
 	Skills      []string                          `json:"skills,omitempty"`
@@ -38,6 +39,17 @@ type Manifest struct {
 	Path        string                            `json:"path,omitempty"`
 	Root        string                            `json:"root,omitempty"`
 	Enabled     bool                              `json:"enabled"`
+}
+
+// LifecycleConfig declares plugin lifecycle commands without executing them.
+type LifecycleConfig struct {
+	Init     []string `json:"init,omitempty"`
+	Shutdown []string `json:"shutdown,omitempty"`
+}
+
+// Empty reports whether no lifecycle commands are configured.
+func (l LifecycleConfig) Empty() bool {
+	return len(l.Init) == 0 && len(l.Shutdown) == 0
 }
 
 type ToolManifest struct {
@@ -134,6 +146,7 @@ type rawManifest struct {
 	Name            string                            `json:"name"`
 	Version         string                            `json:"version,omitempty"`
 	Description     string                            `json:"description,omitempty"`
+	Lifecycle       LifecycleConfig                   `json:"lifecycle,omitempty"`
 	Tools           []json.RawMessage                 `json:"tools,omitempty"`
 	Commands        []string                          `json:"commands,omitempty"`
 	Skills          []string                          `json:"skills,omitempty"`
@@ -241,7 +254,7 @@ func (r ValidationResult) finish() ValidationResult {
 func (r *ValidationResult) validateManifestFields(fields map[string]json.RawMessage) {
 	known := map[string]bool{
 		"id": true, "name": true, "version": true, "description": true,
-		"tools": true, "commands": true, "hooks": true,
+		"lifecycle": true, "tools": true, "commands": true, "hooks": true,
 		"author": true, "agents": true, "skills": true,
 		"mcpServers": true, "mcp_servers": true,
 		"outputStyles": true, "output_styles": true,
@@ -308,6 +321,12 @@ func (r *ValidationResult) validateManifest(manifest Manifest, fields map[string
 	for index, hook := range manifest.Hooks {
 		r.validateComponentPath(fmt.Sprintf("hooks[%d]", index), hook)
 	}
+	for index, command := range manifest.Lifecycle.Init {
+		r.validateLifecycleCommand(fmt.Sprintf("lifecycle.init[%d]", index), command)
+	}
+	for index, command := range manifest.Lifecycle.Shutdown {
+		r.validateLifecycleCommand(fmt.Sprintf("lifecycle.shutdown[%d]", index), command)
+	}
 	for name, server := range manifest.MCPServers {
 		basePath := fmt.Sprintf("mcp_servers.%s", name)
 		if strings.TrimSpace(name) == "" {
@@ -323,6 +342,7 @@ func (r *ValidationResult) validateManifest(manifest Manifest, fields map[string
 		len(manifest.Skills) > 0 ||
 		len(manifest.Agents) > 0 ||
 		len(manifest.Hooks) > 0 ||
+		!manifest.Lifecycle.Empty() ||
 		len(manifest.MCPServers) > 0 ||
 		dirHasEntries(filepath.Join(manifest.Root, "commands")) ||
 		dirHasEntries(filepath.Join(manifest.Root, "skills")) ||
@@ -330,6 +350,12 @@ func (r *ValidationResult) validateManifest(manifest Manifest, fields map[string
 		dirHasEntries(filepath.Join(manifest.Root, "hooks"))
 	if !hasContent {
 		r.addWarning("plugin", "manifest declares no tools, commands, skills, agents, hooks, or mcp servers", "empty_plugin")
+	}
+}
+
+func (r *ValidationResult) validateLifecycleCommand(field string, value string) {
+	if strings.TrimSpace(value) == "" {
+		r.addError(field, "lifecycle command cannot be empty", "empty_lifecycle_command")
 	}
 }
 
@@ -806,6 +832,7 @@ func LoadManifest(dir string) (Manifest, error) {
 		Name:        raw.Name,
 		Version:     raw.Version,
 		Description: raw.Description,
+		Lifecycle:   raw.Lifecycle,
 		Commands:    raw.Commands,
 		Skills:      raw.Skills,
 		Agents:      raw.Agents,

@@ -8934,9 +8934,10 @@ func (a *App) ListPlugins() error {
 }
 
 type pluginsListSummary struct {
-	Total    int `json:"total"`
-	Enabled  int `json:"enabled"`
-	Disabled int `json:"disabled"`
+	Total               int `json:"total"`
+	Enabled             int `json:"enabled"`
+	Disabled            int `json:"disabled"`
+	LifecycleConfigured int `json:"lifecycle_configured"`
 }
 
 type pluginsListReport struct {
@@ -9046,6 +9047,9 @@ func buildPluginsListReport(manifests []plugins.Manifest, configLoadError string
 			summary.Enabled++
 		} else {
 			summary.Disabled++
+		}
+		if !manifest.Lifecycle.Empty() {
+			summary.LifecycleConfigured++
 		}
 	}
 	status := "ok"
@@ -9347,19 +9351,33 @@ type pluginHealthReport struct {
 }
 
 type pluginHealthcheck struct {
-	PluginID      string               `json:"plugin_id"`
-	Name          string               `json:"name,omitempty"`
-	Enabled       bool                 `json:"enabled"`
-	State         string               `json:"state"`
-	StartupEvent  string               `json:"startup_event,omitempty"`
-	Servers       []pluginServerHealth `json:"servers,omitempty"`
-	DegradedMode  *pluginDegradedMode  `json:"degraded_mode,omitempty"`
-	Surfaces      []string             `json:"surfaces,omitempty"`
-	Errors        []string             `json:"errors,omitempty"`
-	Warnings      []string             `json:"warnings,omitempty"`
-	Available     []string             `json:"available_capabilities,omitempty"`
-	Unavailable   []string             `json:"unavailable_capabilities,omitempty"`
-	LastCheckUnix int64                `json:"last_check_unix"`
+	PluginID       string               `json:"plugin_id"`
+	Name           string               `json:"name,omitempty"`
+	Enabled        bool                 `json:"enabled"`
+	State          string               `json:"state"`
+	Lifecycle      pluginLifecycleInfo  `json:"lifecycle"`
+	LifecycleState string               `json:"lifecycle_state"`
+	StartupEvent   string               `json:"startup_event,omitempty"`
+	Servers        []pluginServerHealth `json:"servers,omitempty"`
+	DegradedMode   *pluginDegradedMode  `json:"degraded_mode,omitempty"`
+	Surfaces       []string             `json:"surfaces,omitempty"`
+	Errors         []string             `json:"errors,omitempty"`
+	Warnings       []string             `json:"warnings,omitempty"`
+	Available      []string             `json:"available_capabilities,omitempty"`
+	Unavailable    []string             `json:"unavailable_capabilities,omitempty"`
+	LastCheckUnix  int64                `json:"last_check_unix"`
+}
+
+type pluginLifecycleInfo struct {
+	Configured bool `json:"configured"`
+	Init       struct {
+		Configured   bool `json:"configured"`
+		CommandCount int  `json:"command_count"`
+	} `json:"init"`
+	Shutdown struct {
+		Configured   bool `json:"configured"`
+		CommandCount int  `json:"command_count"`
+	} `json:"shutdown"`
 }
 
 type pluginServerHealth struct {
@@ -9438,13 +9456,15 @@ func normalizePluginHealthAction(action string) string {
 func pluginHealthcheckForManifest(manifest plugins.Manifest) pluginHealthcheck {
 	validation := pluginCompatibilityValidationForSource(manifest.ID, manifest.Root)
 	check := pluginHealthcheck{
-		PluginID:      manifest.ID,
-		Name:          manifest.Name,
-		Enabled:       manifest.Enabled,
-		State:         "healthy",
-		Surfaces:      pluginManifestSurfaces(manifest),
-		Servers:       pluginServerHealthForManifest(manifest),
-		LastCheckUnix: time.Now().Unix(),
+		PluginID:       manifest.ID,
+		Name:           manifest.Name,
+		Enabled:        manifest.Enabled,
+		State:          "healthy",
+		Lifecycle:      pluginLifecycleInfoForManifest(manifest),
+		LifecycleState: pluginLifecycleState(manifest),
+		Surfaces:       pluginManifestSurfaces(manifest),
+		Servers:        pluginServerHealthForManifest(manifest),
+		LastCheckUnix:  time.Now().Unix(),
 	}
 	for _, issue := range validation.Errors {
 		check.Errors = append(check.Errors, issue.Message)
@@ -9478,6 +9498,25 @@ func pluginHealthcheckForManifest(manifest plugins.Manifest) pluginHealthcheck {
 	sort.Strings(check.Available)
 	sort.Strings(check.Unavailable)
 	return check
+}
+
+func pluginLifecycleInfoForManifest(manifest plugins.Manifest) pluginLifecycleInfo {
+	info := pluginLifecycleInfo{Configured: !manifest.Lifecycle.Empty()}
+	info.Init.Configured = len(manifest.Lifecycle.Init) != 0
+	info.Init.CommandCount = len(manifest.Lifecycle.Init)
+	info.Shutdown.Configured = len(manifest.Lifecycle.Shutdown) != 0
+	info.Shutdown.CommandCount = len(manifest.Lifecycle.Shutdown)
+	return info
+}
+
+func pluginLifecycleState(manifest plugins.Manifest) string {
+	if !manifest.Enabled {
+		return "disabled"
+	}
+	if manifest.Lifecycle.Empty() {
+		return "unconfigured"
+	}
+	return "ready"
 }
 
 func pluginServerHealthForManifest(manifest plugins.Manifest) []pluginServerHealth {
@@ -9532,6 +9571,12 @@ func pluginAvailableCapabilities(manifest plugins.Manifest, servers []pluginServ
 		if strings.TrimSpace(hook) != "" {
 			capabilities = append(capabilities, "hook:"+hook)
 		}
+	}
+	if len(manifest.Lifecycle.Init) != 0 {
+		capabilities = append(capabilities, "lifecycle:init")
+	}
+	if len(manifest.Lifecycle.Shutdown) != 0 {
+		capabilities = append(capabilities, "lifecycle:shutdown")
 	}
 	for _, server := range servers {
 		if server.Status != "failed" {
@@ -9615,6 +9660,9 @@ func renderPluginHealthReport(out io.Writer, report pluginHealthReport, format s
 		fmt.Fprintf(out, "  - %s %-10s enabled=%t", check.PluginID, check.State, check.Enabled)
 		if check.StartupEvent != "" {
 			fmt.Fprintf(out, " event=%s", check.StartupEvent)
+		}
+		if check.LifecycleState != "" {
+			fmt.Fprintf(out, " lifecycle=%s", check.LifecycleState)
 		}
 		fmt.Fprintln(out)
 		if len(check.Errors) > 0 {

@@ -23,13 +23,15 @@ func TestLoadPluginManifest(t *testing.T) {
 	workspace := t.TempDir()
 	dir := filepath.Join(workspace, ".codog", "plugins", "demo")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"name":"Demo","version":"0.1.0","commands":["demo"],"skills":["./skills/review"],"agents":["./agents/helper.json"],"mcp_servers":{"local":{"command":"demo-mcp","args":["--stdio"]}},"tools":[{"name":"demo_tool","command":"cat","permission":"read-only"}]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"name":"Demo","version":"0.1.0","lifecycle":{"init":["./bin/init"],"shutdown":["./bin/stop"]},"commands":["demo"],"skills":["./skills/review"],"agents":["./agents/helper.json"],"mcp_servers":{"local":{"command":"demo-mcp","args":["--stdio"]}},"tools":[{"name":"demo_tool","command":"cat","permission":"read-only"}]}`), 0o644))
 
 	manifests, err := Load(workspace)
 	require.NoError(t, err)
 	require.Len(t, manifests, 1)
 	require.Equal(t, "demo", manifests[0].ID)
 	require.Equal(t, "Demo", manifests[0].Name)
+	require.Equal(t, []string{"./bin/init"}, manifests[0].Lifecycle.Init)
+	require.Equal(t, []string{"./bin/stop"}, manifests[0].Lifecycle.Shutdown)
 	require.Equal(t, []string{"demo"}, manifests[0].Commands)
 	require.Equal(t, []string{"./skills/review"}, manifests[0].Skills)
 	require.Equal(t, []string{"./agents/helper.json"}, manifests[0].Agents)
@@ -43,6 +45,18 @@ func TestLoadPluginManifest(t *testing.T) {
 	require.Equal(t, filepath.Join(workspace, ".codog", "plugin-data"), DataRoot(workspace))
 	require.Equal(t, filepath.Join(workspace, ".codog", "plugin-data", "demo"), DataDir(workspace, "demo"))
 	require.Equal(t, filepath.Join(workspace, ".codog", "plugin-data", "demo"), DataDirForManifest(manifests[0]))
+}
+
+func TestValidatePluginManifestRejectsEmptyLifecycleCommands(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source")
+	require.NoError(t, os.MkdirAll(source, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "plugin.json"), []byte(`{"id":"demo","name":"demo","version":"1.0.0","description":"Demo","lifecycle":{"init":[""],"shutdown":["echo stop"]}}`), 0o644))
+
+	result, err := Validate(source)
+
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	requireValidationCode(t, result.Errors, "empty_lifecycle_command")
 }
 
 func TestLoadMCPServersNamespacesEnabledPluginServers(t *testing.T) {

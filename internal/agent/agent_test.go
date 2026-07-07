@@ -30304,7 +30304,7 @@ func TestMarketplaceAcceptsOutputFormatFlags(t *testing.T) {
 	workspace := t.TempDir()
 	dir := filepath.Join(workspace, ".codog", "plugins", "demo")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"id":"demo","name":"Demo"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"id":"demo","name":"Demo","lifecycle":{"init":["./bin/init"],"shutdown":["./bin/stop"]}}`), 0o644))
 
 	var out bytes.Buffer
 	app := &App{Workspace: workspace, Out: &out}
@@ -30321,9 +30321,11 @@ func TestMarketplaceAcceptsOutputFormatFlags(t *testing.T) {
 	require.Equal(t, 1, report.Summary.Total)
 	require.Equal(t, 1, report.Summary.Enabled)
 	require.Equal(t, 0, report.Summary.Disabled)
+	require.Equal(t, 1, report.Summary.LifecycleConfigured)
 	require.Nil(t, report.ConfigLoadError)
 	require.Empty(t, report.LoadFailures)
 	require.Equal(t, "demo", report.Plugins[0].ID)
+	require.Equal(t, []string{"./bin/init"}, report.Plugins[0].Lifecycle.Init)
 	out.Reset()
 
 	require.NoError(t, app.Marketplace([]string{"list", "--json"}))
@@ -30343,6 +30345,7 @@ func TestMarketplacePluginHealthReportsLifecycle(t *testing.T) {
 		"name":"healthy",
 		"version":"1.0.0",
 		"description":"Healthy plugin",
+		"lifecycle":{"init":["./bin/init"],"shutdown":["./bin/stop"]},
 		"tools":[{"name":"healthy_tool","command":"echo ok","permission":"read-only"}]
 	}`)
 	writePluginManifest("degraded", `{
@@ -30377,8 +30380,16 @@ func TestMarketplacePluginHealthReportsLifecycle(t *testing.T) {
 	healthy := pluginHealthcheckByID(report.Plugins, "healthy")
 	require.NotNil(t, healthy)
 	require.Equal(t, "healthy", healthy.State)
+	require.Equal(t, "ready", healthy.LifecycleState)
+	require.True(t, healthy.Lifecycle.Configured)
+	require.True(t, healthy.Lifecycle.Init.Configured)
+	require.Equal(t, 1, healthy.Lifecycle.Init.CommandCount)
+	require.True(t, healthy.Lifecycle.Shutdown.Configured)
+	require.Equal(t, 1, healthy.Lifecycle.Shutdown.CommandCount)
 	require.Equal(t, "startup_healthy", healthy.StartupEvent)
 	require.Contains(t, healthy.Available, "tool:healthy_tool")
+	require.Contains(t, healthy.Available, "lifecycle:init")
+	require.Contains(t, healthy.Available, "lifecycle:shutdown")
 
 	degraded := pluginHealthcheckByID(report.Plugins, "degraded")
 	require.NotNil(t, degraded)
@@ -30404,6 +30415,7 @@ func TestMarketplacePluginHealthReportsLifecycle(t *testing.T) {
 	require.NoError(t, app.Marketplace([]string{"health"}))
 	require.Contains(t, out.String(), "Plugin Health")
 	require.Contains(t, out.String(), "startup_degraded")
+	require.Contains(t, out.String(), "lifecycle=ready")
 }
 
 func pluginHealthcheckByID(checks []pluginHealthcheck, id string) *pluginHealthcheck {
