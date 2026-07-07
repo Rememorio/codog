@@ -59,6 +59,7 @@ type Grant struct {
 	Token              string          `json:"token"`
 	Scope              Scope           `json:"scope"`
 	ApprovingActor     string          `json:"approving_actor"`
+	RequestingActor    string          `json:"requesting_actor"`
 	ApprovedExecutor   string          `json:"approved_executor"`
 	Status             Status          `json:"status"`
 	State              UsageState      `json:"state"`
@@ -78,7 +79,9 @@ type Audit struct {
 	Token              string          `json:"token"`
 	Scope              Scope           `json:"scope"`
 	ApprovingActor     string          `json:"approving_actor"`
+	RequestingActor    string          `json:"requesting_actor"`
 	ExecutingActor     string          `json:"executing_actor"`
+	ExecutionMode      string          `json:"execution_mode"`
 	Status             Status          `json:"status"`
 	DelegatedExecution bool            `json:"delegated_execution"`
 	DelegationChain    []DelegationHop `json:"delegation_chain"`
@@ -114,6 +117,7 @@ type GrantOptions struct {
 	Token            string
 	Scope            Scope
 	ApprovingActor   string
+	RequestingActor  string
 	ApprovedExecutor string
 	Status           Status
 	ExpiresAt        *time.Time
@@ -137,6 +141,10 @@ func (s Store) Grant(opts GrantOptions) (Grant, error) {
 	approvedExecutor := strings.TrimSpace(opts.ApprovedExecutor)
 	if approvedExecutor == "" {
 		return Grant{}, errors.New("approved_executor is required")
+	}
+	requestingActor := strings.TrimSpace(opts.RequestingActor)
+	if requestingActor == "" {
+		requestingActor = approvedExecutor
 	}
 	status := opts.Status
 	if status == "" {
@@ -172,6 +180,7 @@ func (s Store) Grant(opts GrantOptions) (Grant, error) {
 		Token:            token,
 		Scope:            normalizeScope(opts.Scope),
 		ApprovingActor:   approvingActor,
+		RequestingActor:  requestingActor,
 		ApprovedExecutor: approvedExecutor,
 		Status:           status,
 		ExpiresAt:        normalizeExpiry(opts.ExpiresAt),
@@ -212,12 +221,19 @@ func (s Store) Approve(token string, opts GrantOptions) (Grant, error) {
 	if grant.ApprovingActor == "" {
 		return Grant{}, errors.New("approving_actor is required")
 	}
+	requestingActor := strings.TrimSpace(opts.RequestingActor)
+	if requestingActor != "" {
+		grant.RequestingActor = requestingActor
+	}
 	approvedExecutor := strings.TrimSpace(opts.ApprovedExecutor)
 	if approvedExecutor != "" {
 		grant.ApprovedExecutor = approvedExecutor
 	}
 	if grant.ApprovedExecutor == "" {
 		return Grant{}, errors.New("approved_executor is required")
+	}
+	if grant.RequestingActor == "" {
+		grant.RequestingActor = grant.ApprovedExecutor
 	}
 	if opts.ExpiresAt != nil {
 		grant.ExpiresAt = normalizeExpiry(opts.ExpiresAt)
@@ -407,21 +423,35 @@ func validateGrant(grant Grant, scope Scope, executingActor string, now time.Tim
 }
 
 func auditFor(grant Grant, executingActor string, now time.Time) Audit {
+	requestingActor := strings.TrimSpace(grant.RequestingActor)
+	if requestingActor == "" {
+		requestingActor = grant.ApprovedExecutor
+	}
 	chain := append([]DelegationHop(nil), grant.DelegationChain...)
 	if len(chain) == 0 {
 		chain = append(chain, DelegationHop{Actor: grant.ApprovingActor, Reason: "approval granted"})
 	}
+	if requestingActor != "" && requestingActor != grant.ApprovingActor && requestingActor != executingActor && !delegationContains(chain, requestingActor) {
+		chain = append(chain, DelegationHop{Actor: requestingActor, Reason: "approval requested"})
+	}
 	if grant.ApprovingActor != executingActor && !delegationContains(chain, executingActor) {
 		chain = append(chain, DelegationHop{Actor: executingActor, Reason: "delegated execution"})
+	}
+	delegated := grant.ApprovingActor != executingActor
+	mode := "direct_self_use"
+	if delegated {
+		mode = "delegated_execution"
 	}
 	return Audit{
 		Kind:               "approval_token_audit",
 		Token:              grant.Token,
 		Scope:              grant.Scope,
 		ApprovingActor:     grant.ApprovingActor,
+		RequestingActor:    requestingActor,
 		ExecutingActor:     executingActor,
+		ExecutionMode:      mode,
 		Status:             grant.Status,
-		DelegatedExecution: grant.ApprovingActor != executingActor,
+		DelegatedExecution: delegated,
 		DelegationChain:    chain,
 		Uses:               grant.Uses,
 		MaxUses:            grant.MaxUses,

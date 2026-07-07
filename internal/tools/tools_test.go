@@ -4979,6 +4979,7 @@ func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 		"token":"tok-main",
 		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main","commit":"abc123"},
 		"approving_actor":"owner",
+		"requesting_actor":"release-lead",
 		"approved_executor":"release-bot",
 		"max_uses":1,
 		"delegation_chain":[{"actor":"owner","session_id":"session-owner","reason":"owner approval"}]
@@ -4996,6 +4997,9 @@ func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 	}`))
 	require.NoError(t, err)
 	require.Contains(t, verifyOut, `"status": "ok"`)
+	require.Contains(t, verifyOut, `"requesting_actor": "release-lead"`)
+	require.Contains(t, verifyOut, `"executing_actor": "release-bot"`)
+	require.Contains(t, verifyOut, `"execution_mode": "delegated_execution"`)
 	require.Contains(t, verifyOut, `"delegated_execution": true`)
 
 	consumeOut, err := tool.Execute(context.Background(), []byte(`{
@@ -5037,6 +5041,7 @@ func TestApprovalTokenToolApprovesPendingGrant(t *testing.T) {
 		"token":"tok-pending-main",
 		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main","commit":"abc123"},
 		"approving_actor":"owner",
+		"requesting_actor":"release-lead",
 		"approved_executor":"release-bot"
 	}`))
 	require.NoError(t, err)
@@ -5058,6 +5063,7 @@ func TestApprovalTokenToolApprovesPendingGrant(t *testing.T) {
 		"token":"tok-pending-main",
 		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main","commit":"abc123"},
 		"approving_actor":"owner",
+		"requesting_actor":"release-lead",
 		"approved_executor":"release-bot",
 		"max_uses":2,
 		"delegation_chain":[{"actor":"owner","session_id":"session-owner","reason":"owner approval"}]
@@ -5078,6 +5084,8 @@ func TestApprovalTokenToolApprovesPendingGrant(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, verifyOut, `"status": "ok"`)
 	require.Contains(t, verifyOut, `"status": "approval_granted"`)
+	require.Contains(t, verifyOut, `"requesting_actor": "release-lead"`)
+	require.Contains(t, verifyOut, `"execution_mode": "delegated_execution"`)
 	require.Contains(t, verifyOut, `"delegated_execution": true`)
 }
 

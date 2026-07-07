@@ -241,6 +241,9 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, policyApproval.Output, `"pending":"approval_pending"`)
 	require.Contains(t, policyApproval.Output, `"pending_verify_error":"approval_pending"`)
 	require.Contains(t, policyApproval.Output, `"scope_commit":"abc123"`)
+	require.Contains(t, policyApproval.Output, `"requesting_actor":"release-lead"`)
+	require.Contains(t, policyApproval.Output, `"executing_actor":"release-bot"`)
+	require.Contains(t, policyApproval.Output, `"execution_mode":"delegated_execution"`)
 	require.Contains(t, policyApproval.Output, `"verified":"approval_granted"`)
 	require.Contains(t, policyApproval.Output, `"delegated":true`)
 	require.Contains(t, policyApproval.Output, `"consumed":"approval_consumed"`)
@@ -249,6 +252,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, policyApproval.Output, `"remaining_uses":0`)
 	require.Contains(t, policyApproval.Output, `"replay_error":"approval_already_consumed"`)
 	require.Contains(t, policyApproval.Output, `"last_audit_error":"approval_already_consumed"`)
+	require.Contains(t, policyApproval.Output, `"delegation_hop_count":4`)
 
 	policySafetyCategory := findCategory(t, report, "policy-safety")
 	require.True(t, policySafetyCategory.OK)
@@ -1347,6 +1351,7 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Contains(t, policyApproval.ParityRefs, "Delegation audit")
 	require.Contains(t, policyApproval.ParityRefs, "Replay denial")
 	require.Contains(t, policyApproval.ParityRefs, "Commit-scoped approval")
+	require.Contains(t, policyApproval.ParityRefs, "Execution chain traceability")
 
 	notebook := findManifestScenario(t, manifest, "notebook_read_edit_roundtrip")
 	require.Equal(t, "notebook", notebook.Category)

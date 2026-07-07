@@ -1213,7 +1213,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "file tools", RequiredRefs: []string{"File tools", "Edit tool", "Grep chunk assembly", "Glob tool", "MultiEdit tool", "ApplyPatch tool"}},
 	{Capability: "bash and shell safety", RequiredRefs: []string{"Bash tool", "BashOutput tool", "KillBash tool", "Permission prompts", "Output truncation"}},
 	{Capability: "permissions and sandbox", RequiredRefs: []string{"Permission enforcement", "Workspace-write permissions", "Sandbox", "Permission safety", "Workspace scope denial"}},
-	{Capability: "policy and approval control plane", RequiredRefs: []string{"Policy evaluation", "Approval tokens", "Delegation audit", "Replay denial", "Commit-scoped approval"}},
+	{Capability: "policy and approval control plane", RequiredRefs: []string{"Policy evaluation", "Approval tokens", "Delegation audit", "Replay denial", "Commit-scoped approval", "Execution chain traceability"}},
 	{Capability: "sessions, resume, and project memory", RequiredRefs: []string{"Session JSONL", "Resume", "Session context management", "Project memory", "Session summary"}},
 	{Capability: "slash commands and custom workflows", RequiredRefs: []string{"Slash commands", "Skills", "Skill activation", "Templates", "Project workflow surfaces"}},
 	{Capability: "hooks", RequiredRefs: []string{"Hooks", "PreToolUse", "PostToolUse hooks", "UserPromptSubmit", "Stop"}},
@@ -1650,7 +1650,7 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 	"policy_approval_roundtrip": {
 		Category:    "policy-safety",
 		Description: "Evaluates lane policy actions and exercises approval-token grant, verification, consumption, replay denial, and ledger listing.",
-		ParityRefs:  []string{"Policy evaluation", "Approval tokens", "Delegation audit", "Replay denial", "Commit-scoped approval", "Tool result roundtrip"},
+		ParityRefs:  []string{"Policy evaluation", "Approval tokens", "Delegation audit", "Replay denial", "Commit-scoped approval", "Execution chain traceability", "Tool result roundtrip"},
 	},
 	"notebook_read_edit_roundtrip": {
 		Category:    "notebook",
@@ -7017,6 +7017,7 @@ func policyApprovalScenario() scenario {
 				"token": "tok-main",
 				`+scope+`,
 				"approving_actor": "owner",
+				"requesting_actor": "release-lead",
 				"approved_executor": "release-bot"
 			}`), nil)
 			if err != nil {
@@ -7063,9 +7064,10 @@ func policyApprovalScenario() scenario {
 				"token": "tok-main",
 				`+scope+`,
 				"approving_actor": "owner",
+				"requesting_actor": "release-lead",
 				"approved_executor": "release-bot",
 				"max_uses": 1,
-				"delegation_chain": [{"actor":"owner","session_id":"session-owner","reason":"owner approval"}]
+				"delegation_chain": [{"actor":"owner","session_id":"session-owner","reason":"owner approval"},{"actor":"orchestrator","session_id":"session-orchestrator","reason":"relay"}]
 			}`), nil)
 			if err != nil {
 				return localScenarioResult{}, err
@@ -7106,6 +7108,9 @@ func policyApprovalScenario() scenario {
 					Scope struct {
 						Commit string `json:"commit"`
 					} `json:"scope"`
+					RequestingActor    string `json:"requesting_actor"`
+					ExecutingActor     string `json:"executing_actor"`
+					ExecutionMode      string `json:"execution_mode"`
 					Status             string `json:"status"`
 					DelegatedExecution bool   `json:"delegated_execution"`
 					DelegationChain    []struct {
@@ -7116,7 +7121,7 @@ func policyApprovalScenario() scenario {
 			if err := json.Unmarshal([]byte(verifyOut), &verify); err != nil {
 				return localScenarioResult{}, err
 			}
-			if verify.Status != "ok" || verify.Audit.Kind != "approval_token_audit" || verify.Audit.Token != "tok-main" || verify.Audit.Scope.Commit != "abc123" || verify.Audit.Status != "approval_granted" || !verify.Audit.DelegatedExecution || len(verify.Audit.DelegationChain) != 2 || verify.Audit.DelegationChain[1].Actor != "release-bot" {
+			if verify.Status != "ok" || verify.Audit.Kind != "approval_token_audit" || verify.Audit.Token != "tok-main" || verify.Audit.Scope.Commit != "abc123" || verify.Audit.RequestingActor != "release-lead" || verify.Audit.ExecutingActor != "release-bot" || verify.Audit.ExecutionMode != "delegated_execution" || verify.Audit.Status != "approval_granted" || !verify.Audit.DelegatedExecution || len(verify.Audit.DelegationChain) != 4 || verify.Audit.DelegationChain[1].Actor != "orchestrator" || verify.Audit.DelegationChain[2].Actor != "release-lead" || verify.Audit.DelegationChain[3].Actor != "release-bot" {
 				return localScenarioResult{}, fmt.Errorf("unexpected approval verify output: %s", verifyOut)
 			}
 
@@ -7201,6 +7206,9 @@ func policyApprovalScenario() scenario {
 				"approval": map[string]any{
 					"token":                grant.Grant.Token,
 					"scope_commit":         verify.Audit.Scope.Commit,
+					"requesting_actor":     verify.Audit.RequestingActor,
+					"executing_actor":      verify.Audit.ExecutingActor,
+					"execution_mode":       verify.Audit.ExecutionMode,
 					"pending":              pending.Grant.Status,
 					"pending_verify_error": pendingVerify.ErrorKind,
 					"verified":             verify.Audit.Status,

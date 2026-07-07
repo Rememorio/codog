@@ -1787,6 +1787,7 @@ func (ApprovalTokenTool) Definition() anthropic.ToolDefinition {
 					},
 				},
 				"approving_actor":   map[string]any{"type": "string"},
+				"requesting_actor":  map[string]any{"type": "string"},
 				"approved_executor": map[string]any{"type": "string"},
 				"executing_actor":   map[string]any{"type": "string"},
 				"expires_at":        map[string]any{"type": "string", "description": "RFC3339 timestamp."},
@@ -1818,6 +1819,7 @@ func (t ApprovalTokenTool) Execute(_ context.Context, input json.RawMessage) (st
 		Token            string                   `json:"token,omitempty"`
 		Scope            approval.Scope           `json:"scope,omitempty"`
 		ApprovingActor   string                   `json:"approving_actor,omitempty"`
+		RequestingActor  string                   `json:"requesting_actor,omitempty"`
 		ApprovedExecutor string                   `json:"approved_executor,omitempty"`
 		ExecutingActor   string                   `json:"executing_actor,omitempty"`
 		ExpiresAt        string                   `json:"expires_at,omitempty"`
@@ -1845,6 +1847,7 @@ func (t ApprovalTokenTool) Execute(_ context.Context, input json.RawMessage) (st
 			Token:            payload.Token,
 			Scope:            payload.Scope,
 			ApprovingActor:   payload.ApprovingActor,
+			RequestingActor:  payload.RequestingActor,
 			ApprovedExecutor: payload.ApprovedExecutor,
 			Status:           status,
 			ExpiresAt:        expiresAt,
@@ -1864,6 +1867,7 @@ func (t ApprovalTokenTool) Execute(_ context.Context, input json.RawMessage) (st
 		grant, err := store.Approve(payload.Token, approval.GrantOptions{
 			Scope:            payload.Scope,
 			ApprovingActor:   payload.ApprovingActor,
+			RequestingActor:  payload.RequestingActor,
 			ApprovedExecutor: payload.ApprovedExecutor,
 			ExpiresAt:        expiresAt,
 			MaxUses:          payload.MaxUses,

@@ -47,7 +47,9 @@ func TestApprovalTokenBlocksUntilGranted(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "approval_token_audit", audit.Kind)
 	require.Equal(t, "repo-owner", audit.ApprovingActor)
+	require.Equal(t, "release-bot", audit.RequestingActor)
 	require.Equal(t, "release-bot", audit.ExecutingActor)
+	require.Equal(t, "delegated_execution", audit.ExecutionMode)
 	require.True(t, audit.DelegatedExecution)
 	require.Equal(t, []DelegationHop{
 		{Actor: "repo-owner", Reason: "approval granted"},
@@ -94,7 +96,55 @@ func TestApprovalTokenApprovesPendingGrantInPlace(t *testing.T) {
 	audit, err := store.Verify("tok-pending", scope, "release-bot", now.Add(2*time.Minute))
 	require.NoError(t, err)
 	require.Equal(t, StatusGranted, audit.Status)
+	require.Equal(t, "release-bot", audit.RequestingActor)
+	require.Equal(t, "delegated_execution", audit.ExecutionMode)
 	require.Equal(t, []string{"repo-owner", "lead-agent", "release-bot"}, delegationActors(audit.DelegationChain))
+}
+
+func TestApprovalTokenAuditRecordsRequesterAndExecutionMode(t *testing.T) {
+	store := NewStore(t.TempDir())
+	scope := Scope{Policy: "release_requires_owner", Action: "release publish", Repository: "owner/repo", Branch: "main", Commit: "abc123"}
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	_, err := store.Grant(GrantOptions{
+		Token:            "tok-delegated",
+		Scope:            scope,
+		ApprovingActor:   "owner",
+		RequestingActor:  "release-lead",
+		ApprovedExecutor: "release-bot",
+		DelegationChain: []DelegationHop{
+			{Actor: "owner", SessionID: "session-owner", Reason: "owner approval"},
+			{Actor: "orchestrator", SessionID: "session-orchestrator", Reason: "relay"},
+		},
+		Now: now,
+	})
+	require.NoError(t, err)
+
+	audit, err := store.Verify("tok-delegated", scope, "release-bot", now.Add(time.Second))
+	require.NoError(t, err)
+	require.Equal(t, "owner", audit.ApprovingActor)
+	require.Equal(t, "release-lead", audit.RequestingActor)
+	require.Equal(t, "release-bot", audit.ExecutingActor)
+	require.Equal(t, "delegated_execution", audit.ExecutionMode)
+	require.True(t, audit.DelegatedExecution)
+	require.Equal(t, []string{"owner", "orchestrator", "release-lead", "release-bot"}, delegationActors(audit.DelegationChain))
+
+	_, err = store.Grant(GrantOptions{
+		Token:            "tok-direct",
+		Scope:            scope,
+		ApprovingActor:   "owner",
+		RequestingActor:  "owner",
+		ApprovedExecutor: "owner",
+		Now:              now.Add(2 * time.Second),
+	})
+	require.NoError(t, err)
+	direct, err := store.Verify("tok-direct", scope, "owner", now.Add(3*time.Second))
+	require.NoError(t, err)
+	require.Equal(t, "owner", direct.RequestingActor)
+	require.Equal(t, "owner", direct.ExecutingActor)
+	require.Equal(t, "direct_self_use", direct.ExecutionMode)
+	require.False(t, direct.DelegatedExecution)
+	require.Equal(t, []string{"owner"}, delegationActors(direct.DelegationChain))
 }
 
 func TestApprovalTokenRejectsApproveWhenNotPending(t *testing.T) {
