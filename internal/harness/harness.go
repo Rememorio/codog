@@ -9990,7 +9990,7 @@ func reportBackpressureScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			second, err := call("ReportBackpressureTool", `{"action":"generate","channel":"dogfood","trigger_id":"nudge-cycle-1","checked_surfaces":["roadmap","sessions"],"now":"2026-07-07T16:02:00Z"}`)
+			second, err := call("ReportBackpressureTool", `{"action":"generate","channel":"dogfood","trigger_id":"nudge-cycle-1","checked_surfaces":["roadmap","sessions"],"freshness_ttl_seconds":30,"now":"2026-07-07T16:02:00Z"}`)
 			if err != nil {
 				return localScenarioResult{}, err
 			}
@@ -10015,8 +10015,10 @@ func reportBackpressureScenario() scenario {
 			secondOutcome, _ := second["outcome"].(string)
 			secondTrigger, _ := second["trigger_id"].(string)
 			lastMeaningful, _ := second["last_meaningful_report_id"].(string)
+			freshnessCounts, _ := second["freshness_counts"].(map[string]any)
+			staleCount, _ := freshnessCounts["stale"].(float64)
 			snapshotBody, _ := snapshot["snapshot"].(map[string]any)
-			if itemID == "" || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
+			if itemID == "" || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
 				return localScenarioResult{}, fmt.Errorf("unexpected backpressure report: filed=%#v first=%#v second=%#v third=%#v snapshot=%#v", filed, first, second, third, snapshot)
 			}
 			output := map[string]any{
@@ -10029,6 +10031,7 @@ func reportBackpressureScenario() scenario {
 				"second_unchanged": int(secondUnchanged),
 				"second_collapsed": secondCollapsed,
 				"last_meaningful":  lastMeaningful,
+				"stale_count":      int(staleCount),
 				"third_changed":    len(thirdChanged),
 				"snapshot_id":      snapshotID,
 			}

@@ -35,6 +35,13 @@ func TestGenerateCollapsesUnchangedItemsAndStoresSnapshot(t *testing.T) {
 	require.True(t, first.Checked)
 	require.False(t, first.NoChange)
 	require.Len(t, first.NewItems, 1)
+	require.Equal(t, now, first.NewItems[0].ObservedAt)
+	require.Equal(t, int64(60), first.NewItems[0].AgeSeconds)
+	require.Equal(t, int64(3600), first.NewItems[0].FreshnessTTLSeconds)
+	require.Equal(t, "current", first.NewItems[0].Freshness)
+	require.Equal(t, "carried_forward", first.NewItems[0].ObservationSource)
+	require.False(t, first.MixedFreshness)
+	require.Equal(t, map[string]int{"current": 1}, first.FreshnessCounts)
 	require.Empty(t, first.ChangedItems)
 	require.Zero(t, first.UnchangedCount)
 	require.Equal(t, 1, first.TotalCount)
@@ -106,6 +113,50 @@ func TestGenerateNoChangeWithoutPriorMeaningfulReport(t *testing.T) {
 	require.Empty(t, report.LastMeaningfulReportID)
 	require.Empty(t, report.LastMeaningfulItemIDs)
 	require.Zero(t, report.TotalCount)
+}
+
+func TestGenerateMarksStaleAndMixedFreshness(t *testing.T) {
+	configHome := t.TempDir()
+	roadmapStore := roadmap.NewStore(configHome)
+	reportStore := NewStore(configHome)
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	oldItem, err := roadmapStore.File(roadmap.Filing{
+		Title: "old carried state",
+		Now:   now.Add(-2 * time.Hour),
+	})
+	require.NoError(t, err)
+	newItem, err := roadmapStore.File(roadmap.Filing{
+		Title: "fresh carried state",
+		Now:   now.Add(-10 * time.Minute),
+	})
+	require.NoError(t, err)
+
+	report, err := reportStore.GenerateWithOptions("dogfood", now, GenerateOptions{
+		FreshnessTTL: 30 * time.Minute,
+	})
+	require.NoError(t, err)
+
+	require.True(t, report.MixedFreshness)
+	require.Equal(t, map[string]int{"current": 1, "stale": 1}, report.FreshnessCounts)
+	require.Len(t, report.NewItems, 2)
+	byID := map[string]ItemSummary{}
+	for _, item := range report.NewItems {
+		byID[item.ID] = item
+	}
+	require.Equal(t, "stale", byID[oldItem.ItemID].Freshness)
+	require.Equal(t, int64(7200), byID[oldItem.ItemID].AgeSeconds)
+	require.Equal(t, int64(1800), byID[oldItem.ItemID].FreshnessTTLSeconds)
+	require.Equal(t, "current", byID[newItem.ItemID].Freshness)
+	require.Equal(t, "carried_forward", byID[newItem.ItemID].ObservationSource)
+
+	second, err := reportStore.GenerateWithOptions("dogfood", now.Add(time.Minute), GenerateOptions{
+		FreshnessTTL: 30 * time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, second.NoChange)
+	require.Equal(t, 2, second.UnchangedCount)
+	require.True(t, second.MixedFreshness)
 }
 
 func TestGenerateTracksIndependentChannelCursors(t *testing.T) {

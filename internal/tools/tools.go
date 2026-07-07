@@ -9078,8 +9078,9 @@ func (ReportBackpressureTool) Definition() anthropic.ToolDefinition {
 					"type":  "array",
 					"items": map[string]any{"type": "string"},
 				},
-				"snapshot_id": map[string]any{"type": "string"},
-				"now":         map[string]any{"type": "string", "format": "date-time"},
+				"freshness_ttl_seconds": map[string]any{"type": "integer", "minimum": 1},
+				"snapshot_id":           map[string]any{"type": "string"},
+				"now":                   map[string]any{"type": "string", "format": "date-time"},
 			},
 			"additionalProperties": false,
 		},
@@ -9090,12 +9091,13 @@ func (ReportBackpressureTool) Permission() Permission { return PermissionReadOnl
 
 func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Action          string   `json:"action"`
-		Channel         string   `json:"channel"`
-		TriggerID       string   `json:"trigger_id"`
-		CheckedSurfaces []string `json:"checked_surfaces"`
-		SnapshotID      string   `json:"snapshot_id"`
-		Now             string   `json:"now"`
+		Action              string   `json:"action"`
+		Channel             string   `json:"channel"`
+		TriggerID           string   `json:"trigger_id"`
+		CheckedSurfaces     []string `json:"checked_surfaces"`
+		FreshnessTTLSeconds int      `json:"freshness_ttl_seconds"`
+		SnapshotID          string   `json:"snapshot_id"`
+		Now                 string   `json:"now"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -9114,6 +9116,7 @@ func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage
 		report, err := store.GenerateWithOptions(payload.Channel, now, reporting.GenerateOptions{
 			TriggerID:       payload.TriggerID,
 			CheckedSurfaces: payload.CheckedSurfaces,
+			FreshnessTTL:    time.Duration(payload.FreshnessTTLSeconds) * time.Second,
 		})
 		if err != nil {
 			return "", err

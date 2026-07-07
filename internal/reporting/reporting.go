@@ -15,7 +15,10 @@ import (
 	"github.com/Rememorio/codog/internal/roadmap"
 )
 
-const SnapshotSchemaVersion = "codog.reporting.snapshot.v1"
+const (
+	SnapshotSchemaVersion = "codog.reporting.snapshot.v1"
+	DefaultFreshnessTTL   = time.Hour
+)
 
 type Cursor struct {
 	Channel                  string            `json:"channel"`
@@ -29,41 +32,48 @@ type Cursor struct {
 }
 
 type ItemSummary struct {
-	ID             string                       `json:"id"`
-	Title          string                       `json:"title"`
-	State          roadmap.State                `json:"state"`
-	Priority       roadmap.Priority             `json:"priority"`
-	Severity       roadmap.Severity             `json:"severity"`
-	Impact         roadmap.ImpactClass          `json:"impact"`
-	Readiness      roadmap.HandoffReadiness     `json:"readiness,omitempty"`
-	UpdatedAt      time.Time                    `json:"updated_at"`
-	Fingerprint    string                       `json:"fingerprint"`
-	EvidenceRefs   []string                     `json:"evidence_refs,omitempty"`
-	Handoff        *roadmap.HandoffPacket       `json:"handoff,omitempty"`
-	Implementation []roadmap.ImplementationLink `json:"implementation,omitempty"`
+	ID                  string                       `json:"id"`
+	Title               string                       `json:"title"`
+	State               roadmap.State                `json:"state"`
+	Priority            roadmap.Priority             `json:"priority"`
+	Severity            roadmap.Severity             `json:"severity"`
+	Impact              roadmap.ImpactClass          `json:"impact"`
+	Readiness           roadmap.HandoffReadiness     `json:"readiness,omitempty"`
+	UpdatedAt           time.Time                    `json:"updated_at"`
+	ObservedAt          time.Time                    `json:"observed_at"`
+	AgeSeconds          int64                        `json:"age_seconds"`
+	FreshnessTTLSeconds int64                        `json:"freshness_ttl_seconds"`
+	Freshness           string                       `json:"freshness"`
+	ObservationSource   string                       `json:"observation_source"`
+	Fingerprint         string                       `json:"fingerprint"`
+	EvidenceRefs        []string                     `json:"evidence_refs,omitempty"`
+	Handoff             *roadmap.HandoffPacket       `json:"handoff,omitempty"`
+	Implementation      []roadmap.ImplementationLink `json:"implementation,omitempty"`
 }
 
 type Report struct {
-	Kind                     string        `json:"kind"`
-	Channel                  string        `json:"channel"`
-	ReportID                 string        `json:"report_id"`
-	TriggerID                string        `json:"trigger_id,omitempty"`
-	SnapshotID               string        `json:"snapshot_id"`
-	GeneratedAt              time.Time     `json:"generated_at"`
-	Outcome                  string        `json:"outcome"`
-	Checked                  bool          `json:"checked"`
-	CheckedSurfaces          []string      `json:"checked_surfaces,omitempty"`
-	NoChange                 bool          `json:"no_change"`
-	NewItems                 []ItemSummary `json:"new_items,omitempty"`
-	ChangedItems             []ItemSummary `json:"changed_items,omitempty"`
-	UnchangedCount           int           `json:"unchanged_count"`
-	TotalCount               int           `json:"total_count"`
-	Collapsed                bool          `json:"collapsed"`
-	FullSnapshotStored       bool          `json:"full_snapshot_stored"`
-	PreviousReportID         string        `json:"previous_report_id,omitempty"`
-	LastMeaningfulReportID   string        `json:"last_meaningful_report_id,omitempty"`
-	LastMeaningfulSnapshotID string        `json:"last_meaningful_snapshot_id,omitempty"`
-	LastMeaningfulItemIDs    []string      `json:"last_meaningful_item_ids,omitempty"`
+	Kind                     string         `json:"kind"`
+	Channel                  string         `json:"channel"`
+	ReportID                 string         `json:"report_id"`
+	TriggerID                string         `json:"trigger_id,omitempty"`
+	SnapshotID               string         `json:"snapshot_id"`
+	GeneratedAt              time.Time      `json:"generated_at"`
+	Outcome                  string         `json:"outcome"`
+	Checked                  bool           `json:"checked"`
+	CheckedSurfaces          []string       `json:"checked_surfaces,omitempty"`
+	NoChange                 bool           `json:"no_change"`
+	MixedFreshness           bool           `json:"mixed_freshness"`
+	FreshnessCounts          map[string]int `json:"freshness_counts,omitempty"`
+	NewItems                 []ItemSummary  `json:"new_items,omitempty"`
+	ChangedItems             []ItemSummary  `json:"changed_items,omitempty"`
+	UnchangedCount           int            `json:"unchanged_count"`
+	TotalCount               int            `json:"total_count"`
+	Collapsed                bool           `json:"collapsed"`
+	FullSnapshotStored       bool           `json:"full_snapshot_stored"`
+	PreviousReportID         string         `json:"previous_report_id,omitempty"`
+	LastMeaningfulReportID   string         `json:"last_meaningful_report_id,omitempty"`
+	LastMeaningfulSnapshotID string         `json:"last_meaningful_snapshot_id,omitempty"`
+	LastMeaningfulItemIDs    []string       `json:"last_meaningful_item_ids,omitempty"`
 }
 
 type Snapshot struct {
@@ -82,6 +92,7 @@ type Store struct {
 type GenerateOptions struct {
 	TriggerID       string
 	CheckedSurfaces []string
+	FreshnessTTL    time.Duration
 }
 
 func NewStore(configHome string) Store {
@@ -102,6 +113,9 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 	}
 	options.TriggerID = strings.TrimSpace(options.TriggerID)
 	options.CheckedSurfaces = cleanStrings(options.CheckedSurfaces)
+	if options.FreshnessTTL <= 0 {
+		options.FreshnessTTL = DefaultFreshnessTTL
+	}
 	if now.IsZero() {
 		now = time.Now().UTC()
 	} else {
@@ -114,7 +128,7 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 	summaries := make([]ItemSummary, 0, len(items))
 	hashes := make(map[string]string, len(items))
 	for _, item := range items {
-		summary, err := summarizeItem(item)
+		summary, err := summarizeItem(item, now, options.FreshnessTTL)
 		if err != nil {
 			return Report{}, err
 		}
@@ -131,7 +145,9 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 	newItems := []ItemSummary{}
 	changedItems := []ItemSummary{}
 	unchangedCount := 0
+	freshnessCounts := map[string]int{}
 	for _, summary := range summaries {
+		freshnessCounts[summary.Freshness]++
 		previous, ok := cursor.ItemHashes[summary.ID]
 		switch {
 		case !ok:
@@ -189,6 +205,8 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 		Checked:                  true,
 		CheckedSurfaces:          options.CheckedSurfaces,
 		NoChange:                 noChange,
+		MixedFreshness:           len(freshnessCounts) > 1,
+		FreshnessCounts:          freshnessCounts,
 		NewItems:                 newItems,
 		ChangedItems:             changedItems,
 		UnchangedCount:           unchangedCount,
@@ -263,18 +281,43 @@ func (s Store) GetSnapshot(snapshotID string) (Snapshot, error) {
 	return snapshot, nil
 }
 
-func summarizeItem(item roadmap.Item) (ItemSummary, error) {
+func summarizeItem(item roadmap.Item, now time.Time, freshnessTTL time.Duration) (ItemSummary, error) {
+	observedAt := item.UpdatedAt
+	if observedAt.IsZero() {
+		observedAt = item.CreatedAt
+	}
+	if observedAt.IsZero() {
+		observedAt = now
+	}
+	observedAt = observedAt.UTC()
+	age := now.Sub(observedAt)
+	if age < 0 {
+		age = 0
+	}
+	freshness := "current"
+	if age > freshnessTTL {
+		freshness = "stale"
+	}
+	observationSource := "fresh"
+	if age > 0 {
+		observationSource = "carried_forward"
+	}
 	summary := ItemSummary{
-		ID:             item.ID,
-		Title:          item.Title,
-		State:          item.State,
-		Priority:       item.Priority,
-		Severity:       item.Severity,
-		Impact:         item.Impact,
-		UpdatedAt:      item.UpdatedAt,
-		EvidenceRefs:   evidenceRefs(item.Evidence),
-		Handoff:        item.Handoff,
-		Implementation: append([]roadmap.ImplementationLink(nil), item.Implementation...),
+		ID:                  item.ID,
+		Title:               item.Title,
+		State:               item.State,
+		Priority:            item.Priority,
+		Severity:            item.Severity,
+		Impact:              item.Impact,
+		UpdatedAt:           item.UpdatedAt,
+		ObservedAt:          observedAt,
+		AgeSeconds:          int64(age.Seconds()),
+		FreshnessTTLSeconds: int64(freshnessTTL.Seconds()),
+		Freshness:           freshness,
+		ObservationSource:   observationSource,
+		EvidenceRefs:        evidenceRefs(item.Evidence),
+		Handoff:             item.Handoff,
+		Implementation:      append([]roadmap.ImplementationLink(nil), item.Implementation...),
 	}
 	if item.Handoff != nil {
 		summary.Readiness = item.Handoff.Readiness
