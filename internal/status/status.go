@@ -98,6 +98,7 @@ type Options struct {
 	GitStatus                   string
 	GitError                    string
 	GitFreshness                *gitops.BranchFreshness
+	GitIdentity                 *gitops.Identity
 	LaneBoard                   *background.LaneBoard
 	LaneBoardError              string
 	SandboxOS                   string
@@ -274,16 +275,23 @@ type AllowedToolsStatus struct {
 
 // GitStatus summarizes local git state for the workspace.
 type GitStatus struct {
-	Available bool                    `json:"available"`
-	Error     string                  `json:"error,omitempty"`
-	Branch    string                  `json:"branch,omitempty"`
-	Clean     bool                    `json:"clean"`
-	Staged    int                     `json:"staged"`
-	Unstaged  int                     `json:"unstaged"`
-	Untracked int                     `json:"untracked"`
-	Conflicts int                     `json:"conflicts"`
-	Freshness *gitops.BranchFreshness `json:"freshness,omitempty"`
-	Raw       string                  `json:"raw,omitempty"`
+	Available    bool                    `json:"available"`
+	Error        string                  `json:"error,omitempty"`
+	Branch       string                  `json:"branch,omitempty"`
+	HeadSHA      string                  `json:"head_sha,omitempty"`
+	HeadShortSHA string                  `json:"head_short_sha,omitempty"`
+	HeadRef      string                  `json:"head_ref,omitempty"`
+	IsDetached   bool                    `json:"is_detached"`
+	IsBare       bool                    `json:"is_bare"`
+	IsWorktree   bool                    `json:"is_worktree"`
+	GitDir       string                  `json:"git_dir,omitempty"`
+	Clean        bool                    `json:"clean"`
+	Staged       int                     `json:"staged"`
+	Unstaged     int                     `json:"unstaged"`
+	Untracked    int                     `json:"untracked"`
+	Conflicts    int                     `json:"conflicts"`
+	Freshness    *gitops.BranchFreshness `json:"freshness,omitempty"`
+	Raw          string                  `json:"raw,omitempty"`
 }
 
 // LaneBoardStatus summarizes background task lanes.
@@ -407,6 +415,16 @@ func Build(opts Options) Snapshot {
 	if opts.GitFreshness != nil {
 		freshness := *opts.GitFreshness
 		git.Freshness = &freshness
+	}
+	if opts.GitIdentity != nil {
+		identity := *opts.GitIdentity
+		git.HeadSHA = identity.HeadSHA
+		git.HeadShortSHA = identity.HeadShortSHA
+		git.HeadRef = identity.HeadRef
+		git.IsDetached = identity.IsDetached
+		git.IsBare = identity.IsBare
+		git.IsWorktree = identity.IsWorktree
+		git.GitDir = identity.GitDir
 	}
 	bootPreflight := buildBootPreflightStatus(opts, git)
 	status := "ok"
@@ -938,6 +956,19 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 			snapshot.Git.Untracked,
 			snapshot.Git.Conflicts,
 		)
+		if snapshot.Git.HeadShortSHA != "" || snapshot.Git.IsDetached || snapshot.Git.IsBare || snapshot.Git.IsWorktree {
+			ref := snapshot.Git.HeadRef
+			if ref == "" && snapshot.Git.IsDetached {
+				ref = "detached"
+			}
+			fmt.Fprintf(w, "  Git head         ref=%s sha=%s detached=%t bare=%t worktree=%t\n",
+				ref,
+				snapshot.Git.HeadShortSHA,
+				snapshot.Git.IsDetached,
+				snapshot.Git.IsBare,
+				snapshot.Git.IsWorktree,
+			)
+		}
 		if snapshot.Git.Freshness != nil {
 			freshness := snapshot.Git.Freshness
 			upstream := ""

@@ -16288,6 +16288,12 @@ func TestStatusIncludesBranchFreshness(t *testing.T) {
 	}
 	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{}))
 	require.Contains(t, out.String(), `"status": "warn"`)
+	require.Contains(t, out.String(), `"head_sha":`)
+	require.Contains(t, out.String(), `"head_short_sha":`)
+	require.Contains(t, out.String(), `"head_ref": "topic"`)
+	require.Contains(t, out.String(), `"is_detached": false`)
+	require.Contains(t, out.String(), `"is_bare": false`)
+	require.Contains(t, out.String(), `"is_worktree": false`)
 	require.Contains(t, out.String(), `"freshness": {`)
 	require.Contains(t, out.String(), `"status": "stale"`)
 	require.Contains(t, out.String(), `"behind": 1`)

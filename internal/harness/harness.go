@@ -34,6 +34,7 @@ import (
 	"github.com/Rememorio/codog/internal/customcommands"
 	"github.com/Rememorio/codog/internal/doctor"
 	"github.com/Rememorio/codog/internal/focus"
+	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/modelrouting"
@@ -5006,7 +5007,13 @@ func diagnosticsStatusScenario() scenario {
 					Name:  "AGENTS.md",
 					Scope: "workspace",
 				}},
-				GitStatus:        "## main",
+				GitStatus: "## main",
+				GitIdentity: &gitops.Identity{
+					HeadSHA:      "1234567890abcdef1234567890abcdef12345678",
+					HeadShortSHA: "1234567890ab",
+					HeadRef:      "main",
+					GitDir:       filepath.Join(workspace, ".git"),
+				},
 				SandboxOS:        "darwin",
 				SandboxDefault:   "seatbelt",
 				SandboxAvailable: true,
@@ -5086,6 +5093,9 @@ func diagnosticsStatusScenario() scenario {
 					"memory_file_count":   statusReport.Workspace.MemoryFileCount,
 					"permission_unknowns": statusReport.Config.PermissionRules.UnknownCount,
 					"boot_workspace":      statusReport.BootPreflight.Repo.WorkspaceExists,
+					"git_head_sha":        statusReport.Git.HeadSHA,
+					"git_head_ref":        statusReport.Git.HeadRef,
+					"git_detached":        statusReport.Git.IsDetached,
 				},
 				"doctor": map[string]any{
 					"kind":        doctorReport.Kind,

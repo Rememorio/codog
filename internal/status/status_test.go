@@ -196,6 +196,31 @@ func TestBuildWarnsOnStaleBranchFreshness(t *testing.T) {
 	require.Contains(t, out.String(), "Git freshness    status=stale base=main upstream=origin/topic ahead=0 behind=2")
 }
 
+func TestBuildIncludesGitIdentity(t *testing.T) {
+	snapshot := Build(Options{
+		Version:   "test-version",
+		GitStatus: "## main",
+		GitIdentity: &gitops.Identity{
+			HeadSHA:      "1234567890abcdef1234567890abcdef12345678",
+			HeadShortSHA: "1234567890ab",
+			HeadRef:      "main",
+			GitDir:       "/repo/.git",
+		},
+	})
+
+	require.Equal(t, "1234567890abcdef1234567890abcdef12345678", snapshot.Git.HeadSHA)
+	require.Equal(t, "1234567890ab", snapshot.Git.HeadShortSHA)
+	require.Equal(t, "main", snapshot.Git.HeadRef)
+	require.False(t, snapshot.Git.IsDetached)
+	require.False(t, snapshot.Git.IsBare)
+	require.False(t, snapshot.Git.IsWorktree)
+	require.Equal(t, "/repo/.git", snapshot.Git.GitDir)
+
+	var out bytes.Buffer
+	RenderText(&out, snapshot)
+	require.Contains(t, out.String(), "Git head         ref=main sha=1234567890ab detached=false bare=false worktree=false")
+}
+
 func TestBuildMarksInvalidValidationDegraded(t *testing.T) {
 	index := 0
 	snapshot := Build(Options{

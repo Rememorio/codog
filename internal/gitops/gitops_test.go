@@ -76,6 +76,36 @@ func TestStatusDiffAndCommit(t *testing.T) {
 	require.True(t, strings.Contains(status, "## main") || strings.Contains(status, "## master"))
 }
 
+func TestInspectIdentityReportsHeadAndDetachedState(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runGit(t, workspace, "init", "-b", "main")
+	runGit(t, workspace, "config", "user.email", "codog@example.test")
+	runGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "add notes")
+
+	identity, err := InspectIdentity(workspace)
+	require.NoError(t, err)
+	require.Len(t, identity.HeadSHA, 40)
+	require.NotEmpty(t, identity.HeadShortSHA)
+	require.Equal(t, "main", identity.HeadRef)
+	require.False(t, identity.IsDetached)
+	require.False(t, identity.IsBare)
+	require.False(t, identity.IsWorktree)
+	require.NotEmpty(t, identity.GitDir)
+
+	runGit(t, workspace, "checkout", "--detach", "HEAD")
+	identity, err = InspectIdentity(workspace)
+	require.NoError(t, err)
+	require.True(t, identity.IsDetached)
+	require.Empty(t, identity.HeadRef)
+	require.NotEmpty(t, identity.HeadShortSHA)
+}
+
 func TestIsNoGitRepoError(t *testing.T) {
 	require.False(t, IsNoGitRepoError(nil))
 	require.False(t, IsNoGitRepoError(errors.New("permission denied")))

@@ -54,6 +54,17 @@ type BranchFreshness struct {
 	Event               *laneevents.Event `json:"event,omitempty"`
 }
 
+// Identity describes the repository identity and current HEAD state.
+type Identity struct {
+	HeadSHA      string `json:"head_sha,omitempty"`
+	HeadShortSHA string `json:"head_short_sha,omitempty"`
+	HeadRef      string `json:"head_ref,omitempty"`
+	IsDetached   bool   `json:"is_detached"`
+	IsBare       bool   `json:"is_bare"`
+	IsWorktree   bool   `json:"is_worktree"`
+	GitDir       string `json:"git_dir,omitempty"`
+}
+
 type BaseCommitSource struct {
 	Kind  string `json:"kind"`
 	Value string `json:"value"`
@@ -115,6 +126,42 @@ type DiffOptions struct {
 
 func Status(workspace string) (string, error) {
 	return git(workspace, "status", "--short", "--branch")
+}
+
+// InspectIdentity returns HEAD and repository-layout metadata for workspace.
+func InspectIdentity(workspace string) (Identity, error) {
+	inside, err := git(workspace, "rev-parse", "--is-inside-work-tree")
+	if err != nil {
+		return Identity{}, err
+	}
+	bareText, err := git(workspace, "rev-parse", "--is-bare-repository")
+	if err != nil {
+		return Identity{}, err
+	}
+	gitDir, err := git(workspace, "rev-parse", "--git-dir")
+	if err != nil {
+		return Identity{}, err
+	}
+	identity := Identity{
+		IsBare:     parseGitBool(bareText),
+		IsWorktree: isLinkedWorktree(workspace, gitDir),
+		GitDir:     normalizeGitDir(workspace, gitDir),
+	}
+	if strings.TrimSpace(inside) != "true" && !identity.IsBare {
+		return identity, nil
+	}
+	if head, err := git(workspace, "rev-parse", "--verify", "HEAD"); err == nil {
+		identity.HeadSHA = head
+	}
+	if head, err := git(workspace, "rev-parse", "--short", "HEAD"); err == nil {
+		identity.HeadShortSHA = head
+	}
+	if ref, err := git(workspace, "symbolic-ref", "--quiet", "--short", "HEAD"); err == nil {
+		identity.HeadRef = ref
+	} else if identity.HeadSHA != "" {
+		identity.IsDetached = true
+	}
+	return identity, nil
 }
 
 func Run(workspace string, args ...string) (string, error) {
@@ -842,6 +889,32 @@ func logSubjects(workspace, revRange string) ([]string, error) {
 		}
 	}
 	return subjects, nil
+}
+
+func parseGitBool(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "true")
+}
+
+func normalizeGitDir(workspace, gitDir string) string {
+	gitDir = strings.TrimSpace(gitDir)
+	if gitDir == "" || filepath.IsAbs(gitDir) {
+		return gitDir
+	}
+	return filepath.Clean(filepath.Join(workspace, gitDir))
+}
+
+func isLinkedWorktree(workspace, gitDir string) bool {
+	gitDir = normalizeGitDir(workspace, gitDir)
+	if gitDir == "" {
+		return false
+	}
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(gitDir)), "/")
+	for i := 0; i < len(parts)-1; i++ {
+		if parts[i] == "worktrees" {
+			return true
+		}
+	}
+	return false
 }
 
 func git(workspace string, args ...string) (string, error) {
