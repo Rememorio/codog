@@ -24,7 +24,28 @@ const starterConfig = `{
 
 const gitignoreComment = "# Codog local artifacts"
 
-var gitignoreEntries = []string{".codog.local.json", ".codog/worker-state.json", ".codog/focus.json", ".codog/output-style.json", ".codog/todos.json"}
+var gitignoreEntries = []string{
+	".codog.local.json",
+	".codog/worker-state.json",
+	".codog/focus.json",
+	".codog/output-style.json",
+	".codog/todos.json",
+	".codog/plan.json",
+	".codog/undo.jsonl",
+	".codog/safer-scope.json",
+	".codog/additional-dirs.json",
+	".codog/heap/",
+	".codog/share/",
+	".codog/feedback/",
+	".codog/autofix/",
+	".codog/drafts/",
+	".codog/perf/",
+	".codog/recovery/",
+	".codog/traces/",
+	".codog/worktrees/",
+	".codog/context-viz.html",
+	".codog/think-back-*.html",
+}
 
 type Artifact struct {
 	Name       string `json:"name"`

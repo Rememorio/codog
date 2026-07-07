@@ -48,6 +48,21 @@ func TestInitializeCreatesExpectedArtifacts(t *testing.T) {
 	require.Contains(t, string(gitignore), ".codog/focus.json")
 	require.Contains(t, string(gitignore), ".codog/output-style.json")
 	require.Contains(t, string(gitignore), ".codog/todos.json")
+	require.Contains(t, string(gitignore), ".codog/plan.json")
+	require.Contains(t, string(gitignore), ".codog/undo.jsonl")
+	require.Contains(t, string(gitignore), ".codog/safer-scope.json")
+	require.Contains(t, string(gitignore), ".codog/additional-dirs.json")
+	require.Contains(t, string(gitignore), ".codog/heap/")
+	require.Contains(t, string(gitignore), ".codog/share/")
+	require.Contains(t, string(gitignore), ".codog/feedback/")
+	require.Contains(t, string(gitignore), ".codog/autofix/")
+	require.Contains(t, string(gitignore), ".codog/drafts/")
+	require.Contains(t, string(gitignore), ".codog/perf/")
+	require.Contains(t, string(gitignore), ".codog/recovery/")
+	require.Contains(t, string(gitignore), ".codog/traces/")
+	require.Contains(t, string(gitignore), ".codog/worktrees/")
+	require.Contains(t, string(gitignore), ".codog/context-viz.html")
+	require.Contains(t, string(gitignore), ".codog/think-back-*.html")
 }
 
 func TestInitializeIsIdempotentAndPreservesFiles(t *testing.T) {
@@ -106,6 +121,21 @@ func TestEnsureGitignoreEntriesUpdatesExistingFile(t *testing.T) {
 	require.Contains(t, string(data), ".codog/focus.json")
 	require.Contains(t, string(data), ".codog/output-style.json")
 	require.Contains(t, string(data), ".codog/todos.json")
+	require.Contains(t, string(data), ".codog/plan.json")
+	require.Contains(t, string(data), ".codog/undo.jsonl")
+	require.Contains(t, string(data), ".codog/safer-scope.json")
+	require.Contains(t, string(data), ".codog/additional-dirs.json")
+	require.Contains(t, string(data), ".codog/heap/")
+	require.Contains(t, string(data), ".codog/share/")
+	require.Contains(t, string(data), ".codog/feedback/")
+	require.Contains(t, string(data), ".codog/autofix/")
+	require.Contains(t, string(data), ".codog/drafts/")
+	require.Contains(t, string(data), ".codog/perf/")
+	require.Contains(t, string(data), ".codog/recovery/")
+	require.Contains(t, string(data), ".codog/traces/")
+	require.Contains(t, string(data), ".codog/worktrees/")
+	require.Contains(t, string(data), ".codog/context-viz.html")
+	require.Contains(t, string(data), ".codog/think-back-*.html")
 }
 
 func TestRenderText(t *testing.T) {
