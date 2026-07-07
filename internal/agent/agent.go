@@ -29926,13 +29926,14 @@ type cliErrorEnvelope struct {
 }
 
 type actionErrorReport struct {
-	Kind      string `json:"kind"`
-	Action    string `json:"action"`
-	Status    string `json:"status"`
-	ErrorKind string `json:"error_kind"`
-	Argument  string `json:"argument,omitempty"`
-	Message   string `json:"message"`
-	Hint      string `json:"hint"`
+	Kind      string           `json:"kind"`
+	Action    string           `json:"action"`
+	Status    string           `json:"status"`
+	ErrorKind string           `json:"error_kind"`
+	Error     cliErrorEnvelope `json:"error"`
+	Argument  string           `json:"argument,omitempty"`
+	Message   string           `json:"message"`
+	Hint      string           `json:"hint"`
 }
 
 type sessionRestoreErrorReport struct {
@@ -30583,6 +30584,7 @@ func buildPromptErrorReport(report promptErrorReport) promptErrorReport {
 }
 
 func renderActionError(out io.Writer, report actionErrorReport, format string) error {
+	report = buildActionErrorReport(report)
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -30590,6 +30592,24 @@ func renderActionError(out io.Writer, report actionErrorReport, format string) e
 		return &ExitError{Code: 1, Err: err, Silent: true}
 	}
 	return &ExitError{Code: 1, Err: err}
+}
+
+func buildActionErrorReport(report actionErrorReport) actionErrorReport {
+	if strings.TrimSpace(report.Status) == "" {
+		report.Status = "error"
+	}
+	cliReport := cliErrorReport{
+		Kind:      report.ErrorKind,
+		ErrorKind: report.ErrorKind,
+		Status:    report.Status,
+		Command:   report.Kind,
+		Action:    report.Action,
+		Argument:  report.Argument,
+		Message:   report.Message,
+		Hint:      report.Hint,
+	}
+	report.Error = buildCLIErrorEnvelope(errors.New(report.ErrorKind+": "+report.Message), cliReport)
+	return report
 }
 
 func renderMissingActionArgument(out io.Writer, kind string, action string, argument string, message string, hint string, format string) error {
@@ -31139,6 +31159,12 @@ func classifyCLIErrorEnvelopeKind(err error, report cliErrorReport) string {
 		return "usage"
 	case "invalid_permission_mode":
 		return "policy"
+	}
+	if strings.HasPrefix(errorKind, "unsupported_") ||
+		strings.HasPrefix(errorKind, "unknown_") ||
+		strings.HasSuffix(errorKind, "_not_found") ||
+		strings.Contains(errorKind, "_missing_") {
+		return "usage"
 	}
 	if err != nil {
 		var pathErr *os.PathError
@@ -50150,14 +50176,15 @@ type mcpUsageBlock struct {
 }
 
 type mcpUnsupportedActionReport struct {
-	Kind            string        `json:"kind"`
-	Action          string        `json:"action"`
-	OK              bool          `json:"ok"`
-	Status          string        `json:"status"`
-	ErrorKind       string        `json:"error_kind"`
-	RequestedAction string        `json:"requested_action"`
-	Hint            string        `json:"hint"`
-	Usage           mcpUsageBlock `json:"usage"`
+	Kind            string           `json:"kind"`
+	Action          string           `json:"action"`
+	OK              bool             `json:"ok"`
+	Status          string           `json:"status"`
+	ErrorKind       string           `json:"error_kind"`
+	Error           cliErrorEnvelope `json:"error"`
+	RequestedAction string           `json:"requested_action"`
+	Hint            string           `json:"hint"`
+	Usage           mcpUsageBlock    `json:"usage"`
 }
 
 type mcpRemoteActionErrorReport struct {
@@ -50296,7 +50323,7 @@ func renderMCPRemoteActionError(out io.Writer, format string, report mcpRemoteAc
 }
 
 func buildMCPUnsupportedActionReport(requestedAction string, hint string) mcpUnsupportedActionReport {
-	return mcpUnsupportedActionReport{
+	report := mcpUnsupportedActionReport{
 		Kind:            "mcp",
 		Action:          "error",
 		OK:              false,
@@ -50310,6 +50337,17 @@ func buildMCPUnsupportedActionReport(requestedAction string, hint string) mcpUns
 			Sources:      []string{".codog.json", ".codog.local.json", "user config"},
 		},
 	}
+	report.Error = buildCLIErrorEnvelope(errors.New(report.ErrorKind+": unsupported mcp action "+report.RequestedAction), cliErrorReport{
+		Kind:      report.ErrorKind,
+		ErrorKind: report.ErrorKind,
+		Status:    report.Status,
+		Command:   "mcp",
+		Action:    report.Action,
+		Value:     report.RequestedAction,
+		Message:   "unsupported mcp action " + report.RequestedAction,
+		Hint:      report.Hint,
+	})
+	return report
 }
 
 func renderMCPUnsupportedAction(out io.Writer, format string, requestedAction string, hint string) error {

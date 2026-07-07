@@ -10451,6 +10451,16 @@ func TestLocalSubcommandErrorContracts(t *testing.T) {
 			require.Equal(t, tc.action, report.Action)
 			require.Equal(t, "error", report.Status)
 			require.Equal(t, tc.errorKind, report.ErrorKind)
+			require.Equal(t, "usage", report.Error.Kind)
+			require.Equal(t, "parse_args", report.Error.Operation)
+			if report.Argument != "" {
+				require.Equal(t, report.Argument, report.Error.Target)
+			} else if tc.kind == "mcp" && tc.errorKind == "unsupported_action" {
+				require.Equal(t, "bogus", report.Error.Target)
+			} else {
+				require.Equal(t, report.Kind, report.Error.Target)
+			}
+			require.False(t, report.Error.Retryable)
 			require.Contains(t, report.Hint, tc.hintPart)
 		})
 	}
@@ -10775,6 +10785,9 @@ func TestPluginMutationErrorContracts(t *testing.T) {
 			require.Equal(t, tc.action, report.Action)
 			require.Equal(t, "error", report.Status)
 			require.Equal(t, tc.errorKind, report.ErrorKind)
+			require.Equal(t, "usage", report.Error.Kind)
+			require.Equal(t, "parse_args", report.Error.Operation)
+			require.Equal(t, "plugins", report.Error.Target)
 			require.Contains(t, report.Hint, tc.hint)
 		})
 	}
@@ -17182,6 +17195,9 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 	require.Equal(t, "add", addError.Action)
 	require.Equal(t, "missing_argument", addError.ErrorKind)
 	require.Equal(t, "text", addError.Argument)
+	require.Equal(t, "usage", addError.Error.Kind)
+	require.Equal(t, "parse_args", addError.Error.Operation)
+	require.Equal(t, "text", addError.Error.Target)
 	out.Reset()
 
 	require.NoError(t, app.Memory([]string{"add", "Use", "focused", "tests."}))
@@ -17202,6 +17218,9 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 	require.Equal(t, "search", searchError.Action)
 	require.Equal(t, "missing_argument", searchError.ErrorKind)
 	require.Equal(t, "query", searchError.Argument)
+	require.Equal(t, "usage", searchError.Error.Kind)
+	require.Equal(t, "parse_args", searchError.Error.Operation)
+	require.Equal(t, "query", searchError.Error.Target)
 	out.Reset()
 
 	require.NoError(t, app.Memory([]string{"search", "focused", "--limit", "1", "--json"}))
