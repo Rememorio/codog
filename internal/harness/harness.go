@@ -224,6 +224,7 @@ var scenarioOrder = []string{
 	"context_view_roundtrip",
 	"theme_lifecycle_roundtrip",
 	"interface_preferences_roundtrip",
+	"privacy_keybindings_roundtrip",
 	"output_style_lifecycle_roundtrip",
 	"diagnostics_status_roundtrip",
 	"statusline_cli_roundtrip",
@@ -773,6 +774,7 @@ func Run(ctx context.Context) (Report, error) {
 		contextViewScenario(),
 		themeLifecycleScenario(),
 		interfacePreferencesScenario(),
+		privacyKeybindingsScenario(),
 		outputStyleLifecycleScenario(),
 		diagnosticsStatusScenario(),
 		statuslineCLIScenario(),
@@ -1197,7 +1199,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "setup and diagnostics", RequiredRefs: []string{"Doctor", "Status diagnostics", "Terminal setup"}},
 	{Capability: "context view and focus", RequiredRefs: []string{"Context view", "Focused paths", "Context signals"}},
 	{Capability: "statusline rendering", RequiredRefs: []string{"Statusline", "Statusline JSON", "Statusline text"}},
-	{Capability: "appearance and preferences", RequiredRefs: []string{"Theme", "Theme persistence", "Theme reset", "Language preference", "Vim mode", "Preference persistence"}},
+	{Capability: "appearance and preferences", RequiredRefs: []string{"Theme", "Theme persistence", "Theme reset", "Language preference", "Vim mode", "Privacy settings", "Keybindings", "Preference persistence"}},
 }
 
 func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
@@ -1469,6 +1471,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "preferences",
 		Description: "Runs real language and Vim preference CLI commands through set, status, text rendering, and reset operations.",
 		ParityRefs:  []string{"Language preference", "Vim mode", "Preference persistence", "Configuration", "Interactive rendering"},
+	},
+	"privacy_keybindings_roundtrip": {
+		Category:    "preferences",
+		Description: "Runs privacy settings and keybindings CLI commands through persisted configuration, validation, resolution, and text rendering.",
+		ParityRefs:  []string{"Privacy settings", "Prompt history", "Keybindings", "Preference persistence", "Configuration", "Interactive rendering"},
 	},
 	"output_style_lifecycle_roundtrip": {
 		Category:    "interactive-ui",
@@ -2987,6 +2994,321 @@ func decodeVimHarnessReport(output string) (vimHarnessReport, error) {
 	var report vimHarnessReport
 	if err := json.Unmarshal([]byte(output), &report); err != nil {
 		return vimHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func privacyKeybindingsScenario() scenario {
+	return scenario{
+		name: "privacy_keybindings_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, ".codog-home")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			configPath := filepath.Join(workspace, "codog-config.json")
+			configData, err := json.Marshal(map[string]any{
+				"config_home": configHome,
+				"editorMode":  "vim",
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			initialPrivacyOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "privacy-settings")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initialPrivacy, err := decodePrivacyHarnessReport(initialPrivacyOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initialPrivacy.Kind != "privacy_settings" || initialPrivacy.Action != "show" || !initialPrivacy.Settings["prompt_history_enabled"] {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial privacy report: %#v", initialPrivacy)
+			}
+
+			setPrivacyOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "privacy-settings", "set", "prompt-history", "off", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			setPrivacy, err := decodePrivacyHarnessReport(setPrivacyOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if setPrivacy.Action != "set" || setPrivacy.Key != "prompt_history_enabled" || setPrivacy.Value == nil || *setPrivacy.Value || setPrivacy.Settings["prompt_history_enabled"] {
+				return localScenarioResult{}, fmt.Errorf("unexpected set privacy report: %#v", setPrivacy)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(configData), `"prompt_history_enabled": false`) && !strings.Contains(string(configData), `"prompt_history_enabled":false`) {
+				return localScenarioResult{}, fmt.Errorf("privacy config did not persist prompt-history setting: %s", string(configData))
+			}
+
+			statusPrivacyOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "privacy-settings", "show")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			statusPrivacy, err := decodePrivacyHarnessReport(statusPrivacyOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if statusPrivacy.Action != "show" || statusPrivacy.Settings["prompt_history_enabled"] {
+				return localScenarioResult{}, fmt.Errorf("unexpected persisted privacy report: %#v", statusPrivacy)
+			}
+
+			privacyText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "privacy-settings")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(privacyText, "Privacy Settings") || !strings.Contains(privacyText, "Prompt history") || !strings.Contains(privacyText, "disabled") {
+				return localScenarioResult{}, fmt.Errorf("privacy text output missing expected values: %s", privacyText)
+			}
+
+			clearPrivacyOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "privacy-settings", "clear", "prompt-history", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			clearPrivacy, err := decodePrivacyHarnessReport(clearPrivacyOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if clearPrivacy.Action != "clear" || clearPrivacy.Key != "prompt_history_enabled" || !clearPrivacy.Settings["prompt_history_enabled"] {
+				return localScenarioResult{}, fmt.Errorf("unexpected clear privacy report: %#v", clearPrivacy)
+			}
+
+			initialKeybindingsOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initialKeybindings, err := decodeKeybindingsHarnessReport(initialKeybindingsOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initialKeybindings.Kind != "keybindings" || initialKeybindings.Action != "show" || !initialKeybindings.VimMode || initialKeybindings.KeybindingsExists {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial keybindings report: %#v", initialKeybindings)
+			}
+
+			pathOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings", "path")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			pathReport, err := decodeKeybindingsFileHarnessReport(pathOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if pathReport.Action != "path" || pathReport.Path != filepath.Join(configHome, "keybindings.json") || pathReport.Exists {
+				return localScenarioResult{}, fmt.Errorf("unexpected keybindings path report: %#v", pathReport)
+			}
+
+			initOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings", "init")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initReport, err := decodeKeybindingsFileHarnessReport(initOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initReport.Action != "init" || initReport.Status != "created" || !initReport.Created || !initReport.Exists {
+				return localScenarioResult{}, fmt.Errorf("unexpected keybindings init report: %#v", initReport)
+			}
+			keybindingsData, err := os.ReadFile(pathReport.Path)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) {
+				return localScenarioResult{}, fmt.Errorf("keybindings template missing expected entries: %s", string(keybindingsData))
+			}
+
+			validateOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings", "validate")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			validateReport, err := decodeKeybindingsValidationHarnessReport(validateOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 19 {
+				return localScenarioResult{}, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
+			}
+
+			resolveOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings", "resolve", "repl", "Control-R")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			resolveReport, err := decodeKeybindingsResolveHarnessReport(resolveOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if resolveReport.Action != "resolve" || !resolveReport.Found || resolveReport.Source != "user" || resolveReport.NormalizedKey != "ctrl+r" || resolveReport.BindingAction != "reverse search prompt history" {
+				return localScenarioResult{}, fmt.Errorf("unexpected keybindings resolve report: %#v", resolveReport)
+			}
+
+			keybindingsText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "keybindings")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(keybindingsText, "Keybindings") || !strings.Contains(keybindingsText, "Editor mode      vim") || !strings.Contains(keybindingsText, "User valid       true") {
+				return localScenarioResult{}, fmt.Errorf("keybindings text output missing expected values: %s", keybindingsText)
+			}
+
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if strings.Contains(string(configData), `"prompt_history_enabled"`) {
+				return localScenarioResult{}, fmt.Errorf("privacy config still contains prompt_history_enabled after clear: %s", string(configData))
+			}
+
+			report := map[string]any{
+				"kind": "privacy_keybindings",
+				"privacy": map[string]any{
+					"initial_prompt_history": initialPrivacy.Settings["prompt_history_enabled"],
+					"set_prompt_history":     setPrivacy.Settings["prompt_history_enabled"],
+					"status_prompt_history":  statusPrivacy.Settings["prompt_history_enabled"],
+					"cleared_prompt_history": clearPrivacy.Settings["prompt_history_enabled"],
+					"path_persisted":         setPrivacy.Path != "" && strings.HasSuffix(setPrivacy.Path, "codog-config.json"),
+					"text_rendered":          strings.Contains(privacyText, "Prompt history"),
+				},
+				"keybindings": map[string]any{
+					"initial_exists": initialKeybindings.KeybindingsExists,
+					"path":           strings.HasSuffix(pathReport.Path, "keybindings.json"),
+					"created":        initReport.Created,
+					"valid":          validateReport.Valid,
+					"contexts":       validateReport.ContextCount,
+					"bindings":       validateReport.BindingCount,
+					"resolved":       resolveReport.Found,
+					"source":         resolveReport.Source,
+					"text_rendered":  strings.Contains(keybindingsText, "User valid"),
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "privacy keybindings harness ok",
+				RequestCount: 11,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+type privacyHarnessReport struct {
+	Kind     string          `json:"kind"`
+	Action   string          `json:"action"`
+	Status   string          `json:"status"`
+	Settings map[string]bool `json:"settings"`
+	Key      string          `json:"key,omitempty"`
+	Value    *bool           `json:"value,omitempty"`
+	Path     string          `json:"path,omitempty"`
+}
+
+func decodePrivacyHarnessReport(output string) (privacyHarnessReport, error) {
+	var report privacyHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return privacyHarnessReport{}, err
+	}
+	return report, nil
+}
+
+type keybindingsHarnessReport struct {
+	Kind              string                              `json:"kind"`
+	Action            string                              `json:"action"`
+	Status            string                              `json:"status"`
+	EditorMode        string                              `json:"editor_mode"`
+	VimMode           bool                                `json:"vim_mode"`
+	KeybindingsPath   string                              `json:"keybindings_path,omitempty"`
+	KeybindingsExists bool                                `json:"keybindings_exists"`
+	UserBindings      *keybindingsValidationHarnessReport `json:"user_bindings,omitempty"`
+	Sections          []keybindingsSectionHarnessReport   `json:"sections,omitempty"`
+}
+
+type keybindingsFileHarnessReport struct {
+	Kind    string `json:"kind"`
+	Action  string `json:"action"`
+	Status  string `json:"status"`
+	Path    string `json:"path"`
+	Created bool   `json:"created"`
+	Exists  bool   `json:"exists"`
+}
+
+type keybindingsValidationHarnessReport struct {
+	Kind         string                            `json:"kind"`
+	Action       string                            `json:"action"`
+	Status       string                            `json:"status"`
+	Path         string                            `json:"path"`
+	Exists       bool                              `json:"exists"`
+	Valid        bool                              `json:"valid"`
+	ContextCount int                               `json:"context_count"`
+	BindingCount int                               `json:"binding_count"`
+	Errors       []string                          `json:"errors,omitempty"`
+	Sections     []keybindingsSectionHarnessReport `json:"sections,omitempty"`
+}
+
+type keybindingsSectionHarnessReport struct {
+	Name     string                          `json:"name"`
+	Entries  []keybindingsEntryHarnessReport `json:"entries"`
+	Disabled bool                            `json:"disabled,omitempty"`
+}
+
+type keybindingsEntryHarnessReport struct {
+	Key           string `json:"key"`
+	NormalizedKey string `json:"normalized_key,omitempty"`
+	Action        string `json:"action"`
+	Mode          string `json:"mode,omitempty"`
+	Description   string `json:"description,omitempty"`
+}
+
+type keybindingsResolveHarnessReport struct {
+	Kind          string   `json:"kind"`
+	Action        string   `json:"action"`
+	Status        string   `json:"status"`
+	Context       string   `json:"context"`
+	Key           string   `json:"key"`
+	NormalizedKey string   `json:"normalized_key"`
+	Found         bool     `json:"found"`
+	Source        string   `json:"source,omitempty"`
+	BindingAction string   `json:"binding_action,omitempty"`
+	Section       string   `json:"section,omitempty"`
+	Disabled      bool     `json:"disabled,omitempty"`
+	Errors        []string `json:"errors,omitempty"`
+}
+
+func decodeKeybindingsHarnessReport(output string) (keybindingsHarnessReport, error) {
+	var report keybindingsHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return keybindingsHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func decodeKeybindingsFileHarnessReport(output string) (keybindingsFileHarnessReport, error) {
+	var report keybindingsFileHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return keybindingsFileHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func decodeKeybindingsValidationHarnessReport(output string) (keybindingsValidationHarnessReport, error) {
+	var report keybindingsValidationHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return keybindingsValidationHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func decodeKeybindingsResolveHarnessReport(output string) (keybindingsResolveHarnessReport, error) {
+	var report keybindingsResolveHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return keybindingsResolveHarnessReport{}, err
 	}
 	return report, nil
 }
