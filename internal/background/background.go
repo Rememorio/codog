@@ -58,15 +58,25 @@ type LaneHeartbeat struct {
 	Status         string    `json:"status,omitempty"`
 }
 
+// LifecycleResolution describes the canonical lifecycle state inferred from
+// task status and transport freshness.
+type LifecycleResolution struct {
+	Status               string `json:"status"`
+	Terminal             bool   `json:"terminal"`
+	TerminalStateUnknown bool   `json:"terminal_state_unknown,omitempty"`
+	Reason               string `json:"reason,omitempty"`
+}
+
 type LaneBoardEntry struct {
-	TaskID    string         `json:"task_id"`
-	Prompt    string         `json:"prompt,omitempty"`
-	Command   string         `json:"command,omitempty"`
-	Kind      string         `json:"kind,omitempty"`
-	SessionID string         `json:"session_id,omitempty"`
-	Status    string         `json:"status"`
-	Heartbeat *LaneHeartbeat `json:"heartbeat,omitempty"`
-	Freshness LaneFreshness  `json:"freshness"`
+	TaskID    string              `json:"task_id"`
+	Prompt    string              `json:"prompt,omitempty"`
+	Command   string              `json:"command,omitempty"`
+	Kind      string              `json:"kind,omitempty"`
+	SessionID string              `json:"session_id,omitempty"`
+	Status    string              `json:"status"`
+	Heartbeat *LaneHeartbeat      `json:"heartbeat,omitempty"`
+	Freshness LaneFreshness       `json:"freshness"`
+	Lifecycle LifecycleResolution `json:"lifecycle"`
 }
 
 type LaneBoard struct {
@@ -493,6 +503,7 @@ func (s Store) List() ([]Task, error) {
 }
 
 func laneBoardEntry(task Task, now time.Time, stalledAfter time.Duration) LaneBoardEntry {
+	freshness := taskFreshness(task.Heartbeat, now, stalledAfter)
 	return LaneBoardEntry{
 		TaskID:    task.ID,
 		Prompt:    task.Prompt,
@@ -501,7 +512,8 @@ func laneBoardEntry(task Task, now time.Time, stalledAfter time.Duration) LaneBo
 		SessionID: task.SessionID,
 		Status:    task.Status,
 		Heartbeat: task.Heartbeat,
-		Freshness: taskFreshness(task.Heartbeat, now, stalledAfter),
+		Freshness: freshness,
+		Lifecycle: ResolveLifecycle(task.Status, freshness),
 	}
 }
 
@@ -519,6 +531,52 @@ func taskFreshness(heartbeat *LaneHeartbeat, now time.Time, stalledAfter time.Du
 		return LaneFreshnessStalled
 	}
 	return LaneFreshnessHealthy
+}
+
+// ResolveLifecycle returns the canonical lifecycle outcome for a task.
+func ResolveLifecycle(status string, freshness LaneFreshness) LifecycleResolution {
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	if normalized == "" {
+		normalized = "unknown"
+	}
+	switch normalized {
+	case "completed", "finished", "stopped":
+		return LifecycleResolution{
+			Status:   normalized,
+			Terminal: true,
+			Reason:   "canonical_terminal_status",
+		}
+	case "failed", "error":
+		return LifecycleResolution{
+			Status:   normalized,
+			Terminal: true,
+			Reason:   "canonical_terminal_status",
+		}
+	case "exited":
+		return LifecycleResolution{
+			Status:               normalized,
+			Terminal:             true,
+			TerminalStateUnknown: true,
+			Reason:               "process_exited_without_status",
+		}
+	}
+	if freshness == LaneFreshnessTransportDead {
+		return LifecycleResolution{
+			Status:               normalized,
+			TerminalStateUnknown: true,
+			Reason:               "transport_dead_before_terminal_status",
+		}
+	}
+	switch normalized {
+	case "running", "created", "starting", "pending":
+		return LifecycleResolution{Status: normalized, Reason: "active_status"}
+	case "blocked", "waiting":
+		return LifecycleResolution{Status: normalized, Reason: "blocked_status"}
+	case "unknown":
+		return LifecycleResolution{Status: normalized, Reason: "unknown_status"}
+	default:
+		return LifecycleResolution{Status: normalized, Reason: "non_terminal_status"}
+	}
 }
 
 func taskLaneBucket(status string) string {

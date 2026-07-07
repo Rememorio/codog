@@ -9762,6 +9762,9 @@ func backgroundAgentRunScenario() scenario {
 			if status.CurrentStatus != "running" || status.Freshness != background.LaneFreshnessHealthy || status.Health.State != "healthy" {
 				return localScenarioResult{}, fmt.Errorf("unexpected agent run status: %#v", status)
 			}
+			if status.Lifecycle.Terminal || status.Lifecycle.Reason != "active_status" {
+				return localScenarioResult{}, fmt.Errorf("unexpected active lifecycle: %#v", status.Lifecycle)
+			}
 			agentBoard := agentruns.BuildBoard(taskStore, []agentruns.Run{run}, now, 30*time.Second)
 			if len(agentBoard.Active) != 1 || agentBoard.Active[0].Run.ID != run.ID || agentBoard.Active[0].Freshness != background.LaneFreshnessHealthy {
 				return localScenarioResult{}, fmt.Errorf("unexpected agent lane board: %#v", agentBoard)
@@ -9794,6 +9797,17 @@ func backgroundAgentRunScenario() scenario {
 			}
 			if stopped.Status != "stopped" {
 				return localScenarioResult{}, fmt.Errorf("expected stopped task, got %q", stopped.Status)
+			}
+			if _, err := taskStore.UpdateHeartbeat(task.ID, background.LaneHeartbeat{
+				ObservedAt:     now,
+				TransportAlive: false,
+				Status:         "disconnected",
+			}); err != nil {
+				return localScenarioResult{}, err
+			}
+			stoppedStatus := agentruns.StatusForTaskAt(taskStore, run, now, 30*time.Second)
+			if !stoppedStatus.Lifecycle.Terminal || stoppedStatus.Lifecycle.TerminalStateUnknown || stoppedStatus.Health.State != "finished" {
+				return localScenarioResult{}, fmt.Errorf("unexpected stopped lifecycle: %#v", stoppedStatus)
 			}
 			restarted, err := taskStore.Restart(task.ID, workspace)
 			if err != nil {
@@ -9846,21 +9860,23 @@ func backgroundAgentRunScenario() scenario {
 			report := map[string]any{
 				"kind": "background_agent_run",
 				"task": map[string]any{
-					"kind":           task.Kind,
-					"agent_type":     task.AgentType,
-					"session_id":     task.SessionID,
-					"watch_events":   []string{events[0].Type, events[1].Type},
-					"stopped":        stopped.Status,
-					"restarted":      restarted.RestartedFrom == task.ID,
-					"lane":           "active",
-					"lane_freshness": string(taskBoard.Active[0].Freshness),
+					"kind":             task.Kind,
+					"agent_type":       task.AgentType,
+					"session_id":       task.SessionID,
+					"watch_events":     []string{events[0].Type, events[1].Type},
+					"stopped":          stopped.Status,
+					"stopped_terminal": stoppedStatus.Lifecycle.Terminal,
+					"restarted":        restarted.RestartedFrom == task.ID,
+					"lane":             "active",
+					"lane_freshness":   string(taskBoard.Active[0].Freshness),
 				},
 				"agent_run": map[string]any{
-					"agent":        run.Agent,
-					"status":       status.CurrentStatus,
-					"freshness":    string(status.Freshness),
-					"health":       status.Health.State,
-					"active_lanes": len(agentBoard.Active),
+					"agent":            run.Agent,
+					"status":           status.CurrentStatus,
+					"freshness":        string(status.Freshness),
+					"health":           status.Health.State,
+					"lifecycle_reason": status.Lifecycle.Reason,
+					"active_lanes":     len(agentBoard.Active),
 				},
 				"supervisor": map[string]any{
 					"failed_status":    failed.Status,

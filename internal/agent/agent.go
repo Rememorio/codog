@@ -8183,6 +8183,7 @@ func renderAgentRunBoardReport(out io.Writer, report agentRunBoardReport) {
 			fmt.Fprintf(out, "    Agent          %s\n", entry.Run.Agent)
 			fmt.Fprintf(out, "    Status         %s\n", entry.Status)
 			fmt.Fprintf(out, "    Freshness      %s\n", entry.Freshness)
+			fmt.Fprintf(out, "    Lifecycle      %s\n", renderLifecycleResolution(entry.Lifecycle))
 			if entry.Error != "" {
 				fmt.Fprintf(out, "    Error          %s\n", entry.Error)
 			}
@@ -8253,6 +8254,7 @@ func renderAgentRunStatus(out io.Writer, status agentRunStatus) {
 	fmt.Fprintf(out, "    Agent          %s\n", run.Agent)
 	fmt.Fprintf(out, "    Status         %s\n", status.CurrentStatus)
 	fmt.Fprintf(out, "    Freshness      %s\n", status.Freshness)
+	fmt.Fprintf(out, "    Lifecycle      %s\n", renderLifecycleResolution(status.Lifecycle))
 	fmt.Fprintf(out, "    Health         %s\n", status.Health.State)
 	fmt.Fprintf(out, "    Task           %s\n", run.TaskID)
 	if status.Health.RecommendedAction != "" {
@@ -8270,6 +8272,24 @@ func renderAgentRunStatus(out io.Writer, status agentRunStatus) {
 	if status.Error != "" {
 		fmt.Fprintf(out, "    Error          %s\n", status.Error)
 	}
+}
+
+func renderLifecycleResolution(lifecycle background.LifecycleResolution) string {
+	status := strings.TrimSpace(lifecycle.Status)
+	if status == "" {
+		status = "unknown"
+	}
+	parts := []string{status}
+	if lifecycle.Terminal {
+		parts = append(parts, "terminal")
+	}
+	if lifecycle.TerminalStateUnknown {
+		parts = append(parts, "terminal_state_unknown")
+	}
+	if lifecycle.Reason != "" {
+		parts = append(parts, lifecycle.Reason)
+	}
+	return strings.Join(parts, " ")
 }
 
 func (a *App) Agents(args []string) error {

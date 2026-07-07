@@ -36,13 +36,14 @@ type Store struct {
 // Status combines an agent run record with the current state of its background
 // task, when that task can still be found.
 type Status struct {
-	Run           Run                       `json:"run"`
-	Task          *background.Task          `json:"task,omitempty"`
-	CurrentStatus string                    `json:"current_status"`
-	Heartbeat     *background.LaneHeartbeat `json:"heartbeat,omitempty"`
-	Freshness     background.LaneFreshness  `json:"freshness"`
-	Health        HealthReport              `json:"health"`
-	Error         string                    `json:"error,omitempty"`
+	Run           Run                            `json:"run"`
+	Task          *background.Task               `json:"task,omitempty"`
+	CurrentStatus string                         `json:"current_status"`
+	Heartbeat     *background.LaneHeartbeat      `json:"heartbeat,omitempty"`
+	Freshness     background.LaneFreshness       `json:"freshness"`
+	Lifecycle     background.LifecycleResolution `json:"lifecycle"`
+	Health        HealthReport                   `json:"health"`
+	Error         string                         `json:"error,omitempty"`
 }
 
 // HealthReport gives operators a compact diagnosis and next action for a run.
@@ -54,12 +55,13 @@ type HealthReport struct {
 
 // BoardEntry is the lane-board view for a single agent run.
 type BoardEntry struct {
-	Run       Run                       `json:"run"`
-	Task      *background.Task          `json:"task,omitempty"`
-	Status    string                    `json:"status"`
-	Freshness background.LaneFreshness  `json:"freshness"`
-	Heartbeat *background.LaneHeartbeat `json:"heartbeat,omitempty"`
-	Error     string                    `json:"error,omitempty"`
+	Run       Run                            `json:"run"`
+	Task      *background.Task               `json:"task,omitempty"`
+	Status    string                         `json:"status"`
+	Freshness background.LaneFreshness       `json:"freshness"`
+	Lifecycle background.LifecycleResolution `json:"lifecycle"`
+	Heartbeat *background.LaneHeartbeat      `json:"heartbeat,omitempty"`
+	Error     string                         `json:"error,omitempty"`
 }
 
 // Board groups agent runs by current execution state for operator views.
@@ -179,7 +181,12 @@ func StatusForTask(store background.Store, run Run) Status {
 // StatusForTaskAt resolves an agent run at a specific time, which makes
 // heartbeat freshness deterministic in tests and bridge status calls.
 func StatusForTaskAt(store background.Store, run Run, now time.Time, stalledAfter time.Duration) Status {
-	status := Status{Run: run, CurrentStatus: "unknown", Freshness: background.LaneFreshnessUnknown}
+	status := Status{
+		Run:           run,
+		CurrentStatus: "unknown",
+		Freshness:     background.LaneFreshnessUnknown,
+		Lifecycle:     background.ResolveLifecycle("unknown", background.LaneFreshnessUnknown),
+	}
 	task, err := store.Status(run.TaskID)
 	if err != nil {
 		status.Error = err.Error()
@@ -190,6 +197,7 @@ func StatusForTaskAt(store background.Store, run Run, now time.Time, stalledAfte
 	status.CurrentStatus = firstNonEmpty(task.Status, "unknown")
 	status.Heartbeat = task.Heartbeat
 	status.Freshness = freshness(task.Heartbeat, now, stalledAfter)
+	status.Lifecycle = background.ResolveLifecycle(status.CurrentStatus, status.Freshness)
 	status.Health = healthReport(status.CurrentStatus, status.Freshness, &task, "")
 	return status
 }
@@ -211,7 +219,12 @@ func BuildBoard(store background.Store, runs []Run, now time.Time, stalledAfter 
 		Orphaned:    []BoardEntry{},
 	}
 	for _, run := range runs {
-		entry := BoardEntry{Run: run, Status: "unknown", Freshness: background.LaneFreshnessUnknown}
+		entry := BoardEntry{
+			Run:       run,
+			Status:    "unknown",
+			Freshness: background.LaneFreshnessUnknown,
+			Lifecycle: background.ResolveLifecycle("unknown", background.LaneFreshnessUnknown),
+		}
 		task, err := store.Status(run.TaskID)
 		if err != nil {
 			entry.Error = err.Error()
@@ -222,6 +235,7 @@ func BuildBoard(store background.Store, runs []Run, now time.Time, stalledAfter 
 		entry.Status = firstNonEmpty(task.Status, "unknown")
 		entry.Heartbeat = task.Heartbeat
 		entry.Freshness = freshness(task.Heartbeat, board.GeneratedAt, stalledAfter)
+		entry.Lifecycle = background.ResolveLifecycle(entry.Status, entry.Freshness)
 		switch laneBucket(task.Status) {
 		case "active":
 			board.Active = append(board.Active, entry)
@@ -337,11 +351,38 @@ func healthReport(status string, freshness background.LaneFreshness, task *backg
 			RecommendedAction: "Inspect the run id and task store, then prune the orphaned run if it is stale.",
 		}
 	}
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	if task != nil && task.Error != "" {
+		return HealthReport{
+			State:             "failed",
+			Summary:           "The background task recorded an error: " + task.Error,
+			RecommendedAction: "Inspect logs and rerun the agent after addressing the failure.",
+		}
+	}
+	lifecycle := background.ResolveLifecycle(normalized, freshness)
+	if lifecycle.Terminal {
+		switch normalized {
+		case "failed", "error":
+			return HealthReport{
+				State:             "failed",
+				Summary:           "The agent task has reached a failed status.",
+				RecommendedAction: "Inspect logs and rerun the agent after addressing the failure.",
+			}
+		case "exited":
+			return HealthReport{
+				State:             "terminal_unknown",
+				Summary:           "The agent process exited before a canonical terminal status was recorded.",
+				RecommendedAction: "Inspect logs and rerun the agent if the outcome cannot be recovered.",
+			}
+		default:
+			return HealthReport{State: "finished", Summary: "The agent task has reached a terminal status."}
+		}
+	}
 	switch freshness {
 	case background.LaneFreshnessTransportDead:
 		return HealthReport{
 			State:             "transport_dead",
-			Summary:           "The agent heartbeat reports a dead transport.",
+			Summary:           "The agent heartbeat reports a dead transport before a terminal task status.",
 			RecommendedAction: "Inspect logs, restart the run if needed, or stop it if the worker is no longer reachable.",
 		}
 	case background.LaneFreshnessStalled:
@@ -349,14 +390,6 @@ func healthReport(status string, freshness background.LaneFreshness, task *backg
 			State:             "stalled",
 			Summary:           "The agent heartbeat is older than the configured stalled threshold.",
 			RecommendedAction: "Check logs and send a heartbeat or update; stop and restart if no progress is visible.",
-		}
-	}
-	normalized := strings.ToLower(strings.TrimSpace(status))
-	if task != nil && task.Error != "" {
-		return HealthReport{
-			State:             "failed",
-			Summary:           "The background task recorded an error: " + task.Error,
-			RecommendedAction: "Inspect logs and rerun the agent after addressing the failure.",
 		}
 	}
 	switch normalized {
@@ -369,14 +402,6 @@ func healthReport(status string, freshness background.LaneFreshness, task *backg
 			}
 		}
 		return HealthReport{State: "healthy", Summary: "The agent task is active and heartbeat freshness is healthy."}
-	case "completed", "finished", "stopped":
-		return HealthReport{State: "finished", Summary: "The agent task has reached a terminal status."}
-	case "failed", "error":
-		return HealthReport{
-			State:             "failed",
-			Summary:           "The agent task has reached a failed status.",
-			RecommendedAction: "Inspect logs and rerun the agent after addressing the failure.",
-		}
 	case "":
 		return HealthReport{
 			State:             "unknown",

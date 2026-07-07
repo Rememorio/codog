@@ -953,6 +953,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, backgroundAgent.Output, `"freshness":"healthy"`)
 	require.Contains(t, backgroundAgent.Output, `"watch_events":["status","log"]`)
 	require.Contains(t, backgroundAgent.Output, `"stopped":"stopped"`)
+	require.Contains(t, backgroundAgent.Output, `"stopped_terminal":true`)
+	require.Contains(t, backgroundAgent.Output, `"lifecycle_reason":"active_status"`)
 	require.Contains(t, backgroundAgent.Output, `"restarted":true`)
 	require.Contains(t, backgroundAgent.Output, `"failed_exit_code":7`)
 	backgroundAgents := findCategory(t, report, "background-agents")

@@ -101,7 +101,30 @@ func TestStatusForTaskReportsHealth(t *testing.T) {
 	require.NoError(t, err)
 	status = StatusForTaskAt(taskStore, run, now, 30*time.Second)
 	require.Equal(t, background.LaneFreshnessTransportDead, status.Freshness)
+	require.False(t, status.Lifecycle.Terminal)
+	require.True(t, status.Lifecycle.TerminalStateUnknown)
 	require.Equal(t, "transport_dead", status.Health.State)
+
+	stopped, err := taskStore.Stop(task.ID)
+	require.NoError(t, err)
+	_, err = taskStore.UpdateHeartbeat(stopped.ID, background.LaneHeartbeat{
+		ObservedAt:     now,
+		TransportAlive: false,
+		Status:         "disconnected",
+	})
+	require.NoError(t, err)
+	status = StatusForTaskAt(taskStore, run, now, 30*time.Second)
+	require.Equal(t, "stopped", status.CurrentStatus)
+	require.Equal(t, background.LaneFreshnessTransportDead, status.Freshness)
+	require.True(t, status.Lifecycle.Terminal)
+	require.False(t, status.Lifecycle.TerminalStateUnknown)
+	require.Equal(t, "finished", status.Health.State)
+
+	board := BuildBoard(taskStore, []Run{run}, now, 30*time.Second)
+	require.Len(t, board.Finished, 1)
+	require.Equal(t, "stopped", board.Finished[0].Status)
+	require.True(t, board.Finished[0].Lifecycle.Terminal)
+	require.Equal(t, "canonical_terminal_status", board.Finished[0].Lifecycle.Reason)
 
 	orphan := StatusForTaskAt(taskStore, Run{ID: "run-orphan", Agent: "reviewer", TaskID: "missing-task"}, now, 30*time.Second)
 	require.Equal(t, background.LaneFreshnessUnknown, orphan.Freshness)

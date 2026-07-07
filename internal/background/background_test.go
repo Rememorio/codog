@@ -229,8 +229,30 @@ func TestLaneBoardGroupsTasksAndReportsFreshness(t *testing.T) {
 	require.Len(t, board.Finished, 2)
 	require.Equal(t, "failed", board.Finished[0].TaskID)
 	require.Equal(t, LaneFreshnessTransportDead, board.Finished[0].Freshness)
+	require.True(t, board.Finished[0].Lifecycle.Terminal)
+	require.False(t, board.Finished[0].Lifecycle.TerminalStateUnknown)
+	require.Equal(t, "canonical_terminal_status", board.Finished[0].Lifecycle.Reason)
 	require.Equal(t, "completed", board.Finished[1].TaskID)
 	require.Equal(t, LaneFreshnessUnknown, board.Finished[1].Freshness)
+	require.True(t, board.Finished[1].Lifecycle.Terminal)
+	require.Equal(t, "completed", board.Finished[1].Lifecycle.Status)
+}
+
+func TestResolveLifecycleDistinguishesTransportDeathFromTerminalStatus(t *testing.T) {
+	running := ResolveLifecycle("running", LaneFreshnessTransportDead)
+	require.False(t, running.Terminal)
+	require.True(t, running.TerminalStateUnknown)
+	require.Equal(t, "transport_dead_before_terminal_status", running.Reason)
+
+	completed := ResolveLifecycle("completed", LaneFreshnessTransportDead)
+	require.True(t, completed.Terminal)
+	require.False(t, completed.TerminalStateUnknown)
+	require.Equal(t, "canonical_terminal_status", completed.Reason)
+
+	exited := ResolveLifecycle("exited", LaneFreshnessHealthy)
+	require.True(t, exited.Terminal)
+	require.True(t, exited.TerminalStateUnknown)
+	require.Equal(t, "process_exited_without_status", exited.Reason)
 }
 
 func TestUpdateHeartbeatPersistsTaskHeartbeat(t *testing.T) {
