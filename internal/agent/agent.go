@@ -42785,7 +42785,9 @@ type reportSchemaRequest struct {
 	Stdin          bool
 	View           string
 	Consumer       string
+	ReportIDs      []string
 	SchemaVersions []string
+	SchemaFilter   bool
 	FieldFamilies  []string
 	MaxSensitivity string
 }
@@ -42808,6 +42810,11 @@ func (a *App) ReportSchema(args []string) error {
 	switch req.Action {
 	case "registry":
 		registry := reportschema.RegistryV1()
+		registry = reportschema.FilterRegistry(registry, reportschema.RegistryFilter{
+			ReportIDs:      append([]string(nil), req.ReportIDs...),
+			SchemaVersions: schemaFilterValues(req),
+			FieldFamilies:  append([]string(nil), req.FieldFamilies...),
+		})
 		out.Registry = &registry
 	case "canonicalize":
 		report, err := readReportSchemaInput(req, a.In)
@@ -42903,14 +42910,24 @@ func parseReportSchemaArgs(args []string) (reportSchemaRequest, error) {
 			req.Consumer = args[i]
 		case strings.HasPrefix(arg, "--consumer="):
 			req.Consumer = strings.TrimPrefix(arg, "--consumer=")
+		case arg == "--report":
+			i++
+			if i >= len(args) {
+				return req, errors.New("report-schema report id is required")
+			}
+			req.ReportIDs = append(req.ReportIDs, args[i])
+		case strings.HasPrefix(arg, "--report="):
+			req.ReportIDs = append(req.ReportIDs, strings.TrimPrefix(arg, "--report="))
 		case arg == "--schema-version":
 			i++
 			if i >= len(args) {
 				return req, errors.New("report-schema schema version is required")
 			}
 			req.SchemaVersions = appendSchemaVersion(req.SchemaVersions, args[i])
+			req.SchemaFilter = true
 		case strings.HasPrefix(arg, "--schema-version="):
 			req.SchemaVersions = appendSchemaVersion(req.SchemaVersions, strings.TrimPrefix(arg, "--schema-version="))
+			req.SchemaFilter = true
 		case arg == "--field-family":
 			i++
 			if i >= len(args) {
@@ -42953,7 +42970,7 @@ func parseReportSchemaArgs(args []string) (reportSchemaRequest, error) {
 		positionals = positionals[1:]
 	}
 	if len(positionals) > 0 {
-		return req, errors.New("usage: codog report-schema [registry|canonicalize|project] [--input JSON|--file PATH|--stdin] [--consumer NAME] [--field-family NAME] [--max-sensitivity public|internal|operator_only|secret] [--output-format text|json]")
+		return req, errors.New("usage: codog report-schema [registry|canonicalize|project] [--input JSON|--file PATH|--stdin] [--report ID] [--schema-version VERSION] [--consumer NAME] [--field-family NAME] [--max-sensitivity public|internal|operator_only|secret] [--output-format text|json]")
 	}
 	if strings.TrimSpace(req.Input) != "" && strings.TrimSpace(req.File) != "" {
 		return req, errors.New("report-schema accepts only one of --input or --file")
@@ -42976,6 +42993,13 @@ func appendSchemaVersion(values []string, value string) []string {
 		return []string{value}
 	}
 	return append(values, value)
+}
+
+func schemaFilterValues(req reportSchemaRequest) []string {
+	if !req.SchemaFilter {
+		return nil
+	}
+	return append([]string(nil), req.SchemaVersions...)
 }
 
 func readReportSchemaInput(req reportSchemaRequest, stdin io.Reader) (reportschema.CanonicalReport, error) {
@@ -43019,7 +43043,14 @@ func renderReportSchemaReport(out io.Writer, report reportSchemaReport) {
 			if field.Required {
 				required = "required"
 			}
-			fmt.Fprintf(out, "    - %s [%s] %s\n", field.ID, required, field.FieldFamily)
+			extra := ""
+			if len(field.EnumValues) > 0 {
+				extra = " enum=" + strings.Join(field.EnumValues, "|")
+			}
+			if field.Deprecated {
+				extra += " deprecated"
+			}
+			fmt.Fprintf(out, "    - %s [%s] %s%s\n", field.ID, required, field.FieldFamily, extra)
 		}
 		if len(report.Registry.Reports) > 0 {
 			fmt.Fprintf(out, "  Reports          %d\n", len(report.Registry.Reports))

@@ -150,10 +150,13 @@ type Projection struct {
 }
 
 type RegistryField struct {
-	ID          string `json:"id"`
-	Description string `json:"description"`
-	Required    bool   `json:"required"`
-	FieldFamily string `json:"field_family"`
+	ID                string   `json:"id"`
+	Description       string   `json:"description"`
+	Required          bool     `json:"required"`
+	FieldFamily       string   `json:"field_family"`
+	EnumValues        []string `json:"enum_values,omitempty"`
+	Deprecated        bool     `json:"deprecated"`
+	DeprecationReason string   `json:"deprecation_reason,omitempty"`
 }
 
 type RegistryReport struct {
@@ -172,6 +175,12 @@ type Registry struct {
 	Reports       []RegistryReport `json:"reports,omitempty"`
 }
 
+type RegistryFilter struct {
+	ReportIDs      []string
+	SchemaVersions []string
+	FieldFamilies  []string
+}
+
 func RegistryV1() Registry {
 	return Registry{
 		SchemaVersion: SchemaV1,
@@ -179,11 +188,13 @@ func RegistryV1() Registry {
 		Fields: []RegistryField{
 			field("identity.report_id", "stable canonical report identity", true, "identity"),
 			field("identity.content_hash", "hash of canonical payload excluding identity", true, "identity"),
-			field("claims[].kind", "fact/inference/hypothesis/recommendation label", true, "claims"),
-			field("claims[].confidence", "confidence bucket for the claim", true, "claims"),
+			enumField("claims[].kind", "fact/inference/hypothesis/recommendation label", true, "claims", []string{ClaimObservedFact, ClaimInference, ClaimHypothesis, ClaimRecommendation}),
+			enumField("claims[].confidence", "confidence bucket for the claim", true, "claims", []string{ConfidenceHigh, ConfidenceMedium, ConfidenceLow, ConfidenceUnknown}),
 			field("claims[].evidence", "evidence ids supporting a claim", false, "claims"),
 			field("negative_evidence[]", "searched-and-not-found findings with checked scope", false, "negative_evidence"),
+			enumField("negative_evidence[].status", "negative finding status after checking a scope", false, "negative_evidence", []string{NegativeNotObservedInCheckedScope, NegativeUnknownNotChecked}),
 			field("field_deltas[]", "field-level changed/unchanged/cleared/carried-forward attribution", false, "field_deltas"),
+			enumField("field_deltas[].state", "field-level delta state", false, "field_deltas", []string{FieldChanged, FieldUnchanged, FieldCleared, FieldCarriedForward}),
 			field("atomic_update.report_id", "logical update identity shared by all message parts", false, "atomic_update"),
 			field("atomic_update.active_sessions[]", "session ids covered by the logical update", false, "atomic_update"),
 			field("atomic_update.exact_pinpoint", "single exact roadmap pinpoint for the logical update", false, "atomic_update"),
@@ -191,8 +202,14 @@ func RegistryV1() Registry {
 			field("atomic_update.blocker", "current blocker for the logical update", false, "atomic_update"),
 			field("atomic_update.message_parts[]", "ordered chat transport fragments for reconstructing one logical update", false, "atomic_update"),
 			field("projection.provenance.redactions[]", "redaction policy provenance for projected fields", false, "projection"),
+			field("projection.provenance.omitted_field_families[]", "field families intentionally omitted by consumer projection", false, "projection"),
 			field("schema_compatibility.policy", "schema evolution policy id for structured report payloads", false, "compatibility"),
 			field("schema_compatibility.minimal_stable_core[]", "fields preserved for degraded older parsers", false, "compatibility"),
+			field("kind", "structured report kind discriminator", true, "identity"),
+			field("channel", "logical report channel", true, "identity"),
+			field("report_id", "stable report id for a generated dogfood report", true, "identity"),
+			field("snapshot_id", "stored full snapshot id for audit and resume", true, "identity"),
+			enumField("outcome", "delta report outcome", true, "summary", []string{"new", "changed", "no_change"}),
 		},
 		Reports: []RegistryReport{
 			report("canonical_report", SchemaV1, "Canonical structured runtime report accepted by report-schema canonicalize/project.", "codog report-schema", "codog report-schema canonicalize", []string{
@@ -429,8 +446,70 @@ func StableJSONHash(value any) (string, error) {
 	return hex.EncodeToString(sum[:8]), nil
 }
 
+func FilterRegistry(registry Registry, filter RegistryFilter) Registry {
+	filter.ReportIDs = canonicalStringSet(filter.ReportIDs)
+	filter.SchemaVersions = canonicalStringSet(filter.SchemaVersions)
+	filter.FieldFamilies = canonicalStringSet(filter.FieldFamilies)
+	selectedReports := make([]RegistryReport, 0, len(registry.Reports))
+	fieldIDs := map[string]bool{}
+	for _, report := range registry.Reports {
+		if !matchesRegistryFilter(report.ID, filter.ReportIDs) || !matchesRegistryFilter(report.SchemaVersion, filter.SchemaVersions) {
+			continue
+		}
+		selectedReports = append(selectedReports, report)
+		for _, fieldID := range report.Fields {
+			fieldIDs[fieldID] = true
+		}
+	}
+	if len(filter.ReportIDs) == 0 && len(filter.SchemaVersions) == 0 {
+		for _, field := range registry.Fields {
+			fieldIDs[field.ID] = true
+		}
+	}
+	fields := make([]RegistryField, 0, len(registry.Fields))
+	for _, field := range registry.Fields {
+		if !fieldIDs[field.ID] && !matchesRegistryFieldPrefix(field.ID, fieldIDs) {
+			continue
+		}
+		if !matchesRegistryFilter(field.FieldFamily, filter.FieldFamilies) {
+			continue
+		}
+		fields = append(fields, field)
+	}
+	registry.Fields = fields
+	registry.Reports = selectedReports
+	return registry
+}
+
+func matchesRegistryFilter(value string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, candidate := range allowed {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesRegistryFieldPrefix(fieldID string, reportFields map[string]bool) bool {
+	for reportField := range reportFields {
+		if strings.HasPrefix(fieldID, reportField+".") || strings.HasPrefix(fieldID, reportField+"[]") {
+			return true
+		}
+	}
+	return false
+}
+
 func field(id string, description string, required bool, family string) RegistryField {
 	return RegistryField{ID: id, Description: description, Required: required, FieldFamily: family}
+}
+
+func enumField(id string, description string, required bool, family string, values []string) RegistryField {
+	field := field(id, description, required, family)
+	field.EnumValues = append([]string(nil), values...)
+	return field
 }
 
 func report(id string, schemaVersion string, description string, producer string, command string, fields []string) RegistryReport {

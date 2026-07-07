@@ -1158,6 +1158,7 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "read_file", CanonicalToolName("ReadFile"))
 	require.Equal(t, "structured_output", CanonicalToolName("StructuredOutputTool"))
 	require.Equal(t, "report_backpressure", CanonicalToolName("ReportBackpressureTool"))
+	require.Equal(t, "report_schema", CanonicalToolName("ReportSchemaTool"))
 	require.Equal(t, "tool_search", CanonicalToolName("ToolSearch"))
 	require.Equal(t, "sleep", CanonicalToolName("SleepTool"))
 	require.Equal(t, "repl", CanonicalToolName("REPLTool"))
@@ -1184,6 +1185,7 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "skill", aliases["Skill"])
 	require.Equal(t, "structured_output", aliases["StructuredOutputTool"])
 	require.Equal(t, "report_backpressure", aliases["ReportBackpressureTool"])
+	require.Equal(t, "report_schema", aliases["ReportSchemaTool"])
 	require.Equal(t, "testing_permission", aliases["TestingPermission"])
 	require.Equal(t, "tool_search", aliases["ToolSearch"])
 	require.Equal(t, "sleep", aliases["SleepTool"])
@@ -1454,7 +1456,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 85)
+	require.Len(t, infos, 86)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -4315,6 +4317,40 @@ func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
 	require.NotContains(t, projection.Payload, "negative_evidence")
 	require.Contains(t, projection.CanonicalReport, "new_items")
 	require.Contains(t, projection.CanonicalReport, "schema_compatibility")
+}
+
+func TestReportSchemaToolFiltersRegistry(t *testing.T) {
+	out, err := ReportSchemaTool{}.Execute(context.Background(), []byte(`{"action":"registry","report":"report_backpressure","schema_version":"codog.reporting.report.v1","field_family":"field_deltas"}`))
+	require.NoError(t, err)
+
+	var response struct {
+		Kind     string `json:"kind"`
+		Action   string `json:"action"`
+		Status   string `json:"status"`
+		Registry struct {
+			Reports []struct {
+				ID            string `json:"id"`
+				SchemaVersion string `json:"schema_version"`
+			} `json:"reports"`
+			Fields []struct {
+				ID         string   `json:"id"`
+				EnumValues []string `json:"enum_values"`
+				Deprecated bool     `json:"deprecated"`
+			} `json:"fields"`
+		} `json:"registry"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &response))
+
+	require.Equal(t, "report_schema", response.Kind)
+	require.Equal(t, "registry", response.Action)
+	require.Equal(t, "ok", response.Status)
+	require.Len(t, response.Registry.Reports, 1)
+	require.Equal(t, "report_backpressure", response.Registry.Reports[0].ID)
+	require.Len(t, response.Registry.Fields, 2)
+	require.Equal(t, "field_deltas[]", response.Registry.Fields[0].ID)
+	require.Equal(t, "field_deltas[].state", response.Registry.Fields[1].ID)
+	require.Contains(t, response.Registry.Fields[1].EnumValues, "carried_forward")
+	require.False(t, response.Registry.Fields[1].Deprecated)
 }
 
 func TestTaskSuperviseToolRestartsEligibleTasks(t *testing.T) {

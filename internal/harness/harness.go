@@ -10015,6 +10015,10 @@ func reportBackpressureScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
+			schema, err := call("ReportSchemaTool", `{"action":"registry","report":"report_backpressure","schema_version":"codog.reporting.report.v1","field_family":"field_deltas"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
 			firstNew, _ := first["new_items"].([]any)
 			thirdChanged, _ := third["changed_items"].([]any)
 			firstClaims, _ := first["claims"].([]any)
@@ -10044,7 +10048,9 @@ func reportBackpressureScenario() scenario {
 			omittedFamilies, _ := provenance["omitted_field_families"].([]any)
 			projectedPayload, _ := projected["payload"].(map[string]any)
 			projectedCanonical, _ := projected["canonical_report"].(map[string]any)
-			if itemID == "" || firstSchemaVersion != "codog.reporting.report.v1" || compatibilityPolicy != "codog.reporting.compatibility.v1" || len(stableCore) == 0 || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || len(secondNegative) != 2 || negativeStatus != "not_observed_in_checked_scope" || negativeWindow != "2026-07-07T16:01:00Z/2026-07-07T16:02:00Z" || len(secondFieldDeltas) == 0 || secondDeltaState != "cleared" || len(invalidates) != 2 || thirdPriorityState != "changed" || !projectedDowngraded || len(omittedFamilies) == 0 || projectedPayload["field_deltas"] == nil || projectedPayload["new_items"] != nil || projectedCanonical["schema_compatibility"] == nil || firstRootKind != "hypothesis" || thirdRootKind != "observed_fact" || thirdPromotedFrom != "hypothesis" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
+			schemaRegistry, _ := schema["registry"].(map[string]any)
+			schemaFields, _ := schemaRegistry["fields"].([]any)
+			if itemID == "" || firstSchemaVersion != "codog.reporting.report.v1" || compatibilityPolicy != "codog.reporting.compatibility.v1" || len(stableCore) == 0 || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || len(secondNegative) != 2 || negativeStatus != "not_observed_in_checked_scope" || negativeWindow != "2026-07-07T16:01:00Z/2026-07-07T16:02:00Z" || len(secondFieldDeltas) == 0 || secondDeltaState != "cleared" || len(invalidates) != 2 || thirdPriorityState != "changed" || !projectedDowngraded || len(omittedFamilies) == 0 || projectedPayload["field_deltas"] == nil || projectedPayload["new_items"] != nil || projectedCanonical["schema_compatibility"] == nil || len(schemaFields) != 2 || firstRootKind != "hypothesis" || thirdRootKind != "observed_fact" || thirdPromotedFrom != "hypothesis" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
 				return localScenarioResult{}, fmt.Errorf("unexpected backpressure report: filed=%#v first=%#v second=%#v third=%#v snapshot=%#v", filed, first, second, third, snapshot)
 			}
 			output := map[string]any{
@@ -10069,6 +10075,7 @@ func reportBackpressureScenario() scenario {
 				"priority_delta":   thirdPriorityState,
 				"projected":        projectedDowngraded,
 				"projected_omits":  len(omittedFamilies),
+				"schema_fields":    len(schemaFields),
 				"first_root_claim": firstRootKind,
 				"third_root_claim": thirdRootKind,
 				"promoted_from":    thirdPromotedFrom,
@@ -10082,10 +10089,10 @@ func reportBackpressureScenario() scenario {
 			return localScenarioResult{
 				Output:       string(data),
 				FinalMessage: "report backpressure harness ok",
-				RequestCount: 7,
+				RequestCount: 8,
 				MessageCount: 1,
-				ToolCalls:    7,
-				ToolUses:     []string{"roadmap_pinpoint", "report_backpressure", "report_backpressure", "roadmap_pinpoint", "report_backpressure", "report_backpressure", "report_backpressure"},
+				ToolCalls:    8,
+				ToolUses:     []string{"roadmap_pinpoint", "report_backpressure", "report_backpressure", "roadmap_pinpoint", "report_backpressure", "report_backpressure", "report_backpressure", "report_schema"},
 			}, nil
 		},
 	}

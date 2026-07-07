@@ -8292,6 +8292,14 @@ func reportSchemaRegistryEntry(t *testing.T, registry reportschema.Registry, id 
 	return reportschema.RegistryReport{}
 }
 
+func reportSchemaFieldIDs(registry reportschema.Registry) []string {
+	ids := make([]string, 0, len(registry.Fields))
+	for _, field := range registry.Fields {
+		ids = append(ids, field.ID)
+	}
+	return ids
+}
+
 func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	var out bytes.Buffer
 
@@ -14230,12 +14238,28 @@ func TestReportSchemaCommandAndSlash(t *testing.T) {
 	require.Equal(t, harness.ManifestSchemaVersion, reportSchemaRegistryEntry(t, *registryReport.Registry, "mock_parity_manifest").SchemaVersion)
 	out.Reset()
 
+	require.NoError(t, app.ReportSchema([]string{"registry", "--report", "report_backpressure", "--schema-version", reportschema.ReportingReportSchemaV1, "--field-family", "field_deltas", "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &registryReport))
+	require.NotNil(t, registryReport.Registry)
+	require.Len(t, registryReport.Registry.Reports, 1)
+	require.Equal(t, "report_backpressure", registryReport.Registry.Reports[0].ID)
+	require.Equal(t, []string{"field_deltas[]", "field_deltas[].state"}, reportSchemaFieldIDs(*registryReport.Registry))
+	require.Contains(t, registryReport.Registry.Fields[1].EnumValues, reportschema.FieldCarriedForward)
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/report-schema registry", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Report Schema")
 	require.Contains(t, out.String(), "Schema           claw.report.v1")
 	require.Contains(t, out.String(), "identity.report_id")
 	require.Contains(t, out.String(), "mock_parity_report "+harness.ReportSchemaVersion)
 	require.Contains(t, out.String(), "mock_parity_manifest "+harness.ManifestSchemaVersion)
+	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/report-schema registry --report report_backpressure --field-family field_deltas", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "field_deltas[].state")
+	require.Contains(t, out.String(), "enum=changed|unchanged|cleared|carried_forward")
+	require.NotContains(t, out.String(), "claims[].kind")
 	require.Empty(t, errOut.String())
 }
 
@@ -15859,7 +15883,7 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Model            claude-test")
 	require.Contains(t, out.String(), "Memory files     1")
 	require.Contains(t, out.String(), "Task lanes       active=0 blocked=0 finished=0")
-	require.Contains(t, out.String(), "Tools            85")
+	require.Contains(t, out.String(), "Tools            86")
 	out.Reset()
 
 	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{Resume: "source"}))

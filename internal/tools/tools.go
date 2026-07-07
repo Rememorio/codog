@@ -179,6 +179,8 @@ var claudeToolAliases = map[string]string{
 	"roadmappinpointtool":          "roadmap_pinpoint",
 	"reportbackpressure":           "report_backpressure",
 	"reportbackpressuretool":       "report_backpressure",
+	"reportschema":                 "report_schema",
+	"reportschematool":             "report_schema",
 	"edit":                         "edit_file",
 	"editfile":                     "edit_file",
 	"edittool":                     "edit_file",
@@ -456,6 +458,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"RoadmapPinpointTool":          "roadmap_pinpoint",
 	"ReportBackpressure":           "report_backpressure",
 	"ReportBackpressureTool":       "report_backpressure",
+	"ReportSchema":                 "report_schema",
+	"ReportSchemaTool":             "report_schema",
 	"RemoteTrigger":                "remote_trigger",
 	"RemoteTriggerTool":            "remote_trigger",
 	"RunTaskPacket":                "run_task_packet",
@@ -694,6 +698,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(RecoveryStatusTool{ConfigHome: opts.ConfigHome})
 	r.Register(RoadmapPinpointTool{ConfigHome: opts.ConfigHome})
 	r.Register(ReportBackpressureTool{ConfigHome: opts.ConfigHome})
+	r.Register(ReportSchemaTool{})
 	r.Register(NudgeTool{ConfigHome: opts.ConfigHome})
 	r.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
 	r.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
@@ -9063,6 +9068,94 @@ func roadmapEvidenceFromPayload(values []roadmapEvidencePayload, defaultTime tim
 
 type ReportBackpressureTool struct {
 	ConfigHome string
+}
+
+type ReportSchemaTool struct{}
+
+type flexibleStrings []string
+
+func (s *flexibleStrings) UnmarshalJSON(data []byte) error {
+	var single string
+	if err := json.Unmarshal(data, &single); err == nil {
+		*s = flexibleStrings{single}
+		return nil
+	}
+	var multiple []string
+	if err := json.Unmarshal(data, &multiple); err != nil {
+		return err
+	}
+	*s = flexibleStrings(multiple)
+	return nil
+}
+
+func (s flexibleStrings) Values() []string {
+	values := make([]string, 0, len(s))
+	for _, value := range s {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func (ReportSchemaTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "report_schema",
+		Description: "Fetch the machine-readable structured report schema registry, optionally filtered by report, schema version, or field family.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"action": map[string]any{"type": "string", "enum": []string{"registry"}},
+				"report": map[string]any{
+					"oneOf": []any{
+						map[string]any{"type": "string"},
+						map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					},
+				},
+				"schema_version": map[string]any{
+					"oneOf": []any{
+						map[string]any{"type": "string"},
+						map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					},
+				},
+				"field_family": map[string]any{
+					"oneOf": []any{
+						map[string]any{"type": "string"},
+						map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					},
+				},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (ReportSchemaTool) Permission() Permission { return PermissionReadOnly }
+
+func (ReportSchemaTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Action        string          `json:"action"`
+		Report        flexibleStrings `json:"report"`
+		SchemaVersion flexibleStrings `json:"schema_version"`
+		FieldFamily   flexibleStrings `json:"field_family"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	action := strings.ToLower(strings.TrimSpace(payload.Action))
+	if action == "" {
+		action = "registry"
+	}
+	if action != "registry" {
+		return "", fmt.Errorf("unknown report_schema action %q", payload.Action)
+	}
+	registry := reportschema.FilterRegistry(reportschema.RegistryV1(), reportschema.RegistryFilter{
+		ReportIDs:      payload.Report.Values(),
+		SchemaVersions: payload.SchemaVersion.Values(),
+		FieldFamilies:  payload.FieldFamily.Values(),
+	})
+	return pretty(map[string]any{"kind": "report_schema", "action": "registry", "status": "ok", "registry": registry}), nil
 }
 
 func (ReportBackpressureTool) Definition() anthropic.ToolDefinition {

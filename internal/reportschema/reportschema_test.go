@@ -64,6 +64,9 @@ func TestRegistryV1IsSelfDescribing(t *testing.T) {
 	require.Equal(t, SchemaV1, registry.SchemaVersion)
 	require.Contains(t, fieldIDs(registry), "claims[].kind")
 	require.Contains(t, fieldIDs(registry), "negative_evidence[]")
+	require.Contains(t, enumValuesByField(t, registry, "claims[].kind"), ClaimHypothesis)
+	require.Contains(t, enumValuesByField(t, registry, "field_deltas[].state"), FieldCarriedForward)
+	require.False(t, fieldByID(t, registry, "schema_compatibility.policy").Deprecated)
 	require.Contains(t, fieldIDs(registry), "atomic_update.message_parts[]")
 	require.Contains(t, fieldIDs(registry), "projection.provenance.redactions[]")
 	require.Contains(t, reportSchemaVersions(registry), SchemaV1)
@@ -81,6 +84,19 @@ func TestRegistryV1IsSelfDescribing(t *testing.T) {
 	require.Equal(t, "codog mock-parity --json", mockParity.Command)
 	require.Contains(t, mockParity.Fields, "coverage")
 	require.Contains(t, mockParity.Fields, "usage_summary")
+}
+
+func TestFilterRegistryForReportVersionAndCapabilities(t *testing.T) {
+	filtered := FilterRegistry(RegistryV1(), RegistryFilter{
+		ReportIDs:      []string{"report_backpressure"},
+		SchemaVersions: []string{ReportingReportSchemaV1},
+		FieldFamilies:  []string{"field_deltas"},
+	})
+
+	require.Len(t, filtered.Reports, 1)
+	require.Equal(t, "report_backpressure", filtered.Reports[0].ID)
+	require.Equal(t, []string{"field_deltas[]", "field_deltas[].state"}, fieldIDs(filtered))
+	require.Contains(t, enumValuesByField(t, filtered, "field_deltas[].state"), FieldChanged)
 }
 
 func TestCanonicalizeSortsAndHashesReport(t *testing.T) {
@@ -334,6 +350,22 @@ func registryReportByID(t *testing.T, registry Registry, id string) RegistryRepo
 	}
 	t.Fatalf("missing registry report %q in %#v", id, registry.Reports)
 	return RegistryReport{}
+}
+
+func fieldByID(t *testing.T, registry Registry, id string) RegistryField {
+	t.Helper()
+	for _, field := range registry.Fields {
+		if field.ID == id {
+			return field
+		}
+	}
+	t.Fatalf("missing registry field %q in %#v", id, registry.Fields)
+	return RegistryField{}
+}
+
+func enumValuesByField(t *testing.T, registry Registry, id string) []string {
+	t.Helper()
+	return fieldByID(t, registry, id).EnumValues
 }
 
 func redactionPaths(redactions []RedactionProvenance) []string {
