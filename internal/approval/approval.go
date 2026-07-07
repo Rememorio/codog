@@ -28,6 +28,7 @@ type Scope struct {
 	Action     string `json:"action"`
 	Repository string `json:"repository,omitempty"`
 	Branch     string `json:"branch,omitempty"`
+	Commit     string `json:"commit,omitempty"`
 }
 
 type DelegationHop struct {
@@ -390,6 +391,7 @@ func normalizeScope(scope Scope) Scope {
 		Action:     strings.TrimSpace(scope.Action),
 		Repository: strings.TrimSpace(scope.Repository),
 		Branch:     strings.TrimSpace(scope.Branch),
+		Commit:     strings.TrimSpace(scope.Commit),
 	}
 }
 

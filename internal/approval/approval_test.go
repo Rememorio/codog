@@ -149,8 +149,9 @@ func TestApprovalTokenConsumeRejectsReplay(t *testing.T) {
 
 func TestApprovalTokenRejectsScopeExpiryRevocationAndDelegateMismatch(t *testing.T) {
 	store := NewStore(t.TempDir())
-	scope := Scope{Policy: "main_push_forbidden", Action: "git push", Repository: "owner/repo", Branch: "main"}
-	devScope := Scope{Policy: "main_push_forbidden", Action: "git push", Repository: "owner/repo", Branch: "dev"}
+	scope := Scope{Policy: "main_push_forbidden", Action: "git push", Repository: "owner/repo", Branch: "main", Commit: "abc123"}
+	devScope := Scope{Policy: "main_push_forbidden", Action: "git push", Repository: "owner/repo", Branch: "dev", Commit: "abc123"}
+	otherCommitScope := Scope{Policy: "main_push_forbidden", Action: "git push", Repository: "owner/repo", Branch: "main", Commit: "def456"}
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	expiresAt := now.Add(time.Minute)
 
@@ -165,6 +166,9 @@ func TestApprovalTokenRejectsScopeExpiryRevocationAndDelegateMismatch(t *testing
 	require.NoError(t, err)
 
 	_, err = store.Verify("tok-expiring", devScope, "bot", now)
+	requireApprovalError(t, err, "approval_scope_mismatch")
+
+	_, err = store.Verify("tok-expiring", otherCommitScope, "bot", now)
 	requireApprovalError(t, err, "approval_scope_mismatch")
 
 	_, err = store.Verify("tok-expiring", scope, "other-bot", now)

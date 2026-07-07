@@ -240,6 +240,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, policyApproval.Output, `"fallback":["create_branch","open_pr"]`)
 	require.Contains(t, policyApproval.Output, `"pending":"approval_pending"`)
 	require.Contains(t, policyApproval.Output, `"pending_verify_error":"approval_pending"`)
+	require.Contains(t, policyApproval.Output, `"scope_commit":"abc123"`)
 	require.Contains(t, policyApproval.Output, `"verified":"approval_granted"`)
 	require.Contains(t, policyApproval.Output, `"delegated":true`)
 	require.Contains(t, policyApproval.Output, `"consumed":"approval_consumed"`)
@@ -1342,6 +1343,7 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Contains(t, policyApproval.ParityRefs, "Approval tokens")
 	require.Contains(t, policyApproval.ParityRefs, "Delegation audit")
 	require.Contains(t, policyApproval.ParityRefs, "Replay denial")
+	require.Contains(t, policyApproval.ParityRefs, "Commit-scoped approval")
 
 	notebook := findManifestScenario(t, manifest, "notebook_read_edit_roundtrip")
 	require.Equal(t, "notebook", notebook.Category)

@@ -1783,6 +1783,7 @@ func (ApprovalTokenTool) Definition() anthropic.ToolDefinition {
 						"action":     map[string]any{"type": "string"},
 						"repository": map[string]any{"type": "string"},
 						"branch":     map[string]any{"type": "string"},
+						"commit":     map[string]any{"type": "string"},
 					},
 				},
 				"approving_actor":   map[string]any{"type": "string"},

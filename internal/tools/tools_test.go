@@ -4977,7 +4977,7 @@ func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 	grantOut, err := tool.Execute(context.Background(), []byte(`{
 		"action":"grant",
 		"token":"tok-main",
-		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main","commit":"abc123"},
 		"approving_actor":"owner",
 		"approved_executor":"release-bot",
 		"max_uses":1,
@@ -4986,11 +4986,12 @@ func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, grantOut, `"kind": "approval_token"`)
 	require.Contains(t, grantOut, `"status": "approval_granted"`)
+	require.Contains(t, grantOut, `"commit": "abc123"`)
 
 	verifyOut, err := tool.Execute(context.Background(), []byte(`{
 		"action":"verify",
 		"token":"tok-main",
-		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main","commit":"abc123"},
 		"executing_actor":"release-bot"
 	}`))
 	require.NoError(t, err)
@@ -5000,7 +5001,7 @@ func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 	consumeOut, err := tool.Execute(context.Background(), []byte(`{
 		"action":"consume",
 		"token":"tok-main",
-		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main","commit":"abc123"},
 		"executing_actor":"release-bot"
 	}`))
 	require.NoError(t, err)
@@ -5010,7 +5011,7 @@ func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 	replayOut, err := tool.Execute(context.Background(), []byte(`{
 		"action":"consume",
 		"token":"tok-main",
-		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main","commit":"abc123"},
 		"executing_actor":"release-bot"
 	}`))
 	require.NoError(t, err)
@@ -5021,6 +5022,7 @@ func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, listOut, `"kind": "approval_token_ledger"`)
 	require.Contains(t, listOut, `"token": "tok-main"`)
+	require.Contains(t, listOut, `"commit": "abc123"`)
 }
 
 func TestApprovalTokenToolApprovesPendingGrant(t *testing.T) {
@@ -5030,7 +5032,7 @@ func TestApprovalTokenToolApprovesPendingGrant(t *testing.T) {
 	pendingOut, err := tool.Execute(context.Background(), []byte(`{
 		"action":"pending",
 		"token":"tok-pending-main",
-		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main","commit":"abc123"},
 		"approving_actor":"owner",
 		"approved_executor":"release-bot"
 	}`))
@@ -5041,7 +5043,7 @@ func TestApprovalTokenToolApprovesPendingGrant(t *testing.T) {
 	deniedOut, err := tool.Execute(context.Background(), []byte(`{
 		"action":"verify",
 		"token":"tok-pending-main",
-		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main","commit":"abc123"},
 		"executing_actor":"release-bot"
 	}`))
 	require.NoError(t, err)
@@ -5051,7 +5053,7 @@ func TestApprovalTokenToolApprovesPendingGrant(t *testing.T) {
 	approveOut, err := tool.Execute(context.Background(), []byte(`{
 		"action":"approve",
 		"token":"tok-pending-main",
-		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main","commit":"abc123"},
 		"approving_actor":"owner",
 		"approved_executor":"release-bot",
 		"max_uses":2,
@@ -5062,11 +5064,12 @@ func TestApprovalTokenToolApprovesPendingGrant(t *testing.T) {
 	require.Contains(t, approveOut, `"status": "ok"`)
 	require.Contains(t, approveOut, `"status": "approval_granted"`)
 	require.Contains(t, approveOut, `"max_uses": 2`)
+	require.Contains(t, approveOut, `"commit": "abc123"`)
 
 	verifyOut, err := tool.Execute(context.Background(), []byte(`{
 		"action":"verify",
 		"token":"tok-pending-main",
-		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main","commit":"abc123"},
 		"executing_actor":"release-bot"
 	}`))
 	require.NoError(t, err)
