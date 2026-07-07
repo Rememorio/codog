@@ -2782,6 +2782,51 @@ func TestCLIErrorTextUsageTrailerOnlyForUsage(t *testing.T) {
 	require.NotContains(t, filesystemText, "Run `codog --help` for usage.")
 }
 
+func TestCLIErrorSessionLookupEnvelopeIncludesNamespace(t *testing.T) {
+	configHome := t.TempDir()
+	workspaceA := filepath.Join(t.TempDir(), "repo-a")
+	workspaceB := filepath.Join(t.TempDir(), "repo-b")
+	require.NoError(t, os.MkdirAll(workspaceA, 0o755))
+	require.NoError(t, os.MkdirAll(workspaceB, 0o755))
+	storeA := session.NewWorkspaceStore(configHome, workspaceA)
+	storeB := session.NewWorkspaceStore(configHome, workspaceB)
+	require.NoError(t, storeB.Append("other", anthropic.TextMessage("user", "from b")))
+
+	_, err := storeA.LatestID()
+	require.ErrorIs(t, err, session.ErrNoSessions)
+	report := buildCLIErrorReport(err)
+	require.Equal(t, "no_managed_sessions", report.ErrorKind)
+	require.Equal(t, storeA.Dir, report.SessionSearchPath)
+	require.Equal(t, storeA.Workspace, report.Workspace)
+	require.Equal(t, session.WorkspaceFingerprint(storeA.Workspace), report.WorkspaceFingerprint)
+	require.Equal(t, 1, report.OtherWorkspacePartitions)
+	require.Equal(t, 1, report.OtherWorkspaceSessions)
+	require.Equal(t, "session", report.Error.Kind)
+	require.Equal(t, storeA.Dir, report.Error.Target)
+	require.Contains(t, report.Hint, "current workspace session namespace")
+	require.Contains(t, report.Hint, "other workspace partition")
+}
+
+func TestSessionRestoreErrorReportIncludesLookupNamespace(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	_, err := store.OpenExisting("missing-session")
+	require.ErrorIs(t, err, session.ErrSessionNotFound)
+
+	report := buildSessionRestoreErrorReport("status", "missing-session", err)
+	require.Equal(t, "session_not_found", report.ErrorKind)
+	require.Equal(t, "missing-session", report.RequestedSession)
+	require.Equal(t, store.Dir, report.SessionSearchPath)
+	require.Equal(t, store.Workspace, report.Workspace)
+	require.Equal(t, session.WorkspaceFingerprint(store.Workspace), report.WorkspaceFingerprint)
+	require.Contains(t, report.Hint, "current workspace session namespace")
+
+	cliReport := buildCLIErrorReport(err)
+	require.Equal(t, `session "missing-session" was not found`, cliReport.Message)
+	require.NotContains(t, cliReport.Message, "searched")
+}
+
 func TestApprovalSlashAliasesReturnInteractiveOnly(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")

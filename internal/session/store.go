@@ -240,6 +240,50 @@ func (e WorkspaceMismatchError) Error() string {
 	return fmt.Sprintf("session workspace mismatch: expected %s, found %s", e.Expected, e.Actual)
 }
 
+// LookupError adds workspace-namespace context to session lookup failures while
+// preserving ErrNoSessions and ErrSessionNotFound through errors.Is.
+type LookupError struct {
+	Err                      error
+	Reference                string
+	SearchDir                string
+	LegacyDir                string
+	Workspace                string
+	WorkspaceFingerprint     string
+	OtherWorkspacePartitions int
+	OtherWorkspaceSessions   int
+}
+
+func (e LookupError) Error() string {
+	base := "session lookup failed"
+	if e.Err != nil {
+		base = e.Err.Error()
+	}
+	if strings.TrimSpace(e.Reference) != "" && errors.Is(e.Err, ErrSessionNotFound) {
+		base += ": " + strings.TrimSpace(e.Reference)
+	}
+	details := []string{}
+	if strings.TrimSpace(e.SearchDir) != "" {
+		details = append(details, "searched "+e.SearchDir)
+	}
+	if strings.TrimSpace(e.Workspace) != "" {
+		details = append(details, "workspace "+e.Workspace)
+	}
+	if strings.TrimSpace(e.WorkspaceFingerprint) != "" {
+		details = append(details, "workspace_fingerprint "+e.WorkspaceFingerprint)
+	}
+	if e.OtherWorkspaceSessions > 0 {
+		details = append(details, fmt.Sprintf("found %d session(s) in %d other workspace partition(s)", e.OtherWorkspaceSessions, e.OtherWorkspacePartitions))
+	}
+	if len(details) == 0 {
+		return base
+	}
+	return base + " (" + strings.Join(details, "; ") + ")"
+}
+
+func (e LookupError) Unwrap() error {
+	return e.Err
+}
+
 func NewStore(configHome string) *Store {
 	return &Store{Dir: filepath.Join(configHome, "sessions")}
 }
@@ -356,7 +400,7 @@ func (s *Store) OpenExisting(id string) (*Session, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
+			return nil, s.lookupError(ErrSessionNotFound, id)
 		}
 		return nil, err
 	}
@@ -375,7 +419,7 @@ func (s *Store) openExistingPath(path string) (*Session, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, path)
+			return nil, s.lookupError(ErrSessionNotFound, path)
 		}
 		return nil, err
 	}
@@ -995,7 +1039,7 @@ func (s *Store) LatestIDExcluding(excludeID string) (string, error) {
 		}
 	}
 	if visible == 0 {
-		return "", ErrNoSessions
+		return "", s.lookupError(ErrNoSessions, "")
 	}
 	return "", ErrAllSessionsEmpty
 }
@@ -1021,7 +1065,7 @@ func (s *Store) LatestSessionExcluding(excludeID string) (*Session, error) {
 	}
 	visible += visibleSessionCount(global, excludeID)
 	if visible == 0 {
-		return nil, ErrNoSessions
+		return nil, s.lookupError(ErrNoSessions, "")
 	}
 	return nil, ErrAllSessionsEmpty
 }
@@ -1033,7 +1077,7 @@ func (s *Store) LatestAnyID() (string, error) {
 		return "", err
 	}
 	if len(sessions) == 0 {
-		return "", ErrNoSessions
+		return "", s.lookupError(ErrNoSessions, "")
 	}
 	return sessions[0].ID, nil
 }
@@ -2072,6 +2116,76 @@ func (s *Store) globalWorkspaceSessions() ([]Session, error) {
 	}
 	sortSessions(sessions)
 	return sessions, nil
+}
+
+func (s *Store) lookupError(cause error, reference string) error {
+	partitions, sessions := s.otherWorkspaceSessionStats()
+	workspace := strings.TrimSpace(s.Workspace)
+	fingerprint := ""
+	if workspace != "" {
+		fingerprint = WorkspaceFingerprint(workspace)
+	}
+	return LookupError{
+		Err:                      cause,
+		Reference:                strings.TrimSpace(reference),
+		SearchDir:                cleanOptionalPath(s.Dir),
+		LegacyDir:                cleanOptionalPath(s.LegacyDir),
+		Workspace:                workspace,
+		WorkspaceFingerprint:     fingerprint,
+		OtherWorkspacePartitions: partitions,
+		OtherWorkspaceSessions:   sessions,
+	}
+}
+
+func cleanOptionalPath(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	return filepath.Clean(path)
+}
+
+func (s *Store) otherWorkspaceSessionStats() (int, int) {
+	if strings.TrimSpace(s.LegacyDir) == "" {
+		return 0, 0
+	}
+	entries, err := os.ReadDir(s.LegacyDir)
+	if err != nil {
+		return 0, 0
+	}
+	current := filepath.Clean(s.Dir)
+	partitions := 0
+	sessions := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(s.LegacyDir, entry.Name())
+		if sameDir(dir, current) {
+			continue
+		}
+		count := sessionFileCount(dir)
+		if count == 0 {
+			continue
+		}
+		partitions++
+		sessions += count
+	}
+	return partitions, sessions
+}
+
+func sessionFileCount(dir string) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !isSessionFileName(entry.Name()) {
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 func (s *Store) sessionsInDir(dir string) ([]Session, error) {

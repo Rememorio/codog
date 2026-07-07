@@ -29867,29 +29867,34 @@ type slashErrorReport struct {
 }
 
 type cliErrorReport struct {
-	Type              string            `json:"type"`
-	Kind              string            `json:"kind"`
-	ErrorKind         string            `json:"error_kind"`
-	Status            string            `json:"status"`
-	Error             cliErrorEnvelope  `json:"error"`
-	Action            string            `json:"action,omitempty"`
-	Command           string            `json:"command,omitempty"`
-	Args              []string          `json:"args,omitempty"`
-	Option            string            `json:"option,omitempty"`
-	Message           string            `json:"message"`
-	Hint              string            `json:"hint"`
-	Provider          string            `json:"provider,omitempty"`
-	EnvVars           []string          `json:"env_vars,omitempty"`
-	Value             string            `json:"value,omitempty"`
-	Values            []string          `json:"values,omitempty"`
-	Expected          []string          `json:"expected,omitempty"`
-	Argument          string            `json:"argument,omitempty"`
-	ToolName          string            `json:"tool_name,omitempty"`
-	Available         []string          `json:"available,omitempty"`
-	ToolAliases       map[string]string `json:"tool_aliases,omitempty"`
-	Path              string            `json:"path,omitempty"`
-	ExpectedWorkspace string            `json:"expected_workspace,omitempty"`
-	ActualWorkspace   string            `json:"actual_workspace,omitempty"`
+	Type                     string            `json:"type"`
+	Kind                     string            `json:"kind"`
+	ErrorKind                string            `json:"error_kind"`
+	Status                   string            `json:"status"`
+	Error                    cliErrorEnvelope  `json:"error"`
+	Action                   string            `json:"action,omitempty"`
+	Command                  string            `json:"command,omitempty"`
+	Args                     []string          `json:"args,omitempty"`
+	Option                   string            `json:"option,omitempty"`
+	Message                  string            `json:"message"`
+	Hint                     string            `json:"hint"`
+	Provider                 string            `json:"provider,omitempty"`
+	EnvVars                  []string          `json:"env_vars,omitempty"`
+	Value                    string            `json:"value,omitempty"`
+	Values                   []string          `json:"values,omitempty"`
+	Expected                 []string          `json:"expected,omitempty"`
+	Argument                 string            `json:"argument,omitempty"`
+	ToolName                 string            `json:"tool_name,omitempty"`
+	Available                []string          `json:"available,omitempty"`
+	ToolAliases              map[string]string `json:"tool_aliases,omitempty"`
+	Path                     string            `json:"path,omitempty"`
+	SessionSearchPath        string            `json:"session_search_path,omitempty"`
+	Workspace                string            `json:"workspace,omitempty"`
+	WorkspaceFingerprint     string            `json:"workspace_fingerprint,omitempty"`
+	OtherWorkspacePartitions int               `json:"other_workspace_partitions,omitempty"`
+	OtherWorkspaceSessions   int               `json:"other_workspace_sessions,omitempty"`
+	ExpectedWorkspace        string            `json:"expected_workspace,omitempty"`
+	ActualWorkspace          string            `json:"actual_workspace,omitempty"`
 }
 
 type cliErrorEnvelope struct {
@@ -29913,16 +29918,21 @@ type actionErrorReport struct {
 }
 
 type sessionRestoreErrorReport struct {
-	Kind              string `json:"kind"`
-	Action            string `json:"action"`
-	Status            string `json:"status"`
-	ErrorKind         string `json:"error_kind"`
-	RequestedSession  string `json:"requested_session,omitempty"`
-	Path              string `json:"path,omitempty"`
-	ExpectedWorkspace string `json:"expected_workspace,omitempty"`
-	ActualWorkspace   string `json:"actual_workspace,omitempty"`
-	Message           string `json:"message"`
-	Hint              string `json:"hint"`
+	Kind                     string `json:"kind"`
+	Action                   string `json:"action"`
+	Status                   string `json:"status"`
+	ErrorKind                string `json:"error_kind"`
+	RequestedSession         string `json:"requested_session,omitempty"`
+	Path                     string `json:"path,omitempty"`
+	SessionSearchPath        string `json:"session_search_path,omitempty"`
+	Workspace                string `json:"workspace,omitempty"`
+	WorkspaceFingerprint     string `json:"workspace_fingerprint,omitempty"`
+	OtherWorkspacePartitions int    `json:"other_workspace_partitions,omitempty"`
+	OtherWorkspaceSessions   int    `json:"other_workspace_sessions,omitempty"`
+	ExpectedWorkspace        string `json:"expected_workspace,omitempty"`
+	ActualWorkspace          string `json:"actual_workspace,omitempty"`
+	Message                  string `json:"message"`
+	Hint                     string `json:"hint"`
 }
 
 func renderSessionRestoreError(out io.Writer, action string, requested string, err error, format string) error {
@@ -29958,6 +29968,7 @@ func buildSessionRestoreErrorReport(action string, requested string, err error) 
 	}
 	var directoryErr session.PathIsDirectoryError
 	var mismatchErr session.WorkspaceMismatchError
+	var lookupErr session.LookupError
 	switch {
 	case errors.As(err, &directoryErr):
 		report.ErrorKind = "session_path_is_directory"
@@ -29975,16 +29986,66 @@ func buildSessionRestoreErrorReport(action string, requested string, err error) 
 		report.ErrorKind = "no_managed_sessions"
 		report.Message = "no managed sessions found"
 		report.Hint = "Run `codog prompt <text>` to create a session, or pass an existing .jsonl/.json session path."
+		if errors.As(err, &lookupErr) {
+			applySessionRestoreLookupError(&report, lookupErr)
+		}
 	case errors.Is(err, session.ErrSessionNotFound):
 		report.ErrorKind = "session_not_found"
 		if requested != "" {
 			report.Message = fmt.Sprintf("session %q was not found", requested)
+		} else if errors.As(err, &lookupErr) && strings.TrimSpace(lookupErr.Reference) != "" {
+			report.Message = fmt.Sprintf("session %q was not found", strings.TrimSpace(lookupErr.Reference))
 		} else {
 			report.Message = "session was not found"
 		}
 		report.Hint = "Run `codog sessions list` to see saved sessions, or pass an existing .jsonl/.json session path."
+		if errors.As(err, &lookupErr) {
+			applySessionRestoreLookupError(&report, lookupErr)
+		}
 	}
 	return report
+}
+
+func applySessionRestoreLookupError(report *sessionRestoreErrorReport, lookup session.LookupError) {
+	report.SessionSearchPath = lookup.SearchDir
+	report.Workspace = lookup.Workspace
+	report.WorkspaceFingerprint = lookup.WorkspaceFingerprint
+	report.OtherWorkspacePartitions = lookup.OtherWorkspacePartitions
+	report.OtherWorkspaceSessions = lookup.OtherWorkspaceSessions
+	if report.Path == "" {
+		report.Path = lookup.SearchDir
+	}
+	report.Hint = sessionLookupHint(report.Hint, lookup)
+}
+
+func applyCLIErrorSessionLookup(report *cliErrorReport, err error) {
+	var lookup session.LookupError
+	if !errors.As(err, &lookup) {
+		return
+	}
+	report.SessionSearchPath = lookup.SearchDir
+	report.Workspace = lookup.Workspace
+	report.WorkspaceFingerprint = lookup.WorkspaceFingerprint
+	report.OtherWorkspacePartitions = lookup.OtherWorkspacePartitions
+	report.OtherWorkspaceSessions = lookup.OtherWorkspaceSessions
+	if report.Path == "" {
+		report.Path = lookup.SearchDir
+	}
+	report.Hint = sessionLookupHint(report.Hint, lookup)
+}
+
+func sessionLookupHint(base string, lookup session.LookupError) string {
+	parts := []string{}
+	if strings.TrimSpace(base) != "" {
+		parts = append(parts, strings.TrimSpace(base))
+	}
+	if strings.TrimSpace(lookup.SearchDir) != "" {
+		parts = append(parts, "Codog searched the current workspace session namespace at "+lookup.SearchDir+".")
+	}
+	if lookup.OtherWorkspaceSessions > 0 {
+		parts = append(parts, fmt.Sprintf("Found %d session(s) in %d other workspace partition(s); those sessions are intentionally isolated from this workspace.", lookup.OtherWorkspaceSessions, lookup.OtherWorkspacePartitions))
+	}
+	return strings.Join(parts, " ")
 }
 
 func sessionNotFoundMessage(message string) string {
@@ -29999,6 +30060,14 @@ func sessionNotFoundMessage(message string) string {
 		}
 	}
 	return message
+}
+
+func sessionNotFoundMessageFromError(err error, message string) string {
+	var lookup session.LookupError
+	if errors.As(err, &lookup) && strings.TrimSpace(lookup.Reference) != "" {
+		return fmt.Sprintf("session %q was not found", strings.TrimSpace(lookup.Reference))
+	}
+	return sessionNotFoundMessage(message)
 }
 
 type outputFormatError struct {
@@ -30540,24 +30609,28 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		})
 	}
 	if errors.Is(err, session.ErrNoSessions) {
-		return finish(cliErrorReport{
+		report := cliErrorReport{
 			Kind:      "no_managed_sessions",
 			ErrorKind: "no_managed_sessions",
 			Status:    "error",
 			Action:    "abort",
 			Message:   "no saved sessions found",
 			Hint:      "Run `codog prompt <text>` to create a session, or pass an existing .jsonl/.json session path.",
-		})
+		}
+		applyCLIErrorSessionLookup(&report, err)
+		return finish(report)
 	}
 	if errors.Is(err, session.ErrSessionNotFound) {
-		return finish(cliErrorReport{
+		report := cliErrorReport{
 			Kind:      "session_not_found",
 			ErrorKind: "session_not_found",
 			Status:    "error",
 			Action:    "abort",
-			Message:   sessionNotFoundMessage(message),
+			Message:   sessionNotFoundMessageFromError(err, message),
 			Hint:      "Run `codog sessions list` to see saved sessions, or pass an existing .jsonl/.json session path.",
-		})
+		}
+		applyCLIErrorSessionLookup(&report, err)
+		return finish(report)
 	}
 	if errors.Is(err, oauth.ErrNoToken) {
 		return finish(cliErrorReport{
@@ -31021,7 +31094,7 @@ func cliErrorTarget(err error, report cliErrorReport) string {
 	if errors.As(err, &pathErr) && strings.TrimSpace(pathErr.Path) != "" {
 		return strings.TrimSpace(pathErr.Path)
 	}
-	if target := firstNonEmpty(report.Path, report.Option, report.Argument, report.Value, report.ToolName, report.Command); target != "" {
+	if target := firstNonEmpty(report.SessionSearchPath, report.Path, report.Option, report.Argument, report.Value, report.ToolName, report.Command); target != "" {
 		return target
 	}
 	if len(report.EnvVars) > 0 {

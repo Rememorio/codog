@@ -51,6 +51,45 @@ func TestWorkspaceStoresIsolateSameSessionID(t *testing.T) {
 	require.Equal(t, "from b", sessionB.Messages[0].Content[0].Text)
 }
 
+func TestWorkspaceStoreLookupErrorDescribesCurrentNamespace(t *testing.T) {
+	configHome := t.TempDir()
+	workspaceA := filepath.Join(t.TempDir(), "repo-a")
+	workspaceB := filepath.Join(t.TempDir(), "repo-b")
+	require.NoError(t, os.MkdirAll(workspaceA, 0o755))
+	require.NoError(t, os.MkdirAll(workspaceB, 0o755))
+
+	storeA := NewWorkspaceStore(configHome, workspaceA)
+	storeB := NewWorkspaceStore(configHome, workspaceB)
+	require.NoError(t, storeB.Append("other", anthropic.TextMessage("user", "from b")))
+
+	_, err := storeA.LatestID()
+	require.ErrorIs(t, err, ErrNoSessions)
+	var lookup LookupError
+	require.ErrorAs(t, err, &lookup)
+	require.Equal(t, storeA.Dir, lookup.SearchDir)
+	require.Equal(t, storeA.Workspace, lookup.Workspace)
+	require.Equal(t, WorkspaceFingerprint(storeA.Workspace), lookup.WorkspaceFingerprint)
+	require.Equal(t, 1, lookup.OtherWorkspacePartitions)
+	require.Equal(t, 1, lookup.OtherWorkspaceSessions)
+	require.Contains(t, err.Error(), storeA.Dir)
+	require.Contains(t, err.Error(), "other workspace partition")
+}
+
+func TestWorkspaceStoreMissingSessionLookupErrorKeepsReference(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := NewWorkspaceStore(configHome, workspace)
+
+	_, err := store.OpenExisting("missing-session")
+	require.ErrorIs(t, err, ErrSessionNotFound)
+	var lookup LookupError
+	require.ErrorAs(t, err, &lookup)
+	require.Equal(t, "missing-session", lookup.Reference)
+	require.Equal(t, store.Dir, lookup.SearchDir)
+	require.Contains(t, err.Error(), "missing-session")
+	require.Contains(t, err.Error(), store.Dir)
+}
+
 func TestWorkspaceStoreReadsAndContinuesLegacyFlatSessions(t *testing.T) {
 	configHome := t.TempDir()
 	legacy := NewStore(configHome)
