@@ -30491,24 +30491,25 @@ func samePath(left string, right string) bool {
 }
 
 type promptErrorReport struct {
-	Kind      string `json:"kind"`
-	Action    string `json:"action"`
-	ErrorKind string `json:"error_kind"`
-	Status    string `json:"status"`
-	Argument  string `json:"argument,omitempty"`
-	Message   string `json:"message"`
-	Hint      string `json:"hint"`
+	Kind      string           `json:"kind"`
+	Action    string           `json:"action"`
+	ErrorKind string           `json:"error_kind"`
+	Error     cliErrorEnvelope `json:"error"`
+	Status    string           `json:"status"`
+	Argument  string           `json:"argument,omitempty"`
+	Message   string           `json:"message"`
+	Hint      string           `json:"hint"`
 }
 
 func renderMissingPrompt(out io.Writer, format string) error {
-	report := promptErrorReport{
+	report := buildPromptErrorReport(promptErrorReport{
 		Kind:      "prompt",
 		Action:    "abort",
 		ErrorKind: "missing_prompt",
 		Status:    "error",
 		Message:   "prompt is empty",
 		Hint:      "Provide a prompt with `codog prompt \"...\"`, `codog -p \"...\"`, or pipe text into `codog prompt`.",
-	}
+	})
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "json", "stream-json":
@@ -30521,14 +30522,14 @@ func renderMissingPrompt(out io.Writer, format string) error {
 }
 
 func renderEmptyPrompt(out io.Writer, format string) error {
-	report := promptErrorReport{
+	report := buildPromptErrorReport(promptErrorReport{
 		Kind:      "prompt",
 		Action:    "abort",
 		ErrorKind: "empty_prompt",
 		Status:    "error",
 		Message:   "empty prompt",
 		Hint:      "Provide a prompt with `codog prompt \"...\"`, run a local command such as `codog status`, or start the REPL with no positional argument.",
-	}
+	})
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "json", "stream-json":
@@ -30541,7 +30542,7 @@ func renderEmptyPrompt(out io.Writer, format string) error {
 }
 
 func renderCompactPromptMissingArgument(out io.Writer, format string) error {
-	report := promptErrorReport{
+	report := buildPromptErrorReport(promptErrorReport{
 		Kind:      "prompt",
 		Action:    "abort",
 		ErrorKind: "missing_argument",
@@ -30549,7 +30550,7 @@ func renderCompactPromptMissingArgument(out io.Writer, format string) error {
 		Argument:  "prompt or subcommand",
 		Message:   "--compact requires a prompt or subcommand",
 		Hint:      "Pass a prompt after `--compact`, for example `codog --compact \"summarize this\"`, or run `codog compact --session latest` to compact a saved session.",
-	}
+	})
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "json", "stream-json":
@@ -30559,6 +30560,24 @@ func renderCompactPromptMissingArgument(out io.Writer, format string) error {
 	default:
 		return &ExitError{Code: 1, Err: err}
 	}
+}
+
+func buildPromptErrorReport(report promptErrorReport) promptErrorReport {
+	if strings.TrimSpace(report.Status) == "" {
+		report.Status = "error"
+	}
+	cliReport := cliErrorReport{
+		Kind:      report.ErrorKind,
+		ErrorKind: report.ErrorKind,
+		Status:    report.Status,
+		Command:   "prompt",
+		Action:    report.Action,
+		Argument:  report.Argument,
+		Message:   report.Message,
+		Hint:      report.Hint,
+	}
+	report.Error = buildCLIErrorEnvelope(errors.New(report.ErrorKind+": "+report.Message), cliReport)
+	return report
 }
 
 func renderActionError(out io.Writer, report actionErrorReport, format string) error {
@@ -31114,7 +31133,7 @@ func classifyCLIErrorEnvelopeKind(err error, report cliErrorReport) string {
 		return "session"
 	case "json_schema_validation_failed":
 		return "parse"
-	case "missing_argument", "missing_flag_value", "duplicate_flag", "invalid_flag_value", "invalid_output_format", "invalid_resume_argument", "invalid_tool_name", "missing_tool_name", "unknown_option", "unexpected_extra_args":
+	case "missing_argument", "missing_prompt", "empty_prompt", "missing_flag_value", "duplicate_flag", "invalid_flag_value", "invalid_output_format", "invalid_resume_argument", "invalid_tool_name", "missing_tool_name", "unknown_option", "unexpected_extra_args":
 		return "usage"
 	case "invalid_permission_mode":
 		return "policy"

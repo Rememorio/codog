@@ -11431,6 +11431,10 @@ func TestPromptMissingPromptOutputContract(t *testing.T) {
 	require.Equal(t, "abort", report.Action)
 	require.Equal(t, "missing_prompt", report.ErrorKind)
 	require.Equal(t, "error", report.Status)
+	require.Equal(t, "usage", report.Error.Kind)
+	require.Equal(t, "parse_args", report.Error.Operation)
+	require.Equal(t, "prompt", report.Error.Target)
+	require.False(t, report.Error.Retryable)
 	require.Contains(t, report.Hint, "codog prompt")
 
 	out, err = captureStdout(t, func() error {
@@ -11441,6 +11445,8 @@ func TestPromptMissingPromptOutputContract(t *testing.T) {
 	require.True(t, exitErr.Silent)
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "missing_prompt", report.ErrorKind)
+	require.Equal(t, "usage", report.Error.Kind)
+	require.Equal(t, "parse_args", report.Error.Operation)
 }
 
 func TestCompactFlagMissingArgumentOutputContract(t *testing.T) {
@@ -11475,6 +11481,9 @@ func TestCompactFlagMissingArgumentOutputContract(t *testing.T) {
 	require.Equal(t, "abort", report.Action)
 	require.Equal(t, "missing_argument", report.ErrorKind)
 	require.Equal(t, "prompt or subcommand", report.Argument)
+	require.Equal(t, "usage", report.Error.Kind)
+	require.Equal(t, "parse_args", report.Error.Operation)
+	require.Equal(t, "prompt or subcommand", report.Error.Target)
 	require.Contains(t, report.Hint, "--compact")
 }
 
@@ -12018,6 +12027,9 @@ func TestExplicitEmptyTopLevelPromptOutputContract(t *testing.T) {
 	require.Equal(t, "abort", report.Action)
 	require.Equal(t, "empty_prompt", report.ErrorKind)
 	require.Equal(t, "error", report.Status)
+	require.Equal(t, "usage", report.Error.Kind)
+	require.Equal(t, "parse_args", report.Error.Operation)
+	require.Equal(t, "prompt", report.Error.Target)
 	require.Contains(t, report.Hint, "codog prompt")
 }
 
