@@ -4221,6 +4221,10 @@ func TestReportBackpressureToolCollapsesRepeatedRoadmapReports(t *testing.T) {
 
 	firstOut, err := reportTool.Execute(context.Background(), []byte(`{"action":"generate","channel":"dogfood","now":"2026-07-07T13:01:00Z"}`))
 	require.NoError(t, err)
+	require.Contains(t, firstOut, `"schema_version": "codog.reporting.report.v1"`)
+	require.Contains(t, firstOut, `"schema_compatibility": {`)
+	require.Contains(t, firstOut, `"policy": "codog.reporting.compatibility.v1"`)
+	require.Contains(t, firstOut, `"minimal_stable_core": [`)
 	require.Contains(t, firstOut, `"kind": "report_backpressure"`)
 	require.Contains(t, firstOut, `"outcome": "new"`)
 	require.Contains(t, firstOut, `"new_items": [`)

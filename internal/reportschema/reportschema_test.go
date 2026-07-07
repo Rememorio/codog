@@ -67,8 +67,15 @@ func TestRegistryV1IsSelfDescribing(t *testing.T) {
 	require.Contains(t, fieldIDs(registry), "atomic_update.message_parts[]")
 	require.Contains(t, fieldIDs(registry), "projection.provenance.redactions[]")
 	require.Contains(t, reportSchemaVersions(registry), SchemaV1)
+	require.Contains(t, reportSchemaVersions(registry), ReportingReportSchemaV1)
+	require.Contains(t, reportSchemaVersions(registry), ReportingSnapshotSchemaV1)
 	require.Contains(t, reportSchemaVersions(registry), MockParityReportSchemaV1)
 	require.Contains(t, reportSchemaVersions(registry), MockParityManifestSchemaV1)
+
+	backpressure := registryReportByID(t, registry, "report_backpressure")
+	require.Equal(t, ReportingReportSchemaV1, backpressure.SchemaVersion)
+	require.Contains(t, backpressure.Fields, "schema_compatibility")
+	require.Contains(t, backpressure.Fields, "field_deltas")
 
 	mockParity := registryReportByID(t, registry, "mock_parity_report")
 	require.Equal(t, "codog mock-parity --json", mockParity.Command)

@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	SnapshotSchemaVersion = "codog.reporting.snapshot.v1"
+	SnapshotSchemaVersion = reportschema.ReportingSnapshotSchemaV1
 	DefaultFreshnessTTL   = time.Hour
 )
 
@@ -66,32 +66,34 @@ type ClaimSummary struct {
 }
 
 type Report struct {
-	Kind                        string                          `json:"kind"`
-	Channel                     string                          `json:"channel"`
-	ReportID                    string                          `json:"report_id"`
-	TriggerID                   string                          `json:"trigger_id,omitempty"`
-	SnapshotID                  string                          `json:"snapshot_id"`
-	GeneratedAt                 time.Time                       `json:"generated_at"`
-	Outcome                     string                          `json:"outcome"`
-	Checked                     bool                            `json:"checked"`
-	CheckedSurfaces             []string                        `json:"checked_surfaces,omitempty"`
-	NoChange                    bool                            `json:"no_change"`
-	MixedFreshness              bool                            `json:"mixed_freshness"`
-	FreshnessCounts             map[string]int                  `json:"freshness_counts,omitempty"`
-	Claims                      []ClaimSummary                  `json:"claims,omitempty"`
-	NegativeEvidence            []reportschema.NegativeEvidence `json:"negative_evidence,omitempty"`
-	InvalidatesNegativeEvidence []string                        `json:"invalidates_negative_evidence,omitempty"`
-	FieldDeltas                 []reportschema.FieldDelta       `json:"field_deltas,omitempty"`
-	NewItems                    []ItemSummary                   `json:"new_items,omitempty"`
-	ChangedItems                []ItemSummary                   `json:"changed_items,omitempty"`
-	UnchangedCount              int                             `json:"unchanged_count"`
-	TotalCount                  int                             `json:"total_count"`
-	Collapsed                   bool                            `json:"collapsed"`
-	FullSnapshotStored          bool                            `json:"full_snapshot_stored"`
-	PreviousReportID            string                          `json:"previous_report_id,omitempty"`
-	LastMeaningfulReportID      string                          `json:"last_meaningful_report_id,omitempty"`
-	LastMeaningfulSnapshotID    string                          `json:"last_meaningful_snapshot_id,omitempty"`
-	LastMeaningfulItemIDs       []string                        `json:"last_meaningful_item_ids,omitempty"`
+	SchemaVersion               string                             `json:"schema_version"`
+	SchemaCompatibility         reportschema.CompatibilityGuidance `json:"schema_compatibility"`
+	Kind                        string                             `json:"kind"`
+	Channel                     string                             `json:"channel"`
+	ReportID                    string                             `json:"report_id"`
+	TriggerID                   string                             `json:"trigger_id,omitempty"`
+	SnapshotID                  string                             `json:"snapshot_id"`
+	GeneratedAt                 time.Time                          `json:"generated_at"`
+	Outcome                     string                             `json:"outcome"`
+	Checked                     bool                               `json:"checked"`
+	CheckedSurfaces             []string                           `json:"checked_surfaces,omitempty"`
+	NoChange                    bool                               `json:"no_change"`
+	MixedFreshness              bool                               `json:"mixed_freshness"`
+	FreshnessCounts             map[string]int                     `json:"freshness_counts,omitempty"`
+	Claims                      []ClaimSummary                     `json:"claims,omitempty"`
+	NegativeEvidence            []reportschema.NegativeEvidence    `json:"negative_evidence,omitempty"`
+	InvalidatesNegativeEvidence []string                           `json:"invalidates_negative_evidence,omitempty"`
+	FieldDeltas                 []reportschema.FieldDelta          `json:"field_deltas,omitempty"`
+	NewItems                    []ItemSummary                      `json:"new_items,omitempty"`
+	ChangedItems                []ItemSummary                      `json:"changed_items,omitempty"`
+	UnchangedCount              int                                `json:"unchanged_count"`
+	TotalCount                  int                                `json:"total_count"`
+	Collapsed                   bool                               `json:"collapsed"`
+	FullSnapshotStored          bool                               `json:"full_snapshot_stored"`
+	PreviousReportID            string                             `json:"previous_report_id,omitempty"`
+	LastMeaningfulReportID      string                             `json:"last_meaningful_report_id,omitempty"`
+	LastMeaningfulSnapshotID    string                             `json:"last_meaningful_snapshot_id,omitempty"`
+	LastMeaningfulItemIDs       []string                           `json:"last_meaningful_item_ids,omitempty"`
 }
 
 type Snapshot struct {
@@ -246,6 +248,8 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 		return Report{}, err
 	}
 	report := Report{
+		SchemaVersion:               reportschema.ReportingReportSchemaV1,
+		SchemaCompatibility:         reportSchemaCompatibility(),
 		Kind:                        "report_backpressure",
 		Channel:                     channel,
 		ReportID:                    "report-" + reportID,
@@ -296,6 +300,39 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 		return Report{}, err
 	}
 	return report, nil
+}
+
+func reportSchemaCompatibility() reportschema.CompatibilityGuidance {
+	return reportschema.CompatibilityGuidance{
+		Policy:               reportschema.ReportingCompatibilityV1,
+		CurrentVersion:       reportschema.ReportingReportSchemaV1,
+		MinCompatibleVersion: reportschema.ReportingReportSchemaV1,
+		AdditiveChanges: []string{
+			"new optional top-level fields",
+			"new optional item summary fields",
+			"new field_deltas entries for additional fields",
+			"new negative_evidence query ids",
+		},
+		BreakingChanges: []string{
+			"removing or renaming minimal_stable_core fields",
+			"changing enum meanings for outcome or field_deltas.state",
+			"changing report_id or snapshot_id identity semantics",
+		},
+		MinimalStableCore: []string{
+			"schema_version",
+			"kind",
+			"channel",
+			"report_id",
+			"snapshot_id",
+			"generated_at",
+			"outcome",
+			"checked",
+			"no_change",
+			"total_count",
+			"unchanged_count",
+		},
+		OlderConsumerGuidance: "Consumers that do not support this version should parse only minimal_stable_core, ignore unknown fields, and fetch the snapshot for full audit context.",
+	}
 }
 
 func buildNegativeEvidence(channel string, now time.Time, cursor Cursor, options GenerateOptions) ([]reportschema.NegativeEvidence, error) {

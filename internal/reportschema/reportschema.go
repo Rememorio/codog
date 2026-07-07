@@ -12,6 +12,9 @@ import (
 const (
 	SchemaV1                   = "claw.report.v1"
 	DefaultProjectionPolicyV1  = "claw.report.projection.v1"
+	ReportingReportSchemaV1    = "codog.reporting.report.v1"
+	ReportingSnapshotSchemaV1  = "codog.reporting.snapshot.v1"
+	ReportingCompatibilityV1   = "codog.reporting.compatibility.v1"
 	MockParityReportSchemaV1   = "codog.mock_parity.v1"
 	MockParityManifestSchemaV1 = "codog.mock_parity_manifest.v1"
 
@@ -63,6 +66,17 @@ type FieldDelta struct {
 	PreviousHash *string `json:"previous_hash,omitempty"`
 	CurrentHash  *string `json:"current_hash,omitempty"`
 	Attribution  string  `json:"attribution"`
+}
+
+// CompatibilityGuidance describes how consumers should handle report schema evolution.
+type CompatibilityGuidance struct {
+	Policy                string   `json:"policy"`
+	CurrentVersion        string   `json:"current_version"`
+	MinCompatibleVersion  string   `json:"min_compatible_version"`
+	AdditiveChanges       []string `json:"additive_changes"`
+	BreakingChanges       []string `json:"breaking_changes"`
+	MinimalStableCore     []string `json:"minimal_stable_core"`
+	OlderConsumerGuidance string   `json:"older_consumer_guidance"`
 }
 
 // MessagePart records one transport fragment for a logical report update.
@@ -176,6 +190,8 @@ func RegistryV1() Registry {
 			field("atomic_update.blocker", "current blocker for the logical update", false, "atomic_update"),
 			field("atomic_update.message_parts[]", "ordered chat transport fragments for reconstructing one logical update", false, "atomic_update"),
 			field("projection.provenance.redactions[]", "redaction policy provenance for projected fields", false, "projection"),
+			field("schema_compatibility.policy", "schema evolution policy id for structured report payloads", false, "compatibility"),
+			field("schema_compatibility.minimal_stable_core[]", "fields preserved for degraded older parsers", false, "compatibility"),
 		},
 		Reports: []RegistryReport{
 			report("canonical_report", SchemaV1, "Canonical structured runtime report accepted by report-schema canonicalize/project.", "codog report-schema", "codog report-schema canonicalize", []string{
@@ -187,6 +203,31 @@ func RegistryV1() Registry {
 				"negative_evidence",
 				"field_deltas",
 				"atomic_update",
+			}),
+			report("report_backpressure", ReportingReportSchemaV1, "Delta-first dogfood report with schema compatibility guidance and field-level attribution.", "codog report_backpressure", "codog tool report_backpressure", []string{
+				"schema_version",
+				"schema_compatibility",
+				"kind",
+				"channel",
+				"report_id",
+				"snapshot_id",
+				"generated_at",
+				"outcome",
+				"checked",
+				"no_change",
+				"claims",
+				"negative_evidence",
+				"field_deltas",
+				"new_items",
+				"changed_items",
+				"last_meaningful_report_id",
+			}),
+			report("report_backpressure_snapshot", ReportingSnapshotSchemaV1, "Stored full dogfood report snapshot for audit and resume.", "codog report_backpressure", "codog tool report_backpressure snapshot", []string{
+				"schema_version",
+				"snapshot_id",
+				"channel",
+				"generated_at",
+				"items",
 			}),
 			report("mock_parity_report", MockParityReportSchemaV1, "Deterministic mock provider parity harness execution report.", "codog mock-parity", "codog mock-parity --json", []string{
 				"schema_version",
