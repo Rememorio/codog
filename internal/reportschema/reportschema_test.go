@@ -66,6 +66,8 @@ func TestRegistryV1IsSelfDescribing(t *testing.T) {
 	require.Contains(t, fieldIDs(registry), "negative_evidence[]")
 	require.Contains(t, enumValuesByField(t, registry, "claims[].kind"), ClaimHypothesis)
 	require.Contains(t, enumValuesByField(t, registry, "field_deltas[].state"), FieldCarriedForward)
+	require.Contains(t, enumValuesByField(t, registry, "view"), "delta_brief")
+	require.Contains(t, enumValuesByField(t, registry, "verbosity"), "verbose")
 	require.False(t, fieldByID(t, registry, "schema_compatibility.policy").Deprecated)
 	require.Contains(t, fieldIDs(registry), "atomic_update.message_parts[]")
 	require.Contains(t, fieldIDs(registry), "projection.provenance.redactions[]")
@@ -79,6 +81,9 @@ func TestRegistryV1IsSelfDescribing(t *testing.T) {
 	require.Equal(t, ReportingReportSchemaV1, backpressure.SchemaVersion)
 	require.Contains(t, backpressure.Fields, "schema_compatibility")
 	require.Contains(t, backpressure.Fields, "field_deltas")
+	projection := registryReportByID(t, registry, "report_backpressure_projection")
+	require.Contains(t, projection.Fields, "canonical_report")
+	require.Contains(t, projection.Fields, "view")
 
 	mockParity := registryReportByID(t, registry, "mock_parity_report")
 	require.Equal(t, "codog mock-parity --json", mockParity.Command)

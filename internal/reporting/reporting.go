@@ -100,6 +100,7 @@ type ReportProjection struct {
 	SchemaVersion   string                     `json:"schema_version"`
 	ProjectionID    string                     `json:"projection_id"`
 	View            string                     `json:"view"`
+	Verbosity       string                     `json:"verbosity"`
 	Provenance      ReportProjectionProvenance `json:"provenance"`
 	Payload         map[string]any             `json:"payload"`
 	CanonicalReport Report                     `json:"canonical_report"`
@@ -112,6 +113,8 @@ type ReportProjectionProvenance struct {
 	SourceSnapshotID     string                            `json:"source_snapshot_id"`
 	SourceContentHash    string                            `json:"source_content_hash"`
 	Consumer             reportschema.ConsumerCapabilities `json:"consumer"`
+	View                 string                            `json:"view"`
+	Verbosity            string                            `json:"verbosity"`
 	Downgraded           bool                              `json:"downgraded"`
 	OmittedFieldFamilies []string                          `json:"omitted_field_families,omitempty"`
 }
@@ -156,7 +159,7 @@ func (s Store) Generate(channel string, now time.Time) (Report, error) {
 	return s.GenerateWithOptions(channel, now, GenerateOptions{})
 }
 
-func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities, view string) (ReportProjection, error) {
+func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities, view string, verbosity string) (ReportProjection, error) {
 	capabilities.Consumer = strings.TrimSpace(capabilities.Consumer)
 	if capabilities.Consumer == "" {
 		capabilities.Consumer = "unknown"
@@ -164,9 +167,11 @@ func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities
 	capabilities.SchemaVersions = cleanStrings(capabilities.SchemaVersions)
 	capabilities.FieldFamilies = cleanStrings(capabilities.FieldFamilies)
 	capabilities.MaxSensitivity = strings.TrimSpace(capabilities.MaxSensitivity)
-	if strings.TrimSpace(view) == "" {
+	view = strings.TrimSpace(view)
+	if view == "" {
 		view = "default"
 	}
+	verbosity = normalizeVerbosity(verbosity)
 	fullPayload, err := reportMap(report)
 	if err != nil {
 		return ReportProjection{}, err
@@ -175,7 +180,9 @@ func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities
 	restrictFamilies := len(capabilities.FieldFamilies) > 0 || !supportsSchema
 	payload := fullPayload
 	omitted := []string{}
-	if restrictFamilies {
+	if isAudienceReportView(view) {
+		payload, omitted = audienceReportPayload(report, view, verbosity)
+	} else if restrictFamilies {
 		payload, omitted = projectedReportPayload(report, capabilities)
 	}
 	sourceHash, err := stableHash(report)
@@ -185,6 +192,7 @@ func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities
 	projection := ReportProjection{
 		SchemaVersion: reportschema.ReportingReportSchemaV1,
 		View:          view,
+		Verbosity:     verbosity,
 		Provenance: ReportProjectionProvenance{
 			PolicyID:             reportschema.ReportingProjectionPolicyV1,
 			SourceSchemaVersion:  report.SchemaVersion,
@@ -192,7 +200,9 @@ func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities
 			SourceSnapshotID:     report.SnapshotID,
 			SourceContentHash:    sourceHash,
 			Consumer:             capabilities,
-			Downgraded:           !supportsSchema || len(omitted) > 0,
+			View:                 view,
+			Verbosity:            verbosity,
+			Downgraded:           !supportsSchema || len(omitted) > 0 || isAudienceReportView(view),
 			OmittedFieldFamilies: omitted,
 		},
 		Payload:         payload,
@@ -200,6 +210,7 @@ func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities
 	}
 	projectionID, err := stableHash(map[string]any{
 		"view":       projection.View,
+		"verbosity":  projection.Verbosity,
 		"provenance": projection.Provenance,
 		"payload":    projection.Payload,
 	})
@@ -433,6 +444,188 @@ func projectedReportPayload(report Report, capabilities reportschema.ConsumerCap
 		omitted = append(omitted, family)
 	}
 	return payload, omitted
+}
+
+func audienceReportPayload(report Report, view string, verbosity string) (map[string]any, []string) {
+	payload := reportCorePayload(report)
+	payload["projection_view"] = view
+	payload["projection_verbosity"] = verbosity
+	switch view {
+	case "delta_brief":
+		payload["summary"] = reportSummary(report)
+		payload["top_items"] = projectedItems(report, verbosity)
+		payload["field_deltas"] = report.FieldDeltas
+		return payload, []string{"compatibility", "negative_evidence", "freshness"}
+	case "ops_audit":
+		payload["schema_compatibility"] = report.SchemaCompatibility
+		payload["checked_surfaces"] = report.CheckedSurfaces
+		payload["negative_evidence"] = report.NegativeEvidence
+		payload["invalidates_negative_evidence"] = report.InvalidatesNegativeEvidence
+		payload["field_deltas"] = report.FieldDeltas
+		payload["freshness_counts"] = report.FreshnessCounts
+		payload["items"] = projectedItems(report, verbosity)
+		return payload, []string{}
+	case "human_readable":
+		payload["summary_text"] = humanReportSummary(report)
+		payload["highlights"] = reportHighlights(report, verbosity)
+		payload["next_actions"] = reportNextActions(report)
+		return payload, []string{"field_deltas", "negative_evidence", "freshness"}
+	case "roadmap_sync":
+		payload["roadmap_items"] = roadmapSyncItems(report, verbosity)
+		payload["field_deltas"] = report.FieldDeltas
+		payload["last_meaningful_report_id"] = report.LastMeaningfulReportID
+		payload["last_meaningful_snapshot_id"] = report.LastMeaningfulSnapshotID
+		payload["last_meaningful_item_ids"] = report.LastMeaningfulItemIDs
+		return payload, []string{"claims", "negative_evidence", "freshness"}
+	default:
+		return payload, []string{"compatibility", "claims", "negative_evidence", "field_deltas", "items", "freshness"}
+	}
+}
+
+func reportCorePayload(report Report) map[string]any {
+	return map[string]any{
+		"schema_version":  report.SchemaVersion,
+		"kind":            report.Kind,
+		"channel":         report.Channel,
+		"report_id":       report.ReportID,
+		"snapshot_id":     report.SnapshotID,
+		"generated_at":    report.GeneratedAt,
+		"outcome":         report.Outcome,
+		"checked":         report.Checked,
+		"no_change":       report.NoChange,
+		"total_count":     report.TotalCount,
+		"unchanged_count": report.UnchangedCount,
+	}
+}
+
+func reportSummary(report Report) map[string]any {
+	return map[string]any{
+		"outcome":       report.Outcome,
+		"new_count":     len(report.NewItems),
+		"changed_count": len(report.ChangedItems),
+		"total_count":   report.TotalCount,
+		"no_change":     report.NoChange,
+		"collapsed":     report.Collapsed,
+	}
+}
+
+func projectedItems(report Report, verbosity string) []map[string]any {
+	items := append([]ItemSummary(nil), report.NewItems...)
+	items = append(items, report.ChangedItems...)
+	limit := len(items)
+	switch verbosity {
+	case "brief":
+		if limit > 3 {
+			limit = 3
+		}
+	case "normal":
+		if limit > 10 {
+			limit = 10
+		}
+	}
+	projected := make([]map[string]any, 0, limit)
+	for _, item := range items[:limit] {
+		value := map[string]any{
+			"id":       item.ID,
+			"title":    item.Title,
+			"state":    item.State,
+			"priority": item.Priority,
+			"severity": item.Severity,
+			"impact":   item.Impact,
+		}
+		if verbosity != "brief" {
+			value["freshness"] = item.Freshness
+			value["evidence_refs"] = item.EvidenceRefs
+		}
+		if verbosity == "verbose" {
+			value["claims"] = item.Claims
+			value["handoff"] = item.Handoff
+			value["implementation"] = item.Implementation
+		}
+		projected = append(projected, value)
+	}
+	return projected
+}
+
+func humanReportSummary(report Report) string {
+	switch report.Outcome {
+	case "no_change":
+		return "No new report delta was observed."
+	case "new":
+		return "New roadmap report items were observed."
+	default:
+		return "Roadmap report items changed."
+	}
+}
+
+func reportHighlights(report Report, verbosity string) []string {
+	items := append([]ItemSummary(nil), report.NewItems...)
+	items = append(items, report.ChangedItems...)
+	limit := len(items)
+	if verbosity == "brief" && limit > 3 {
+		limit = 3
+	}
+	highlights := make([]string, 0, limit)
+	for _, item := range items[:limit] {
+		highlights = append(highlights, string(item.Priority)+" "+item.Title)
+	}
+	if len(highlights) == 0 && report.NoChange {
+		highlights = append(highlights, "No changed roadmap items")
+	}
+	return highlights
+}
+
+func reportNextActions(report Report) []string {
+	actions := []string{}
+	for _, item := range append(append([]ItemSummary(nil), report.NewItems...), report.ChangedItems...) {
+		if item.Handoff != nil {
+			actions = append(actions, item.Handoff.SuggestedVerification...)
+		}
+	}
+	return cleanStrings(actions)
+}
+
+func roadmapSyncItems(report Report, verbosity string) []map[string]any {
+	items := append([]ItemSummary(nil), report.NewItems...)
+	items = append(items, report.ChangedItems...)
+	projected := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		value := map[string]any{
+			"id":          item.ID,
+			"title":       item.Title,
+			"state":       item.State,
+			"priority":    item.Priority,
+			"severity":    item.Severity,
+			"impact":      item.Impact,
+			"updated_at":  item.UpdatedAt,
+			"readiness":   item.Readiness,
+			"fingerprint": item.Fingerprint,
+		}
+		if verbosity != "brief" {
+			value["evidence_refs"] = item.EvidenceRefs
+			value["handoff"] = item.Handoff
+		}
+		projected = append(projected, value)
+	}
+	return projected
+}
+
+func isAudienceReportView(view string) bool {
+	switch view {
+	case "delta_brief", "ops_audit", "human_readable", "roadmap_sync":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeVerbosity(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "brief", "normal", "verbose":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "normal"
+	}
 }
 
 func addReportFamily(payload map[string]any, report Report, family string) {

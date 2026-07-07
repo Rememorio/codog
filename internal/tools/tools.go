@@ -9202,6 +9202,10 @@ func (ReportBackpressureTool) Definition() anthropic.ToolDefinition {
 					"items": map[string]any{"type": "string"},
 				},
 				"projection_view": map[string]any{"type": "string"},
+				"projection_verbosity": map[string]any{
+					"type": "string",
+					"enum": []string{"brief", "normal", "verbose"},
+				},
 			},
 			"additionalProperties": false,
 		},
@@ -9230,6 +9234,7 @@ func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage
 		SchemaVersions      []string `json:"schema_versions"`
 		FieldFamilies       []string `json:"field_families"`
 		ProjectionView      string   `json:"projection_view"`
+		ProjectionVerbosity string   `json:"projection_verbosity"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -9264,12 +9269,12 @@ func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage
 		if err != nil {
 			return "", err
 		}
-		if payload.Consumer != "" || len(payload.SchemaVersions) > 0 || len(payload.FieldFamilies) > 0 || payload.ProjectionView != "" {
+		if payload.Consumer != "" || len(payload.SchemaVersions) > 0 || len(payload.FieldFamilies) > 0 || payload.ProjectionView != "" || payload.ProjectionVerbosity != "" {
 			projection, err := reporting.ProjectReport(report, reportschema.ConsumerCapabilities{
 				Consumer:       payload.Consumer,
 				SchemaVersions: payload.SchemaVersions,
 				FieldFamilies:  payload.FieldFamilies,
-			}, payload.ProjectionView)
+			}, payload.ProjectionView, payload.ProjectionVerbosity)
 			if err != nil {
 				return "", err
 			}

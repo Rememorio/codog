@@ -4317,6 +4317,33 @@ func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
 	require.NotContains(t, projection.Payload, "negative_evidence")
 	require.Contains(t, projection.CanonicalReport, "new_items")
 	require.Contains(t, projection.CanonicalReport, "schema_compatibility")
+
+	briefOut, err := reportTool.Execute(context.Background(), []byte(`{"action":"generate","channel":"dogfood","consumer":"clawhip","schema_versions":["codog.reporting.report.v1"],"projection_view":"delta_brief","projection_verbosity":"brief","now":"2026-07-07T14:02:00Z"}`))
+	require.NoError(t, err)
+	var brief struct {
+		View       string         `json:"view"`
+		Verbosity  string         `json:"verbosity"`
+		Payload    map[string]any `json:"payload"`
+		Provenance struct {
+			SourceReportID string `json:"source_report_id"`
+			View           string `json:"view"`
+			Verbosity      string `json:"verbosity"`
+			Downgraded     bool   `json:"downgraded"`
+		} `json:"provenance"`
+		CanonicalReport map[string]any `json:"canonical_report"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(briefOut), &brief))
+	require.Equal(t, "delta_brief", brief.View)
+	require.Equal(t, "brief", brief.Verbosity)
+	require.True(t, brief.Provenance.Downgraded)
+	require.Equal(t, "delta_brief", brief.Provenance.View)
+	require.Equal(t, "brief", brief.Provenance.Verbosity)
+	require.Contains(t, brief.Payload, "summary")
+	require.Contains(t, brief.Payload, "top_items")
+	require.NotContains(t, brief.Payload, "new_items")
+	require.Contains(t, brief.CanonicalReport, "schema_compatibility")
+	require.Contains(t, brief.CanonicalReport, "report_id")
+	require.NotEmpty(t, brief.Provenance.SourceReportID)
 }
 
 func TestReportSchemaToolFiltersRegistry(t *testing.T) {

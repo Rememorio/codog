@@ -246,7 +246,7 @@ func TestProjectReportNegotiatesConsumerCapabilities(t *testing.T) {
 		Consumer:       "legacy-claw",
 		SchemaVersions: []string{"legacy.report.v1"},
 		FieldFamilies:  []string{"claims", "field_deltas"},
-	}, "legacy")
+	}, "legacy", "normal")
 	require.NoError(t, err)
 
 	require.Equal(t, reportschema.ReportingReportSchemaV1, projection.SchemaVersion)
@@ -269,11 +269,70 @@ func TestProjectReportNegotiatesConsumerCapabilities(t *testing.T) {
 	full, err := ProjectReport(report, reportschema.ConsumerCapabilities{
 		Consumer:       "current-claw",
 		SchemaVersions: []string{reportschema.ReportingReportSchemaV1},
-	}, "full")
+	}, "full", "normal")
 	require.NoError(t, err)
 	require.False(t, full.Provenance.Downgraded)
 	require.Empty(t, full.Provenance.OmittedFieldFamilies)
 	require.Contains(t, full.Payload, "new_items")
+}
+
+func TestProjectReportBuildsAudienceViews(t *testing.T) {
+	configHome := t.TempDir()
+	roadmapStore := roadmap.NewStore(configHome)
+	reportStore := NewStore(configHome)
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	filed, err := roadmapStore.File(roadmap.Filing{
+		Title:    "audience projection",
+		Priority: roadmap.PriorityP0,
+		Severity: roadmap.SeverityCritical,
+		Impact:   roadmap.ImpactObservabilityDebt,
+		Handoff: &roadmap.HandoffPacket{
+			SuggestedVerification: []string{"go test ./internal/reporting"},
+		},
+		Now: now,
+	})
+	require.NoError(t, err)
+	report, err := reportStore.Generate("dogfood", now.Add(time.Minute))
+	require.NoError(t, err)
+
+	brief, err := ProjectReport(report, reportschema.ConsumerCapabilities{
+		Consumer:       "clawhip",
+		SchemaVersions: []string{reportschema.ReportingReportSchemaV1},
+	}, "delta_brief", "brief")
+	require.NoError(t, err)
+	require.True(t, brief.Provenance.Downgraded)
+	require.Equal(t, "delta_brief", brief.View)
+	require.Equal(t, "brief", brief.Verbosity)
+	require.Equal(t, "delta_brief", brief.Provenance.View)
+	require.Equal(t, "brief", brief.Provenance.Verbosity)
+	require.Equal(t, report.ReportID, brief.Provenance.SourceReportID)
+	require.Contains(t, brief.Payload, "summary")
+	require.Contains(t, brief.Payload, "top_items")
+	require.NotContains(t, brief.Payload, "negative_evidence")
+	require.Len(t, brief.CanonicalReport.NewItems, 1)
+
+	human, err := ProjectReport(report, reportschema.ConsumerCapabilities{
+		Consumer:       "human-operator",
+		SchemaVersions: []string{reportschema.ReportingReportSchemaV1},
+	}, "human_readable", "verbose")
+	require.NoError(t, err)
+	require.Equal(t, "human_readable", human.View)
+	require.Contains(t, human.Payload["summary_text"], "New roadmap")
+	require.Contains(t, human.Payload, "highlights")
+	require.Contains(t, human.Payload, "next_actions")
+
+	sync, err := ProjectReport(report, reportschema.ConsumerCapabilities{
+		Consumer:       "roadmap-sync",
+		SchemaVersions: []string{reportschema.ReportingReportSchemaV1},
+	}, "roadmap_sync", "normal")
+	require.NoError(t, err)
+	require.Contains(t, sync.Payload, "roadmap_items")
+	require.Equal(t, report.ReportID, sync.Provenance.SourceReportID)
+	items, ok := sync.Payload["roadmap_items"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, items, 1)
+	require.Equal(t, filed.ItemID, items[0]["id"])
 }
 
 func claimByID(t *testing.T, claims []ClaimSummary, id string) ClaimSummary {
