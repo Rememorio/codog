@@ -99,6 +99,7 @@ type Options struct {
 	GitError                    string
 	GitFreshness                *gitops.BranchFreshness
 	GitIdentity                 *gitops.Identity
+	GitBaseCommit               *gitops.BaseCommitCheck
 	LaneBoard                   *background.LaneBoard
 	LaneBoardError              string
 	SandboxOS                   string
@@ -278,6 +279,8 @@ type GitStatus struct {
 	Available    bool                    `json:"available"`
 	Error        string                  `json:"error,omitempty"`
 	Branch       string                  `json:"branch,omitempty"`
+	Upstream     string                  `json:"upstream,omitempty"`
+	HasUpstream  bool                    `json:"has_upstream"`
 	HeadSHA      string                  `json:"head_sha,omitempty"`
 	HeadShortSHA string                  `json:"head_short_sha,omitempty"`
 	HeadRef      string                  `json:"head_ref,omitempty"`
@@ -291,6 +294,7 @@ type GitStatus struct {
 	Untracked    int                     `json:"untracked"`
 	Conflicts    int                     `json:"conflicts"`
 	Freshness    *gitops.BranchFreshness `json:"freshness,omitempty"`
+	BaseCommit   *gitops.BaseCommitCheck `json:"base_commit,omitempty"`
 	Raw          string                  `json:"raw,omitempty"`
 }
 
@@ -415,6 +419,8 @@ func Build(opts Options) Snapshot {
 	if opts.GitFreshness != nil {
 		freshness := *opts.GitFreshness
 		git.Freshness = &freshness
+		git.Upstream = freshness.Upstream
+		git.HasUpstream = freshness.HasUpstream
 	}
 	if opts.GitIdentity != nil {
 		identity := *opts.GitIdentity
@@ -425,6 +431,14 @@ func Build(opts Options) Snapshot {
 		git.IsBare = identity.IsBare
 		git.IsWorktree = identity.IsWorktree
 		git.GitDir = identity.GitDir
+	}
+	if opts.GitBaseCommit != nil {
+		baseCommit := *opts.GitBaseCommit
+		if baseCommit.Source != nil {
+			source := *baseCommit.Source
+			baseCommit.Source = &source
+		}
+		git.BaseCommit = &baseCommit
 	}
 	bootPreflight := buildBootPreflightStatus(opts, git)
 	status := "ok"
@@ -442,10 +456,10 @@ func Build(opts Options) Snapshot {
 		status = "warn"
 	} else if strings.TrimSpace(auth.Warning) != "" {
 		status = "warn"
-	} else if git.Freshness != nil {
-		if !git.Freshness.Fresh {
-			status = "warn"
-		}
+	} else if git.Freshness != nil && !git.Freshness.Fresh {
+		status = "warn"
+	} else if git.BaseCommit != nil && !git.BaseCommit.Matches {
+		status = "warn"
 	}
 	return Snapshot{
 		Kind:                "status",
@@ -981,6 +995,15 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 				upstream,
 				freshness.Ahead,
 				freshness.Behind,
+			)
+		}
+		if snapshot.Git.BaseCommit != nil {
+			check := snapshot.Git.BaseCommit
+			fmt.Fprintf(w, "  Git base         status=%s matches=%t expected=%s actual=%s\n",
+				check.Status,
+				check.Matches,
+				check.Expected,
+				check.Actual,
 			)
 		}
 	} else {

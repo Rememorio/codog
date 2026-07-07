@@ -16300,6 +16300,40 @@ func TestStatusIncludesBranchFreshness(t *testing.T) {
 	require.Contains(t, out.String(), `"fix: main update"`)
 }
 
+func TestStatusIncludesBaseCommitCheck(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runGit(t, workspace, "init", "-b", "main")
+	runGit(t, workspace, "config", "user.email", "codog@example.test")
+	runGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "base.txt"), []byte("base\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "chore: base")
+	baseSHA := strings.TrimSpace(runGitOutput(t, workspace, "rev-parse", "HEAD"))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog-base"), []byte(baseSHA+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "next.txt"), []byte("next\n"), 0o644))
+	runGit(t, workspace, "add", "next.txt")
+	runGit(t, workspace, "commit", "-m", "feat: next")
+
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{Model: "claude-test", BaseURL: "https://api.example.test"},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"status": "warn"`)
+	require.Contains(t, out.String(), `"base_commit": {`)
+	require.Contains(t, out.String(), `"status": "diverged"`)
+	require.Contains(t, out.String(), `"matches": false`)
+	require.Contains(t, out.String(), `"kind": "codog_file"`)
+	require.Contains(t, out.String(), `"expected": "`+baseSHA+`"`)
+	require.Contains(t, out.String(), "stale codebase")
+}
+
 func TestHistoryCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
@@ -27301,6 +27335,15 @@ func runGit(t *testing.T, workspace string, args ...string) {
 	cmd.Dir = workspace
 	data, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(data))
+}
+
+func runGitOutput(t *testing.T, workspace string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = workspace
+	data, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(data))
+	return string(data)
 }
 
 func captureStdout(t *testing.T, fn func() error) (string, error) {

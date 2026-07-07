@@ -970,6 +970,17 @@ func checkGit(workspace string) Check {
 		branch = strings.TrimSpace(rawBranch)
 		details = append(details, "Branch: "+branch)
 	}
+	var baseCommit *gitops.BaseCommitCheck
+	if check, err := gitops.CheckBaseCommitForWorkspace(workspace, ""); err == nil {
+		baseCommit = &check
+		details = append(details, "Base commit: "+check.Status)
+		if check.Expected != "" {
+			details = append(details, "Expected base: "+check.Expected)
+		}
+		if check.Actual != "" {
+			details = append(details, "Actual base: "+check.Actual)
+		}
+	}
 	if freshness, err := gitops.CheckBranchFreshness(workspace, branch, "main"); err == nil {
 		details = append(details,
 			"Base: "+freshness.Base,
@@ -988,6 +999,18 @@ func checkGit(workspace string) Check {
 				Details: details,
 				Hint:    "Review `codog branch freshness` and update the branch before risky edits or PR work.",
 			}
+		}
+	}
+	if baseCommit != nil && !baseCommit.Matches {
+		return Check{
+			Name:    "Git",
+			Status:  StatusWarn,
+			Summary: "Worktree HEAD does not match the expected base commit.",
+			Details: details,
+			Hint:    "Review `codog stale-base --json` and refresh the worktree before risky edits or PR work.",
+			Data: map[string]any{
+				"base_commit": *baseCommit,
+			},
 		}
 	}
 	return Check{Name: "Git", Status: StatusOK, Summary: "git worktree is available.", Details: details}

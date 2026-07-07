@@ -27488,12 +27488,16 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 	}
 	var gitFreshness *gitops.BranchFreshness
 	var gitIdentity *gitops.Identity
+	var gitBaseCommit *gitops.BaseCommitCheck
 	if gitErr == nil {
 		if freshness, err := gitops.CheckBranchFreshness(a.Workspace, "", "main"); err == nil {
 			gitFreshness = &freshness
 		}
 		if identity, err := gitops.InspectIdentity(a.Workspace); err == nil {
 			gitIdentity = &identity
+		}
+		if check, err := gitops.CheckBaseCommitForWorkspace(a.Workspace, ""); err == nil {
+			gitBaseCommit = &check
 		}
 	}
 	var laneBoard *background.LaneBoard
@@ -27601,6 +27605,7 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 		GitError:                    gitError,
 		GitFreshness:                gitFreshness,
 		GitIdentity:                 gitIdentity,
+		GitBaseCommit:               gitBaseCommit,
 		LaneBoard:                   laneBoard,
 		LaneBoardError:              laneBoardError,
 		SandboxOS:                   sandboxStatus.OS,

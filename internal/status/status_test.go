@@ -189,6 +189,8 @@ func TestBuildWarnsOnStaleBranchFreshness(t *testing.T) {
 	require.Equal(t, "stale", snapshot.Git.Freshness.Status)
 	require.True(t, snapshot.Git.Freshness.HasUpstream)
 	require.Equal(t, "origin/topic", snapshot.Git.Freshness.Upstream)
+	require.True(t, snapshot.Git.HasUpstream)
+	require.Equal(t, "origin/topic", snapshot.Git.Upstream)
 	require.Equal(t, 2, snapshot.Git.Freshness.Behind)
 
 	var out bytes.Buffer
@@ -219,6 +221,38 @@ func TestBuildIncludesGitIdentity(t *testing.T) {
 	var out bytes.Buffer
 	RenderText(&out, snapshot)
 	require.Contains(t, out.String(), "Git head         ref=main sha=1234567890ab detached=false bare=false worktree=false")
+}
+
+func TestBuildWarnsOnDivergedBaseCommit(t *testing.T) {
+	snapshot := Build(Options{
+		Version:   "test-version",
+		GitStatus: "## main",
+		GitFreshness: &gitops.BranchFreshness{
+			Branch: "main",
+			Base:   "main",
+			Status: "fresh",
+			Fresh:  true,
+		},
+		GitBaseCommit: &gitops.BaseCommitCheck{
+			Status:   "diverged",
+			Matches:  false,
+			Source:   &gitops.BaseCommitSource{Kind: "codog_file", Value: "abc123"},
+			Expected: "abc123",
+			Actual:   "def456",
+			Warning:  "warning: stale-base",
+		},
+	})
+
+	require.Equal(t, "warn", snapshot.Status)
+	require.NotNil(t, snapshot.Git.BaseCommit)
+	require.Equal(t, "diverged", snapshot.Git.BaseCommit.Status)
+	require.False(t, snapshot.Git.BaseCommit.Matches)
+	require.Equal(t, "abc123", snapshot.Git.BaseCommit.Expected)
+	require.Equal(t, "def456", snapshot.Git.BaseCommit.Actual)
+
+	var out bytes.Buffer
+	RenderText(&out, snapshot)
+	require.Contains(t, out.String(), "Git base         status=diverged matches=false expected=abc123 actual=def456")
 }
 
 func TestBuildMarksInvalidValidationDegraded(t *testing.T) {

@@ -598,6 +598,45 @@ func TestRunWarnsForStaleBranchFreshness(t *testing.T) {
 	require.Contains(t, strings.Join(git.Details, "\n"), "Missing: fix: main update")
 }
 
+func TestRunWarnsForDivergedBaseCommit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runTestGit(t, workspace, "init", "-b", "main")
+	runTestGit(t, workspace, "config", "user.email", "codog@example.test")
+	runTestGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "base.txt"), []byte("base\n"), 0o644))
+	runTestGit(t, workspace, "add", ".")
+	runTestGit(t, workspace, "commit", "-m", "chore: base")
+	baseSHA := strings.TrimSpace(runTestGitOutput(t, workspace, "rev-parse", "HEAD"))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog-base"), []byte(baseSHA+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "next.txt"), []byte("next\n"), 0o644))
+	runTestGit(t, workspace, "add", "next.txt")
+	runTestGit(t, workspace, "commit", "-m", "feat: next")
+
+	report := Run(Options{
+		Workspace:      workspace,
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	git := findCheck(t, report, "Git")
+	require.Equal(t, StatusWarn, git.Status)
+	require.Contains(t, git.Summary, "expected base commit")
+	require.Contains(t, strings.Join(git.Details, "\n"), "Base commit: diverged")
+	require.Contains(t, strings.Join(git.Details, "\n"), "Expected base: "+baseSHA)
+	require.Contains(t, git.Hint, "codog stale-base --json")
+	require.Contains(t, git.Data, "base_commit")
+}
+
 func TestRunWarnsForUnavailableMCPServer(t *testing.T) {
 	report := Run(Options{
 		Workspace:      t.TempDir(),
@@ -754,6 +793,15 @@ func runTestGit(t *testing.T, workspace string, args ...string) {
 	cmd.Dir = workspace
 	data, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(data))
+}
+
+func runTestGitOutput(t *testing.T, workspace string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = workspace
+	data, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(data))
+	return string(data)
 }
 
 func findCheck(t *testing.T, report Report, name string) Check {

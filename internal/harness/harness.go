@@ -5014,6 +5014,13 @@ func diagnosticsStatusScenario() scenario {
 					HeadRef:      "main",
 					GitDir:       filepath.Join(workspace, ".git"),
 				},
+				GitBaseCommit: &gitops.BaseCommitCheck{
+					Status:   "matches",
+					Matches:  true,
+					Source:   &gitops.BaseCommitSource{Kind: "codog_file", Value: "1234567890abcdef1234567890abcdef12345678", Path: filepath.Join(workspace, ".codog-base")},
+					Expected: "1234567890abcdef1234567890abcdef12345678",
+					Actual:   "1234567890abcdef1234567890abcdef12345678",
+				},
 				SandboxOS:        "darwin",
 				SandboxDefault:   "seatbelt",
 				SandboxAvailable: true,
@@ -5096,6 +5103,8 @@ func diagnosticsStatusScenario() scenario {
 					"git_head_sha":        statusReport.Git.HeadSHA,
 					"git_head_ref":        statusReport.Git.HeadRef,
 					"git_detached":        statusReport.Git.IsDetached,
+					"base_commit_status":  statusReport.Git.BaseCommit.Status,
+					"base_commit_matches": statusReport.Git.BaseCommit.Matches,
 				},
 				"doctor": map[string]any{
 					"kind":        doctorReport.Kind,
