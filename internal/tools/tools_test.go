@@ -4280,6 +4280,43 @@ func TestReportBackpressureToolCollapsesRepeatedRoadmapReports(t *testing.T) {
 	require.Contains(t, snapshotOut, `"schema_version": "codog.reporting.snapshot.v1"`)
 }
 
+func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
+	configHome := t.TempDir()
+	roadmapTool := RoadmapPinpointTool{ConfigHome: configHome}
+	reportTool := ReportBackpressureTool{ConfigHome: configHome}
+
+	_, err := roadmapTool.Execute(context.Background(), []byte(`{"action":"file","title":"project consumer report","priority":"p1","evidence":[{"role":"root_cause_hint","type":"log","reference":"log:projection","preview":"legacy consumer needs reduced payload"}],"now":"2026-07-07T14:00:00Z"}`))
+	require.NoError(t, err)
+
+	out, err := reportTool.Execute(context.Background(), []byte(`{"action":"generate","channel":"dogfood","consumer":"legacy-claw","schema_versions":["legacy.report.v1"],"field_families":["claims","field_deltas"],"projection_view":"legacy","now":"2026-07-07T14:01:00Z"}`))
+	require.NoError(t, err)
+	var projection struct {
+		SchemaVersion string `json:"schema_version"`
+		Provenance    struct {
+			Downgraded           bool     `json:"downgraded"`
+			OmittedFieldFamilies []string `json:"omitted_field_families"`
+			Consumer             struct {
+				Consumer string `json:"consumer"`
+			} `json:"consumer"`
+		} `json:"provenance"`
+		Payload         map[string]any `json:"payload"`
+		CanonicalReport map[string]any `json:"canonical_report"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &projection))
+
+	require.Equal(t, "codog.reporting.report.v1", projection.SchemaVersion)
+	require.True(t, projection.Provenance.Downgraded)
+	require.Equal(t, "legacy-claw", projection.Provenance.Consumer.Consumer)
+	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "items")
+	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "negative_evidence")
+	require.Contains(t, projection.Payload, "claims")
+	require.Contains(t, projection.Payload, "field_deltas")
+	require.NotContains(t, projection.Payload, "new_items")
+	require.NotContains(t, projection.Payload, "negative_evidence")
+	require.Contains(t, projection.CanonicalReport, "new_items")
+	require.Contains(t, projection.CanonicalReport, "schema_compatibility")
+}
+
 func TestTaskSuperviseToolRestartsEligibleTasks(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX sh")

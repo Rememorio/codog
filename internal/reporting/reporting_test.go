@@ -221,6 +221,61 @@ func TestGenerateNoChangeWithoutPriorMeaningfulReport(t *testing.T) {
 	require.Equal(t, "2026-07-07T13:00:00Z/2026-07-07T13:00:00Z", noDelta.Window)
 }
 
+func TestProjectReportNegotiatesConsumerCapabilities(t *testing.T) {
+	configHome := t.TempDir()
+	roadmapStore := roadmap.NewStore(configHome)
+	reportStore := NewStore(configHome)
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	_, err := roadmapStore.File(roadmap.Filing{
+		Title:    "projectable report",
+		Priority: roadmap.PriorityP1,
+		Evidence: []roadmap.EvidenceAttachment{{
+			Role:      roadmap.EvidenceRootCauseHint,
+			Type:      "log",
+			Reference: "log:projection",
+			Preview:   "projection keeps canonical context",
+		}},
+		Now: now,
+	})
+	require.NoError(t, err)
+	report, err := reportStore.Generate("dogfood", now.Add(time.Minute))
+	require.NoError(t, err)
+
+	projection, err := ProjectReport(report, reportschema.ConsumerCapabilities{
+		Consumer:       "legacy-claw",
+		SchemaVersions: []string{"legacy.report.v1"},
+		FieldFamilies:  []string{"claims", "field_deltas"},
+	}, "legacy")
+	require.NoError(t, err)
+
+	require.Equal(t, reportschema.ReportingReportSchemaV1, projection.SchemaVersion)
+	require.NotEmpty(t, projection.ProjectionID)
+	require.Equal(t, "legacy", projection.View)
+	require.True(t, projection.Provenance.Downgraded)
+	require.Equal(t, reportschema.ReportingProjectionPolicyV1, projection.Provenance.PolicyID)
+	require.Equal(t, "legacy-claw", projection.Provenance.Consumer.Consumer)
+	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "negative_evidence")
+	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "items")
+	require.Equal(t, report.ReportID, projection.Provenance.SourceReportID)
+	require.Equal(t, report.SnapshotID, projection.Provenance.SourceSnapshotID)
+	require.Equal(t, report.ReportID, projection.Payload["report_id"])
+	require.Contains(t, projection.Payload, "claims")
+	require.Contains(t, projection.Payload, "field_deltas")
+	require.NotContains(t, projection.Payload, "new_items")
+	require.NotContains(t, projection.Payload, "negative_evidence")
+	require.Len(t, projection.CanonicalReport.NewItems, 1)
+
+	full, err := ProjectReport(report, reportschema.ConsumerCapabilities{
+		Consumer:       "current-claw",
+		SchemaVersions: []string{reportschema.ReportingReportSchemaV1},
+	}, "full")
+	require.NoError(t, err)
+	require.False(t, full.Provenance.Downgraded)
+	require.Empty(t, full.Provenance.OmittedFieldFamilies)
+	require.Contains(t, full.Payload, "new_items")
+}
+
 func claimByID(t *testing.T, claims []ClaimSummary, id string) ClaimSummary {
 	t.Helper()
 	for _, claim := range claims {

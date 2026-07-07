@@ -96,6 +96,26 @@ type Report struct {
 	LastMeaningfulItemIDs       []string                           `json:"last_meaningful_item_ids,omitempty"`
 }
 
+type ReportProjection struct {
+	SchemaVersion   string                     `json:"schema_version"`
+	ProjectionID    string                     `json:"projection_id"`
+	View            string                     `json:"view"`
+	Provenance      ReportProjectionProvenance `json:"provenance"`
+	Payload         map[string]any             `json:"payload"`
+	CanonicalReport Report                     `json:"canonical_report"`
+}
+
+type ReportProjectionProvenance struct {
+	PolicyID             string                            `json:"policy_id"`
+	SourceSchemaVersion  string                            `json:"source_schema_version"`
+	SourceReportID       string                            `json:"source_report_id"`
+	SourceSnapshotID     string                            `json:"source_snapshot_id"`
+	SourceContentHash    string                            `json:"source_content_hash"`
+	Consumer             reportschema.ConsumerCapabilities `json:"consumer"`
+	Downgraded           bool                              `json:"downgraded"`
+	OmittedFieldFamilies []string                          `json:"omitted_field_families,omitempty"`
+}
+
 type Snapshot struct {
 	SchemaVersion string        `json:"schema_version"`
 	SnapshotID    string        `json:"snapshot_id"`
@@ -134,6 +154,60 @@ func NewStore(configHome string) Store {
 
 func (s Store) Generate(channel string, now time.Time) (Report, error) {
 	return s.GenerateWithOptions(channel, now, GenerateOptions{})
+}
+
+func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities, view string) (ReportProjection, error) {
+	capabilities.Consumer = strings.TrimSpace(capabilities.Consumer)
+	if capabilities.Consumer == "" {
+		capabilities.Consumer = "unknown"
+	}
+	capabilities.SchemaVersions = cleanStrings(capabilities.SchemaVersions)
+	capabilities.FieldFamilies = cleanStrings(capabilities.FieldFamilies)
+	capabilities.MaxSensitivity = strings.TrimSpace(capabilities.MaxSensitivity)
+	if strings.TrimSpace(view) == "" {
+		view = "default"
+	}
+	fullPayload, err := reportMap(report)
+	if err != nil {
+		return ReportProjection{}, err
+	}
+	supportsSchema := supportsReportSchema(capabilities, report.SchemaVersion)
+	restrictFamilies := len(capabilities.FieldFamilies) > 0 || !supportsSchema
+	payload := fullPayload
+	omitted := []string{}
+	if restrictFamilies {
+		payload, omitted = projectedReportPayload(report, capabilities)
+	}
+	sourceHash, err := stableHash(report)
+	if err != nil {
+		return ReportProjection{}, err
+	}
+	projection := ReportProjection{
+		SchemaVersion: reportschema.ReportingReportSchemaV1,
+		View:          view,
+		Provenance: ReportProjectionProvenance{
+			PolicyID:             reportschema.ReportingProjectionPolicyV1,
+			SourceSchemaVersion:  report.SchemaVersion,
+			SourceReportID:       report.ReportID,
+			SourceSnapshotID:     report.SnapshotID,
+			SourceContentHash:    sourceHash,
+			Consumer:             capabilities,
+			Downgraded:           !supportsSchema || len(omitted) > 0,
+			OmittedFieldFamilies: omitted,
+		},
+		Payload:         payload,
+		CanonicalReport: report,
+	}
+	projectionID, err := stableHash(map[string]any{
+		"view":       projection.View,
+		"provenance": projection.Provenance,
+		"payload":    projection.Payload,
+	})
+	if err != nil {
+		return ReportProjection{}, err
+	}
+	projection.ProjectionID = projectionID
+	return projection, nil
 }
 
 func (s Store) GenerateWithOptions(channel string, now time.Time, options GenerateOptions) (Report, error) {
@@ -333,6 +407,91 @@ func reportSchemaCompatibility() reportschema.CompatibilityGuidance {
 		},
 		OlderConsumerGuidance: "Consumers that do not support this version should parse only minimal_stable_core, ignore unknown fields, and fetch the snapshot for full audit context.",
 	}
+}
+
+func projectedReportPayload(report Report, capabilities reportschema.ConsumerCapabilities) (map[string]any, []string) {
+	payload := map[string]any{
+		"schema_version":  report.SchemaVersion,
+		"kind":            report.Kind,
+		"channel":         report.Channel,
+		"report_id":       report.ReportID,
+		"snapshot_id":     report.SnapshotID,
+		"generated_at":    report.GeneratedAt,
+		"outcome":         report.Outcome,
+		"checked":         report.Checked,
+		"no_change":       report.NoChange,
+		"total_count":     report.TotalCount,
+		"unchanged_count": report.UnchangedCount,
+	}
+	families := []string{"compatibility", "claims", "negative_evidence", "field_deltas", "items", "freshness"}
+	omitted := []string{}
+	for _, family := range families {
+		if supportsReportFamily(capabilities, family) {
+			addReportFamily(payload, report, family)
+			continue
+		}
+		omitted = append(omitted, family)
+	}
+	return payload, omitted
+}
+
+func addReportFamily(payload map[string]any, report Report, family string) {
+	switch family {
+	case "compatibility":
+		payload["schema_compatibility"] = report.SchemaCompatibility
+	case "claims":
+		payload["claims"] = report.Claims
+	case "negative_evidence":
+		payload["negative_evidence"] = report.NegativeEvidence
+		payload["invalidates_negative_evidence"] = report.InvalidatesNegativeEvidence
+	case "field_deltas":
+		payload["field_deltas"] = report.FieldDeltas
+	case "items":
+		payload["new_items"] = report.NewItems
+		payload["changed_items"] = report.ChangedItems
+		payload["last_meaningful_report_id"] = report.LastMeaningfulReportID
+		payload["last_meaningful_snapshot_id"] = report.LastMeaningfulSnapshotID
+		payload["last_meaningful_item_ids"] = report.LastMeaningfulItemIDs
+	case "freshness":
+		payload["mixed_freshness"] = report.MixedFreshness
+		payload["freshness_counts"] = report.FreshnessCounts
+	}
+}
+
+func reportMap(report Report) (map[string]any, error) {
+	data, err := json.Marshal(report)
+	if err != nil {
+		return nil, err
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func supportsReportSchema(capabilities reportschema.ConsumerCapabilities, schema string) bool {
+	if len(capabilities.SchemaVersions) == 0 {
+		return true
+	}
+	for _, value := range capabilities.SchemaVersions {
+		if value == schema {
+			return true
+		}
+	}
+	return false
+}
+
+func supportsReportFamily(capabilities reportschema.ConsumerCapabilities, family string) bool {
+	if len(capabilities.FieldFamilies) == 0 {
+		return false
+	}
+	for _, value := range capabilities.FieldFamilies {
+		if value == family {
+			return true
+		}
+	}
+	return false
 }
 
 func buildNegativeEvidence(channel string, now time.Time, cursor Cursor, options GenerateOptions) ([]reportschema.NegativeEvidence, error) {

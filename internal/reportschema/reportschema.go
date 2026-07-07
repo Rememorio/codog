@@ -10,13 +10,14 @@ import (
 )
 
 const (
-	SchemaV1                   = "claw.report.v1"
-	DefaultProjectionPolicyV1  = "claw.report.projection.v1"
-	ReportingReportSchemaV1    = "codog.reporting.report.v1"
-	ReportingSnapshotSchemaV1  = "codog.reporting.snapshot.v1"
-	ReportingCompatibilityV1   = "codog.reporting.compatibility.v1"
-	MockParityReportSchemaV1   = "codog.mock_parity.v1"
-	MockParityManifestSchemaV1 = "codog.mock_parity_manifest.v1"
+	SchemaV1                    = "claw.report.v1"
+	DefaultProjectionPolicyV1   = "claw.report.projection.v1"
+	ReportingReportSchemaV1     = "codog.reporting.report.v1"
+	ReportingSnapshotSchemaV1   = "codog.reporting.snapshot.v1"
+	ReportingCompatibilityV1    = "codog.reporting.compatibility.v1"
+	ReportingProjectionPolicyV1 = "codog.reporting.projection.v1"
+	MockParityReportSchemaV1    = "codog.mock_parity.v1"
+	MockParityManifestSchemaV1  = "codog.mock_parity_manifest.v1"
 
 	ClaimObservedFact   = "observed_fact"
 	ClaimInference      = "inference"

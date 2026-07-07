@@ -49,6 +49,7 @@ import (
 	"github.com/Rememorio/codog/internal/powershellvalidation"
 	"github.com/Rememorio/codog/internal/recovery"
 	"github.com/Rememorio/codog/internal/reporting"
+	"github.com/Rememorio/codog/internal/reportschema"
 	"github.com/Rememorio/codog/internal/roadmap"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/shellstate"
@@ -9098,6 +9099,16 @@ func (ReportBackpressureTool) Definition() anthropic.ToolDefinition {
 				"freshness_ttl_seconds": map[string]any{"type": "integer", "minimum": 1},
 				"snapshot_id":           map[string]any{"type": "string"},
 				"now":                   map[string]any{"type": "string", "format": "date-time"},
+				"consumer":              map[string]any{"type": "string"},
+				"schema_versions": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+				},
+				"field_families": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+				},
+				"projection_view": map[string]any{"type": "string"},
 			},
 			"additionalProperties": false,
 		},
@@ -9119,9 +9130,13 @@ func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage
 			CheckedSurfaces []string `json:"checked_surfaces"`
 			Window          string   `json:"window"`
 		} `json:"negative_queries"`
-		FreshnessTTLSeconds int    `json:"freshness_ttl_seconds"`
-		SnapshotID          string `json:"snapshot_id"`
-		Now                 string `json:"now"`
+		FreshnessTTLSeconds int      `json:"freshness_ttl_seconds"`
+		SnapshotID          string   `json:"snapshot_id"`
+		Now                 string   `json:"now"`
+		Consumer            string   `json:"consumer"`
+		SchemaVersions      []string `json:"schema_versions"`
+		FieldFamilies       []string `json:"field_families"`
+		ProjectionView      string   `json:"projection_view"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -9155,6 +9170,17 @@ func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage
 		})
 		if err != nil {
 			return "", err
+		}
+		if payload.Consumer != "" || len(payload.SchemaVersions) > 0 || len(payload.FieldFamilies) > 0 || payload.ProjectionView != "" {
+			projection, err := reporting.ProjectReport(report, reportschema.ConsumerCapabilities{
+				Consumer:       payload.Consumer,
+				SchemaVersions: payload.SchemaVersions,
+				FieldFamilies:  payload.FieldFamilies,
+			}, payload.ProjectionView)
+			if err != nil {
+				return "", err
+			}
+			return pretty(projection), nil
 		}
 		return pretty(report), nil
 	case "snapshot":
