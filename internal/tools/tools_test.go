@@ -1452,7 +1452,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 82)
+	require.Len(t, infos, 83)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -1872,6 +1872,8 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"MultiEditTool":                "multi_edit",
 		"NotebookEditTool":             "notebook_edit",
 		"NotebookReadTool":             "notebook_read",
+		"Nudge":                        "nudge",
+		"NudgeTool":                    "nudge",
 		"PowerShellTool":               "powershell",
 		"ReadFile":                     "read_file",
 		"ReadTool":                     "read_file",
@@ -4104,6 +4106,36 @@ func TestTaskHeartbeatAndLaneBoardTools(t *testing.T) {
 	require.Equal(t, background.LaneFreshnessHealthy, board.Active[0].Freshness)
 	require.Empty(t, board.Blocked)
 	require.Empty(t, board.Finished)
+}
+
+func TestNudgeToolClassifiesAndAcknowledgesCycles(t *testing.T) {
+	configHome := t.TempDir()
+	tool := NudgeTool{ConfigHome: configHome}
+
+	firstOut, err := tool.Execute(context.Background(), []byte(`{"action":"observe","nudge_id":"dogfood","cycle_id":"cycle-1","prompt":"check status","delivered_at":"2026-07-07T12:00:00Z"}`))
+	require.NoError(t, err)
+	require.Contains(t, firstOut, `"state": "new_nudge"`)
+	require.Contains(t, firstOut, `"delivery_count": 1`)
+
+	retryOut, err := tool.Execute(context.Background(), []byte(`{"action":"observe","nudge_id":"dogfood","cycle_id":"cycle-1","prompt":"check status","delivered_at":"2026-07-07T12:01:00Z"}`))
+	require.NoError(t, err)
+	require.Contains(t, retryOut, `"state": "retry_nudge"`)
+	require.Contains(t, retryOut, `"delivery_count": 2`)
+
+	ackOut, err := tool.Execute(context.Background(), []byte(`{"action":"ack","nudge_id":"dogfood","cycle_id":"cycle-1","response_id":"response-1","delivered_at":"2026-07-07T12:02:00Z"}`))
+	require.NoError(t, err)
+	require.Contains(t, ackOut, `"acknowledged": true`)
+	require.Contains(t, ackOut, `"response_id": "response-1"`)
+
+	staleOut, err := tool.Execute(context.Background(), []byte(`{"action":"observe","nudge_id":"dogfood","cycle_id":"cycle-1","delivered_at":"2026-07-07T12:03:00Z"}`))
+	require.NoError(t, err)
+	require.Contains(t, staleOut, `"state": "stale_duplicate"`)
+	require.Contains(t, staleOut, `"already_acknowledged": true`)
+
+	listOut, err := tool.Execute(context.Background(), []byte(`{"action":"list"}`))
+	require.NoError(t, err)
+	require.Contains(t, listOut, `"kind": "nudge_list"`)
+	require.Contains(t, listOut, `"count": 1`)
 }
 
 func TestTaskSuperviseToolRestartsEligibleTasks(t *testing.T) {

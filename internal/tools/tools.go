@@ -43,6 +43,7 @@ import (
 	"github.com/Rememorio/codog/internal/hookenv"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/mcpauthdiag"
+	"github.com/Rememorio/codog/internal/nudges"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/policyengine"
 	"github.com/Rememorio/codog/internal/powershellvalidation"
@@ -169,6 +170,8 @@ var claudeToolAliases = map[string]string{
 	"crondeletetool":               "cron_delete",
 	"cronlist":                     "cron_list",
 	"cronlisttool":                 "cron_list",
+	"nudge":                        "nudge",
+	"nudgetool":                    "nudge",
 	"edit":                         "edit_file",
 	"editfile":                     "edit_file",
 	"edittool":                     "edit_file",
@@ -423,6 +426,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"NotebookEditTool":             "notebook_edit",
 	"NotebookRead":                 "notebook_read",
 	"NotebookReadTool":             "notebook_read",
+	"Nudge":                        "nudge",
+	"NudgeTool":                    "nudge",
 	"PowerShell":                   "powershell",
 	"PowerShellTool":               "powershell",
 	"PolicyEvaluate":               "policy_evaluate",
@@ -676,6 +681,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(RecoveryRecipeTool{ConfigHome: opts.ConfigHome})
 	r.Register(RecoveryAttemptTool{ConfigHome: opts.ConfigHome})
 	r.Register(RecoveryStatusTool{ConfigHome: opts.ConfigHome})
+	r.Register(NudgeTool{ConfigHome: opts.ConfigHome})
 	r.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
 	r.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
 	r.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -8712,6 +8718,101 @@ func toolScopeBinding(binding background.ScopeBinding, owner string, workflowSco
 		binding.WatcherAction = watcherAction
 	}
 	return binding
+}
+
+type NudgeTool struct {
+	ConfigHome string
+}
+
+func (NudgeTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "nudge",
+		Description: "Record, acknowledge, or inspect a recurring nudge cycle.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"action":       map[string]any{"type": "string", "enum": []string{"observe", "ack", "acknowledge", "status", "list"}},
+				"nudge_id":     map[string]any{"type": "string"},
+				"cycle_id":     map[string]any{"type": "string"},
+				"prompt":       map[string]any{"type": "string"},
+				"delivered_at": map[string]any{"type": "string", "format": "date-time"},
+				"response_id":  map[string]any{"type": "string"},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (NudgeTool) Permission() Permission { return PermissionReadOnly }
+
+func (t NudgeTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Action      string `json:"action"`
+		NudgeID     string `json:"nudge_id"`
+		CycleID     string `json:"cycle_id"`
+		Prompt      string `json:"prompt"`
+		DeliveredAt string `json:"delivered_at"`
+		ResponseID  string `json:"response_id"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	action := strings.ToLower(strings.TrimSpace(payload.Action))
+	if action == "" {
+		action = "observe"
+	}
+	store := nudges.NewStore(t.ConfigHome)
+	switch action {
+	case "list":
+		records, err := store.List()
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"kind": "nudge_list", "records": records, "count": len(records)}), nil
+	case "status":
+		record, err := store.Get(payload.NudgeID, payload.CycleID)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"kind": "nudge_status", "record": record}), nil
+	}
+	delivery, err := nudgeDeliveryFromPayload(payload.NudgeID, payload.CycleID, payload.Prompt, payload.DeliveredAt, payload.ResponseID)
+	if err != nil {
+		return "", err
+	}
+	switch action {
+	case "observe":
+		observation, err := store.Observe(delivery)
+		if err != nil {
+			return "", err
+		}
+		return pretty(observation), nil
+	case "ack", "acknowledge":
+		observation, err := store.Acknowledge(delivery)
+		if err != nil {
+			return "", err
+		}
+		return pretty(observation), nil
+	default:
+		return "", fmt.Errorf("unknown nudge action %q", payload.Action)
+	}
+}
+
+func nudgeDeliveryFromPayload(nudgeID string, cycleID string, prompt string, deliveredAt string, responseID string) (nudges.Delivery, error) {
+	delivery := nudges.Delivery{
+		NudgeID:    nudgeID,
+		CycleID:    cycleID,
+		Prompt:     prompt,
+		ResponseID: responseID,
+	}
+	if strings.TrimSpace(deliveredAt) != "" {
+		parsed, err := time.Parse(time.RFC3339, deliveredAt)
+		if err != nil {
+			return nudges.Delivery{}, err
+		}
+		delivery.DeliveredAt = parsed
+	}
+	return delivery, nil
 }
 
 type TaskLaneBoardTool struct {

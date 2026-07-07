@@ -255,6 +255,7 @@ var scenarioOrder = []string{
 	"team_cron_lifecycle_roundtrip",
 	"worker_lifecycle_roundtrip",
 	"recovery_lifecycle_roundtrip",
+	"nudge_ack_dedupe_roundtrip",
 	"agent_markdown_definition_roundtrip",
 	"background_agent_run_roundtrip",
 	"remote_trigger_roundtrip",
@@ -818,6 +819,7 @@ func Run(ctx context.Context) (Report, error) {
 		teamCronLifecycleScenario(),
 		workerLifecycleScenario(),
 		recoveryLifecycleScenario(),
+		nudgeAckDedupeScenario(),
 		agentMarkdownDefinitionScenario(),
 		backgroundAgentRunScenario(),
 		remoteTriggerScenario(),
@@ -1720,6 +1722,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "recovery",
 		Description: "Reads recovery recipes, records successful, exhausted, and partial recovery attempts, and verifies the ledger status surface.",
 		ParityRefs:  []string{"Recovery recipes", "Recovery attempts", "Recovery ledger", "Escalation tracking", "Tool result roundtrip"},
+	},
+	"nudge_ack_dedupe_roundtrip": {
+		Category:    "nudge",
+		Description: "Records recurring nudge deliveries, classifies retries, acknowledges a cycle, and suppresses stale duplicates.",
+		ParityRefs:  []string{"Nudge acknowledgement", "Nudge dedupe", "Recurring prompt idempotency", "Tool result roundtrip"},
 	},
 	"background_agent_run_roundtrip": {
 		Category:    "background-agents",
@@ -9703,6 +9710,74 @@ Review changes and report verification.
 			return localScenarioResult{
 				Output:       strings.Join([]string{listOut, showOut, helpOut}, "\n"),
 				FinalMessage: "agent markdown definition harness ok",
+			}, nil
+		},
+	}
+}
+
+func nudgeAckDedupeScenario() scenario {
+	return scenario{
+		name: "nudge_ack_dedupe_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
+			call := func(input string) (map[string]any, error) {
+				out, err := registry.Execute(ctx, "NudgeTool", json.RawMessage(input), nil)
+				if err != nil {
+					return nil, err
+				}
+				var report map[string]any
+				if err := json.Unmarshal([]byte(out), &report); err != nil {
+					return nil, err
+				}
+				return report, nil
+			}
+
+			first, err := call(`{"action":"observe","nudge_id":"dogfood","cycle_id":"cycle-1","prompt":"check status","delivered_at":"2026-07-07T12:00:00Z"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			retry, err := call(`{"action":"observe","nudge_id":"dogfood","cycle_id":"cycle-1","prompt":"check status","delivered_at":"2026-07-07T12:01:00Z"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			ack, err := call(`{"action":"ack","nudge_id":"dogfood","cycle_id":"cycle-1","response_id":"response-1","delivered_at":"2026-07-07T12:02:00Z"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			stale, err := call(`{"action":"observe","nudge_id":"dogfood","cycle_id":"cycle-1","delivered_at":"2026-07-07T12:03:00Z"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			list, err := call(`{"action":"list"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if first["state"] != "new_nudge" || retry["state"] != "retry_nudge" || ack["acknowledged"] != true || stale["state"] != "stale_duplicate" || stale["already_acknowledged"] != true {
+				return localScenarioResult{}, fmt.Errorf("unexpected nudge states: first=%v retry=%v ack=%v stale=%v", first, retry, ack, stale)
+			}
+			report := map[string]any{
+				"kind":                 "nudge_ack_dedupe",
+				"first_state":          first["state"],
+				"retry_state":          retry["state"],
+				"acknowledged":         ack["acknowledged"],
+				"stale_state":          stale["state"],
+				"already_acknowledged": stale["already_acknowledged"],
+				"delivery_count":       stale["delivery_count"],
+				"record_count":         list["count"],
+				"fingerprint":          first["fingerprint"],
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "nudge ack dedupe harness ok",
+				RequestCount: 5,
+				MessageCount: 1,
+				ToolCalls:    5,
+				ToolUses:     []string{"nudge", "nudge", "nudge", "nudge", "nudge"},
 			}, nil
 		},
 	}
