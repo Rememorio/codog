@@ -1015,6 +1015,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, reportBackpressure.Output, `"projected_view":"delta_brief"`)
 	require.Contains(t, reportBackpressure.Output, `"projected_level":"brief"`)
 	require.Contains(t, reportBackpressure.Output, `"projected_omits":`)
+	require.Contains(t, reportBackpressure.Output, `"source_anchor":"`)
 	require.Contains(t, reportBackpressure.Output, `"schema_fields":2`)
 	require.Contains(t, reportBackpressure.Output, `"first_root_claim":"hypothesis"`)
 	require.Contains(t, reportBackpressure.Output, `"third_root_claim":"observed_fact"`)

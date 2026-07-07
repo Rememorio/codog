@@ -40,6 +40,12 @@ func TestGenerateCollapsesUnchangedItemsAndStoresSnapshot(t *testing.T) {
 	require.Contains(t, first.SchemaCompatibility.AdditiveChanges, "new optional top-level fields")
 	require.Contains(t, first.SchemaCompatibility.BreakingChanges, "removing or renaming minimal_stable_core fields")
 	require.Contains(t, first.SchemaCompatibility.OlderConsumerGuidance, "minimal_stable_core")
+	require.Equal(t, first.ReportID, first.Identity.ReportID)
+	require.NotEmpty(t, first.Identity.ContentHash)
+	require.NotEmpty(t, first.Identity.CanonicalFingerprint)
+	contentHash, err := reportContentHash(first)
+	require.NoError(t, err)
+	require.Equal(t, first.Identity.ContentHash, contentHash)
 	require.Equal(t, "report_backpressure", first.Kind)
 	require.Equal(t, "new", first.Outcome)
 	require.True(t, first.Checked)
@@ -259,7 +265,11 @@ func TestProjectReportNegotiatesConsumerCapabilities(t *testing.T) {
 	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "items")
 	require.Equal(t, report.ReportID, projection.Provenance.SourceReportID)
 	require.Equal(t, report.SnapshotID, projection.Provenance.SourceSnapshotID)
+	require.Equal(t, report.Identity.ContentHash, projection.Provenance.SourceContentHash)
+	require.False(t, projection.Provenance.SourceChanged)
+	require.True(t, projection.Provenance.RenderingChanged)
 	require.Equal(t, report.ReportID, projection.Payload["report_id"])
+	require.Equal(t, report.Identity, projection.Payload["identity"])
 	require.Contains(t, projection.Payload, "claims")
 	require.Contains(t, projection.Payload, "field_deltas")
 	require.NotContains(t, projection.Payload, "new_items")
@@ -272,6 +282,7 @@ func TestProjectReportNegotiatesConsumerCapabilities(t *testing.T) {
 	}, "full", "normal")
 	require.NoError(t, err)
 	require.False(t, full.Provenance.Downgraded)
+	require.False(t, full.Provenance.RenderingChanged)
 	require.Empty(t, full.Provenance.OmittedFieldFamilies)
 	require.Contains(t, full.Payload, "new_items")
 }
@@ -307,7 +318,11 @@ func TestProjectReportBuildsAudienceViews(t *testing.T) {
 	require.Equal(t, "delta_brief", brief.Provenance.View)
 	require.Equal(t, "brief", brief.Provenance.Verbosity)
 	require.Equal(t, report.ReportID, brief.Provenance.SourceReportID)
+	require.Equal(t, report.Identity.ContentHash, brief.Provenance.SourceContentHash)
+	require.False(t, brief.Provenance.SourceChanged)
+	require.True(t, brief.Provenance.RenderingChanged)
 	require.Contains(t, brief.Payload, "summary")
+	require.Equal(t, report.Identity, brief.Payload["identity"])
 	require.Contains(t, brief.Payload, "top_items")
 	require.NotContains(t, brief.Payload, "negative_evidence")
 	require.Len(t, brief.CanonicalReport.NewItems, 1)
@@ -318,6 +333,8 @@ func TestProjectReportBuildsAudienceViews(t *testing.T) {
 	}, "human_readable", "verbose")
 	require.NoError(t, err)
 	require.Equal(t, "human_readable", human.View)
+	require.Equal(t, brief.Provenance.SourceContentHash, human.Provenance.SourceContentHash)
+	require.NotEqual(t, brief.ProjectionID, human.ProjectionID)
 	require.Contains(t, human.Payload["summary_text"], "New roadmap")
 	require.Contains(t, human.Payload, "highlights")
 	require.Contains(t, human.Payload, "next_actions")
@@ -329,10 +346,19 @@ func TestProjectReportBuildsAudienceViews(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, sync.Payload, "roadmap_items")
 	require.Equal(t, report.ReportID, sync.Provenance.SourceReportID)
+	require.Equal(t, brief.Provenance.SourceContentHash, sync.Provenance.SourceContentHash)
 	items, ok := sync.Payload["roadmap_items"].([]map[string]any)
 	require.True(t, ok)
 	require.Len(t, items, 1)
 	require.Equal(t, filed.ItemID, items[0]["id"])
+
+	briefAgain, err := ProjectReport(report, reportschema.ConsumerCapabilities{
+		Consumer:       "clawhip",
+		SchemaVersions: []string{reportschema.ReportingReportSchemaV1},
+	}, "delta_brief", "brief")
+	require.NoError(t, err)
+	require.Equal(t, brief.ProjectionID, briefAgain.ProjectionID)
+	require.Equal(t, brief.Provenance.SourceContentHash, briefAgain.Provenance.SourceContentHash)
 }
 
 func claimByID(t *testing.T, claims []ClaimSummary, id string) ClaimSummary {

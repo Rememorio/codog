@@ -188,6 +188,7 @@ func RegistryV1() Registry {
 		Fields: []RegistryField{
 			field("identity.report_id", "stable canonical report identity", true, "identity"),
 			field("identity.content_hash", "hash of canonical payload excluding identity", true, "identity"),
+			field("identity.canonical_fingerprint", "fingerprint binding report id, content hash, and snapshot id", false, "identity"),
 			enumField("claims[].kind", "fact/inference/hypothesis/recommendation label", true, "claims", []string{ClaimObservedFact, ClaimInference, ClaimHypothesis, ClaimRecommendation}),
 			enumField("claims[].confidence", "confidence bucket for the claim", true, "claims", []string{ConfidenceHigh, ConfidenceMedium, ConfidenceLow, ConfidenceUnknown}),
 			field("claims[].evidence", "evidence ids supporting a claim", false, "claims"),
@@ -230,6 +231,7 @@ func RegistryV1() Registry {
 			report("report_backpressure", ReportingReportSchemaV1, "Delta-first dogfood report with schema compatibility guidance and field-level attribution.", "codog report_backpressure", "codog tool report_backpressure", []string{
 				"schema_version",
 				"schema_compatibility",
+				"identity",
 				"kind",
 				"channel",
 				"report_id",

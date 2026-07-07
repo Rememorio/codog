@@ -68,6 +68,7 @@ type ClaimSummary struct {
 type Report struct {
 	SchemaVersion               string                             `json:"schema_version"`
 	SchemaCompatibility         reportschema.CompatibilityGuidance `json:"schema_compatibility"`
+	Identity                    ReportIdentity                     `json:"identity"`
 	Kind                        string                             `json:"kind"`
 	Channel                     string                             `json:"channel"`
 	ReportID                    string                             `json:"report_id"`
@@ -96,6 +97,12 @@ type Report struct {
 	LastMeaningfulItemIDs       []string                           `json:"last_meaningful_item_ids,omitempty"`
 }
 
+type ReportIdentity struct {
+	ReportID             string `json:"report_id"`
+	ContentHash          string `json:"content_hash"`
+	CanonicalFingerprint string `json:"canonical_fingerprint"`
+}
+
 type ReportProjection struct {
 	SchemaVersion   string                     `json:"schema_version"`
 	ProjectionID    string                     `json:"projection_id"`
@@ -107,16 +114,19 @@ type ReportProjection struct {
 }
 
 type ReportProjectionProvenance struct {
-	PolicyID             string                            `json:"policy_id"`
-	SourceSchemaVersion  string                            `json:"source_schema_version"`
-	SourceReportID       string                            `json:"source_report_id"`
-	SourceSnapshotID     string                            `json:"source_snapshot_id"`
-	SourceContentHash    string                            `json:"source_content_hash"`
-	Consumer             reportschema.ConsumerCapabilities `json:"consumer"`
-	View                 string                            `json:"view"`
-	Verbosity            string                            `json:"verbosity"`
-	Downgraded           bool                              `json:"downgraded"`
-	OmittedFieldFamilies []string                          `json:"omitted_field_families,omitempty"`
+	PolicyID                string                            `json:"policy_id"`
+	SourceSchemaVersion     string                            `json:"source_schema_version"`
+	SourceReportID          string                            `json:"source_report_id"`
+	SourceSnapshotID        string                            `json:"source_snapshot_id"`
+	SourceContentHash       string                            `json:"source_content_hash"`
+	Consumer                reportschema.ConsumerCapabilities `json:"consumer"`
+	View                    string                            `json:"view"`
+	Verbosity               string                            `json:"verbosity"`
+	SourceChanged           bool                              `json:"source_changed"`
+	RenderingChanged        bool                              `json:"rendering_changed"`
+	DuplicateOfProjectionID string                            `json:"duplicate_of_projection_id,omitempty"`
+	Downgraded              bool                              `json:"downgraded"`
+	OmittedFieldFamilies    []string                          `json:"omitted_field_families,omitempty"`
 }
 
 type Snapshot struct {
@@ -172,6 +182,15 @@ func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities
 		view = "default"
 	}
 	verbosity = normalizeVerbosity(verbosity)
+	identity := report.Identity
+	if identity.ContentHash == "" {
+		var err error
+		identity, err = reportIdentity(report)
+		if err != nil {
+			return ReportProjection{}, err
+		}
+		report.Identity = identity
+	}
 	fullPayload, err := reportMap(report)
 	if err != nil {
 		return ReportProjection{}, err
@@ -185,10 +204,8 @@ func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities
 	} else if restrictFamilies {
 		payload, omitted = projectedReportPayload(report, capabilities)
 	}
-	sourceHash, err := stableHash(report)
-	if err != nil {
-		return ReportProjection{}, err
-	}
+	sourceHash := identity.ContentHash
+	renderingChanged := isAudienceReportView(view) || restrictFamilies
 	projection := ReportProjection{
 		SchemaVersion: reportschema.ReportingReportSchemaV1,
 		View:          view,
@@ -202,6 +219,8 @@ func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities
 			Consumer:             capabilities,
 			View:                 view,
 			Verbosity:            verbosity,
+			SourceChanged:        false,
+			RenderingChanged:     renderingChanged,
 			Downgraded:           !supportsSchema || len(omitted) > 0 || isAudienceReportView(view),
 			OmittedFieldFamilies: omitted,
 		},
@@ -362,6 +381,11 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 		LastMeaningfulSnapshotID:    lastMeaningfulSnapshotID,
 		LastMeaningfulItemIDs:       lastMeaningfulItemIDs,
 	}
+	identity, err := reportIdentity(report)
+	if err != nil {
+		return Report{}, err
+	}
+	report.Identity = identity
 	if err := s.saveSnapshot(snapshot); err != nil {
 		return Report{}, err
 	}
@@ -405,6 +429,7 @@ func reportSchemaCompatibility() reportschema.CompatibilityGuidance {
 		},
 		MinimalStableCore: []string{
 			"schema_version",
+			"identity",
 			"kind",
 			"channel",
 			"report_id",
@@ -420,9 +445,36 @@ func reportSchemaCompatibility() reportschema.CompatibilityGuidance {
 	}
 }
 
+func reportIdentity(report Report) (ReportIdentity, error) {
+	contentHash, err := reportContentHash(report)
+	if err != nil {
+		return ReportIdentity{}, err
+	}
+	fingerprint, err := stableHash(map[string]any{
+		"report_id":    report.ReportID,
+		"content_hash": contentHash,
+		"snapshot_id":  report.SnapshotID,
+	})
+	if err != nil {
+		return ReportIdentity{}, err
+	}
+	return ReportIdentity{
+		ReportID:             report.ReportID,
+		ContentHash:          contentHash,
+		CanonicalFingerprint: fingerprint,
+	}, nil
+}
+
+func reportContentHash(report Report) (string, error) {
+	hashable := report
+	hashable.Identity = ReportIdentity{}
+	return stableHash(hashable)
+}
+
 func projectedReportPayload(report Report, capabilities reportschema.ConsumerCapabilities) (map[string]any, []string) {
 	payload := map[string]any{
 		"schema_version":  report.SchemaVersion,
+		"identity":        report.Identity,
 		"kind":            report.Kind,
 		"channel":         report.Channel,
 		"report_id":       report.ReportID,
@@ -485,6 +537,7 @@ func audienceReportPayload(report Report, view string, verbosity string) (map[st
 func reportCorePayload(report Report) map[string]any {
 	return map[string]any{
 		"schema_version":  report.SchemaVersion,
+		"identity":        report.Identity,
 		"kind":            report.Kind,
 		"channel":         report.Channel,
 		"report_id":       report.ReportID,

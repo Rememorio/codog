@@ -68,6 +68,7 @@ func TestRegistryV1IsSelfDescribing(t *testing.T) {
 	require.Contains(t, enumValuesByField(t, registry, "field_deltas[].state"), FieldCarriedForward)
 	require.Contains(t, enumValuesByField(t, registry, "view"), "delta_brief")
 	require.Contains(t, enumValuesByField(t, registry, "verbosity"), "verbose")
+	require.Contains(t, fieldIDs(registry), "identity.canonical_fingerprint")
 	require.False(t, fieldByID(t, registry, "schema_compatibility.policy").Deprecated)
 	require.Contains(t, fieldIDs(registry), "atomic_update.message_parts[]")
 	require.Contains(t, fieldIDs(registry), "projection.provenance.redactions[]")
@@ -79,6 +80,7 @@ func TestRegistryV1IsSelfDescribing(t *testing.T) {
 
 	backpressure := registryReportByID(t, registry, "report_backpressure")
 	require.Equal(t, ReportingReportSchemaV1, backpressure.SchemaVersion)
+	require.Contains(t, backpressure.Fields, "identity")
 	require.Contains(t, backpressure.Fields, "schema_compatibility")
 	require.Contains(t, backpressure.Fields, "field_deltas")
 	projection := registryReportByID(t, registry, "report_backpressure_projection")

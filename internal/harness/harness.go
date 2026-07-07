@@ -10045,16 +10045,20 @@ func reportBackpressureScenario() scenario {
 			snapshotBody, _ := snapshot["snapshot"].(map[string]any)
 			provenance, _ := projected["provenance"].(map[string]any)
 			projectedDowngraded, _ := provenance["downgraded"].(bool)
+			projectedSourceHash, _ := provenance["source_content_hash"].(string)
+			projectedRenderingChanged, _ := provenance["rendering_changed"].(bool)
 			omittedFamilies, _ := provenance["omitted_field_families"].([]any)
 			projectedPayload, _ := projected["payload"].(map[string]any)
 			projectedCanonical, _ := projected["canonical_report"].(map[string]any)
+			canonicalIdentity, _ := projectedCanonical["identity"].(map[string]any)
+			canonicalHash, _ := canonicalIdentity["content_hash"].(string)
 			projectedView, _ := projected["view"].(string)
 			projectedVerbosity, _ := projected["verbosity"].(string)
 			projectedSummary, _ := projectedPayload["summary"].(map[string]any)
 			projectedTopItems, _ := projectedPayload["top_items"].([]any)
 			schemaRegistry, _ := schema["registry"].(map[string]any)
 			schemaFields, _ := schemaRegistry["fields"].([]any)
-			if itemID == "" || firstSchemaVersion != "codog.reporting.report.v1" || compatibilityPolicy != "codog.reporting.compatibility.v1" || len(stableCore) == 0 || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || len(secondNegative) != 2 || negativeStatus != "not_observed_in_checked_scope" || negativeWindow != "2026-07-07T16:01:00Z/2026-07-07T16:02:00Z" || len(secondFieldDeltas) == 0 || secondDeltaState != "cleared" || len(invalidates) != 2 || thirdPriorityState != "changed" || !projectedDowngraded || projectedView != "delta_brief" || projectedVerbosity != "brief" || len(omittedFamilies) == 0 || projectedPayload["field_deltas"] == nil || projectedPayload["new_items"] != nil || projectedSummary["outcome"] == nil || len(projectedTopItems) != 0 || projectedCanonical["schema_compatibility"] == nil || len(schemaFields) != 2 || firstRootKind != "hypothesis" || thirdRootKind != "observed_fact" || thirdPromotedFrom != "hypothesis" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
+			if itemID == "" || firstSchemaVersion != "codog.reporting.report.v1" || compatibilityPolicy != "codog.reporting.compatibility.v1" || len(stableCore) == 0 || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || len(secondNegative) != 2 || negativeStatus != "not_observed_in_checked_scope" || negativeWindow != "2026-07-07T16:01:00Z/2026-07-07T16:02:00Z" || len(secondFieldDeltas) == 0 || secondDeltaState != "cleared" || len(invalidates) != 2 || thirdPriorityState != "changed" || !projectedDowngraded || !projectedRenderingChanged || projectedSourceHash == "" || projectedSourceHash != canonicalHash || projectedView != "delta_brief" || projectedVerbosity != "brief" || len(omittedFamilies) == 0 || projectedPayload["field_deltas"] == nil || projectedPayload["new_items"] != nil || projectedSummary["outcome"] == nil || len(projectedTopItems) != 0 || projectedCanonical["schema_compatibility"] == nil || len(schemaFields) != 2 || firstRootKind != "hypothesis" || thirdRootKind != "observed_fact" || thirdPromotedFrom != "hypothesis" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
 				return localScenarioResult{}, fmt.Errorf("unexpected backpressure report: filed=%#v first=%#v second=%#v third=%#v snapshot=%#v", filed, first, second, third, snapshot)
 			}
 			output := map[string]any{
@@ -10081,6 +10085,7 @@ func reportBackpressureScenario() scenario {
 				"projected_view":   projectedView,
 				"projected_level":  projectedVerbosity,
 				"projected_omits":  len(omittedFamilies),
+				"source_anchor":    projectedSourceHash,
 				"schema_fields":    len(schemaFields),
 				"first_root_claim": firstRootKind,
 				"third_root_claim": thirdRootKind,

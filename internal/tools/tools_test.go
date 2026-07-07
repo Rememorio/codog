@@ -4297,6 +4297,9 @@ func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
 		Provenance    struct {
 			Downgraded           bool     `json:"downgraded"`
 			OmittedFieldFamilies []string `json:"omitted_field_families"`
+			SourceContentHash    string   `json:"source_content_hash"`
+			SourceChanged        bool     `json:"source_changed"`
+			RenderingChanged     bool     `json:"rendering_changed"`
 			Consumer             struct {
 				Consumer string `json:"consumer"`
 			} `json:"consumer"`
@@ -4308,6 +4311,9 @@ func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
 
 	require.Equal(t, "codog.reporting.report.v1", projection.SchemaVersion)
 	require.True(t, projection.Provenance.Downgraded)
+	require.NotEmpty(t, projection.Provenance.SourceContentHash)
+	require.False(t, projection.Provenance.SourceChanged)
+	require.True(t, projection.Provenance.RenderingChanged)
 	require.Equal(t, "legacy-claw", projection.Provenance.Consumer.Consumer)
 	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "items")
 	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "negative_evidence")
@@ -4325,10 +4331,13 @@ func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
 		Verbosity  string         `json:"verbosity"`
 		Payload    map[string]any `json:"payload"`
 		Provenance struct {
-			SourceReportID string `json:"source_report_id"`
-			View           string `json:"view"`
-			Verbosity      string `json:"verbosity"`
-			Downgraded     bool   `json:"downgraded"`
+			SourceReportID    string `json:"source_report_id"`
+			SourceContentHash string `json:"source_content_hash"`
+			View              string `json:"view"`
+			Verbosity         string `json:"verbosity"`
+			SourceChanged     bool   `json:"source_changed"`
+			RenderingChanged  bool   `json:"rendering_changed"`
+			Downgraded        bool   `json:"downgraded"`
 		} `json:"provenance"`
 		CanonicalReport map[string]any `json:"canonical_report"`
 	}
@@ -4336,13 +4345,18 @@ func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
 	require.Equal(t, "delta_brief", brief.View)
 	require.Equal(t, "brief", brief.Verbosity)
 	require.True(t, brief.Provenance.Downgraded)
+	require.NotEmpty(t, brief.Provenance.SourceContentHash)
 	require.Equal(t, "delta_brief", brief.Provenance.View)
 	require.Equal(t, "brief", brief.Provenance.Verbosity)
+	require.False(t, brief.Provenance.SourceChanged)
+	require.True(t, brief.Provenance.RenderingChanged)
 	require.Contains(t, brief.Payload, "summary")
+	require.Contains(t, brief.Payload, "identity")
 	require.Contains(t, brief.Payload, "top_items")
 	require.NotContains(t, brief.Payload, "new_items")
 	require.Contains(t, brief.CanonicalReport, "schema_compatibility")
 	require.Contains(t, brief.CanonicalReport, "report_id")
+	require.Contains(t, brief.CanonicalReport, "identity")
 	require.NotEmpty(t, brief.Provenance.SourceReportID)
 }
 
