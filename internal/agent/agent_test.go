@@ -16866,6 +16866,35 @@ func TestScopeCommandAppliesAndRestoresSaferWorkspace(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestScopeCommandAppliesAppendIgnoreBlockChoice(t *testing.T) {
+	workspace := t.TempDir()
+	resolvedWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	workspace = resolvedWorkspace
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "app"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "node_modules"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "app", "main.go"), []byte("package app\n"), 0o644))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Scope([]string{"apply", "--choice", "append_ignore_block", "--json"}))
+	require.Equal(t, workspace, app.Workspace)
+	require.Contains(t, out.String(), `"applied_choice": "ignore"`)
+	require.Contains(t, out.String(), `"action": "append_ignore_block"`)
+	data, err := os.ReadFile(filepath.Join(workspace, ".codogignore"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "node_modules/")
+	require.Empty(t, errOut.String())
+}
+
 func TestRunAndProjectCommandSurfaces(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/cmdsurf\n\ngo 1.22\n"), 0o644))

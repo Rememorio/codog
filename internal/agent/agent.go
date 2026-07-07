@@ -15882,7 +15882,7 @@ func parseScopeArgs(args []string) (scopeRequest, error) {
 	}
 	choice := strings.ToLower(strings.TrimSpace(req.Choice))
 	switch choice {
-	case "", "auto", "workspace", "switch_workspace", "ignore", "write_ignore_stub", "both", "all":
+	case "", "auto", "workspace", "switch_workspace", "ignore", "append_ignore_block", "write_ignore_stub", "both", "all":
 	default:
 		return req, invalidFlagValueError{Flag: "--choice", Value: req.Choice, Message: "scope choice must be auto, workspace, ignore, or both", Usage: usage}
 	}

@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	StateFileName = "safer-scope.json"
-	IgnoreMarker  = "# Codog safer-scope exclusions"
+	StateFileName           = "safer-scope.json"
+	IgnoreMarker            = "# Codog safer-scope exclusions"
+	ActionAppendIgnoreBlock = "append_ignore_block"
+	actionWriteIgnoreStub   = "write_ignore_stub"
 )
 
 // Options controls safer-scope planning and application.
@@ -123,7 +125,7 @@ func Apply(workspace string, opts Options) (Report, error) {
 		switch choice.Action {
 		case "switch_workspace":
 			activeWorkspace = choice.Target
-		case "write_ignore_stub":
+		case ActionAppendIgnoreBlock, actionWriteIgnoreStub:
 			if err := appendIgnoreBlock(workspace, choice.IgnoreFile, choice.IgnoreEntries); err != nil {
 				return Report{}, err
 			}
@@ -336,7 +338,7 @@ func buildPlan(workspace string, opts Options) (plan, error) {
 	if len(excludes) > 0 {
 		choices = append(choices, Choice{
 			ID:              "ignore",
-			Action:          "write_ignore_stub",
+			Action:          ActionAppendIgnoreBlock,
 			Status:          "available",
 			PreviewExcludes: append([]string(nil), excludes...),
 			IgnoreFile:      ".codogignore",
@@ -376,11 +378,15 @@ func selectChoices(plan plan, choice string) []Choice {
 		return append([]Choice(nil), plan.Choices...)
 	}
 	for _, candidate := range plan.Choices {
-		if candidate.ID == choice || candidate.Action == choice {
+		if candidate.ID == choice || candidate.Action == choice || choiceAliasesAction(choice, candidate.Action) {
 			return []Choice{candidate}
 		}
 	}
 	return nil
+}
+
+func choiceAliasesAction(choice, action string) bool {
+	return choice == actionWriteIgnoreStub && action == ActionAppendIgnoreBlock
 }
 
 func workspaceChoice(workspace string, target string, inventory fileinventory.Report, excludes []string) Choice {
