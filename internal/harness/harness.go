@@ -216,6 +216,7 @@ var scenarioOrder = []string{
 	"plan_todo_roundtrip",
 	"todo_completion_verification_roundtrip",
 	"lsp_static_roundtrip",
+	"lsp_cli_metadata_roundtrip",
 	"plugin_tool_roundtrip",
 	"command_skill_template_roundtrip",
 	"skill_activation_roundtrip",
@@ -740,6 +741,7 @@ func Run(ctx context.Context) (Report, error) {
 		planTodoScenario(),
 		todoCompletionVerificationScenario(),
 		lspStaticScenario(),
+		lspCLIMetadataScenario(),
 		{
 			name:    "plugin_tool_roundtrip",
 			plugins: true,
@@ -1645,6 +1647,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "code-intelligence",
 		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, implementation lookup, highlights, folding ranges, selection ranges, monikers, linked editing ranges, document links, document colors, inlay hints, inline values, signature help, code lenses, semantic tokens, rename previews, code actions, call hierarchy, type hierarchy, references, hover, completions, completion item resolve, execute command, diagnostics, and formatting.",
 		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Implementation lookup", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Document links", "Document colors", "Inlay hints", "Inline values", "Signature help", "Code lenses", "Semantic tokens", "Rename previews", "Code actions", "Call hierarchy", "Type hierarchy", "Completion item resolve", "Execute command", "Diagnostics"},
+	},
+	"lsp_cli_metadata_roundtrip": {
+		Category:    "code-intelligence",
+		Description: "Runs the real code-intel lsp CLI through action discovery, server candidate discovery, server listing, and text rendering.",
+		ParityRefs:  []string{"LSP tool", "LSP metadata", "LSP action discovery", "Code intelligence", "Interactive rendering"},
 	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
@@ -7804,6 +7811,135 @@ func lspStaticScenario() scenario {
 			}, nil
 		},
 	}
+}
+
+func lspCLIMetadataScenario() scenario {
+	return scenario{
+		name: "lsp_cli_metadata_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			configPath := filepath.Join(workspace, "codog-config.json")
+			configData, err := json.Marshal(map[string]any{"config_home": configHome})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			actionsOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "code-intel", "lsp", "actions", "--json")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var actions lspActionsHarnessReport
+			if err := json.Unmarshal([]byte(actionsOut), &actions); err != nil {
+				return localScenarioResult{}, err
+			}
+			if actions.Kind != "lsp_actions" || actions.Action != "actions" || actions.Status != "ok" || actions.Count < 40 {
+				return localScenarioResult{}, fmt.Errorf("unexpected lsp actions report: %#v", actions)
+			}
+			if !strings.Contains(actionsOut, `"name": "definition"`) || !strings.Contains(actionsOut, `"method": "textDocument/definition"`) || !strings.Contains(actionsOut, `"name": "references"`) {
+				return localScenarioResult{}, fmt.Errorf("lsp actions output missing expected actions: %s", actionsOut)
+			}
+
+			discoverOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "code-intel", "lsp", "discover", "--json")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var discover lspDiscoverHarnessReport
+			if err := json.Unmarshal([]byte(discoverOut), &discover); err != nil {
+				return localScenarioResult{}, err
+			}
+			if discover.Kind != "lsp_discover" || discover.Action != "discover" || discover.Status != "ok" || discover.Count < 5 {
+				return localScenarioResult{}, fmt.Errorf("unexpected lsp discover report: %#v", discover)
+			}
+			if !lspHarnessCandidateExists(discover.Candidates, "go", "gopls") || !lspHarnessCandidateExists(discover.Candidates, "rust", "rust-analyzer") {
+				return localScenarioResult{}, fmt.Errorf("lsp discover candidates missing expected defaults: %#v", discover.Candidates)
+			}
+
+			listOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "code-intel", "lsp", "list", "--json")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var list lspListHarnessReport
+			if err := json.Unmarshal([]byte(listOut), &list); err != nil {
+				return localScenarioResult{}, err
+			}
+			if list.Kind != "lsp_list" || list.Action != "list" || list.Status != "ok" || list.Count != 0 || len(list.Servers) != 0 {
+				return localScenarioResult{}, fmt.Errorf("unexpected lsp list report: %#v", list)
+			}
+
+			textOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "code-intel", "lsp", "discover", "--output-format", "text")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(textOut, "LSP Discover") || !strings.Contains(textOut, "gopls") || !strings.Contains(textOut, "rust-analyzer") {
+				return localScenarioResult{}, fmt.Errorf("lsp discover text output missing expected values: %s", textOut)
+			}
+
+			report := map[string]any{
+				"kind": "lsp_cli_metadata",
+				"lsp": map[string]any{
+					"actions":       actions.Count,
+					"candidates":    discover.Count,
+					"servers":       list.Count,
+					"has_go":        lspHarnessCandidateExists(discover.Candidates, "go", "gopls"),
+					"has_rust":      lspHarnessCandidateExists(discover.Candidates, "rust", "rust-analyzer"),
+					"text_rendered": strings.Contains(textOut, "LSP Discover"),
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "lsp cli metadata harness ok",
+				RequestCount: 4,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+type lspActionsHarnessReport struct {
+	Kind   string `json:"kind"`
+	Action string `json:"action"`
+	Status string `json:"status"`
+	Count  int    `json:"count"`
+}
+
+type lspDiscoverHarnessReport struct {
+	Kind       string                `json:"kind"`
+	Action     string                `json:"action"`
+	Status     string                `json:"status"`
+	Count      int                   `json:"count"`
+	Candidates []lspHarnessCandidate `json:"candidates"`
+}
+
+type lspListHarnessReport struct {
+	Kind    string            `json:"kind"`
+	Action  string            `json:"action"`
+	Status  string            `json:"status"`
+	Count   int               `json:"count"`
+	Servers []json.RawMessage `json:"servers"`
+}
+
+type lspHarnessCandidate struct {
+	Language string `json:"language"`
+	Command  string `json:"command"`
+}
+
+func lspHarnessCandidateExists(candidates []lspHarnessCandidate, language string, command string) bool {
+	for _, candidate := range candidates {
+		if candidate.Language == language && candidate.Command == command {
+			return true
+		}
+	}
+	return false
 }
 
 func pluginLifecycleScenario() scenario {

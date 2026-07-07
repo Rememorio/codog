@@ -34311,15 +34311,24 @@ func renderCodeIntelNotebookEdit(out io.Writer, report codeIntelNotebookEditRepo
 }
 
 func (a *App) CodeIntelLSP(args []string) error {
+	format, args, err := parseCodeIntelLSPArgs(args)
+	if err != nil {
+		return err
+	}
 	store := codeintel.NewLSPStore(a.Config.ConfigHome, a.Workspace)
 	if len(args) == 0 || args[0] == "list" {
 		statuses, err := store.List()
 		if err != nil {
 			return err
 		}
-		data, _ := json.MarshalIndent(statuses, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+		return renderCodeIntelLSPPayload(a.Out, format, codeIntelLSPListReport{
+			Kind:    "lsp_list",
+			Action:  "list",
+			Status:  "ok",
+			Count:   len(statuses),
+			Servers: statuses,
+			Message: lspListMessage(statuses),
+		})
 	}
 	var payload any
 	switch args[0] {
@@ -34334,7 +34343,15 @@ func (a *App) CodeIntelLSP(args []string) error {
 			Message: "LSP query actions are resolved locally; start a language server before running `code-intel lsp query`.",
 		}
 	case "discover":
-		payload = codeintel.DefaultLSPCandidates()
+		candidates := codeintel.DefaultLSPCandidates()
+		payload = codeIntelLSPDiscoverReport{
+			Kind:       "lsp_discover",
+			Action:     "discover",
+			Status:     "ok",
+			Count:      len(candidates),
+			Candidates: candidates,
+			Message:    "Language-server candidates are discovered from common executable names on PATH.",
+		}
 	case "start":
 		if len(args) < 2 {
 			return errors.New("usage: codog code-intel lsp start LANGUAGE [COMMAND...]")
@@ -34427,9 +34444,156 @@ func (a *App) CodeIntelLSP(args []string) error {
 	default:
 		return fmt.Errorf("unknown code-intel lsp command %q", args[0])
 	}
-	data, _ := json.MarshalIndent(payload, "", "  ")
-	fmt.Fprintln(a.Out, string(data))
+	return renderCodeIntelLSPPayload(a.Out, format, payload)
+}
+
+func parseCodeIntelLSPArgs(args []string) (string, []string, error) {
+	format := "json"
+	rest := []string{}
+	usage := "codog code-intel lsp [list|actions|discover|start|status|query|stop] [ARGS...] [--json|--output-format text|json]"
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if missingFlagValueAt(args, index) {
+				return "", nil, missingFlagValueError{Command: "code-intel lsp", Flag: arg, Usage: usage}
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	normalized, err := normalizeOutputFormat("code-intel lsp", format, []string{"text", "json"})
+	if err != nil {
+		return "", nil, err
+	}
+	return normalized, rest, nil
+}
+
+func renderCodeIntelLSPPayload(out io.Writer, format string, payload any) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(payload, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	switch report := payload.(type) {
+	case codeIntelLSPActionsReport:
+		renderCodeIntelLSPActionsText(out, report)
+	case codeIntelLSPDiscoverReport:
+		renderCodeIntelLSPDiscoverText(out, report)
+	case codeIntelLSPListReport:
+		renderCodeIntelLSPListText(out, report)
+	case codeintel.LSPServerStatus:
+		renderCodeIntelLSPServerStatusText(out, report)
+	case codeintel.LSPQueryResult:
+		renderCodeIntelLSPQueryText(out, report)
+	default:
+		data, _ := json.MarshalIndent(payload, "", "  ")
+		fmt.Fprintln(out, string(data))
+	}
 	return nil
+}
+
+func renderCodeIntelLSPActionsText(out io.Writer, report codeIntelLSPActionsReport) {
+	fmt.Fprintln(out, "LSP Actions")
+	fmt.Fprintf(out, "  Count            %d\n", report.Count)
+	for _, action := range report.Actions {
+		method := action.Method
+		if method == "" {
+			method = "notification"
+		}
+		fmt.Fprintf(out, "  %-18s %-34s %s\n", action.Name, method, action.Description)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
+func renderCodeIntelLSPDiscoverText(out io.Writer, report codeIntelLSPDiscoverReport) {
+	fmt.Fprintln(out, "LSP Discover")
+	fmt.Fprintf(out, "  Count            %d\n", report.Count)
+	for _, candidate := range report.Candidates {
+		state := "missing"
+		if candidate.Installed {
+			state = "installed"
+		}
+		command := strings.TrimSpace(strings.Join(append([]string{candidate.Command}, candidate.Args...), " "))
+		if candidate.Path != "" {
+			command = candidate.Path
+			if len(candidate.Args) > 0 {
+				command += " " + strings.Join(candidate.Args, " ")
+			}
+		}
+		fmt.Fprintf(out, "  %-12s %-9s %-36s %s\n", candidate.Language, state, command, candidate.Description)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
+func renderCodeIntelLSPListText(out io.Writer, report codeIntelLSPListReport) {
+	fmt.Fprintln(out, "LSP Servers")
+	fmt.Fprintf(out, "  Count            %d\n", report.Count)
+	if len(report.Servers) == 0 {
+		fmt.Fprintln(out, "  Servers          none")
+	} else {
+		for _, server := range report.Servers {
+			fmt.Fprintf(out, "  %-12s %-10s task=%s command=%s\n", server.Language, server.Task.Status, server.TaskID, server.Command)
+		}
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
+func renderCodeIntelLSPServerStatusText(out io.Writer, status codeintel.LSPServerStatus) {
+	fmt.Fprintln(out, "LSP Server")
+	fmt.Fprintf(out, "  Language         %s\n", status.Language)
+	fmt.Fprintf(out, "  Status           %s\n", status.Task.Status)
+	fmt.Fprintf(out, "  Task             %s\n", status.TaskID)
+	fmt.Fprintf(out, "  Workspace        %s\n", status.Workspace)
+	fmt.Fprintf(out, "  Command          %s\n", status.Command)
+}
+
+func renderCodeIntelLSPQueryText(out io.Writer, result codeintel.LSPQueryResult) {
+	fmt.Fprintln(out, "LSP Query")
+	fmt.Fprintf(out, "  Language         %s\n", result.Language)
+	fmt.Fprintf(out, "  Action           %s\n", result.Action)
+	fmt.Fprintf(out, "  Method           %s\n", result.Method)
+	fmt.Fprintf(out, "  Path             %s\n", result.Path)
+	fmt.Fprintf(out, "  Changed          %t\n", result.Changed)
+	fmt.Fprintf(out, "  Text edits       %d\n", result.TextEdits)
+	fmt.Fprintf(out, "  File edits       %d\n", result.FileEdits)
+}
+
+func lspListMessage(statuses []codeintel.LSPServerStatus) string {
+	if len(statuses) == 0 {
+		return "No language servers are recorded for this workspace."
+	}
+	return "Language servers are recorded for this workspace."
+}
+
+type codeIntelLSPDiscoverReport struct {
+	Kind       string                   `json:"kind"`
+	Action     string                   `json:"action"`
+	Status     string                   `json:"status"`
+	Count      int                      `json:"count"`
+	Candidates []codeintel.LSPCandidate `json:"candidates"`
+	Message    string                   `json:"message,omitempty"`
+}
+
+type codeIntelLSPListReport struct {
+	Kind    string                      `json:"kind"`
+	Action  string                      `json:"action"`
+	Status  string                      `json:"status"`
+	Count   int                         `json:"count"`
+	Servers []codeintel.LSPServerStatus `json:"servers"`
+	Message string                      `json:"message,omitempty"`
 }
 
 type codeIntelLSPActionsReport struct {

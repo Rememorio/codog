@@ -28372,7 +28372,21 @@ func TestCodeIntelLSPCommands(t *testing.T) {
 	}
 
 	require.NoError(t, app.CodeIntel([]string{"lsp", "discover"}))
-	require.Contains(t, out.String(), `"language": "go"`)
+	var discover codeIntelLSPDiscoverReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &discover))
+	require.Equal(t, "lsp_discover", discover.Kind)
+	require.Equal(t, "discover", discover.Action)
+	require.Equal(t, "ok", discover.Status)
+	require.GreaterOrEqual(t, discover.Count, 1)
+	require.NotEmpty(t, discover.Candidates)
+	require.True(t, lspCandidateExists(discover.Candidates, "go", "gopls"))
+	require.Contains(t, discover.Message, "PATH")
+	out.Reset()
+
+	require.NoError(t, app.CodeIntel([]string{"lsp", "discover", "--output-format", "text"}))
+	require.Contains(t, out.String(), "LSP Discover")
+	require.Contains(t, out.String(), "go")
+	require.Contains(t, out.String(), "gopls")
 	out.Reset()
 
 	require.NoError(t, app.CodeIntel([]string{"lsp", "actions"}))
@@ -28393,7 +28407,21 @@ func TestCodeIntelLSPCommands(t *testing.T) {
 	out.Reset()
 
 	require.NoError(t, app.CodeIntel([]string{"lsp", "list"}))
-	require.Contains(t, out.String(), `"language": "go"`)
+	var list codeIntelLSPListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &list))
+	require.Equal(t, "lsp_list", list.Kind)
+	require.Equal(t, "list", list.Action)
+	require.Equal(t, "ok", list.Status)
+	require.Equal(t, 1, list.Count)
+	require.Len(t, list.Servers, 1)
+	require.Equal(t, "go", list.Servers[0].Language)
+	require.Contains(t, list.Message, "recorded")
+	out.Reset()
+
+	require.NoError(t, app.CodeIntel([]string{"lsp", "list", "--output-format=text"}))
+	require.Contains(t, out.String(), "LSP Servers")
+	require.Contains(t, out.String(), "go")
+	require.Contains(t, out.String(), "running")
 	out.Reset()
 
 	require.NoError(t, app.CodeIntel([]string{"lsp", "stop", "go"}))
@@ -28436,6 +28464,15 @@ func TestResumedCodeIntelLSPStartAndStop(t *testing.T) {
 func lspActionExists(actions []codeintel.LSPActionInfo, name string, method string) bool {
 	for _, action := range actions {
 		if action.Name == name && action.Method == method {
+			return true
+		}
+	}
+	return false
+}
+
+func lspCandidateExists(candidates []codeintel.LSPCandidate, language string, command string) bool {
+	for _, candidate := range candidates {
+		if candidate.Language == language && candidate.Command == command {
 			return true
 		}
 	}
