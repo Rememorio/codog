@@ -30231,6 +30231,31 @@ func (e unexpectedExtraArgsError) Error() string {
 	return fmt.Sprintf("unexpected_extra_args: %s got unexpected arguments: %s", e.Command, strings.Join(e.Args, " "))
 }
 
+type exportFilesystemError struct {
+	Operation string
+	Path      string
+	Err       error
+}
+
+func (e exportFilesystemError) Error() string {
+	operation := strings.TrimSpace(e.Operation)
+	if operation == "" {
+		operation = "write_output"
+	}
+	path := strings.TrimSpace(e.Path)
+	if path == "" {
+		path = "<unknown>"
+	}
+	if e.Err != nil {
+		return fmt.Sprintf("export_%s_failed: failed to %s export output %q: %v", operation, strings.ReplaceAll(operation, "_", " "), path, e.Err)
+	}
+	return fmt.Sprintf("export_%s_failed: failed to %s export output %q", operation, strings.ReplaceAll(operation, "_", " "), path)
+}
+
+func (e exportFilesystemError) Unwrap() error {
+	return e.Err
+}
+
 type invalidResumeArgumentError struct {
 	Command string
 	Args    []string
@@ -30595,6 +30620,38 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Option:    "--json-schema",
 			Message:   jsonSchemaErr.Error(),
 			Hint:      "Adjust the prompt or --json-schema so the final assistant response is valid JSON matching the schema.",
+			Path:      path,
+		})
+	}
+	var exportErr exportFilesystemError
+	if errors.As(err, &exportErr) {
+		operation := strings.TrimSpace(exportErr.Operation)
+		if operation == "" {
+			operation = "write_output"
+		}
+		path := strings.TrimSpace(exportErr.Path)
+		message := fmt.Sprintf("failed to %s export output", strings.ReplaceAll(operation, "_", " "))
+		if path != "" {
+			message = fmt.Sprintf("%s: %s", message, path)
+		}
+		hint := "Choose a writable file path inside the workspace."
+		switch operation {
+		case "resolve_output_path", "validate_output_path":
+			hint = "Use a file path inside the workspace, or pass an absolute path intentionally."
+			if errors.Is(exportErr.Err, os.ErrNotExist) {
+				hint = "Create the parent directory or choose an existing output directory."
+			}
+		case "write_output":
+			hint = "Create the parent directory or choose a writable output file."
+		}
+		return finish(cliErrorReport{
+			Kind:      "export_" + operation + "_failed",
+			ErrorKind: "export_" + operation + "_failed",
+			Status:    "error",
+			Command:   "export",
+			Action:    "write",
+			Message:   message,
+			Hint:      hint,
 			Path:      path,
 		})
 	}
@@ -31071,6 +31128,10 @@ func classifyCLIErrorEnvelopeKind(err error, report cliErrorReport) string {
 }
 
 func cliErrorOperation(err error, report cliErrorReport, kind string) string {
+	var exportErr exportFilesystemError
+	if errors.As(err, &exportErr) && strings.TrimSpace(exportErr.Operation) != "" {
+		return strings.TrimSpace(exportErr.Operation)
+	}
 	var pathErr *os.PathError
 	if errors.As(err, &pathErr) && strings.TrimSpace(pathErr.Op) != "" {
 		return strings.TrimSpace(pathErr.Op)
@@ -31106,6 +31167,10 @@ func cliErrorOperation(err error, report cliErrorReport, kind string) string {
 }
 
 func cliErrorTarget(err error, report cliErrorReport) string {
+	var exportErr exportFilesystemError
+	if errors.As(err, &exportErr) && strings.TrimSpace(exportErr.Path) != "" {
+		return strings.TrimSpace(exportErr.Path)
+	}
 	var pathErr *os.PathError
 	if errors.As(err, &pathErr) && strings.TrimSpace(pathErr.Path) != "" {
 		return strings.TrimSpace(pathErr.Path)
@@ -45058,13 +45123,13 @@ func (a *App) writeExport(req exportRequest) error {
 	}
 	path, err := a.resolveWorkspaceOutputPath(req.Output)
 	if err != nil {
-		return err
+		return exportFilesystemError{Operation: "resolve_output_path", Path: req.Output, Err: err}
 	}
 	if err := session.ValidateExportOutputPath(path); err != nil {
-		return err
+		return exportFilesystemError{Operation: "validate_output_path", Path: path, Err: err}
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return err
+		return exportFilesystemError{Operation: "write_output", Path: path, Err: err}
 	}
 	format, _ := session.NormalizeExportFormat(req.Format)
 	report := map[string]any{

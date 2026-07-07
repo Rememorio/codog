@@ -27081,6 +27081,42 @@ func TestExportMissingSessionReportsTypedJSON(t *testing.T) {
 	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
+func TestExportWriteFailureReportsFilesystemEnvelope(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "export me")))
+	t.Chdir(workspace)
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "export", "--session", "source", "--output", "missing-dir/out.md"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+
+	var report cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	expectedPath := filepath.Join(workspace, "missing-dir", "out.md")
+	require.Equal(t, "export_validate_output_path_failed", report.ErrorKind)
+	require.Equal(t, "export", report.Command)
+	require.Equal(t, "write", report.Action)
+	require.Equal(t, expectedPath, report.Path)
+	require.Equal(t, "filesystem", report.Error.Kind)
+	require.Equal(t, "validate_output_path", report.Error.Operation)
+	require.Equal(t, expectedPath, report.Error.Target)
+	require.Equal(t, "ENOENT", report.Error.Errno)
+	require.True(t, report.Error.Retryable)
+	require.Contains(t, report.Hint, "parent directory")
+	require.Contains(t, report.Message, expectedPath)
+	require.NoFileExists(t, expectedPath)
+}
+
 func TestExportSlashWritesCurrentSession(t *testing.T) {
 	workspace := t.TempDir()
 	store := session.NewWorkspaceStore(t.TempDir(), workspace)
