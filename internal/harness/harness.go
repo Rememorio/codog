@@ -226,6 +226,7 @@ var scenarioOrder = []string{
 	"interface_preferences_roundtrip",
 	"privacy_keybindings_roundtrip",
 	"browser_notifications_roundtrip",
+	"model_runtime_preferences_roundtrip",
 	"output_style_lifecycle_roundtrip",
 	"diagnostics_status_roundtrip",
 	"statusline_cli_roundtrip",
@@ -777,6 +778,7 @@ func Run(ctx context.Context) (Report, error) {
 		interfacePreferencesScenario(),
 		privacyKeybindingsScenario(),
 		browserNotificationsScenario(),
+		modelRuntimePreferencesScenario(),
 		outputStyleLifecycleScenario(),
 		diagnosticsStatusScenario(),
 		statuslineCLIScenario(),
@@ -1202,6 +1204,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "context view and focus", RequiredRefs: []string{"Context view", "Focused paths", "Context signals"}},
 	{Capability: "statusline rendering", RequiredRefs: []string{"Statusline", "Statusline JSON", "Statusline text"}},
 	{Capability: "appearance and preferences", RequiredRefs: []string{"Theme", "Theme persistence", "Theme reset", "Language preference", "Vim mode", "Privacy settings", "Keybindings", "Chrome integration", "Notifications", "Telemetry", "Preference persistence"}},
+	{Capability: "model runtime controls", RequiredRefs: []string{"Reasoning effort", "Fast mode", "Temperature preference", "Preference persistence"}},
 }
 
 func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
@@ -1483,6 +1486,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "preferences",
 		Description: "Runs Chrome, notifications, and telemetry preference CLI commands through persisted configuration, status, text rendering, and reset operations.",
 		ParityRefs:  []string{"Chrome integration", "Notifications", "Telemetry", "Preference persistence", "Configuration", "Interactive rendering"},
+	},
+	"model_runtime_preferences_roundtrip": {
+		Category:    "model-runtime",
+		Description: "Runs reasoning effort, fast mode, and temperature preference CLI commands through persisted configuration, status, text rendering, and reset operations.",
+		ParityRefs:  []string{"Reasoning effort", "Fast mode", "Temperature preference", "Preference persistence", "Configuration", "Interactive rendering"},
 	},
 	"output_style_lifecycle_roundtrip": {
 		Category:    "interactive-ui",
@@ -3611,6 +3619,295 @@ func decodeTelemetryHarnessReport(output string) (telemetryHarnessReport, error)
 	var report telemetryHarnessReport
 	if err := json.Unmarshal([]byte(output), &report); err != nil {
 		return telemetryHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func modelRuntimePreferencesScenario() scenario {
+	return scenario{
+		name: "model_runtime_preferences_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, ".codog-home")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			configPath := filepath.Join(workspace, "codog-config.json")
+			configData, err := json.Marshal(map[string]any{"config_home": configHome})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			initialReasoningOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "reasoning")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initialReasoning, err := decodeEffortHarnessReport(initialReasoningOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initialReasoning.Kind != "reasoning" || initialReasoning.Action != "status" || initialReasoning.Effort != "auto" {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial reasoning report: %#v", initialReasoning)
+			}
+			if !slices.Contains(initialReasoning.Available, "high") || !slices.Contains(initialReasoning.Available, "disabled") {
+				return localScenarioResult{}, fmt.Errorf("reasoning available list missing expected levels: %#v", initialReasoning.Available)
+			}
+
+			setReasoningOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "reasoning", "high", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			setReasoning, err := decodeEffortHarnessReport(setReasoningOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if setReasoning.Action != "set" || setReasoning.Effort != "high" || setReasoning.Previous != "auto" {
+				return localScenarioResult{}, fmt.Errorf("unexpected set reasoning report: %#v", setReasoning)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(configData), `"reasoning_effort": "high"`) && !strings.Contains(string(configData), `"reasoning_effort":"high"`) {
+				return localScenarioResult{}, fmt.Errorf("reasoning config did not persist high effort: %s", string(configData))
+			}
+
+			statusReasoningOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "reasoning", "status")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			statusReasoning, err := decodeEffortHarnessReport(statusReasoningOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if statusReasoning.Action != "status" || statusReasoning.Effort != "high" {
+				return localScenarioResult{}, fmt.Errorf("unexpected persisted reasoning report: %#v", statusReasoning)
+			}
+
+			reasoningText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "reasoning", "list")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(reasoningText, "Reasoning") || !strings.Contains(reasoningText, "Available") || !strings.Contains(reasoningText, "disabled") {
+				return localScenarioResult{}, fmt.Errorf("reasoning text output missing expected values: %s", reasoningText)
+			}
+
+			clearReasoningOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "reasoning", "clear", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			clearReasoning, err := decodeEffortHarnessReport(clearReasoningOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if clearReasoning.Action != "clear" || clearReasoning.Effort != "auto" || clearReasoning.Previous != "high" {
+				return localScenarioResult{}, fmt.Errorf("unexpected clear reasoning report: %#v", clearReasoning)
+			}
+
+			initialFastOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "fast")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initialFast, err := decodeFastHarnessReport(initialFastOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initialFast.Kind != "fast" || initialFast.Action != "status" || initialFast.Enabled {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial fast report: %#v", initialFast)
+			}
+
+			setFastOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "fast", "on", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			setFast, err := decodeFastHarnessReport(setFastOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if setFast.Action != "set" || !setFast.Enabled {
+				return localScenarioResult{}, fmt.Errorf("unexpected set fast report: %#v", setFast)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(configData), `"fast_mode": true`) && !strings.Contains(string(configData), `"fast_mode":true`) {
+				return localScenarioResult{}, fmt.Errorf("fast config did not persist enabled state: %s", string(configData))
+			}
+
+			fastText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "fast", "status")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(fastText, "Fast Mode") || !strings.Contains(fastText, "Enabled          true") {
+				return localScenarioResult{}, fmt.Errorf("fast text output missing expected values: %s", fastText)
+			}
+
+			clearFastOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "fast", "clear", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			clearFast, err := decodeFastHarnessReport(clearFastOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if clearFast.Action != "clear" || clearFast.Enabled || !clearFast.Previous {
+				return localScenarioResult{}, fmt.Errorf("unexpected clear fast report: %#v", clearFast)
+			}
+
+			initialTemperatureOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "temperature")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initialTemperature, err := decodeTemperatureHarnessReport(initialTemperatureOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initialTemperature.Kind != "temperature" || initialTemperature.Action != "status" || initialTemperature.Configured || initialTemperature.Temperature != nil {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial temperature report: %#v", initialTemperature)
+			}
+
+			setTemperatureOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "temperature", "0.7", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			setTemperature, err := decodeTemperatureHarnessReport(setTemperatureOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if setTemperature.Action != "set" || !setTemperature.Configured || setTemperature.Temperature == nil || math.Abs(*setTemperature.Temperature-0.7) > 0.0001 {
+				return localScenarioResult{}, fmt.Errorf("unexpected set temperature report: %#v", setTemperature)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(configData), `"temperature": 0.7`) && !strings.Contains(string(configData), `"temperature":0.7`) {
+				return localScenarioResult{}, fmt.Errorf("temperature config did not persist 0.7: %s", string(configData))
+			}
+
+			temperatureText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "temperature")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(temperatureText, "Temperature") || !strings.Contains(temperatureText, "Value            0.7") {
+				return localScenarioResult{}, fmt.Errorf("temperature text output missing expected values: %s", temperatureText)
+			}
+
+			clearTemperatureOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "temperature", "clear", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			clearTemperature, err := decodeTemperatureHarnessReport(clearTemperatureOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if clearTemperature.Action != "clear" || clearTemperature.Configured || clearTemperature.Temperature != nil {
+				return localScenarioResult{}, fmt.Errorf("unexpected clear temperature report: %#v", clearTemperature)
+			}
+
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, clearedKey := range []string{`"reasoning_effort"`, `"fast_mode"`, `"temperature"`} {
+				if strings.Contains(string(configData), clearedKey) {
+					return localScenarioResult{}, fmt.Errorf("config still contains %s after clear: %s", clearedKey, string(configData))
+				}
+			}
+
+			report := map[string]any{
+				"kind": "model_runtime_preferences",
+				"reasoning": map[string]any{
+					"initial":        initialReasoning.Effort,
+					"set":            setReasoning.Effort,
+					"status":         statusReasoning.Effort,
+					"cleared":        clearReasoning.Effort,
+					"clear_previous": clearReasoning.Previous,
+					"path_persisted": setReasoning.Path != "" && strings.HasSuffix(setReasoning.Path, "codog-config.json"),
+					"text_rendered":  strings.Contains(reasoningText, "Available"),
+				},
+				"fast": map[string]any{
+					"initial_enabled": initialFast.Enabled,
+					"set":             setFast.Enabled,
+					"cleared":         clearFast.Enabled,
+					"clear_previous":  clearFast.Previous,
+					"path_persisted":  setFast.Path != "" && strings.HasSuffix(setFast.Path, "codog-config.json"),
+					"text_rendered":   strings.Contains(fastText, "Enabled          true"),
+				},
+				"temperature": map[string]any{
+					"initial_configured": initialTemperature.Configured,
+					"set":                *setTemperature.Temperature,
+					"cleared_configured": clearTemperature.Configured,
+					"path_persisted":     setTemperature.Path != "" && strings.HasSuffix(setTemperature.Path, "codog-config.json"),
+					"text_rendered":      strings.Contains(temperatureText, "Value            0.7"),
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "model runtime preferences harness ok",
+				RequestCount: 13,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+type effortHarnessReport struct {
+	Kind      string   `json:"kind"`
+	Action    string   `json:"action"`
+	Status    string   `json:"status"`
+	Effort    string   `json:"effort"`
+	Previous  string   `json:"previous,omitempty"`
+	Path      string   `json:"path,omitempty"`
+	Available []string `json:"available"`
+}
+
+type fastHarnessReport struct {
+	Kind     string `json:"kind"`
+	Action   string `json:"action"`
+	Status   string `json:"status"`
+	Enabled  bool   `json:"enabled"`
+	Previous bool   `json:"previous,omitempty"`
+	Path     string `json:"path,omitempty"`
+}
+
+type temperatureHarnessReport struct {
+	Kind        string   `json:"kind"`
+	Action      string   `json:"action"`
+	Status      string   `json:"status"`
+	Configured  bool     `json:"configured"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	Path        string   `json:"path,omitempty"`
+	Message     string   `json:"message,omitempty"`
+}
+
+func decodeEffortHarnessReport(output string) (effortHarnessReport, error) {
+	var report effortHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return effortHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func decodeFastHarnessReport(output string) (fastHarnessReport, error) {
+	var report fastHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return fastHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func decodeTemperatureHarnessReport(output string) (temperatureHarnessReport, error) {
+	var report temperatureHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return temperatureHarnessReport{}, err
 	}
 	return report, nil
 }
