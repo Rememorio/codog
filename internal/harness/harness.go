@@ -223,6 +223,7 @@ var scenarioOrder = []string{
 	"session_summary_roundtrip",
 	"context_view_roundtrip",
 	"theme_lifecycle_roundtrip",
+	"interface_preferences_roundtrip",
 	"output_style_lifecycle_roundtrip",
 	"diagnostics_status_roundtrip",
 	"statusline_cli_roundtrip",
@@ -771,6 +772,7 @@ func Run(ctx context.Context) (Report, error) {
 		sessionSummaryScenario(),
 		contextViewScenario(),
 		themeLifecycleScenario(),
+		interfacePreferencesScenario(),
 		outputStyleLifecycleScenario(),
 		diagnosticsStatusScenario(),
 		statuslineCLIScenario(),
@@ -1195,7 +1197,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "setup and diagnostics", RequiredRefs: []string{"Doctor", "Status diagnostics", "Terminal setup"}},
 	{Capability: "context view and focus", RequiredRefs: []string{"Context view", "Focused paths", "Context signals"}},
 	{Capability: "statusline rendering", RequiredRefs: []string{"Statusline", "Statusline JSON", "Statusline text"}},
-	{Capability: "appearance and preferences", RequiredRefs: []string{"Theme", "Theme persistence", "Theme reset"}},
+	{Capability: "appearance and preferences", RequiredRefs: []string{"Theme", "Theme persistence", "Theme reset", "Language preference", "Vim mode", "Preference persistence"}},
 }
 
 func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
@@ -1462,6 +1464,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "preferences",
 		Description: "Runs the real theme CLI through local preference set, status, and reset operations.",
 		ParityRefs:  []string{"Theme", "Theme persistence", "Theme reset", "Configuration"},
+	},
+	"interface_preferences_roundtrip": {
+		Category:    "preferences",
+		Description: "Runs real language and Vim preference CLI commands through set, status, text rendering, and reset operations.",
+		ParityRefs:  []string{"Language preference", "Vim mode", "Preference persistence", "Configuration", "Interactive rendering"},
 	},
 	"output_style_lifecycle_roundtrip": {
 		Category:    "interactive-ui",
@@ -2759,6 +2766,227 @@ func decodeThemeHarnessReport(output string) (themeHarnessReport, error) {
 	var report themeHarnessReport
 	if err := json.Unmarshal([]byte(output), &report); err != nil {
 		return themeHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func interfacePreferencesScenario() scenario {
+	return scenario{
+		name: "interface_preferences_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, ".codog-home")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			configPath := filepath.Join(workspace, "codog-config.json")
+			configData, err := json.Marshal(map[string]any{"config_home": configHome})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			initialLanguageOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "language")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initialLanguage, err := decodeLanguageHarnessReport(initialLanguageOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initialLanguage.Kind != "language" || initialLanguage.Action != "status" || initialLanguage.Configured || initialLanguage.Language != "" {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial language report: %#v", initialLanguage)
+			}
+
+			setLanguageOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "language", "use", "Japanese", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			setLanguage, err := decodeLanguageHarnessReport(setLanguageOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if setLanguage.Action != "set" || !setLanguage.Configured || setLanguage.Language != "Japanese" {
+				return localScenarioResult{}, fmt.Errorf("unexpected set language report: %#v", setLanguage)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(configData), `"language": "Japanese"`) && !strings.Contains(string(configData), `"language":"Japanese"`) {
+				return localScenarioResult{}, fmt.Errorf("language config did not persist: %s", string(configData))
+			}
+
+			statusLanguageOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "language", "view")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			statusLanguage, err := decodeLanguageHarnessReport(statusLanguageOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if statusLanguage.Action != "status" || !statusLanguage.Configured || statusLanguage.Language != "Japanese" {
+				return localScenarioResult{}, fmt.Errorf("unexpected persisted language report: %#v", statusLanguage)
+			}
+
+			languageText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "language", "view")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(languageText, "Language") || !strings.Contains(languageText, "Japanese") {
+				return localScenarioResult{}, fmt.Errorf("language text output missing expected values: %s", languageText)
+			}
+
+			clearLanguageOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "language", "clear", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			clearLanguage, err := decodeLanguageHarnessReport(clearLanguageOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if clearLanguage.Action != "clear" || clearLanguage.Configured || clearLanguage.Language != "" || clearLanguage.Previous != "Japanese" {
+				return localScenarioResult{}, fmt.Errorf("unexpected clear language report: %#v", clearLanguage)
+			}
+
+			initialVimOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "vim", "status")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initialVim, err := decodeVimHarnessReport(initialVimOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initialVim.Kind != "vim" || initialVim.Action != "status" || initialVim.Enabled || initialVim.EditorMode != "default" {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial vim report: %#v", initialVim)
+			}
+
+			setVimOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "vim", "on", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			setVim, err := decodeVimHarnessReport(setVimOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if setVim.Action != "set" || !setVim.Enabled || setVim.EditorMode != "vim" || setVim.Previous != "default" {
+				return localScenarioResult{}, fmt.Errorf("unexpected set vim report: %#v", setVim)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(configData), `"editorMode": "vim"`) && !strings.Contains(string(configData), `"editorMode":"vim"`) {
+				return localScenarioResult{}, fmt.Errorf("vim config did not persist: %s", string(configData))
+			}
+
+			statusVimOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "vim", "status")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			statusVim, err := decodeVimHarnessReport(statusVimOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if statusVim.Action != "status" || !statusVim.Enabled || statusVim.EditorMode != "vim" {
+				return localScenarioResult{}, fmt.Errorf("unexpected persisted vim report: %#v", statusVim)
+			}
+
+			vimText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "vim", "status")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(vimText, "Vim") || !strings.Contains(vimText, "Editor mode") || !strings.Contains(vimText, "vim") {
+				return localScenarioResult{}, fmt.Errorf("vim text output missing expected values: %s", vimText)
+			}
+
+			clearVimOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "vim", "clear", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			clearVim, err := decodeVimHarnessReport(clearVimOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if clearVim.Action != "clear" || clearVim.Enabled || clearVim.EditorMode != "default" || clearVim.Previous != "vim" {
+				return localScenarioResult{}, fmt.Errorf("unexpected clear vim report: %#v", clearVim)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if strings.Contains(string(configData), `"language"`) || strings.Contains(string(configData), `"editorMode"`) {
+				return localScenarioResult{}, fmt.Errorf("interface preferences still persisted after clear: %s", string(configData))
+			}
+
+			report := map[string]any{
+				"kind": "interface_preferences",
+				"language": map[string]any{
+					"initial_configured": initialLanguage.Configured,
+					"set":                setLanguage.Language,
+					"status":             statusLanguage.Language,
+					"cleared":            clearLanguage.Language,
+					"clear_previous":     clearLanguage.Previous,
+					"path_persisted":     setLanguage.Path != "" && strings.HasSuffix(setLanguage.Path, "codog-config.json"),
+					"text_rendered":      strings.Contains(languageText, "Japanese"),
+				},
+				"vim": map[string]any{
+					"initial_enabled": initialVim.Enabled,
+					"set":             setVim.EditorMode,
+					"status":          statusVim.EditorMode,
+					"cleared":         clearVim.EditorMode,
+					"clear_previous":  clearVim.Previous,
+					"path_persisted":  setVim.Path != "" && strings.HasSuffix(setVim.Path, "codog-config.json"),
+					"text_rendered":   strings.Contains(vimText, "Editor mode"),
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "interface preferences harness ok",
+				RequestCount: 8,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+type languageHarnessReport struct {
+	Kind       string `json:"kind"`
+	Action     string `json:"action"`
+	Status     string `json:"status"`
+	Configured bool   `json:"configured"`
+	Language   string `json:"language"`
+	Previous   string `json:"previous,omitempty"`
+	Path       string `json:"path,omitempty"`
+}
+
+func decodeLanguageHarnessReport(output string) (languageHarnessReport, error) {
+	var report languageHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return languageHarnessReport{}, err
+	}
+	return report, nil
+}
+
+type vimHarnessReport struct {
+	Kind       string `json:"kind"`
+	Action     string `json:"action"`
+	Status     string `json:"status"`
+	Enabled    bool   `json:"enabled"`
+	EditorMode string `json:"editor_mode"`
+	Previous   string `json:"previous,omitempty"`
+	Path       string `json:"path,omitempty"`
+}
+
+func decodeVimHarnessReport(output string) (vimHarnessReport, error) {
+	var report vimHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return vimHarnessReport{}, err
 	}
 	return report, nil
 }
