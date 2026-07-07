@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/Rememorio/codog/internal/harness"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,10 +64,11 @@ func TestRegistryV1IsSelfDescribing(t *testing.T) {
 	require.Equal(t, SchemaV1, registry.SchemaVersion)
 	require.Contains(t, fieldIDs(registry), "claims[].kind")
 	require.Contains(t, fieldIDs(registry), "negative_evidence[]")
+	require.Contains(t, fieldIDs(registry), "atomic_update.message_parts[]")
 	require.Contains(t, fieldIDs(registry), "projection.provenance.redactions[]")
 	require.Contains(t, reportSchemaVersions(registry), SchemaV1)
-	require.Contains(t, reportSchemaVersions(registry), harness.ReportSchemaVersion)
-	require.Contains(t, reportSchemaVersions(registry), harness.ManifestSchemaVersion)
+	require.Contains(t, reportSchemaVersions(registry), MockParityReportSchemaV1)
+	require.Contains(t, reportSchemaVersions(registry), MockParityManifestSchemaV1)
 
 	mockParity := registryReportByID(t, registry, "mock_parity_report")
 	require.Equal(t, "codog mock-parity --json", mockParity.Command)
@@ -87,6 +87,114 @@ func TestCanonicalizeSortsAndHashesReport(t *testing.T) {
 	require.Equal(t, ConfidenceMedium, report.Claims[1].Confidence)
 	require.Equal(t, NegativeNotObservedInCheckedScope, report.NegativeEvidence[0].Status)
 	require.Equal(t, FieldCleared, report.FieldDeltas[0].State)
+}
+
+func TestCanonicalizeBindsAtomicUpdateAndOrdersMessageParts(t *testing.T) {
+	report, err := Canonicalize(CanonicalReport{
+		Identity:    Identity{ReportID: "report-atomic-1"},
+		GeneratedAt: "2026-05-14T00:00:00Z",
+		Producer:    "worker-1",
+		AtomicUpdate: &AtomicUpdate{
+			ActiveSessions: []string{"session-b", "session-a", "session-a"},
+			ExactPinpoint:  "4.13 message atomicity",
+			ConcreteDelta:  "split report transport added",
+			Blocker:        "none",
+			MessageParts: []MessagePart{
+				{PartIndex: 1, PartCount: 3, Content: "delta; "},
+				{PartIndex: 2, PartCount: 3, Content: "blocker."},
+				{PartIndex: 0, PartCount: 3, Content: "pinpoint; "},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, "report-atomic-1", report.AtomicUpdate.ReportID)
+	require.Equal(t, []string{"session-a", "session-b"}, report.AtomicUpdate.ActiveSessions)
+	require.True(t, report.AtomicUpdate.MessageComplete)
+	require.Equal(t, []int{0, 1, 2}, messagePartIndexes(report.AtomicUpdate.MessageParts))
+	for _, part := range report.AtomicUpdate.MessageParts {
+		require.Equal(t, "report-atomic-1", part.ReportID)
+		require.NotEmpty(t, part.ContentHash)
+	}
+
+	message, complete, err := ReconstructAtomicMessage(*report.AtomicUpdate)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, "pinpoint; delta; blocker.", message)
+}
+
+func TestCanonicalizeKeepsAtomicFieldsStableForPartialBursts(t *testing.T) {
+	report, err := Canonicalize(CanonicalReport{
+		Identity:    Identity{ReportID: "report-partial-1"},
+		GeneratedAt: "2026-05-14T00:00:00Z",
+		Producer:    "worker-1",
+		AtomicUpdate: &AtomicUpdate{
+			ExactPinpoint: "4.13",
+			ConcreteDelta: "first and last fragment arrived",
+			Blocker:       "middle fragment missing",
+			MessageParts: []MessagePart{
+				{PartIndex: 2, PartCount: 3, Content: "tail"},
+				{PartIndex: 0, PartCount: 3, Content: "head"},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	require.False(t, report.AtomicUpdate.MessageComplete)
+	require.Equal(t, "4.13", report.AtomicUpdate.ExactPinpoint)
+	require.Equal(t, "first and last fragment arrived", report.AtomicUpdate.ConcreteDelta)
+	require.Equal(t, "middle fragment missing", report.AtomicUpdate.Blocker)
+
+	message, complete, err := ReconstructAtomicMessage(*report.AtomicUpdate)
+	require.NoError(t, err)
+	require.False(t, complete)
+	require.Equal(t, "headtail", message)
+}
+
+func TestCanonicalizeRejectsMismatchedAtomicReportID(t *testing.T) {
+	_, err := Canonicalize(CanonicalReport{
+		Identity: Identity{ReportID: "report-parent"},
+		AtomicUpdate: &AtomicUpdate{
+			ReportID: "report-other",
+		},
+	})
+	require.ErrorContains(t, err, "does not match report identity")
+
+	_, err = Canonicalize(CanonicalReport{
+		Identity: Identity{ReportID: "report-parent"},
+		AtomicUpdate: &AtomicUpdate{
+			MessageParts: []MessagePart{{
+				ReportID:  "report-other",
+				PartIndex: 0,
+				PartCount: 1,
+				Content:   "body",
+			}},
+		},
+	})
+	require.ErrorContains(t, err, "does not match report identity")
+}
+
+func TestAtomicReportIDDoesNotPerturbContentHash(t *testing.T) {
+	left, err := Canonicalize(CanonicalReport{
+		Identity:    Identity{ReportID: "report-left"},
+		GeneratedAt: "2026-05-14T00:00:00Z",
+		Producer:    "worker-1",
+		AtomicUpdate: &AtomicUpdate{
+			MessageParts: []MessagePart{{PartIndex: 0, PartCount: 1, Content: "same"}},
+		},
+	})
+	require.NoError(t, err)
+	right, err := Canonicalize(CanonicalReport{
+		Identity:    Identity{ReportID: "report-right"},
+		GeneratedAt: "2026-05-14T00:00:00Z",
+		Producer:    "worker-1",
+		AtomicUpdate: &AtomicUpdate{
+			MessageParts: []MessagePart{{PartIndex: 0, PartCount: 1, Content: "same"}},
+		},
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, left.Identity.ContentHash, right.Identity.ContentHash)
 }
 
 func TestProjectIsDeterministicAndRecordsRedactionProvenance(t *testing.T) {
@@ -125,7 +233,7 @@ func TestProjectOmitsUnsupportedFamilies(t *testing.T) {
 	require.NoError(t, err)
 
 	require.True(t, projection.Provenance.Downgraded)
-	require.Equal(t, []string{"negative_evidence", "field_deltas"}, projection.Provenance.OmittedFieldFamilies)
+	require.Equal(t, []string{"negative_evidence", "field_deltas", "atomic_update"}, projection.Provenance.OmittedFieldFamilies)
 	require.Contains(t, projection.Payload, "claims")
 	require.NotContains(t, projection.Payload, "negative_evidence")
 	require.NotContains(t, projection.Payload, "field_deltas")
@@ -152,6 +260,32 @@ func TestProjectUsesEmptyArraysForSupportedEmptyFamilies(t *testing.T) {
 	require.Contains(t, string(data), `"field_deltas":[]`)
 	require.NotContains(t, string(data), `"negative_evidence":null`)
 	require.NotContains(t, string(data), `"field_deltas":null`)
+}
+
+func TestProjectIncludesAtomicUpdateWhenSupported(t *testing.T) {
+	report, err := Canonicalize(CanonicalReport{
+		Identity:    Identity{ReportID: "report-atomic-1"},
+		GeneratedAt: "2026-05-14T00:00:00Z",
+		Producer:    "worker-1",
+		AtomicUpdate: &AtomicUpdate{
+			ExactPinpoint: "4.13",
+			MessageParts:  []MessagePart{{PartIndex: 0, PartCount: 1, Content: "one"}},
+		},
+	})
+	require.NoError(t, err)
+
+	projection, err := Project(report, ConsumerCapabilities{
+		Consumer:       "discord-bot",
+		SchemaVersions: []string{SchemaV1},
+		FieldFamilies:  []string{"atomic_update"},
+		MaxSensitivity: SensitivityPublic,
+	}, "dogfood")
+	require.NoError(t, err)
+
+	require.Contains(t, projection.Payload, "atomic_update")
+	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "claims")
+	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "negative_evidence")
+	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "field_deltas")
 }
 
 func TestStableJSONHashIgnoresMapKeyOrder(t *testing.T) {
@@ -201,4 +335,12 @@ func redactionPaths(redactions []RedactionProvenance) []string {
 		paths = append(paths, redaction.FieldPath)
 	}
 	return paths
+}
+
+func messagePartIndexes(parts []MessagePart) []int {
+	indexes := make([]int, 0, len(parts))
+	for _, part := range parts {
+		indexes = append(indexes, part.PartIndex)
+	}
+	return indexes
 }

@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
-	"github.com/Rememorio/codog/internal/harness"
 )
 
 const (
-	SchemaV1                  = "claw.report.v1"
-	DefaultProjectionPolicyV1 = "claw.report.projection.v1"
+	SchemaV1                   = "claw.report.v1"
+	DefaultProjectionPolicyV1  = "claw.report.projection.v1"
+	MockParityReportSchemaV1   = "codog.mock_parity.v1"
+	MockParityManifestSchemaV1 = "codog.mock_parity_manifest.v1"
 
 	ClaimObservedFact   = "observed_fact"
 	ClaimInference      = "inference"
@@ -65,6 +65,26 @@ type FieldDelta struct {
 	Attribution  string  `json:"attribution"`
 }
 
+// MessagePart records one transport fragment for a logical report update.
+type MessagePart struct {
+	ReportID    string `json:"report_id"`
+	PartIndex   int    `json:"part_index"`
+	PartCount   int    `json:"part_count"`
+	Content     string `json:"content"`
+	ContentHash string `json:"content_hash,omitempty"`
+}
+
+// AtomicUpdate binds dogfood status fields and chat fragments to one report id.
+type AtomicUpdate struct {
+	ReportID        string        `json:"report_id"`
+	ActiveSessions  []string      `json:"active_sessions,omitempty"`
+	ExactPinpoint   string        `json:"exact_pinpoint,omitempty"`
+	ConcreteDelta   string        `json:"concrete_delta,omitempty"`
+	Blocker         string        `json:"blocker,omitempty"`
+	MessageParts    []MessagePart `json:"message_parts,omitempty"`
+	MessageComplete bool          `json:"message_complete"`
+}
+
 type Identity struct {
 	ReportID    string `json:"report_id"`
 	ContentHash string `json:"content_hash"`
@@ -78,6 +98,7 @@ type CanonicalReport struct {
 	Claims           []Claim            `json:"claims,omitempty"`
 	NegativeEvidence []NegativeEvidence `json:"negative_evidence,omitempty"`
 	FieldDeltas      []FieldDelta       `json:"field_deltas,omitempty"`
+	AtomicUpdate     *AtomicUpdate      `json:"atomic_update,omitempty"`
 }
 
 type ConsumerCapabilities struct {
@@ -148,6 +169,12 @@ func RegistryV1() Registry {
 			field("claims[].evidence", "evidence ids supporting a claim", false, "claims"),
 			field("negative_evidence[]", "searched-and-not-found findings with checked scope", false, "negative_evidence"),
 			field("field_deltas[]", "field-level changed/unchanged/cleared/carried-forward attribution", false, "field_deltas"),
+			field("atomic_update.report_id", "logical update identity shared by all message parts", false, "atomic_update"),
+			field("atomic_update.active_sessions[]", "session ids covered by the logical update", false, "atomic_update"),
+			field("atomic_update.exact_pinpoint", "single exact roadmap pinpoint for the logical update", false, "atomic_update"),
+			field("atomic_update.concrete_delta", "single concrete delta for the logical update", false, "atomic_update"),
+			field("atomic_update.blocker", "current blocker for the logical update", false, "atomic_update"),
+			field("atomic_update.message_parts[]", "ordered chat transport fragments for reconstructing one logical update", false, "atomic_update"),
 			field("projection.provenance.redactions[]", "redaction policy provenance for projected fields", false, "projection"),
 		},
 		Reports: []RegistryReport{
@@ -159,8 +186,9 @@ func RegistryV1() Registry {
 				"claims",
 				"negative_evidence",
 				"field_deltas",
+				"atomic_update",
 			}),
-			report("mock_parity_report", harness.ReportSchemaVersion, "Deterministic mock provider parity harness execution report.", "codog mock-parity", "codog mock-parity --json", []string{
+			report("mock_parity_report", MockParityReportSchemaV1, "Deterministic mock provider parity harness execution report.", "codog mock-parity", "codog mock-parity --json", []string{
 				"schema_version",
 				"ok",
 				"passed",
@@ -172,7 +200,7 @@ func RegistryV1() Registry {
 				"usage_summary",
 				"estimated_cost",
 			}),
-			report("mock_parity_manifest", harness.ManifestSchemaVersion, "Deterministic mock provider parity scenario catalog without executing the harness.", "codog mock-parity", "codog mock-parity manifest --json", []string{
+			report("mock_parity_manifest", MockParityManifestSchemaV1, "Deterministic mock provider parity scenario catalog without executing the harness.", "codog mock-parity", "codog mock-parity manifest --json", []string{
 				"schema_version",
 				"scenario_count",
 				"categories",
@@ -187,13 +215,31 @@ func Canonicalize(report CanonicalReport) (CanonicalReport, error) {
 	sort.Slice(report.Claims, func(i, j int) bool { return report.Claims[i].ID < report.Claims[j].ID })
 	sort.Slice(report.NegativeEvidence, func(i, j int) bool { return report.NegativeEvidence[i].ID < report.NegativeEvidence[j].ID })
 	sort.Slice(report.FieldDeltas, func(i, j int) bool { return report.FieldDeltas[i].Field < report.FieldDeltas[j].Field })
+	reportID := strings.TrimSpace(report.Identity.ReportID)
+	if reportID == "" && report.AtomicUpdate != nil {
+		reportID = strings.TrimSpace(report.AtomicUpdate.ReportID)
+	}
+	atomicUpdate, err := canonicalizeAtomicUpdate(report.AtomicUpdate, reportID)
+	if err != nil {
+		return CanonicalReport{}, err
+	}
+	report.AtomicUpdate = atomicUpdate
 	contentHash, err := ContentHash(report)
 	if err != nil {
 		return CanonicalReport{}, err
 	}
 	if strings.TrimSpace(report.Identity.ReportID) == "" {
-		report.Identity.ReportID = "report-" + contentHash
+		if reportID != "" {
+			report.Identity.ReportID = reportID
+		} else {
+			report.Identity.ReportID = "report-" + contentHash
+		}
 	}
+	atomicUpdate, err = canonicalizeAtomicUpdate(report.AtomicUpdate, report.Identity.ReportID)
+	if err != nil {
+		return CanonicalReport{}, err
+	}
+	report.AtomicUpdate = atomicUpdate
 	report.Identity.ContentHash = contentHash
 	return report, nil
 }
@@ -202,7 +248,32 @@ func ContentHash(report CanonicalReport) (string, error) {
 	hashable := report
 	hashable.Identity.ReportID = ""
 	hashable.Identity.ContentHash = ""
+	if hashable.AtomicUpdate != nil {
+		atomicUpdate := *hashable.AtomicUpdate
+		atomicUpdate.ReportID = ""
+		atomicUpdate.MessageParts = append([]MessagePart(nil), atomicUpdate.MessageParts...)
+		for i := range atomicUpdate.MessageParts {
+			atomicUpdate.MessageParts[i].ReportID = ""
+		}
+		hashable.AtomicUpdate = &atomicUpdate
+	}
 	return StableJSONHash(hashable)
+}
+
+// ReconstructAtomicMessage joins message parts in canonical order.
+func ReconstructAtomicMessage(update AtomicUpdate) (string, bool, error) {
+	canonical, err := canonicalizeAtomicUpdate(&update, strings.TrimSpace(update.ReportID))
+	if err != nil {
+		return "", false, err
+	}
+	if canonical == nil {
+		return "", false, nil
+	}
+	var builder strings.Builder
+	for _, part := range canonical.MessageParts {
+		builder.WriteString(part.Content)
+	}
+	return builder.String(), canonical.MessageComplete, nil
 }
 
 func Project(report CanonicalReport, capabilities ConsumerCapabilities, view string) (Projection, error) {
@@ -263,6 +334,13 @@ func Project(report CanonicalReport, capabilities ConsumerCapabilities, view str
 	} else {
 		omitted = append(omitted, "field_deltas")
 	}
+	if supportsFamily(capabilities, "atomic_update") {
+		if canonical.AtomicUpdate != nil {
+			payload["atomic_update"] = canonical.AtomicUpdate
+		}
+	} else {
+		omitted = append(omitted, "atomic_update")
+	}
 
 	provenance := ProjectionProvenance{
 		PolicyID:             DefaultProjectionPolicyV1,
@@ -322,6 +400,84 @@ func report(id string, schemaVersion string, description string, producer string
 		Command:       command,
 		Fields:        append([]string(nil), fields...),
 	}
+}
+
+func canonicalizeAtomicUpdate(update *AtomicUpdate, reportID string) (*AtomicUpdate, error) {
+	if update == nil {
+		return nil, nil
+	}
+	canonical := *update
+	canonical.ReportID = strings.TrimSpace(canonical.ReportID)
+	reportID = strings.TrimSpace(reportID)
+	switch {
+	case canonical.ReportID == "":
+		canonical.ReportID = reportID
+	case reportID == "":
+		reportID = canonical.ReportID
+	case canonical.ReportID != reportID:
+		return nil, fmt.Errorf("atomic_update report_id %q does not match report identity %q", canonical.ReportID, reportID)
+	}
+	canonical.ActiveSessions = canonicalStringSet(canonical.ActiveSessions)
+	canonical.MessageParts = append([]MessagePart(nil), canonical.MessageParts...)
+	seen := map[int]struct{}{}
+	expectedCount := 0
+	for i := range canonical.MessageParts {
+		part := &canonical.MessageParts[i]
+		part.ReportID = strings.TrimSpace(part.ReportID)
+		switch {
+		case part.ReportID == "":
+			part.ReportID = reportID
+		case reportID == "":
+			reportID = part.ReportID
+			canonical.ReportID = reportID
+		case part.ReportID != reportID:
+			return nil, fmt.Errorf("message part report_id %q does not match report identity %q", part.ReportID, reportID)
+		}
+		if part.PartCount <= 0 {
+			return nil, fmt.Errorf("message part %d has invalid part_count %d", part.PartIndex, part.PartCount)
+		}
+		if part.PartIndex < 0 || part.PartIndex >= part.PartCount {
+			return nil, fmt.Errorf("message part index %d outside part_count %d", part.PartIndex, part.PartCount)
+		}
+		if expectedCount == 0 {
+			expectedCount = part.PartCount
+		} else if part.PartCount != expectedCount {
+			return nil, fmt.Errorf("message part %d has part_count %d, expected %d", part.PartIndex, part.PartCount, expectedCount)
+		}
+		if _, ok := seen[part.PartIndex]; ok {
+			return nil, fmt.Errorf("duplicate message part index %d", part.PartIndex)
+		}
+		seen[part.PartIndex] = struct{}{}
+		if strings.TrimSpace(part.ContentHash) == "" {
+			hash, err := StableJSONHash(part.Content)
+			if err != nil {
+				return nil, err
+			}
+			part.ContentHash = hash
+		}
+	}
+	sort.Slice(canonical.MessageParts, func(i, j int) bool {
+		return canonical.MessageParts[i].PartIndex < canonical.MessageParts[j].PartIndex
+	})
+	canonical.MessageComplete = expectedCount > 0 && len(seen) == expectedCount
+	return &canonical, nil
+}
+
+func canonicalStringSet(values []string) []string {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		set[value] = struct{}{}
+	}
+	out := make([]string, 0, len(set))
+	for value := range set {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func supportsFamily(capabilities ConsumerCapabilities, family string) bool {

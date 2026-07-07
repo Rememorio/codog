@@ -44,6 +44,7 @@ import (
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/policyengine"
 	"github.com/Rememorio/codog/internal/providerdiag"
+	"github.com/Rememorio/codog/internal/reportschema"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/session"
@@ -59,10 +60,10 @@ import (
 )
 
 // ReportSchemaVersion is the stable schema identifier for mock parity reports.
-const ReportSchemaVersion = "codog.mock_parity.v1"
+const ReportSchemaVersion = reportschema.MockParityReportSchemaV1
 
 // ManifestSchemaVersion is the stable schema identifier for mock parity manifests.
-const ManifestSchemaVersion = "codog.mock_parity_manifest.v1"
+const ManifestSchemaVersion = reportschema.MockParityManifestSchemaV1
 
 // Report summarizes one deterministic mock parity harness run.
 type Report struct {
@@ -257,6 +258,7 @@ var scenarioOrder = []string{
 	"recovery_lifecycle_roundtrip",
 	"nudge_ack_dedupe_roundtrip",
 	"roadmap_pinpoint_lifecycle_roundtrip",
+	"report_atomic_update_roundtrip",
 	"agent_markdown_definition_roundtrip",
 	"background_agent_run_roundtrip",
 	"remote_trigger_roundtrip",
@@ -822,6 +824,7 @@ func Run(ctx context.Context) (Report, error) {
 		recoveryLifecycleScenario(),
 		nudgeAckDedupeScenario(),
 		roadmapPinpointLifecycleScenario(),
+		reportAtomicUpdateScenario(),
 		agentMarkdownDefinitionScenario(),
 		backgroundAgentRunScenario(),
 		remoteTriggerScenario(),
@@ -1734,6 +1737,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "roadmap",
 		Description: "Files a roadmap pinpoint, preserves its stable id across updates, and drives lifecycle states to closure.",
 		ParityRefs:  []string{"Stable roadmap id", "Roadmap lifecycle", "Pinpoint update", "Tool result roundtrip"},
+	},
+	"report_atomic_update_roundtrip": {
+		Category:    "roadmap",
+		Description: "Canonicalizes one logical dogfood update across misordered and partial chat transport fragments.",
+		ParityRefs:  []string{"Atomic dogfood report", "Message part ordering", "Pinpoint update", "Mock parity report"},
 	},
 	"background_agent_run_roundtrip": {
 		Category:    "background-agents",
@@ -9851,6 +9859,84 @@ func roadmapPinpointLifecycleScenario() scenario {
 				MessageCount: 1,
 				ToolCalls:    4,
 				ToolUses:     []string{"roadmap_pinpoint", "roadmap_pinpoint", "roadmap_pinpoint", "roadmap_pinpoint"},
+			}, nil
+		},
+	}
+}
+
+func reportAtomicUpdateScenario() scenario {
+	return scenario{
+		name: "report_atomic_update_roundtrip",
+		runLocal: func(context.Context, string) (localScenarioResult, error) {
+			complete, err := reportschema.Canonicalize(reportschema.CanonicalReport{
+				Identity:    reportschema.Identity{ReportID: "report-atomic-harness"},
+				GeneratedAt: "2026-07-07T16:00:00Z",
+				Producer:    "codog mock-parity",
+				AtomicUpdate: &reportschema.AtomicUpdate{
+					ActiveSessions: []string{"session-b", "session-a", "session-a"},
+					ExactPinpoint:  "4.13 report atomicity",
+					ConcreteDelta:  "canonical message parts added",
+					Blocker:        "none",
+					MessageParts: []reportschema.MessagePart{
+						{PartIndex: 2, PartCount: 3, Content: "blocker=none"},
+						{PartIndex: 0, PartCount: 3, Content: "pinpoint=4.13;"},
+						{PartIndex: 1, PartCount: 3, Content: "delta=canonical;"},
+					},
+				},
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			message, messageComplete, err := reportschema.ReconstructAtomicMessage(*complete.AtomicUpdate)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !messageComplete || message != "pinpoint=4.13;delta=canonical;blocker=none" {
+				return localScenarioResult{}, fmt.Errorf("unexpected reconstructed atomic message: complete=%t message=%q", messageComplete, message)
+			}
+			partial, err := reportschema.Canonicalize(reportschema.CanonicalReport{
+				Identity:    reportschema.Identity{ReportID: "report-atomic-partial"},
+				GeneratedAt: "2026-07-07T16:01:00Z",
+				Producer:    "codog mock-parity",
+				AtomicUpdate: &reportschema.AtomicUpdate{
+					ExactPinpoint: "4.13 report atomicity",
+					ConcreteDelta: "first and last message part arrived",
+					Blocker:       "middle fragment missing",
+					MessageParts: []reportschema.MessagePart{
+						{PartIndex: 2, PartCount: 3, Content: "tail"},
+						{PartIndex: 0, PartCount: 3, Content: "head"},
+					},
+				},
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			partialMessage, partialComplete, err := reportschema.ReconstructAtomicMessage(*partial.AtomicUpdate)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if partialComplete || partial.AtomicUpdate.ExactPinpoint != complete.AtomicUpdate.ExactPinpoint || partialMessage != "headtail" {
+				return localScenarioResult{}, fmt.Errorf("unexpected partial atomic report: complete=%t report=%#v message=%q", partialComplete, partial.AtomicUpdate, partialMessage)
+			}
+			report := map[string]any{
+				"kind":             "report_atomic_update",
+				"report_id":        complete.Identity.ReportID,
+				"message_complete": complete.AtomicUpdate.MessageComplete,
+				"part_indexes":     []int{complete.AtomicUpdate.MessageParts[0].PartIndex, complete.AtomicUpdate.MessageParts[1].PartIndex, complete.AtomicUpdate.MessageParts[2].PartIndex},
+				"reconstructed":    message,
+				"partial_complete": partial.AtomicUpdate.MessageComplete,
+				"partial_message":  partialMessage,
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "report atomic update harness ok",
+				RequestCount: 2,
+				MessageCount: 2,
+				ToolCalls:    0,
 			}, nil
 		},
 	}
