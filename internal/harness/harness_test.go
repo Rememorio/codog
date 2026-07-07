@@ -1002,6 +1002,9 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, reportBackpressure.Output, `"second_collapsed":true`)
 	require.Contains(t, reportBackpressure.Output, `"last_meaningful":"report-`)
 	require.Contains(t, reportBackpressure.Output, `"stale_count":1`)
+	require.Contains(t, reportBackpressure.Output, `"first_root_claim":"hypothesis"`)
+	require.Contains(t, reportBackpressure.Output, `"third_root_claim":"observed_fact"`)
+	require.Contains(t, reportBackpressure.Output, `"promoted_from":"hypothesis"`)
 	require.Contains(t, reportBackpressure.Output, `"third_changed":1`)
 
 	agentMarkdown := findScenario(t, report, "agent_markdown_definition_roundtrip")

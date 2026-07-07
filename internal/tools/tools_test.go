@@ -4212,7 +4212,7 @@ func TestReportBackpressureToolCollapsesRepeatedRoadmapReports(t *testing.T) {
 	roadmapTool := RoadmapPinpointTool{ConfigHome: configHome}
 	reportTool := ReportBackpressureTool{ConfigHome: configHome}
 
-	fileOut, err := roadmapTool.Execute(context.Background(), []byte(`{"action":"file","title":"collapse unchanged reports","description":"avoid repeated backlog spam","priority":"p1","severity":"high","impact":"observability_debt","now":"2026-07-07T13:00:00Z"}`))
+	fileOut, err := roadmapTool.Execute(context.Background(), []byte(`{"action":"file","title":"collapse unchanged reports","description":"avoid repeated backlog spam","priority":"p1","severity":"high","impact":"observability_debt","evidence":[{"role":"root_cause_hint","type":"log","reference":"log:dogfood","preview":"repeated backlog likely comes from missing cursor collapse"}],"now":"2026-07-07T13:00:00Z"}`))
 	require.NoError(t, err)
 	var filed struct {
 		ItemID string `json:"item_id"`
@@ -4227,6 +4227,8 @@ func TestReportBackpressureToolCollapsesRepeatedRoadmapReports(t *testing.T) {
 	require.Contains(t, firstOut, `"age_seconds": 60`)
 	require.Contains(t, firstOut, `"freshness": "current"`)
 	require.Contains(t, firstOut, `"observation_source": "carried_forward"`)
+	require.Contains(t, firstOut, `"kind": "hypothesis"`)
+	require.Contains(t, firstOut, `"confidence": "medium"`)
 	require.Contains(t, firstOut, `"unchanged_count": 0`)
 	require.Contains(t, firstOut, `"full_snapshot_stored": true`)
 	var first struct {
@@ -4251,12 +4253,13 @@ func TestReportBackpressureToolCollapsesRepeatedRoadmapReports(t *testing.T) {
 	require.NotContains(t, secondOut, `"new_items"`)
 	require.Contains(t, secondOut, `"previous_report_id": "`+first.ReportID+`"`)
 
-	_, err = roadmapTool.Execute(context.Background(), []byte(`{"action":"update","id":"`+filed.ItemID+`","priority":"p0","severity":"critical","now":"2026-07-07T13:03:00Z"}`))
+	_, err = roadmapTool.Execute(context.Background(), []byte(`{"action":"update","id":"`+filed.ItemID+`","priority":"p0","severity":"critical","evidence":[{"role":"verification","type":"test","reference":"go-test","preview":"cursor collapse test passes"}],"now":"2026-07-07T13:03:00Z"}`))
 	require.NoError(t, err)
 	thirdOut, err := reportTool.Execute(context.Background(), []byte(`{"action":"generate","channel":"dogfood","now":"2026-07-07T13:04:00Z"}`))
 	require.NoError(t, err)
 	require.Contains(t, thirdOut, `"changed_items": [`)
 	require.Contains(t, thirdOut, `"priority": "p0"`)
+	require.Contains(t, thirdOut, `"promoted_from": "hypothesis"`)
 
 	snapshotOut, err := reportTool.Execute(context.Background(), []byte(`{"action":"snapshot","snapshot_id":"`+first.SnapshotID+`"}`))
 	require.NoError(t, err)

@@ -9981,7 +9981,7 @@ func reportBackpressureScenario() scenario {
 				return report, nil
 			}
 
-			filed, err := call("RoadmapPinpointTool", `{"action":"file","title":"backpressure report","description":"collapse unchanged backlog","priority":"p1","severity":"high","impact":"observability_debt","now":"2026-07-07T16:00:00Z"}`)
+			filed, err := call("RoadmapPinpointTool", `{"action":"file","title":"backpressure report","description":"collapse unchanged backlog","priority":"p1","severity":"high","impact":"observability_debt","evidence":[{"role":"root_cause_hint","type":"log","reference":"log:dogfood","preview":"repeated backlog likely comes from missing cursor collapse"}],"now":"2026-07-07T16:00:00Z"}`)
 			if err != nil {
 				return localScenarioResult{}, err
 			}
@@ -9994,7 +9994,7 @@ func reportBackpressureScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			_, err = call("RoadmapPinpointTool", `{"action":"update","id":"`+itemID+`","priority":"p0","severity":"critical","now":"2026-07-07T16:03:00Z"}`)
+			_, err = call("RoadmapPinpointTool", `{"action":"update","id":"`+itemID+`","priority":"p0","severity":"critical","evidence":[{"role":"verification","type":"test","reference":"go-test","preview":"cursor collapse test passes"}],"now":"2026-07-07T16:03:00Z"}`)
 			if err != nil {
 				return localScenarioResult{}, err
 			}
@@ -10009,6 +10009,8 @@ func reportBackpressureScenario() scenario {
 			}
 			firstNew, _ := first["new_items"].([]any)
 			thirdChanged, _ := third["changed_items"].([]any)
+			firstClaims, _ := first["claims"].([]any)
+			thirdClaims, _ := third["claims"].([]any)
 			secondUnchanged, _ := second["unchanged_count"].(float64)
 			secondCollapsed, _ := second["collapsed"].(bool)
 			secondNoChange, _ := second["no_change"].(bool)
@@ -10017,8 +10019,11 @@ func reportBackpressureScenario() scenario {
 			lastMeaningful, _ := second["last_meaningful_report_id"].(string)
 			freshnessCounts, _ := second["freshness_counts"].(map[string]any)
 			staleCount, _ := freshnessCounts["stale"].(float64)
+			firstRootKind := claimKind(firstClaims, "root-cause")
+			thirdRootKind := claimKind(thirdClaims, "root-cause")
+			thirdPromotedFrom := claimPromotedFrom(thirdClaims, "root-cause")
 			snapshotBody, _ := snapshot["snapshot"].(map[string]any)
-			if itemID == "" || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
+			if itemID == "" || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || firstRootKind != "hypothesis" || thirdRootKind != "observed_fact" || thirdPromotedFrom != "hypothesis" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
 				return localScenarioResult{}, fmt.Errorf("unexpected backpressure report: filed=%#v first=%#v second=%#v third=%#v snapshot=%#v", filed, first, second, third, snapshot)
 			}
 			output := map[string]any{
@@ -10032,6 +10037,9 @@ func reportBackpressureScenario() scenario {
 				"second_collapsed": secondCollapsed,
 				"last_meaningful":  lastMeaningful,
 				"stale_count":      int(staleCount),
+				"first_root_claim": firstRootKind,
+				"third_root_claim": thirdRootKind,
+				"promoted_from":    thirdPromotedFrom,
 				"third_changed":    len(thirdChanged),
 				"snapshot_id":      snapshotID,
 			}
@@ -10049,6 +10057,36 @@ func reportBackpressureScenario() scenario {
 			}, nil
 		},
 	}
+}
+
+func claimKind(claims []any, idFragment string) string {
+	for _, value := range claims {
+		claim, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := claim["id"].(string)
+		if strings.Contains(id, idFragment) {
+			kind, _ := claim["kind"].(string)
+			return kind
+		}
+	}
+	return ""
+}
+
+func claimPromotedFrom(claims []any, idFragment string) string {
+	for _, value := range claims {
+		claim, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := claim["id"].(string)
+		if strings.Contains(id, idFragment) {
+			promotedFrom, _ := claim["promoted_from"].(string)
+			return promotedFrom
+		}
+	}
+	return ""
 }
 
 func backgroundAgentRunScenario() scenario {

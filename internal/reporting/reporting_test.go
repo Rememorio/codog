@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rememorio/codog/internal/reportschema"
 	"github.com/Rememorio/codog/internal/roadmap"
 	"github.com/stretchr/testify/require"
 )
@@ -50,6 +51,8 @@ func TestGenerateCollapsesUnchangedItemsAndStoresSnapshot(t *testing.T) {
 	require.NotEmpty(t, first.SnapshotID)
 	require.Equal(t, first.ReportID, first.LastMeaningfulReportID)
 	require.Equal(t, []string{firstItem.ItemID}, first.LastMeaningfulItemIDs)
+	require.NotEmpty(t, first.Claims)
+	require.Contains(t, claimKinds(first.Claims), reportschema.ClaimObservedFact)
 
 	snapshot, err := reportStore.GetSnapshot(first.SnapshotID)
 	require.NoError(t, err)
@@ -99,6 +102,60 @@ func TestGenerateCollapsesUnchangedItemsAndStoresSnapshot(t *testing.T) {
 	require.Equal(t, third.ReportID, third.LastMeaningfulReportID)
 }
 
+func TestGenerateLabelsAndPromotesClaims(t *testing.T) {
+	configHome := t.TempDir()
+	roadmapStore := roadmap.NewStore(configHome)
+	reportStore := NewStore(configHome)
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	filed, err := roadmapStore.File(roadmap.Filing{
+		Title: "root cause needs confidence",
+		Evidence: []roadmap.EvidenceAttachment{{
+			Role:      roadmap.EvidenceRootCauseHint,
+			Type:      "log",
+			Reference: "log:startup",
+			Preview:   "startup timeout likely caused by missing readiness marker",
+		}},
+		Handoff: &roadmap.HandoffPacket{
+			SuggestedVerification: []string{"go test ./internal/workerstate"},
+		},
+		Now: now,
+	})
+	require.NoError(t, err)
+
+	first, err := reportStore.Generate("dogfood", now.Add(time.Minute))
+	require.NoError(t, err)
+	rootClaim := claimByID(t, first.Claims, "claim-"+filed.ItemID+"-root-cause")
+	require.Equal(t, reportschema.ClaimHypothesis, rootClaim.Kind)
+	require.Equal(t, reportschema.ConfidenceMedium, rootClaim.Confidence)
+	require.Empty(t, rootClaim.PromotedFrom)
+	require.Contains(t, rootClaim.Text, "startup timeout")
+	require.Len(t, rootClaim.Evidence, 1)
+	require.Contains(t, claimKinds(first.Claims), reportschema.ClaimRecommendation)
+
+	updated, err := roadmapStore.File(roadmap.Filing{
+		ID: filed.ItemID,
+		Evidence: []roadmap.EvidenceAttachment{{
+			Role:      roadmap.EvidenceVerification,
+			Type:      "test",
+			Reference: "go-test",
+			Preview:   "readiness marker test passes",
+		}},
+		Now: now.Add(2 * time.Minute),
+	})
+	require.NoError(t, err)
+	require.Equal(t, filed.ItemID, updated.ItemID)
+
+	second, err := reportStore.Generate("dogfood", now.Add(3*time.Minute))
+	require.NoError(t, err)
+	promoted := claimByID(t, second.Claims, rootClaim.ID)
+	require.Equal(t, reportschema.ClaimObservedFact, promoted.Kind)
+	require.Equal(t, reportschema.ConfidenceHigh, promoted.Confidence)
+	require.Equal(t, reportschema.ClaimHypothesis, promoted.PromotedFrom)
+	require.Len(t, promoted.Evidence, 2)
+	require.Equal(t, filed.ItemID, promoted.ItemID)
+}
+
 func TestGenerateNoChangeWithoutPriorMeaningfulReport(t *testing.T) {
 	reportStore := NewStore(t.TempDir())
 	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
@@ -113,6 +170,25 @@ func TestGenerateNoChangeWithoutPriorMeaningfulReport(t *testing.T) {
 	require.Empty(t, report.LastMeaningfulReportID)
 	require.Empty(t, report.LastMeaningfulItemIDs)
 	require.Zero(t, report.TotalCount)
+}
+
+func claimByID(t *testing.T, claims []ClaimSummary, id string) ClaimSummary {
+	t.Helper()
+	for _, claim := range claims {
+		if claim.ID == id {
+			return claim
+		}
+	}
+	t.Fatalf("missing claim %q in %#v", id, claims)
+	return ClaimSummary{}
+}
+
+func claimKinds(claims []ClaimSummary) []string {
+	kinds := make([]string, 0, len(claims))
+	for _, claim := range claims {
+		kinds = append(kinds, claim.Kind)
+	}
+	return kinds
 }
 
 func TestGenerateMarksStaleAndMixedFreshness(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rememorio/codog/internal/reportschema"
 	"github.com/Rememorio/codog/internal/roadmap"
 )
 
@@ -47,8 +48,19 @@ type ItemSummary struct {
 	ObservationSource   string                       `json:"observation_source"`
 	Fingerprint         string                       `json:"fingerprint"`
 	EvidenceRefs        []string                     `json:"evidence_refs,omitempty"`
+	Claims              []ClaimSummary               `json:"claims,omitempty"`
 	Handoff             *roadmap.HandoffPacket       `json:"handoff,omitempty"`
 	Implementation      []roadmap.ImplementationLink `json:"implementation,omitempty"`
+}
+
+type ClaimSummary struct {
+	ID           string   `json:"id"`
+	ItemID       string   `json:"item_id"`
+	Kind         string   `json:"kind"`
+	Text         string   `json:"text"`
+	Confidence   string   `json:"confidence"`
+	Evidence     []string `json:"evidence,omitempty"`
+	PromotedFrom string   `json:"promoted_from,omitempty"`
 }
 
 type Report struct {
@@ -64,6 +76,7 @@ type Report struct {
 	NoChange                 bool           `json:"no_change"`
 	MixedFreshness           bool           `json:"mixed_freshness"`
 	FreshnessCounts          map[string]int `json:"freshness_counts,omitempty"`
+	Claims                   []ClaimSummary `json:"claims,omitempty"`
 	NewItems                 []ItemSummary  `json:"new_items,omitempty"`
 	ChangedItems             []ItemSummary  `json:"changed_items,omitempty"`
 	UnchangedCount           int            `json:"unchanged_count"`
@@ -126,6 +139,7 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 		return Report{}, err
 	}
 	summaries := make([]ItemSummary, 0, len(items))
+	claims := []ClaimSummary{}
 	hashes := make(map[string]string, len(items))
 	for _, item := range items {
 		summary, err := summarizeItem(item, now, options.FreshnessTTL)
@@ -133,6 +147,7 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 			return Report{}, err
 		}
 		summaries = append(summaries, summary)
+		claims = append(claims, summary.Claims...)
 		hashes[item.ID] = summary.Fingerprint
 	}
 	cursor, err := s.GetCursor(channel)
@@ -207,6 +222,7 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 		NoChange:                 noChange,
 		MixedFreshness:           len(freshnessCounts) > 1,
 		FreshnessCounts:          freshnessCounts,
+		Claims:                   claims,
 		NewItems:                 newItems,
 		ChangedItems:             changedItems,
 		UnchangedCount:           unchangedCount,
@@ -316,6 +332,7 @@ func summarizeItem(item roadmap.Item, now time.Time, freshnessTTL time.Duration)
 		Freshness:           freshness,
 		ObservationSource:   observationSource,
 		EvidenceRefs:        evidenceRefs(item.Evidence),
+		Claims:              claimsForItem(item),
 		Handoff:             item.Handoff,
 		Implementation:      append([]roadmap.ImplementationLink(nil), item.Implementation...),
 	}
@@ -330,6 +347,7 @@ func summarizeItem(item roadmap.Item, now time.Time, freshnessTTL time.Duration)
 		"severity":       summary.Severity,
 		"impact":         summary.Impact,
 		"evidence_refs":  summary.EvidenceRefs,
+		"claims":         summary.Claims,
 		"handoff":        summary.Handoff,
 		"implementation": summary.Implementation,
 	})
@@ -338,6 +356,79 @@ func summarizeItem(item roadmap.Item, now time.Time, freshnessTTL time.Duration)
 	}
 	summary.Fingerprint = hash
 	return summary, nil
+}
+
+func claimsForItem(item roadmap.Item) []ClaimSummary {
+	refs := evidenceRefs(item.Evidence)
+	claims := []ClaimSummary{{
+		ID:         "claim-" + item.ID + "-status",
+		ItemID:     item.ID,
+		Kind:       reportschema.ClaimObservedFact,
+		Text:       "Pinpoint " + item.ID + " is " + string(item.State),
+		Confidence: reportschema.ConfidenceHigh,
+		Evidence:   refs,
+	}}
+	if claim, ok := rootCauseClaim(item); ok {
+		claims = append(claims, claim)
+	}
+	if item.Handoff != nil && len(item.Handoff.SuggestedVerification) > 0 {
+		claims = append(claims, ClaimSummary{
+			ID:         "claim-" + item.ID + "-verification-recommendation",
+			ItemID:     item.ID,
+			Kind:       reportschema.ClaimRecommendation,
+			Text:       strings.Join(item.Handoff.SuggestedVerification, "; "),
+			Confidence: reportschema.ConfidenceMedium,
+			Evidence:   refs,
+		})
+	}
+	sort.Slice(claims, func(i, j int) bool { return claims[i].ID < claims[j].ID })
+	return claims
+}
+
+func rootCauseClaim(item roadmap.Item) (ClaimSummary, bool) {
+	var hint roadmap.EvidenceAttachment
+	foundHint := false
+	confirmingRefs := []string{}
+	for _, evidence := range item.Evidence {
+		switch evidence.Role {
+		case roadmap.EvidenceRootCauseHint:
+			if !foundHint {
+				hint = evidence
+				foundHint = true
+			}
+		case roadmap.EvidenceRepro, roadmap.EvidenceVerification:
+			if evidence.ID != "" {
+				confirmingRefs = append(confirmingRefs, evidence.ID)
+			}
+		}
+	}
+	if !foundHint {
+		return ClaimSummary{}, false
+	}
+	evidence := []string{}
+	if hint.ID != "" {
+		evidence = append(evidence, hint.ID)
+	}
+	evidence = append(evidence, confirmingRefs...)
+	sort.Strings(evidence)
+	text := strings.TrimSpace(hint.Preview)
+	if text == "" {
+		text = "Root cause hint: " + hint.Reference
+	}
+	claim := ClaimSummary{
+		ID:         "claim-" + item.ID + "-root-cause",
+		ItemID:     item.ID,
+		Kind:       reportschema.ClaimHypothesis,
+		Text:       text,
+		Confidence: reportschema.ConfidenceMedium,
+		Evidence:   cleanStrings(evidence),
+	}
+	if len(confirmingRefs) > 0 {
+		claim.Kind = reportschema.ClaimObservedFact
+		claim.Confidence = reportschema.ConfidenceHigh
+		claim.PromotedFrom = reportschema.ClaimHypothesis
+	}
+	return claim, true
 }
 
 func evidenceRefs(evidence []roadmap.EvidenceAttachment) []string {
