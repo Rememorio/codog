@@ -1396,7 +1396,17 @@ func TestLoadMCPHeadersHelperAliases(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, []byte(`{
 		"mcp_servers": {
 			"snake": {"url": "https://snake.example/mcp", "headers_helper": "./snake-helper", "tool_call_timeout_ms": 15000},
-			"camel": {"url": "https://camel.example/mcp", "headersHelper": "./camel-helper", "toolCallTimeoutMs": 25000}
+			"camel": {
+				"url": "https://camel.example/mcp",
+				"headersHelper": "./camel-helper",
+				"toolCallTimeoutMs": 25000,
+				"oauth": {
+					"clientId": "mcp-client",
+					"callbackPort": 7777,
+					"authServerMetadataUrl": "https://issuer.test/.well-known/oauth-authorization-server",
+					"xaa": true
+				}
+			}
 		}
 	}`), 0o644))
 
@@ -1407,6 +1417,12 @@ func TestLoadMCPHeadersHelperAliases(t *testing.T) {
 	require.Equal(t, 15000, cfg.MCPServers["snake"].ToolCallTimeoutMS)
 	require.Equal(t, "./camel-helper", cfg.MCPServers["camel"].HeadersHelper)
 	require.Equal(t, 25000, cfg.MCPServers["camel"].ToolCallTimeoutMS)
+	require.NotNil(t, cfg.MCPServers["camel"].OAuth)
+	require.Equal(t, "mcp-client", cfg.MCPServers["camel"].OAuth.ClientID)
+	require.Equal(t, 7777, cfg.MCPServers["camel"].OAuth.CallbackPort)
+	require.Equal(t, "https://issuer.test/.well-known/oauth-authorization-server", cfg.MCPServers["camel"].OAuth.AuthServerMetadataURL)
+	require.NotNil(t, cfg.MCPServers["camel"].OAuth.XAA)
+	require.True(t, *cfg.MCPServers["camel"].OAuth.XAA)
 }
 
 func TestLoadMCPServersCamelAliasAndEnvObject(t *testing.T) {

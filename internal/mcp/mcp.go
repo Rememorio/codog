@@ -229,13 +229,18 @@ type ServerTransport struct {
 
 // ServerDetails contains redacted transport-specific configuration details.
 type ServerDetails struct {
-	Command                 string   `json:"command,omitempty"`
-	URL                     string   `json:"url,omitempty"`
-	ArgsCount               int      `json:"args_count"`
-	ToolCallTimeoutMS       int      `json:"tool_call_timeout_ms,omitempty"`
-	EnvKeys                 []string `json:"env_keys,omitempty"`
-	HeaderKeys              []string `json:"header_keys,omitempty"`
-	HeadersHelperConfigured bool     `json:"headers_helper_configured,omitempty"`
+	Command                    string   `json:"command,omitempty"`
+	URL                        string   `json:"url,omitempty"`
+	ArgsCount                  int      `json:"args_count"`
+	ToolCallTimeoutMS          int      `json:"tool_call_timeout_ms,omitempty"`
+	EnvKeys                    []string `json:"env_keys,omitempty"`
+	HeaderKeys                 []string `json:"header_keys,omitempty"`
+	HeadersHelperConfigured    bool     `json:"headers_helper_configured,omitempty"`
+	OAuthConfigured            bool     `json:"oauth_configured,omitempty"`
+	OAuthClientIDConfigured    bool     `json:"oauth_client_id_configured,omitempty"`
+	OAuthCallbackPort          int      `json:"oauth_callback_port,omitempty"`
+	OAuthAuthServerMetadataURL string   `json:"oauth_auth_server_metadata_url,omitempty"`
+	OAuthXAA                   *bool    `json:"oauth_xaa,omitempty"`
 }
 
 // ServerDescriptor is a redacted, user-facing description of one MCP server.
@@ -332,10 +337,11 @@ func ServerConfigHash(server config.MCPServerConfig) string {
 	server = resolveMCPServerConfig(server)
 	if isHTTPServer(server) {
 		rendered := fmt.Sprintf(
-			"http|%s|%s|%s|",
+			"http|%s|%s|%s|%s|",
 			UnwrapCCRProxyURL(server.URL),
 			renderHeaderSignature(server.Headers),
 			strings.TrimSpace(server.HeadersHelper),
+			renderOAuthSignature(server.OAuth),
 		)
 		return stableHexHash(fmt.Sprintf("required:%t|%s", server.Required, rendered))
 	}
@@ -360,9 +366,14 @@ func DescribeServer(name string, server config.MCPServerConfig) ServerDescriptor
 			Transport: ServerTransport{ID: "http", Label: "http"},
 			Summary:   httpServerSummary(server),
 			Details: ServerDetails{
-				URL:                     redactedURL(server.URL),
-				HeaderKeys:              headerKeys(server.Headers),
-				HeadersHelperConfigured: strings.TrimSpace(server.HeadersHelper) != "",
+				URL:                        redactedURL(server.URL),
+				HeaderKeys:                 headerKeys(server.Headers),
+				HeadersHelperConfigured:    strings.TrimSpace(server.HeadersHelper) != "",
+				OAuthConfigured:            server.OAuth != nil,
+				OAuthClientIDConfigured:    server.OAuth != nil && strings.TrimSpace(server.OAuth.ClientID) != "",
+				OAuthCallbackPort:          mcpOAuthCallbackPort(server.OAuth),
+				OAuthAuthServerMetadataURL: mcpOAuthMetadataURL(server.OAuth),
+				OAuthXAA:                   mcpOAuthXAA(server.OAuth),
 			},
 		}
 	}
@@ -419,7 +430,18 @@ func resolveMCPServerConfig(server config.MCPServerConfig) config.MCPServerConfi
 	server.URL = expandMCPRuntimeString(server.URL, false)
 	server.Headers = expandMCPHeaders(server.Headers)
 	server.HeadersHelper = expandMCPRuntimeString(server.HeadersHelper, true)
+	server.OAuth = expandMCPOAuth(server.OAuth)
 	return server
+}
+
+func expandMCPOAuth(oauth *config.MCPServerOAuthConfig) *config.MCPServerOAuthConfig {
+	if oauth == nil {
+		return nil
+	}
+	out := *oauth
+	out.ClientID = expandMCPRuntimeString(out.ClientID, false)
+	out.AuthServerMetadataURL = expandMCPRuntimeString(out.AuthServerMetadataURL, false)
+	return &out
 }
 
 func expandMCPRuntimeStrings(values []string, expandHome bool) []string {
@@ -564,6 +586,22 @@ func renderEnvSignature(env []string) string {
 	return strings.Join(entries, ";")
 }
 
+func renderOAuthSignature(oauth *config.MCPServerOAuthConfig) string {
+	if oauth == nil {
+		return ""
+	}
+	xaa := ""
+	if oauth.XAA != nil {
+		xaa = fmt.Sprintf("%t", *oauth.XAA)
+	}
+	return strings.Join([]string{
+		strings.TrimSpace(oauth.ClientID),
+		fmt.Sprintf("%d", oauth.CallbackPort),
+		strings.TrimSpace(oauth.AuthServerMetadataURL),
+		xaa,
+	}, "|")
+}
+
 func headerKeys(headers map[string]string) []string {
 	if len(headers) == 0 {
 		return nil
@@ -577,6 +615,28 @@ func headerKeys(headers map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func mcpOAuthCallbackPort(oauth *config.MCPServerOAuthConfig) int {
+	if oauth == nil {
+		return 0
+	}
+	return oauth.CallbackPort
+}
+
+func mcpOAuthMetadataURL(oauth *config.MCPServerOAuthConfig) string {
+	if oauth == nil {
+		return ""
+	}
+	return strings.TrimSpace(oauth.AuthServerMetadataURL)
+}
+
+func mcpOAuthXAA(oauth *config.MCPServerOAuthConfig) *bool {
+	if oauth == nil || oauth.XAA == nil {
+		return nil
+	}
+	value := *oauth.XAA
+	return &value
 }
 
 func envKeys(env []string) []string {

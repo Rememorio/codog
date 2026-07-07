@@ -252,9 +252,20 @@ var mcpServerFields = []fieldSpec{
 	{"headers", FieldObject},
 	{"headers_helper", FieldString},
 	{"headersHelper", FieldString},
+	{"oauth", FieldObject},
 	{"tool_call_timeout_ms", FieldNumber},
 	{"toolCallTimeoutMs", FieldNumber},
 	{"required", FieldBool},
+}
+
+var mcpOAuthFields = []fieldSpec{
+	{"clientId", FieldString},
+	{"client_id", FieldString},
+	{"callbackPort", FieldNumber},
+	{"callback_port", FieldNumber},
+	{"authServerMetadataUrl", FieldString},
+	{"auth_server_metadata_url", FieldString},
+	{"xaa", FieldBool},
 }
 
 var mcpFields = []fieldSpec{
@@ -689,6 +700,9 @@ func validateMCPServers(result *Result, servers map[string]any, source []byte, p
 			continue
 		}
 		validateObject(result, serverObject, mcpServerFields, joinField(prefix, name), source, path)
+		if oauthObject, ok := objectAt(serverObject, "oauth"); ok {
+			validateObject(result, oauthObject, mcpOAuthFields, joinField(joinField(prefix, name), "oauth"), source, path)
+		}
 	}
 }
 

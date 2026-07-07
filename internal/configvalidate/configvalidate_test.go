@@ -433,13 +433,35 @@ func TestValidateBytesValidatesMCPRemoteHeaders(t *testing.T) {
 }
 
 func TestValidateBytesAcceptsMCPRemoteServer(t *testing.T) {
-	source := []byte(`{"mcp_servers":{"remote":{"url":"https://mcp.example.test","headers":{"Authorization":"Bearer token"},"headersHelper":"./headers-helper","toolCallTimeoutMs":15000,"required":true},"remote_snake":{"url":"https://mcp.example.test","headers_helper":"./headers-helper","tool_call_timeout_ms":25000}}}`)
+	source := []byte(`{"mcp_servers":{"remote":{"url":"https://mcp.example.test","headers":{"Authorization":"Bearer token"},"headersHelper":"./headers-helper","toolCallTimeoutMs":15000,"required":true,"oauth":{"clientId":"mcp-client","callbackPort":7777,"authServerMetadataUrl":"https://issuer.test/.well-known/oauth-authorization-server","xaa":true}},"remote_snake":{"url":"https://mcp.example.test","headers_helper":"./headers-helper","tool_call_timeout_ms":25000,"oauth":{"client_id":"snake-client","callback_port":8888,"auth_server_metadata_url":"https://issuer.test/metadata","xaa":false}}}}`)
 
 	result := ValidateBytes(source, "config.json")
 
 	require.Equal(t, "ok", result.Status)
 	require.Empty(t, result.Errors)
 	require.Empty(t, result.Warnings)
+}
+
+func TestValidateBytesValidatesMCPRemoteOAuthTypes(t *testing.T) {
+	source := []byte(`{"mcp_servers":{"remote":{"url":"https://mcp.example.test","oauth":{"clientId":42,"callbackPort":"bad","authServerMetadataUrl":false,"xaa":"yes","extra":true}}}}`)
+
+	result := ValidateBytes(source, "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 4)
+	expected := map[string]string{
+		"mcp_servers.remote.oauth.clientId":              "a string",
+		"mcp_servers.remote.oauth.callbackPort":          "a number",
+		"mcp_servers.remote.oauth.authServerMetadataUrl": "a string",
+		"mcp_servers.remote.oauth.xaa":                   "a boolean",
+	}
+	for _, diagnostic := range result.Errors {
+		require.Equal(t, expected[diagnostic.Field], diagnostic.Expected)
+		delete(expected, diagnostic.Field)
+	}
+	require.Empty(t, expected)
+	require.Len(t, result.Warnings, 1)
+	require.Equal(t, "mcp_servers.remote.oauth.extra", result.Warnings[0].Field)
 }
 
 func TestValidateBytesValidatesMCPRequiredType(t *testing.T) {

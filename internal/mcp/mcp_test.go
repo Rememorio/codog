@@ -114,10 +114,17 @@ func TestHTTPMCPTransportListsCallsAndReads(t *testing.T) {
 	}))
 	defer server.Close()
 
+	xaa := true
 	cfg := config.MCPServerConfig{
 		URL:           server.URL + "/mcp?token=secret",
 		Headers:       map[string]string{"Authorization": "Bearer static"},
 		HeadersHelper: headersHelperCommand(),
+		OAuth: &config.MCPServerOAuthConfig{
+			ClientID:              "mcp-client",
+			CallbackPort:          7777,
+			AuthServerMetadataURL: "https://issuer.test/.well-known/oauth-authorization-server",
+			XAA:                   &xaa,
+		},
 	}
 	ready := Preflight(context.Background(), "remote", cfg)
 	require.Equal(t, "ok", ready.Status)
@@ -149,6 +156,12 @@ func TestHTTPMCPTransportListsCallsAndReads(t *testing.T) {
 	require.Equal(t, "http", description.Transport.ID)
 	require.Equal(t, []string{"Authorization"}, description.Details.HeaderKeys)
 	require.True(t, description.Details.HeadersHelperConfigured)
+	require.True(t, description.Details.OAuthConfigured)
+	require.True(t, description.Details.OAuthClientIDConfigured)
+	require.Equal(t, 7777, description.Details.OAuthCallbackPort)
+	require.Equal(t, "https://issuer.test/.well-known/oauth-authorization-server", description.Details.OAuthAuthServerMetadataURL)
+	require.NotNil(t, description.Details.OAuthXAA)
+	require.True(t, *description.Details.OAuthXAA)
 	require.Contains(t, description.Details.URL, "token=%5Bredacted%5D")
 	require.NotContains(t, description.Details.URL, "secret")
 	require.Contains(t, ServerSignature(cfg), "token=%5Bredacted%5D")
@@ -439,6 +452,36 @@ func TestServerConfigHashTracksContentWithoutLeakingEnv(t *testing.T) {
 	require.NotEqual(t, hash, ServerConfigHash(changedTimeout))
 	require.NotEqual(t, hash, ServerConfigHash(required))
 	require.NotContains(t, hash, "secret")
+}
+
+func TestServerConfigHashTracksRemoteOAuthConfig(t *testing.T) {
+	xaa := true
+	base := config.MCPServerConfig{
+		URL:           "https://example.test/mcp",
+		Headers:       map[string]string{"Authorization": "Bearer secret"},
+		HeadersHelper: "helper.sh",
+		OAuth: &config.MCPServerOAuthConfig{
+			ClientID:              "mcp-client",
+			CallbackPort:          7777,
+			AuthServerMetadataURL: "https://issuer.test/.well-known/oauth-authorization-server",
+			XAA:                   &xaa,
+		},
+	}
+	withoutOAuth := base
+	withoutOAuth.OAuth = nil
+	changedOAuth := base
+	changedOAuth.OAuth = &config.MCPServerOAuthConfig{
+		ClientID:              "other-client",
+		CallbackPort:          7777,
+		AuthServerMetadataURL: "https://issuer.test/.well-known/oauth-authorization-server",
+		XAA:                   &xaa,
+	}
+
+	hash := ServerConfigHash(base)
+	require.Len(t, hash, 16)
+	require.NotEqual(t, hash, ServerConfigHash(withoutOAuth))
+	require.NotEqual(t, hash, ServerConfigHash(changedOAuth))
+	require.NotContains(t, ServerSignature(base), "secret")
 }
 
 func TestDescribeServerRedactsSensitiveConfigValues(t *testing.T) {
