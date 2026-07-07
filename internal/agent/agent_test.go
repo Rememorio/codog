@@ -3495,6 +3495,10 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
 	require.Equal(t, "unknown_slash_command", slashReport.ErrorKind)
 	require.Equal(t, "/statuz", slashReport.Command)
+	require.Equal(t, "usage", slashReport.Error.Kind)
+	require.Equal(t, "parse_args", slashReport.Error.Operation)
+	require.Equal(t, "/statuz", slashReport.Error.Target)
+	require.False(t, slashReport.Error.Retryable)
 	require.Contains(t, slashReport.Suggestions, "/status")
 	require.Contains(t, slashReport.Suggestions, "/stats")
 	require.Empty(t, slashReport.CompatibilityNote)
@@ -3520,6 +3524,9 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
 	require.Equal(t, "interactive_only", slashReport.ErrorKind)
 	require.Equal(t, "/approve", slashReport.Command)
+	require.Equal(t, "usage", slashReport.Error.Kind)
+	require.Equal(t, "parse_args", slashReport.Error.Operation)
+	require.Equal(t, "/approve", slashReport.Error.Target)
 	require.NotContains(t, slashReport.Hint, "--resume")
 
 	newConfigPath := filepath.Join(t.TempDir(), "config.json")
@@ -3749,6 +3756,9 @@ func TestDirectSlashSuggestsProjectCommands(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
 	require.Equal(t, "unknown_slash_command", slashReport.ErrorKind)
 	require.Equal(t, "/team/reveiw", slashReport.Command)
+	require.Equal(t, "usage", slashReport.Error.Kind)
+	require.Equal(t, "parse_args", slashReport.Error.Operation)
+	require.Equal(t, "/team/reveiw", slashReport.Error.Target)
 	require.Contains(t, slashReport.Suggestions, "/team/review")
 }
 
@@ -10241,6 +10251,9 @@ func TestLocalRouteGuardContracts(t *testing.T) {
 			var report slashErrorReport
 			require.NoError(t, json.Unmarshal([]byte(out), &report))
 			require.Equal(t, "interactive_only", report.ErrorKind)
+			require.Equal(t, "usage", report.Error.Kind)
+			require.Equal(t, "parse_args", report.Error.Operation)
+			require.Equal(t, strings.Join(route, " "), report.Error.Target)
 			require.NotEmpty(t, report.Hint)
 			require.NotContains(t, out, "config_parse_error")
 			require.NotContains(t, out, "missing_credentials")
@@ -11961,6 +11974,9 @@ func TestTopLevelEmptyNonTTYStdinReturnsInteractiveOnly(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "interactive_only", report.ErrorKind)
 	require.Equal(t, "repl", report.Command)
+	require.Equal(t, "usage", report.Error.Kind)
+	require.Equal(t, "parse_args", report.Error.Operation)
+	require.Equal(t, "repl", report.Error.Target)
 	require.Contains(t, report.Hint, "echo 'task' | codog")
 }
 

@@ -29873,14 +29873,15 @@ type commandNotFoundReport struct {
 }
 
 type slashErrorReport struct {
-	Kind              string   `json:"kind"`
-	ErrorKind         string   `json:"error_kind"`
-	Status            string   `json:"status"`
-	Command           string   `json:"command"`
-	Message           string   `json:"message"`
-	Hint              string   `json:"hint"`
-	Suggestions       []string `json:"suggestions,omitempty"`
-	CompatibilityNote string   `json:"compatibility_note,omitempty"`
+	Kind              string           `json:"kind"`
+	ErrorKind         string           `json:"error_kind"`
+	Error             cliErrorEnvelope `json:"error"`
+	Status            string           `json:"status"`
+	Command           string           `json:"command"`
+	Message           string           `json:"message"`
+	Hint              string           `json:"hint"`
+	Suggestions       []string         `json:"suggestions,omitempty"`
+	CompatibilityNote string           `json:"compatibility_note,omitempty"`
 }
 
 type cliErrorReport struct {
@@ -31134,7 +31135,7 @@ func classifyCLIErrorEnvelopeKind(err error, report cliErrorReport) string {
 		return "session"
 	case "json_schema_validation_failed":
 		return "parse"
-	case "command_not_found", "missing_argument", "missing_prompt", "empty_prompt", "missing_flag_value", "duplicate_flag", "invalid_flag_value", "invalid_output_format", "invalid_resume_argument", "invalid_tool_name", "missing_tool_name", "unknown_option", "unexpected_extra_args":
+	case "command_not_found", "interactive_only", "unknown_slash_command", "unsupported_resumed_slash_command", "missing_argument", "missing_prompt", "empty_prompt", "missing_flag_value", "duplicate_flag", "invalid_flag_value", "invalid_output_format", "invalid_resume_argument", "invalid_tool_name", "missing_tool_name", "unknown_option", "unexpected_extra_args":
 		return "usage"
 	case "invalid_permission_mode":
 		return "policy"
@@ -32860,14 +32861,14 @@ func slashCommandName(name string) string {
 }
 
 func renderUnsupportedResumedSlashCommand(out io.Writer, command string, format string) error {
-	report := slashErrorReport{
+	report := buildSlashErrorReport(slashErrorReport{
 		Kind:      "unsupported_resumed_slash_command",
 		ErrorKind: "unsupported_resumed_slash_command",
 		Status:    "error",
 		Command:   command,
 		Message:   fmt.Sprintf("%s cannot be run through --resume without starting an interactive session", command),
 		Hint:      unsupportedResumedSlashHint(),
-	}
+	})
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -32940,7 +32941,7 @@ func renderUnknownSlashCommand(out io.Writer, command string, format string, ext
 
 func unknownSlashCommandReport(command string, extraSuggestions []string) slashErrorReport {
 	command = strings.TrimSpace(command)
-	return slashErrorReport{
+	return buildSlashErrorReport(slashErrorReport{
 		Kind:              "unknown_slash_command",
 		ErrorKind:         "unknown_slash_command",
 		Status:            "error",
@@ -32949,7 +32950,7 @@ func unknownSlashCommandReport(command string, extraSuggestions []string) slashE
 		Hint:              "Run `codog repl` and use `/help` to list interactive slash commands.",
 		Suggestions:       slash.SuggestWithCandidates(command, 3, extraSuggestions),
 		CompatibilityNote: unknownSlashCompatibilityNote(command),
-	}
+	})
 }
 
 func unknownSlashCompatibilityNote(command string) string {
@@ -33001,14 +33002,14 @@ func renderInteractiveOnlySlash(out io.Writer, command string, format string) er
 }
 
 func renderInteractiveOnlyWithHint(out io.Writer, command string, message string, hint string, format string) error {
-	report := slashErrorReport{
+	report := buildSlashErrorReport(slashErrorReport{
 		Kind:      "interactive_only",
 		ErrorKind: "interactive_only",
 		Status:    "error",
 		Command:   command,
 		Message:   message,
 		Hint:      hint,
-	}
+	})
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -33016,6 +33017,22 @@ func renderInteractiveOnlyWithHint(out io.Writer, command string, message string
 		return &ExitError{Code: 1, Err: err, Silent: true}
 	}
 	return &ExitError{Code: 1, Err: err}
+}
+
+func buildSlashErrorReport(report slashErrorReport) slashErrorReport {
+	if strings.TrimSpace(report.Status) == "" {
+		report.Status = "error"
+	}
+	cliReport := cliErrorReport{
+		Kind:      report.ErrorKind,
+		ErrorKind: report.ErrorKind,
+		Status:    report.Status,
+		Command:   report.Command,
+		Message:   report.Message,
+		Hint:      report.Hint,
+	}
+	report.Error = buildCLIErrorEnvelope(errors.New(report.ErrorKind+": "+report.Message), cliReport)
+	return report
 }
 
 func renderGlobalResumeArgumentGuard(out io.Writer, command string, args []string, overrides config.FlagOverrides, format string) (bool, error) {
