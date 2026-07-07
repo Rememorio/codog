@@ -7099,6 +7099,50 @@ func parseBackgroundRunArgs(args []string) (string, background.RunOptions, error
 			args = args[2:]
 			continue
 		}
+		if arg == "--owner" {
+			if len(args) < 2 {
+				return "", options, errors.New("missing value for --owner")
+			}
+			options.ScopeBinding.Owner = args[1]
+			args = args[2:]
+			continue
+		}
+		if strings.HasPrefix(arg, "--owner=") {
+			options.ScopeBinding.Owner = strings.TrimPrefix(arg, "--owner=")
+			args = args[1:]
+			continue
+		}
+		if arg == "--workflow-scope" || arg == "--scope" {
+			if len(args) < 2 {
+				return "", options, fmt.Errorf("missing value for %s", arg)
+			}
+			options.ScopeBinding.WorkflowScope = args[1]
+			args = args[2:]
+			continue
+		}
+		if strings.HasPrefix(arg, "--workflow-scope=") {
+			options.ScopeBinding.WorkflowScope = strings.TrimPrefix(arg, "--workflow-scope=")
+			args = args[1:]
+			continue
+		}
+		if strings.HasPrefix(arg, "--scope=") {
+			options.ScopeBinding.WorkflowScope = strings.TrimPrefix(arg, "--scope=")
+			args = args[1:]
+			continue
+		}
+		if arg == "--watcher-action" {
+			if len(args) < 2 {
+				return "", options, errors.New("missing value for --watcher-action")
+			}
+			options.ScopeBinding.WatcherAction = args[1]
+			args = args[2:]
+			continue
+		}
+		if strings.HasPrefix(arg, "--watcher-action=") {
+			options.ScopeBinding.WatcherAction = strings.TrimPrefix(arg, "--watcher-action=")
+			args = args[1:]
+			continue
+		}
 		break
 	}
 	command := strings.Join(args, " ")
@@ -8225,6 +8269,7 @@ func renderAgentRunBoardReport(out io.Writer, report agentRunBoardReport) {
 			fmt.Fprintf(out, "    Freshness      %s\n", entry.Freshness)
 			fmt.Fprintf(out, "    Lifecycle      %s\n", renderLifecycleResolution(entry.Lifecycle))
 			fmt.Fprintf(out, "    Provenance     %s\n", renderEventProvenance(entry.Provenance))
+			fmt.Fprintf(out, "    Scope          %s\n", renderScopeBinding(entry.ScopeBinding))
 			if entry.TerminalOutcome != nil {
 				fmt.Fprintf(out, "    Terminal       %s\n", renderTerminalOutcome(entry.TerminalOutcome))
 			}
@@ -8300,6 +8345,7 @@ func renderAgentRunStatus(out io.Writer, status agentRunStatus) {
 	fmt.Fprintf(out, "    Freshness      %s\n", status.Freshness)
 	fmt.Fprintf(out, "    Lifecycle      %s\n", renderLifecycleResolution(status.Lifecycle))
 	fmt.Fprintf(out, "    Provenance     %s\n", renderEventProvenance(status.Provenance))
+	fmt.Fprintf(out, "    Scope          %s\n", renderScopeBinding(status.ScopeBinding))
 	if status.TerminalOutcome != nil {
 		fmt.Fprintf(out, "    Terminal       %s\n", renderTerminalOutcome(status.TerminalOutcome))
 	}
@@ -8331,6 +8377,20 @@ func renderEventProvenance(provenance background.EventProvenance) string {
 		provenance.Emitter,
 		provenance.Confidence,
 	}, " ")
+}
+
+func renderScopeBinding(binding background.ScopeBinding) string {
+	binding = background.NormalizeScopeBinding(binding)
+	parts := []string{binding.WorkflowScope, binding.WatcherAction}
+	if binding.Owner != "" {
+		parts = append(parts, "owner="+binding.Owner)
+	}
+	if binding.Actionable {
+		parts = append(parts, "actionable")
+	} else {
+		parts = append(parts, "not_actionable")
+	}
+	return strings.Join(parts, " ")
 }
 
 func renderTerminalOutcome(outcome *background.TerminalOutcome) string {
@@ -24054,6 +24114,7 @@ func (a *App) serveACP(ctx context.Context) error {
 				Kind:          req.Kind,
 				SessionID:     req.SessionID,
 				RestartPolicy: req.RestartPolicy,
+				ScopeBinding:  acpScopeBinding(req.ScopeBinding, req.Owner, req.WorkflowScope, req.WatcherAction),
 			})
 			if err != nil {
 				return nil, err
@@ -24739,6 +24800,19 @@ func acpHeartbeatProvenance(provenance background.EventProvenance, sourceKind st
 		provenance.Confidence = confidence
 	}
 	return provenance
+}
+
+func acpScopeBinding(binding background.ScopeBinding, owner string, workflowScope string, watcherAction string) background.ScopeBinding {
+	if strings.TrimSpace(owner) != "" {
+		binding.Owner = owner
+	}
+	if strings.TrimSpace(workflowScope) != "" {
+		binding.WorkflowScope = workflowScope
+	}
+	if strings.TrimSpace(watcherAction) != "" {
+		binding.WatcherAction = watcherAction
+	}
+	return binding
 }
 
 func acpSessionSummary(workspace string, sess *session.Session) acpserver.SessionSummary {

@@ -570,7 +570,7 @@ func TestServeHandlesBackgroundRequests(t *testing.T) {
 	observedAt := time.Date(2026, 7, 3, 1, 0, 0, 0, time.UTC)
 	keep := 2
 	input := strings.Join([]string{
-		`{"jsonrpc":"2.0","id":1,"method":"background/run","params":{"command":"printf acp","kind":"terminal","session_id":"session-1","restart_policy":{"enabled":true,"max_attempts":1}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"background/run","params":{"command":"printf acp","kind":"terminal","session_id":"session-1","restart_policy":{"enabled":true,"max_attempts":1},"owner":"acp-bot","workflow_scope":"claw-code-dogfood","watcher_action":"act"}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"background/list","params":{"session_id":"session-1","kind":"terminal"}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"background/get","params":{"id":"task-1"}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"background/logs","params":{"id":"task-1","limit":4096}}`,
@@ -592,6 +592,9 @@ func TestServeHandlesBackgroundRequests(t *testing.T) {
 			require.NotNil(t, req.RestartPolicy)
 			require.True(t, req.RestartPolicy.Enabled)
 			require.Equal(t, 1, req.RestartPolicy.MaxAttempts)
+			require.Equal(t, "acp-bot", req.Owner)
+			require.Equal(t, "claw-code-dogfood", req.WorkflowScope)
+			require.Equal(t, "act", req.WatcherAction)
 			return map[string]any{"kind": "background_run", "id": "task-1"}, nil
 		},
 		BackgroundList: func(_ context.Context, req BackgroundListRequest) (any, error) {

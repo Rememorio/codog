@@ -39,6 +39,7 @@ type Task struct {
 	RestartedBy     string           `json:"restarted_by,omitempty"`
 	Messages        []TaskMessage    `json:"messages,omitempty"`
 	Heartbeat       *LaneHeartbeat   `json:"heartbeat,omitempty"`
+	ScopeBinding    ScopeBinding     `json:"scope_binding"`
 	TerminalEvents  []TerminalEvent  `json:"terminal_events,omitempty"`
 	TerminalOutcome *TerminalOutcome `json:"terminal_outcome,omitempty"`
 }
@@ -46,6 +47,14 @@ type Task struct {
 type TaskMessage struct {
 	Message   string    `json:"message"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// ScopeBinding declares ownership and watcher responsibility for a lane.
+type ScopeBinding struct {
+	Owner         string `json:"owner,omitempty"`
+	WorkflowScope string `json:"workflow_scope"`
+	WatcherAction string `json:"watcher_action"`
+	Actionable    bool   `json:"actionable"`
 }
 
 // TerminalEvent records one raw terminal notification for audit and dedupe.
@@ -121,6 +130,7 @@ type LaneBoardEntry struct {
 	Heartbeat       *LaneHeartbeat      `json:"heartbeat,omitempty"`
 	Freshness       LaneFreshness       `json:"freshness"`
 	Provenance      EventProvenance     `json:"provenance"`
+	ScopeBinding    ScopeBinding        `json:"scope_binding"`
 	Lifecycle       LifecycleResolution `json:"lifecycle"`
 	TerminalOutcome *TerminalOutcome    `json:"terminal_outcome,omitempty"`
 }
@@ -133,14 +143,15 @@ type LaneBoard struct {
 }
 
 type WatchEvent struct {
-	Type       string          `json:"type"`
-	ID         string          `json:"id"`
-	Offset     int64           `json:"offset,omitempty"`
-	Data       string          `json:"data,omitempty"`
-	Status     string          `json:"status,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	Task       *Task           `json:"task,omitempty"`
-	Provenance EventProvenance `json:"provenance"`
+	Type         string          `json:"type"`
+	ID           string          `json:"id"`
+	Offset       int64           `json:"offset,omitempty"`
+	Data         string          `json:"data,omitempty"`
+	Status       string          `json:"status,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	Task         *Task           `json:"task,omitempty"`
+	Provenance   EventProvenance `json:"provenance"`
+	ScopeBinding ScopeBinding    `json:"scope_binding"`
 }
 
 type WatchOptions struct {
@@ -160,6 +171,7 @@ type RunOptions struct {
 	Prompt        string
 	Description   string
 	TaskPacket    json.RawMessage
+	ScopeBinding  ScopeBinding
 }
 
 type RestartPolicy struct {
@@ -263,6 +275,7 @@ func (s Store) Restart(id string, cwd string) (Task, error) {
 		Prompt:        task.Prompt,
 		Description:   task.Description,
 		TaskPacket:    task.TaskPacket,
+		ScopeBinding:  task.ScopeBinding,
 	})
 	if err != nil {
 		return Task{}, err
@@ -361,6 +374,7 @@ func (s Store) SuperviseOnce(now time.Time) (SuperviseResult, error) {
 			Prompt:        task.Prompt,
 			Description:   task.Description,
 			TaskPacket:    task.TaskPacket,
+			ScopeBinding:  task.ScopeBinding,
 		})
 		if err != nil {
 			return result, err
@@ -421,6 +435,7 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 		StartedAt:     time.Now().UTC(),
 		LogPath:       logPath,
 		RestartedFrom: options.RestartedFrom,
+		ScopeBinding:  NormalizeScopeBinding(options.ScopeBinding),
 	}
 	if err := s.save(task); err != nil {
 		_ = killBackgroundProcess(cmd.Process.Pid)
@@ -574,6 +589,7 @@ func laneBoardEntry(task Task, now time.Time, stalledAfter time.Duration) LaneBo
 		Heartbeat:       task.Heartbeat,
 		Freshness:       freshness,
 		Provenance:      taskProvenance(task),
+		ScopeBinding:    NormalizeScopeBinding(task.ScopeBinding),
 		Lifecycle:       ResolveLifecycle(task.Status, freshness),
 		TerminalOutcome: cloneTerminalOutcome(task.TerminalOutcome),
 	}
@@ -715,6 +731,48 @@ func NormalizeEventProvenance(provenance EventProvenance) EventProvenance {
 		"high":   "high",
 	})
 	return provenance
+}
+
+// NormalizeScopeBinding fills missing lane ownership fields with stable
+// defaults and derives whether the current watcher should act.
+func NormalizeScopeBinding(binding ScopeBinding) ScopeBinding {
+	binding.Owner = strings.TrimSpace(binding.Owner)
+	binding.WorkflowScope = normalizeScopeText(binding.WorkflowScope, "codog")
+	binding.WatcherAction = normalizeScopeValue(binding.WatcherAction, "act", map[string]string{
+		"act":          "act",
+		"action":       "act",
+		"actionable":   "act",
+		"observe":      "observe",
+		"observe_only": "observe",
+		"observe-only": "observe",
+		"readonly":     "observe",
+		"read_only":    "observe",
+		"ignore":       "ignore",
+		"ignored":      "ignore",
+	})
+	binding.Actionable = binding.WatcherAction == "act"
+	return binding
+}
+
+func normalizeScopeValue(value string, fallback string, aliases map[string]string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	if normalized == "" {
+		return fallback
+	}
+	if canonical, ok := aliases[normalized]; ok {
+		return canonical
+	}
+	return normalized
+}
+
+func normalizeScopeText(value string, fallback string) string {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" {
+		return fallback
+	}
+	return normalized
 }
 
 func normalizeProvenanceValue(value string, fallback string, aliases map[string]string) string {
@@ -923,6 +981,7 @@ func (s Store) Status(id string) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
+	task.ScopeBinding = NormalizeScopeBinding(task.ScopeBinding)
 	normalizeTaskHeartbeat(&task)
 	if task.Status == "running" && !processRunning(task.PID) {
 		now := time.Now().UTC()
@@ -1029,7 +1088,7 @@ func (s Store) Watch(ctx context.Context, id string, options WatchOptions, emit 
 		return err
 	}
 	events := 0
-	if err := emit(WatchEvent{Type: "status", ID: id, Status: task.Status, Error: task.Error, Task: &task, Provenance: taskProvenance(task)}); err != nil {
+	if err := emit(WatchEvent{Type: "status", ID: id, Status: task.Status, Error: task.Error, Task: &task, Provenance: taskProvenance(task), ScopeBinding: NormalizeScopeBinding(task.ScopeBinding)}); err != nil {
 		return err
 	}
 	events++
@@ -1044,7 +1103,7 @@ func (s Store) Watch(ctx context.Context, id string, options WatchOptions, emit 
 		}
 		if data != "" {
 			offset = nextOffset
-			if err := emit(WatchEvent{Type: "log", ID: id, Offset: offset, Data: data, Provenance: taskProvenance(task)}); err != nil {
+			if err := emit(WatchEvent{Type: "log", ID: id, Offset: offset, Data: data, Provenance: taskProvenance(task), ScopeBinding: NormalizeScopeBinding(task.ScopeBinding)}); err != nil {
 				return err
 			}
 			events++
@@ -1057,7 +1116,7 @@ func (s Store) Watch(ctx context.Context, id string, options WatchOptions, emit 
 			return err
 		}
 		if task.Status != lastStatus {
-			if err := emit(WatchEvent{Type: "status", ID: id, Status: task.Status, Error: task.Error, Task: &task, Provenance: taskProvenance(task)}); err != nil {
+			if err := emit(WatchEvent{Type: "status", ID: id, Status: task.Status, Error: task.Error, Task: &task, Provenance: taskProvenance(task), ScopeBinding: NormalizeScopeBinding(task.ScopeBinding)}); err != nil {
 				return err
 			}
 			events++
@@ -1118,6 +1177,7 @@ func (s Store) save(task Task) error {
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return err
 	}
+	task.ScopeBinding = NormalizeScopeBinding(task.ScopeBinding)
 	task = ensureTerminalOutcome(task)
 	data, err := json.MarshalIndent(task, "", "  ")
 	if err != nil {

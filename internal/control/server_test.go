@@ -520,7 +520,7 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 	}.Handler())
 	defer server.Close()
 
-	resp, err := http.Post(server.URL+"/background", "application/json", bytes.NewBufferString(`{"command":"printf remote-$CODOG_REMOTE_ENV","session_id":"session-remote","restart_policy":{"enabled":true,"mode":"on-failure","max_attempts":2}}`))
+	resp, err := http.Post(server.URL+"/background", "application/json", bytes.NewBufferString(`{"command":"printf remote-$CODOG_REMOTE_ENV","session_id":"session-remote","restart_policy":{"enabled":true,"mode":"on-failure","max_attempts":2},"owner":"remote-bot","workflow_scope":"external-git-maintenance","watcher_action":"observe"}`))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -528,6 +528,9 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&task))
 	require.NotEmpty(t, task.ID)
 	require.Equal(t, "session-remote", task.SessionID)
+	require.Equal(t, "remote-bot", task.ScopeBinding.Owner)
+	require.Equal(t, "external-git-maintenance", task.ScopeBinding.WorkflowScope)
+	require.False(t, task.ScopeBinding.Actionable)
 	require.NotNil(t, task.RestartPolicy)
 	require.Equal(t, 2, task.RestartPolicy.MaxAttempts)
 

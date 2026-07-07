@@ -86,6 +86,8 @@ func TestStatusForTaskReportsHealth(t *testing.T) {
 	status := StatusForTaskAt(taskStore, run, now, 30*time.Second)
 	require.Equal(t, background.LaneFreshnessHealthy, status.Freshness)
 	require.NotNil(t, status.Heartbeat)
+	require.Equal(t, "codog", status.ScopeBinding.WorkflowScope)
+	require.True(t, status.ScopeBinding.Actionable)
 	require.Equal(t, "replay", status.Provenance.SourceKind)
 	require.Equal(t, "unit-test", status.Provenance.Emitter)
 	require.Equal(t, "healthy", status.Health.State)

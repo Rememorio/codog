@@ -1255,6 +1255,10 @@ func (s Server) backgroundRun(params json.RawMessage) (any, error) {
 		Kind          string                    `json:"kind"`
 		SessionID     string                    `json:"session_id"`
 		RestartPolicy *background.RestartPolicy `json:"restart_policy"`
+		ScopeBinding  background.ScopeBinding   `json:"scope_binding"`
+		Owner         string                    `json:"owner"`
+		WorkflowScope string                    `json:"workflow_scope"`
+		WatcherAction string                    `json:"watcher_action"`
 	}
 	if err := json.Unmarshal(params, &payload); err != nil {
 		return nil, err
@@ -1270,6 +1274,7 @@ func (s Server) backgroundRun(params json.RawMessage) (any, error) {
 		Kind:          payload.Kind,
 		SessionID:     payload.SessionID,
 		RestartPolicy: payload.RestartPolicy,
+		ScopeBinding:  bridgeScopeBinding(payload.ScopeBinding, payload.Owner, payload.WorkflowScope, payload.WatcherAction),
 	})
 }
 
@@ -1396,6 +1401,19 @@ func bridgeHeartbeatProvenance(provenance background.EventProvenance, sourceKind
 		provenance.Confidence = confidence
 	}
 	return provenance
+}
+
+func bridgeScopeBinding(binding background.ScopeBinding, owner string, workflowScope string, watcherAction string) background.ScopeBinding {
+	if strings.TrimSpace(owner) != "" {
+		binding.Owner = owner
+	}
+	if strings.TrimSpace(workflowScope) != "" {
+		binding.WorkflowScope = workflowScope
+	}
+	if strings.TrimSpace(watcherAction) != "" {
+		binding.WatcherAction = watcherAction
+	}
+	return binding
 }
 
 func (s Server) backgroundStop(params json.RawMessage) (any, error) {

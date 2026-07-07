@@ -3862,11 +3862,15 @@ func TestConfigToolGetsAndSetsUserConfig(t *testing.T) {
 func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()
-	createOut, err := TaskCreateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"command":"printf task-output","kind":"test","session_id":"session-1"}`))
+	createOut, err := TaskCreateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"command":"printf task-output","kind":"test","session_id":"session-1","owner":"tools-bot","workflow_scope":"manual-operator","watcher_action":"ignore"}`))
 	require.NoError(t, err)
 	var task background.Task
 	require.NoError(t, json.Unmarshal([]byte(createOut), &task))
 	require.NotEmpty(t, task.ID)
+	require.Equal(t, "tools-bot", task.ScopeBinding.Owner)
+	require.Equal(t, "manual-operator", task.ScopeBinding.WorkflowScope)
+	require.Equal(t, "ignore", task.ScopeBinding.WatcherAction)
+	require.False(t, task.ScopeBinding.Actionable)
 
 	var completed background.Task
 	require.Eventually(t, func() bool {

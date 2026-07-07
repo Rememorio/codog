@@ -104,7 +104,8 @@ func TestRestartTaskReusesCommandAndWorkspace(t *testing.T) {
 	store := Store{Dir: t.TempDir()}
 	workspace := t.TempDir()
 	policy := &RestartPolicy{Enabled: true, Mode: "on-failure", MaxAttempts: 3}
-	task, err := store.RunWithOptions("pwd", workspace, RunOptions{Kind: "terminal", SessionID: "session-1", RestartPolicy: policy})
+	scope := ScopeBinding{Owner: "release-bot", WorkflowScope: "external-git-maintenance", WatcherAction: "observe"}
+	task, err := store.RunWithOptions("pwd", workspace, RunOptions{Kind: "terminal", SessionID: "session-1", RestartPolicy: policy, ScopeBinding: scope})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		status, err := store.Status(task.ID)
@@ -120,6 +121,10 @@ func TestRestartTaskReusesCommandAndWorkspace(t *testing.T) {
 	require.Equal(t, workspace, restarted.Workspace)
 	require.Equal(t, "session-1", restarted.SessionID)
 	require.Equal(t, policy, restarted.RestartPolicy)
+	require.Equal(t, "release-bot", restarted.ScopeBinding.Owner)
+	require.Equal(t, "external-git-maintenance", restarted.ScopeBinding.WorkflowScope)
+	require.Equal(t, "observe", restarted.ScopeBinding.WatcherAction)
+	require.False(t, restarted.ScopeBinding.Actionable)
 	source, err := store.Get(task.ID)
 	require.NoError(t, err)
 	require.Equal(t, restarted.ID, source.RestartedBy)
@@ -128,6 +133,45 @@ func TestRestartTaskReusesCommandAndWorkspace(t *testing.T) {
 		logs, err := store.Logs(restarted.ID, 1024)
 		return err == nil && strings.Contains(logs, workspace)
 	}, 2*time.Second, 50*time.Millisecond)
+}
+
+func TestScopeBindingPropagatesToBoardAndWatchEvents(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	logPath := filepath.Join(store.Dir, "task.log")
+	now := time.Date(2026, 7, 7, 11, 0, 0, 0, time.UTC)
+	require.NoError(t, os.WriteFile(logPath, []byte("scope event"), 0o644))
+	require.NoError(t, store.save(Task{
+		ID:        "task",
+		Command:   "echo scope",
+		Status:    "running",
+		PID:       os.Getpid(),
+		StartedAt: now,
+		LogPath:   logPath,
+		ScopeBinding: ScopeBinding{
+			Owner:         "infra-bot",
+			WorkflowScope: "infra-health",
+			WatcherAction: "ignore",
+		},
+	}))
+
+	board, err := store.LaneBoardAt(now, time.Minute)
+	require.NoError(t, err)
+	require.Len(t, board.Active, 1)
+	require.Equal(t, "infra-bot", board.Active[0].ScopeBinding.Owner)
+	require.Equal(t, "infra-health", board.Active[0].ScopeBinding.WorkflowScope)
+	require.Equal(t, "ignore", board.Active[0].ScopeBinding.WatcherAction)
+	require.False(t, board.Active[0].ScopeBinding.Actionable)
+
+	var events []WatchEvent
+	err = store.Watch(context.Background(), "task", WatchOptions{MaxEvents: 2}, func(event WatchEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	require.Equal(t, "infra-health", events[0].ScopeBinding.WorkflowScope)
+	require.Equal(t, "ignore", events[1].ScopeBinding.WatcherAction)
+	require.False(t, events[1].ScopeBinding.Actionable)
 }
 
 func TestListRefreshesExitedRunningTask(t *testing.T) {
@@ -517,6 +561,7 @@ func TestSuperviseOnceRestartsFailedTaskWithPolicy(t *testing.T) {
 		StartedAt:     completed.Add(-time.Minute),
 		CompletedAt:   &completed,
 		LogPath:       logPath,
+		ScopeBinding:  ScopeBinding{Owner: "reviewer", WorkflowScope: "claw-code-dogfood", WatcherAction: "act"},
 	}))
 
 	result, err := store.SuperviseOnce(time.Now().UTC())
@@ -527,6 +572,9 @@ func TestSuperviseOnceRestartsFailedTaskWithPolicy(t *testing.T) {
 	require.Equal(t, "session-1", restarted.SessionID)
 	require.Equal(t, 1, restarted.RestartCount)
 	require.Equal(t, policy, restarted.RestartPolicy)
+	require.Equal(t, "reviewer", restarted.ScopeBinding.Owner)
+	require.Equal(t, "claw-code-dogfood", restarted.ScopeBinding.WorkflowScope)
+	require.True(t, restarted.ScopeBinding.Actionable)
 	source, err := store.Get("failed")
 	require.NoError(t, err)
 	require.Equal(t, restarted.ID, source.RestartedBy)

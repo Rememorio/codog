@@ -42,6 +42,7 @@ type Status struct {
 	Heartbeat       *background.LaneHeartbeat      `json:"heartbeat,omitempty"`
 	Freshness       background.LaneFreshness       `json:"freshness"`
 	Provenance      background.EventProvenance     `json:"provenance"`
+	ScopeBinding    background.ScopeBinding        `json:"scope_binding"`
 	Lifecycle       background.LifecycleResolution `json:"lifecycle"`
 	TerminalOutcome *background.TerminalOutcome    `json:"terminal_outcome,omitempty"`
 	Health          HealthReport                   `json:"health"`
@@ -62,6 +63,7 @@ type BoardEntry struct {
 	Status          string                         `json:"status"`
 	Freshness       background.LaneFreshness       `json:"freshness"`
 	Provenance      background.EventProvenance     `json:"provenance"`
+	ScopeBinding    background.ScopeBinding        `json:"scope_binding"`
 	Lifecycle       background.LifecycleResolution `json:"lifecycle"`
 	TerminalOutcome *background.TerminalOutcome    `json:"terminal_outcome,omitempty"`
 	Heartbeat       *background.LaneHeartbeat      `json:"heartbeat,omitempty"`
@@ -190,6 +192,7 @@ func StatusForTaskAt(store background.Store, run Run, now time.Time, stalledAfte
 		CurrentStatus: "unknown",
 		Freshness:     background.LaneFreshnessUnknown,
 		Provenance:    background.NormalizeEventProvenance(background.EventProvenance{}),
+		ScopeBinding:  background.NormalizeScopeBinding(background.ScopeBinding{}),
 		Lifecycle:     background.ResolveLifecycle("unknown", background.LaneFreshnessUnknown),
 	}
 	task, err := store.Status(run.TaskID)
@@ -203,6 +206,7 @@ func StatusForTaskAt(store background.Store, run Run, now time.Time, stalledAfte
 	status.Heartbeat = task.Heartbeat
 	status.Freshness = freshness(task.Heartbeat, now, stalledAfter)
 	status.Provenance = heartbeatProvenance(task.Heartbeat)
+	status.ScopeBinding = background.NormalizeScopeBinding(task.ScopeBinding)
 	status.Lifecycle = background.ResolveLifecycle(status.CurrentStatus, status.Freshness)
 	status.TerminalOutcome = cloneTerminalOutcome(task.TerminalOutcome)
 	status.Health = healthReport(status.CurrentStatus, status.Freshness, &task, "")
@@ -227,11 +231,12 @@ func BuildBoard(store background.Store, runs []Run, now time.Time, stalledAfter 
 	}
 	for _, run := range runs {
 		entry := BoardEntry{
-			Run:        run,
-			Status:     "unknown",
-			Freshness:  background.LaneFreshnessUnknown,
-			Provenance: background.NormalizeEventProvenance(background.EventProvenance{}),
-			Lifecycle:  background.ResolveLifecycle("unknown", background.LaneFreshnessUnknown),
+			Run:          run,
+			Status:       "unknown",
+			Freshness:    background.LaneFreshnessUnknown,
+			Provenance:   background.NormalizeEventProvenance(background.EventProvenance{}),
+			ScopeBinding: background.NormalizeScopeBinding(background.ScopeBinding{}),
+			Lifecycle:    background.ResolveLifecycle("unknown", background.LaneFreshnessUnknown),
 		}
 		task, err := store.Status(run.TaskID)
 		if err != nil {
@@ -244,6 +249,7 @@ func BuildBoard(store background.Store, runs []Run, now time.Time, stalledAfter 
 		entry.Heartbeat = task.Heartbeat
 		entry.Freshness = freshness(task.Heartbeat, board.GeneratedAt, stalledAfter)
 		entry.Provenance = heartbeatProvenance(task.Heartbeat)
+		entry.ScopeBinding = background.NormalizeScopeBinding(task.ScopeBinding)
 		entry.Lifecycle = background.ResolveLifecycle(entry.Status, entry.Freshness)
 		entry.TerminalOutcome = cloneTerminalOutcome(task.TerminalOutcome)
 		switch laneBucket(task.Status) {

@@ -357,6 +357,10 @@ type BackgroundRunRequest struct {
 	Kind          string                    `json:"kind,omitempty"`
 	SessionID     string                    `json:"session_id,omitempty"`
 	RestartPolicy *background.RestartPolicy `json:"restart_policy,omitempty"`
+	ScopeBinding  background.ScopeBinding   `json:"scope_binding,omitempty"`
+	Owner         string                    `json:"owner,omitempty"`
+	WorkflowScope string                    `json:"workflow_scope,omitempty"`
+	WatcherAction string                    `json:"watcher_action,omitempty"`
 }
 
 // BackgroundIDRequest identifies a background task.

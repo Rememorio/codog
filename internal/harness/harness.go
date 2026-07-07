@@ -9724,6 +9724,11 @@ func backgroundAgentRunScenario() scenario {
 				SessionID:   sessionID,
 				Prompt:      "review branch",
 				Description: "Parity reviewer",
+				ScopeBinding: background.ScopeBinding{
+					Owner:         "reviewer",
+					WorkflowScope: "claw-code-dogfood",
+					WatcherAction: "act",
+				},
 			})
 			if err != nil {
 				return localScenarioResult{}, err
@@ -9774,6 +9779,9 @@ func backgroundAgentRunScenario() scenario {
 			}
 			if status.Provenance.SourceKind != "healthcheck" || status.Provenance.Emitter != "codog-harness" {
 				return localScenarioResult{}, fmt.Errorf("unexpected provenance: %#v", status.Provenance)
+			}
+			if status.ScopeBinding.Owner != "reviewer" || status.ScopeBinding.WorkflowScope != "claw-code-dogfood" || !status.ScopeBinding.Actionable {
+				return localScenarioResult{}, fmt.Errorf("unexpected scope binding: %#v", status.ScopeBinding)
 			}
 			agentBoard := agentruns.BuildBoard(taskStore, []agentruns.Run{run}, now, 30*time.Second)
 			if len(agentBoard.Active) != 1 || agentBoard.Active[0].Run.ID != run.ID || agentBoard.Active[0].Freshness != background.LaneFreshnessHealthy {
@@ -9892,6 +9900,7 @@ func backgroundAgentRunScenario() scenario {
 					"lane":                 "active",
 					"lane_freshness":       string(taskBoard.Active[0].Freshness),
 					"source_kind":          taskBoard.Active[0].Provenance.SourceKind,
+					"workflow_scope":       taskBoard.Active[0].ScopeBinding.WorkflowScope,
 				},
 				"agent_run": map[string]any{
 					"agent":            run.Agent,
@@ -9900,6 +9909,8 @@ func backgroundAgentRunScenario() scenario {
 					"health":           status.Health.State,
 					"lifecycle_reason": status.Lifecycle.Reason,
 					"emitter":          status.Provenance.Emitter,
+					"owner":            status.ScopeBinding.Owner,
+					"actionable":       status.ScopeBinding.Actionable,
 					"active_lanes":     len(agentBoard.Active),
 				},
 				"supervisor": map[string]any{

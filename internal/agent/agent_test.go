@@ -28623,7 +28623,15 @@ func TestRemainingCommandFallbackErrorsAreStructured(t *testing.T) {
 }
 
 func TestParseBackgroundRunArgsWithRestartPolicy(t *testing.T) {
-	command, options, err := parseBackgroundRunArgs([]string{"--restart=always", "--restart-limit", "2", "--restart-delay", "5", "echo", "restart"})
+	command, options, err := parseBackgroundRunArgs([]string{
+		"--restart=always",
+		"--restart-limit", "2",
+		"--restart-delay", "5",
+		"--owner", "ops",
+		"--workflow-scope", "infra-health",
+		"--watcher-action", "observe",
+		"echo", "restart",
+	})
 	require.NoError(t, err)
 	require.Equal(t, "echo restart", command)
 	require.NotNil(t, options.RestartPolicy)
@@ -28631,6 +28639,9 @@ func TestParseBackgroundRunArgsWithRestartPolicy(t *testing.T) {
 	require.Equal(t, "always", options.RestartPolicy.Mode)
 	require.Equal(t, 2, options.RestartPolicy.MaxAttempts)
 	require.Equal(t, 5, options.RestartPolicy.DelaySeconds)
+	require.Equal(t, "ops", options.ScopeBinding.Owner)
+	require.Equal(t, "infra-health", options.ScopeBinding.WorkflowScope)
+	require.Equal(t, "observe", options.ScopeBinding.WatcherAction)
 
 	_, _, err = parseBackgroundRunArgs([]string{"--restart=never", "echo"})
 	require.Error(t, err)

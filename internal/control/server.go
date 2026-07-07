@@ -887,6 +887,10 @@ func (s Server) background(w http.ResponseWriter, r *http.Request) {
 			Command       string                    `json:"command"`
 			SessionID     string                    `json:"session_id"`
 			RestartPolicy *background.RestartPolicy `json:"restart_policy"`
+			ScopeBinding  background.ScopeBinding   `json:"scope_binding"`
+			Owner         string                    `json:"owner"`
+			WorkflowScope string                    `json:"workflow_scope"`
+			WatcherAction string                    `json:"watcher_action"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			writeError(w, err, http.StatusBadRequest)
@@ -896,6 +900,7 @@ func (s Server) background(w http.ResponseWriter, r *http.Request) {
 			SessionID:     payload.SessionID,
 			RestartPolicy: payload.RestartPolicy,
 			Env:           s.remoteEnv(),
+			ScopeBinding:  controlScopeBinding(payload.ScopeBinding, payload.Owner, payload.WorkflowScope, payload.WatcherAction),
 		})
 		if err != nil {
 			writeError(w, err, http.StatusBadRequest)
@@ -924,6 +929,10 @@ func (s Server) terminal(w http.ResponseWriter, r *http.Request) {
 			Command       string                    `json:"command"`
 			SessionID     string                    `json:"session_id"`
 			RestartPolicy *background.RestartPolicy `json:"restart_policy"`
+			ScopeBinding  background.ScopeBinding   `json:"scope_binding"`
+			Owner         string                    `json:"owner"`
+			WorkflowScope string                    `json:"workflow_scope"`
+			WatcherAction string                    `json:"watcher_action"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			writeError(w, err, http.StatusBadRequest)
@@ -934,6 +943,7 @@ func (s Server) terminal(w http.ResponseWriter, r *http.Request) {
 			SessionID:     payload.SessionID,
 			RestartPolicy: payload.RestartPolicy,
 			Env:           s.remoteEnv(),
+			ScopeBinding:  controlScopeBinding(payload.ScopeBinding, payload.Owner, payload.WorkflowScope, payload.WatcherAction),
 		})
 		if err != nil {
 			writeError(w, err, http.StatusBadRequest)
@@ -1418,6 +1428,19 @@ func controlHeartbeatProvenance(provenance background.EventProvenance, sourceKin
 		provenance.Confidence = confidence
 	}
 	return provenance
+}
+
+func controlScopeBinding(binding background.ScopeBinding, owner string, workflowScope string, watcherAction string) background.ScopeBinding {
+	if strings.TrimSpace(owner) != "" {
+		binding.Owner = owner
+	}
+	if strings.TrimSpace(workflowScope) != "" {
+		binding.WorkflowScope = workflowScope
+	}
+	if strings.TrimSpace(watcherAction) != "" {
+		binding.WatcherAction = watcherAction
+	}
+	return binding
 }
 
 func (s Server) hooksHealth(w http.ResponseWriter, r *http.Request) {

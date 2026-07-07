@@ -1415,7 +1415,7 @@ func TestBridgeBackgroundControl(t *testing.T) {
 	workspace := t.TempDir()
 	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
 	var out bytes.Buffer
-	runInput := `{"jsonrpc":"2.0","id":1,"method":"background/run","params":{"command":"printf bridge-control","kind":"terminal","session_id":"ide-session"}}` + "\n"
+	runInput := `{"jsonrpc":"2.0","id":1,"method":"background/run","params":{"command":"printf bridge-control","kind":"terminal","session_id":"ide-session","owner":"ide-bot","workflow_scope":"manual-operator","watcher_action":"observe"}}` + "\n"
 	err := Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: configHome}.Serve(strings.NewReader(runInput), &out)
 	require.NoError(t, err)
 	var runResp struct {
@@ -1425,6 +1425,10 @@ func TestBridgeBackgroundControl(t *testing.T) {
 	require.NotEmpty(t, runResp.Result.ID)
 	require.Equal(t, "terminal", runResp.Result.Kind)
 	require.Equal(t, "ide-session", runResp.Result.SessionID)
+	require.Equal(t, "ide-bot", runResp.Result.ScopeBinding.Owner)
+	require.Equal(t, "manual-operator", runResp.Result.ScopeBinding.WorkflowScope)
+	require.Equal(t, "observe", runResp.Result.ScopeBinding.WatcherAction)
+	require.False(t, runResp.Result.ScopeBinding.Actionable)
 	require.Eventually(t, func() bool {
 		logs, err := background.NewStore(configHome).Logs(runResp.Result.ID, 4096)
 		return err == nil && strings.Contains(logs, "bridge-control")

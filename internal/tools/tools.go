@@ -8060,6 +8060,18 @@ func (TaskCreateTool) Definition() anthropic.ToolDefinition {
 				"description": map[string]any{"type": "string"},
 				"kind":        map[string]any{"type": "string"},
 				"session_id":  map[string]any{"type": "string"},
+				"scope_binding": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"owner":          map[string]any{"type": "string"},
+						"workflow_scope": map[string]any{"type": "string"},
+						"watcher_action": map[string]any{"type": "string", "enum": []string{"act", "observe", "ignore"}},
+					},
+					"additionalProperties": false,
+				},
+				"owner":          map[string]any{"type": "string"},
+				"workflow_scope": map[string]any{"type": "string"},
+				"watcher_action": map[string]any{"type": "string", "enum": []string{"act", "observe", "ignore"}},
 				"restart_policy": map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -8081,12 +8093,16 @@ func (TaskCreateTool) Permission() Permission { return PermissionDanger }
 
 func (t TaskCreateTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Command     string                    `json:"command"`
-		Prompt      string                    `json:"prompt"`
-		Description string                    `json:"description"`
-		Kind        string                    `json:"kind"`
-		SessionID   string                    `json:"session_id"`
-		Restart     *background.RestartPolicy `json:"restart_policy"`
+		Command       string                    `json:"command"`
+		Prompt        string                    `json:"prompt"`
+		Description   string                    `json:"description"`
+		Kind          string                    `json:"kind"`
+		SessionID     string                    `json:"session_id"`
+		Restart       *background.RestartPolicy `json:"restart_policy"`
+		ScopeBinding  background.ScopeBinding   `json:"scope_binding"`
+		Owner         string                    `json:"owner"`
+		WorkflowScope string                    `json:"workflow_scope"`
+		WatcherAction string                    `json:"watcher_action"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -8130,6 +8146,7 @@ func (t TaskCreateTool) Execute(ctx context.Context, input json.RawMessage) (str
 			Env:           env,
 			Prompt:        prompt,
 			Description:   strings.TrimSpace(payload.Description),
+			ScopeBinding:  toolScopeBinding(payload.ScopeBinding, payload.Owner, payload.WorkflowScope, payload.WatcherAction),
 		})
 		if err != nil {
 			return "", err
@@ -8148,6 +8165,7 @@ func (t TaskCreateTool) Execute(ctx context.Context, input json.RawMessage) (str
 		SessionID:     payload.SessionID,
 		RestartPolicy: payload.Restart,
 		Env:           env,
+		ScopeBinding:  toolScopeBinding(payload.ScopeBinding, payload.Owner, payload.WorkflowScope, payload.WatcherAction),
 	})
 	if err != nil {
 		return "", err
@@ -8681,6 +8699,19 @@ func toolHeartbeatProvenance(provenance background.EventProvenance, sourceKind s
 		provenance.Confidence = confidence
 	}
 	return provenance
+}
+
+func toolScopeBinding(binding background.ScopeBinding, owner string, workflowScope string, watcherAction string) background.ScopeBinding {
+	if strings.TrimSpace(owner) != "" {
+		binding.Owner = owner
+	}
+	if strings.TrimSpace(workflowScope) != "" {
+		binding.WorkflowScope = workflowScope
+	}
+	if strings.TrimSpace(watcherAction) != "" {
+		binding.WatcherAction = watcherAction
+	}
+	return binding
 }
 
 type TaskLaneBoardTool struct {
