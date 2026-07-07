@@ -38,6 +38,8 @@ type Cursor struct {
 type ItemSummary struct {
 	ID                  string                       `json:"id"`
 	Title               string                       `json:"title"`
+	DedupeKey           string                       `json:"dedupe_key,omitempty"`
+	SameRootCause       []string                     `json:"same_root_cause,omitempty"`
 	State               roadmap.State                `json:"state"`
 	Priority            roadmap.Priority             `json:"priority"`
 	Severity            roadmap.Severity             `json:"severity"`
@@ -834,15 +836,17 @@ func roadmapSyncItems(report Report, verbosity string) []map[string]any {
 	projected := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		value := map[string]any{
-			"id":          item.ID,
-			"title":       item.Title,
-			"state":       item.State,
-			"priority":    item.Priority,
-			"severity":    item.Severity,
-			"impact":      item.Impact,
-			"updated_at":  item.UpdatedAt,
-			"readiness":   item.Readiness,
-			"fingerprint": item.Fingerprint,
+			"id":              item.ID,
+			"title":           item.Title,
+			"dedupe_key":      item.DedupeKey,
+			"same_root_cause": item.SameRootCause,
+			"state":           item.State,
+			"priority":        item.Priority,
+			"severity":        item.Severity,
+			"impact":          item.Impact,
+			"updated_at":      item.UpdatedAt,
+			"readiness":       item.Readiness,
+			"fingerprint":     item.Fingerprint,
 		}
 		if verbosity != "brief" {
 			value["evidence_refs"] = item.EvidenceRefs
@@ -1422,6 +1426,8 @@ func summarizeItem(item roadmap.Item, now time.Time, freshnessTTL time.Duration)
 	summary := ItemSummary{
 		ID:                  item.ID,
 		Title:               item.Title,
+		DedupeKey:           item.DedupeKey,
+		SameRootCause:       append([]string(nil), item.SameRootCause...),
 		State:               item.State,
 		Priority:            item.Priority,
 		Severity:            item.Severity,
@@ -1442,16 +1448,18 @@ func summarizeItem(item roadmap.Item, now time.Time, freshnessTTL time.Duration)
 		summary.Readiness = item.Handoff.Readiness
 	}
 	hash, err := stableHash(map[string]any{
-		"id":             summary.ID,
-		"title":          summary.Title,
-		"state":          summary.State,
-		"priority":       summary.Priority,
-		"severity":       summary.Severity,
-		"impact":         summary.Impact,
-		"evidence_refs":  summary.EvidenceRefs,
-		"claims":         summary.Claims,
-		"handoff":        summary.Handoff,
-		"implementation": summary.Implementation,
+		"id":              summary.ID,
+		"title":           summary.Title,
+		"dedupe_key":      summary.DedupeKey,
+		"same_root_cause": summary.SameRootCause,
+		"state":           summary.State,
+		"priority":        summary.Priority,
+		"severity":        summary.Severity,
+		"impact":          summary.Impact,
+		"evidence_refs":   summary.EvidenceRefs,
+		"claims":          summary.Claims,
+		"handoff":         summary.Handoff,
+		"implementation":  summary.Implementation,
 	})
 	if err != nil {
 		return ItemSummary{}, err

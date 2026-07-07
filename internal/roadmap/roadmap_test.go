@@ -107,6 +107,97 @@ func TestFileAppendsEvidenceWithoutChangingIdentity(t *testing.T) {
 	require.Equal(t, []string{first.ItemID}, update.Item.Lineage)
 }
 
+func TestFileMergesDuplicateRootCauseByDedupeKey(t *testing.T) {
+	store := NewStore(t.TempDir())
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	first, err := store.File(Filing{
+		Title:       "MCP readiness hides handshake failures",
+		Description: "first observer saw a missing initialization error",
+		Evidence: []EvidenceAttachment{{
+			Role:      EvidenceSymptom,
+			Type:      "session",
+			Reference: "session-a",
+			Preview:   "mcp stayed pending",
+		}},
+		Now: now,
+	})
+	require.NoError(t, err)
+	require.True(t, first.Created)
+	require.NotEmpty(t, first.Item.DedupeKey)
+
+	duplicate, err := store.File(Filing{
+		Title:       "MCP readiness hides handshake failures",
+		Description: "second observer saw the same missing handshake error",
+		Evidence: []EvidenceAttachment{{
+			Role:      EvidenceRootCauseHint,
+			Type:      "session",
+			Reference: "session-b",
+			Preview:   "initialize response was never surfaced",
+		}},
+		Now: now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.False(t, duplicate.Created)
+	require.Equal(t, "roadmap_duplicate_merged", duplicate.Action)
+	require.Equal(t, first.ItemID, duplicate.ItemID)
+	require.Equal(t, first.Item.DedupeKey, duplicate.Item.DedupeKey)
+	require.Len(t, duplicate.Item.Evidence, 2)
+
+	duplicateID := stableID("MCP readiness hides handshake failures", "second observer saw the same missing handshake error")
+	require.Contains(t, duplicate.Item.Lineage, first.ItemID)
+	require.Contains(t, duplicate.Item.Lineage, duplicateID)
+	require.Contains(t, duplicate.Item.SameRootCause, duplicateID)
+
+	items, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, first.ItemID, items[0].ID)
+}
+
+func TestFileMergesExplicitSameRootCauseAndKeepsDistinctSimilarItems(t *testing.T) {
+	store := NewStore(t.TempDir())
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	canonical, err := store.File(Filing{
+		Title:       "Auth errors need typed envelopes",
+		Description: "missing token returns bare prose",
+		Now:         now,
+	})
+	require.NoError(t, err)
+
+	linked, err := store.File(Filing{
+		Title:         "Credential failures flatten structured error state",
+		Description:   "different wording but same missing typed auth envelope",
+		DedupeKey:     "auth-envelope-secondary-observer",
+		SameRootCause: []string{canonical.ItemID},
+		Evidence: []EvidenceAttachment{{
+			Role:      EvidenceSymptom,
+			Type:      "session",
+			Reference: "session-c",
+		}},
+		Now: now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.Equal(t, "roadmap_duplicate_merged", linked.Action)
+	require.Equal(t, canonical.ItemID, linked.ItemID)
+	require.Contains(t, linked.Item.Lineage, stableID("Credential failures flatten structured error state", "different wording but same missing typed auth envelope"))
+
+	distinct, err := store.File(Filing{
+		Title:       "Auth errors need typed envelope hints",
+		Description: "similar wording but a separate hint quality issue",
+		DedupeKey:   "auth-envelope-hint-quality",
+		Now:         now.Add(2 * time.Minute),
+	})
+	require.NoError(t, err)
+	require.True(t, distinct.Created)
+	require.NotEqual(t, canonical.ItemID, distinct.ItemID)
+
+	items, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+}
+
 func TestFileTracksPrioritySeverityAndListOrder(t *testing.T) {
 	store := NewStore(t.TempDir())
 	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)

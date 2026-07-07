@@ -130,10 +130,12 @@ type Item struct {
 	ID                string               `json:"id"`
 	Title             string               `json:"title"`
 	Description       string               `json:"description,omitempty"`
+	DedupeKey         string               `json:"dedupe_key,omitempty"`
 	State             State                `json:"state"`
 	CreatedAt         time.Time            `json:"created_at"`
 	UpdatedAt         time.Time            `json:"updated_at"`
 	LastStateChangeAt time.Time            `json:"last_state_change_at"`
+	SameRootCause     []string             `json:"same_root_cause,omitempty"`
 	Supersedes        []string             `json:"supersedes,omitempty"`
 	SupersededBy      string               `json:"superseded_by,omitempty"`
 	Related           []string             `json:"related,omitempty"`
@@ -155,7 +157,9 @@ type Filing struct {
 	ID               string
 	Title            string
 	Description      string
+	DedupeKey        string
 	State            State
+	SameRootCause    []string
 	Supersedes       []string
 	SupersededBy     string
 	Related          []string
@@ -206,9 +210,9 @@ func (s Store) File(filing Filing) (Result, error) {
 	if err := validatePriorityFields(filing); err != nil {
 		return Result{}, err
 	}
-	id := filing.ID
-	if id == "" {
-		id = stableID(filing.Title, filing.Description)
+	id, dedupeMerged, err := s.resolveFilingID(filing)
+	if err != nil {
+		return Result{}, err
 	}
 	item, err := s.Get(id)
 	created := false
@@ -221,6 +225,7 @@ func (s Store) File(filing Filing) (Result, error) {
 			ID:                id,
 			Title:             filing.Title,
 			Description:       filing.Description,
+			DedupeKey:         filing.DedupeKey,
 			State:             filing.State,
 			CreatedAt:         filing.Now,
 			UpdatedAt:         filing.Now,
@@ -235,6 +240,9 @@ func (s Store) File(filing Filing) (Result, error) {
 		if filing.Description != "" {
 			item.Description = filing.Description
 		}
+		if filing.DedupeKey != "" {
+			item.DedupeKey = filing.DedupeKey
+		}
 		item.UpdatedAt = filing.Now
 		if filing.State != "" && item.State != filing.State {
 			item.State = filing.State
@@ -243,8 +251,16 @@ func (s Store) File(filing Filing) (Result, error) {
 		applyPriority(&item, filing)
 	}
 	ensurePriorityDefaults(&item, filing.Now)
+	proposedID := stableID(filing.Title, filing.Description)
+	item.SameRootCause = mergeStrings(item.SameRootCause, withoutString(filing.SameRootCause, item.ID))
+	if dedupeMerged && proposedID != item.ID {
+		item.SameRootCause = mergeStrings(item.SameRootCause, []string{proposedID})
+	}
 	item.Supersedes = mergeStrings(item.Supersedes, filing.Supersedes)
 	item.Related = mergeStrings(item.Related, filing.Related)
+	if dedupeMerged {
+		item.Lineage = mergeStrings(item.Lineage, []string{proposedID})
+	}
 	evidence, err := normalizeEvidence(filing.Evidence, filing.Now)
 	if err != nil {
 		return Result{}, err
@@ -288,6 +304,8 @@ func (s Store) File(filing Filing) (Result, error) {
 	action := "roadmap_update"
 	if created {
 		action = "new_roadmap_filing"
+	} else if dedupeMerged {
+		action = "roadmap_duplicate_merged"
 	}
 	return Result{Kind: "roadmap_pinpoint", Action: action, ItemID: item.ID, State: item.State, Item: item, Created: created}, nil
 }
@@ -306,6 +324,7 @@ func (s Store) Get(id string) (Item, error) {
 	if err := json.Unmarshal(data, &item); err != nil {
 		return Item{}, err
 	}
+	ensureDedupeKey(&item)
 	ensurePriorityDefaults(&item, fallbackTime(item.UpdatedAt))
 	ensureHandoff(&item, fallbackTime(item.UpdatedAt))
 	return item, nil
@@ -333,6 +352,7 @@ func (s Store) List() ([]Item, error) {
 		if err := json.Unmarshal(data, &item); err != nil {
 			return nil, err
 		}
+		ensureDedupeKey(&item)
 		ensurePriorityDefaults(&item, fallbackTime(item.UpdatedAt))
 		ensureHandoff(&item, fallbackTime(item.UpdatedAt))
 		items = append(items, item)
@@ -346,6 +366,36 @@ func (s Store) List() ([]Item, error) {
 		return items[i].UpdatedAt.After(items[j].UpdatedAt)
 	})
 	return items, nil
+}
+
+func (s Store) resolveFilingID(filing Filing) (string, bool, error) {
+	if filing.ID != "" {
+		return filing.ID, false, nil
+	}
+	proposedID := stableID(filing.Title, filing.Description)
+	for _, candidateID := range filing.SameRootCause {
+		if candidateID == proposedID {
+			continue
+		}
+		if _, err := s.Get(candidateID); err == nil {
+			return candidateID, true, nil
+		} else if !os.IsNotExist(err) {
+			return "", false, err
+		}
+	}
+	if filing.DedupeKey == "" {
+		return proposedID, false, nil
+	}
+	items, err := s.List()
+	if err != nil {
+		return "", false, err
+	}
+	for _, item := range items {
+		if item.ID != proposedID && item.DedupeKey == filing.DedupeKey {
+			return item.ID, true, nil
+		}
+	}
+	return proposedID, false, nil
 }
 
 func (s Store) save(item Item) error {
@@ -378,6 +428,7 @@ func normalizeFiling(filing Filing) Filing {
 	filing.ID = strings.TrimSpace(filing.ID)
 	filing.Title = strings.TrimSpace(filing.Title)
 	filing.Description = strings.TrimSpace(filing.Description)
+	filing.DedupeKey = normalizeDedupeKey(filing.DedupeKey)
 	filing.SupersededBy = strings.TrimSpace(filing.SupersededBy)
 	filing.ReportID = strings.TrimSpace(filing.ReportID)
 	filing.Priority = Priority(strings.TrimSpace(string(filing.Priority)))
@@ -390,7 +441,11 @@ func normalizeFiling(filing Filing) Filing {
 		filing.Now = filing.Now.UTC()
 	}
 	filing.Supersedes = cleanStrings(filing.Supersedes)
+	filing.SameRootCause = cleanStrings(filing.SameRootCause)
 	filing.Related = cleanStrings(filing.Related)
+	if filing.DedupeKey == "" {
+		filing.DedupeKey = stableDedupeKey(filing.Title, filing.Description)
+	}
 	return filing
 }
 
@@ -531,6 +586,14 @@ func fallbackTime(value time.Time) time.Time {
 		return time.Now().UTC()
 	}
 	return value
+}
+
+func ensureDedupeKey(item *Item) {
+	if item.DedupeKey != "" {
+		item.DedupeKey = normalizeDedupeKey(item.DedupeKey)
+		return
+	}
+	item.DedupeKey = stableDedupeKey(item.Title, item.Description)
 }
 
 func normalizeHandoff(packet *HandoffPacket, now time.Time) (*HandoffPacket, error) {
@@ -808,6 +871,36 @@ func stableID(title string, description string) string {
 	return "rp-" + hex.EncodeToString(sum[:6])
 }
 
+func stableDedupeKey(title string, description string) string {
+	key := canonicalDedupeText(title)
+	if key == "" {
+		key = canonicalDedupeText(description)
+	}
+	if key == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	return "rdk-" + hex.EncodeToString(sum[:6])
+}
+
+func normalizeDedupeKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	return value
+}
+
+func canonicalDedupeText(value string) string {
+	words := strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	})
+	if len(words) == 0 {
+		return ""
+	}
+	return strings.Join(words, " ")
+}
+
 func cleanStrings(values []string) []string {
 	out := []string{}
 	seen := map[string]bool{}
@@ -817,6 +910,17 @@ func cleanStrings(values []string) []string {
 			continue
 		}
 		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func withoutString(values []string, ignored string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == ignored {
+			continue
+		}
 		out = append(out, value)
 	}
 	return out
