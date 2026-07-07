@@ -256,6 +256,7 @@ var scenarioOrder = []string{
 	"worker_lifecycle_roundtrip",
 	"recovery_lifecycle_roundtrip",
 	"nudge_ack_dedupe_roundtrip",
+	"roadmap_pinpoint_lifecycle_roundtrip",
 	"agent_markdown_definition_roundtrip",
 	"background_agent_run_roundtrip",
 	"remote_trigger_roundtrip",
@@ -820,6 +821,7 @@ func Run(ctx context.Context) (Report, error) {
 		workerLifecycleScenario(),
 		recoveryLifecycleScenario(),
 		nudgeAckDedupeScenario(),
+		roadmapPinpointLifecycleScenario(),
 		agentMarkdownDefinitionScenario(),
 		backgroundAgentRunScenario(),
 		remoteTriggerScenario(),
@@ -1727,6 +1729,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "nudge",
 		Description: "Records recurring nudge deliveries, classifies retries, acknowledges a cycle, and suppresses stale duplicates.",
 		ParityRefs:  []string{"Nudge acknowledgement", "Nudge dedupe", "Recurring prompt idempotency", "Tool result roundtrip"},
+	},
+	"roadmap_pinpoint_lifecycle_roundtrip": {
+		Category:    "roadmap",
+		Description: "Files a roadmap pinpoint, preserves its stable id across updates, and drives lifecycle states to closure.",
+		ParityRefs:  []string{"Stable roadmap id", "Roadmap lifecycle", "Pinpoint update", "Tool result roundtrip"},
 	},
 	"background_agent_run_roundtrip": {
 		Category:    "background-agents",
@@ -9778,6 +9785,72 @@ func nudgeAckDedupeScenario() scenario {
 				MessageCount: 1,
 				ToolCalls:    5,
 				ToolUses:     []string{"nudge", "nudge", "nudge", "nudge", "nudge"},
+			}, nil
+		},
+	}
+}
+
+func roadmapPinpointLifecycleScenario() scenario {
+	return scenario{
+		name: "roadmap_pinpoint_lifecycle_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
+			call := func(input string) (map[string]any, error) {
+				out, err := registry.Execute(ctx, "RoadmapPinpointTool", json.RawMessage(input), nil)
+				if err != nil {
+					return nil, err
+				}
+				var report map[string]any
+				if err := json.Unmarshal([]byte(out), &report); err != nil {
+					return nil, err
+				}
+				return report, nil
+			}
+
+			filed, err := call(`{"action":"file","title":"stable pinpoint ids","description":"dogfood reports need ids","now":"2026-07-07T13:00:00Z"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			itemID, _ := filed["item_id"].(string)
+			if itemID == "" || filed["action"] != "new_roadmap_filing" {
+				return localScenarioResult{}, fmt.Errorf("unexpected roadmap filing: %#v", filed)
+			}
+			updated, err := call(`{"action":"update","id":"` + itemID + `","title":"stable pinpoint ids after edit","state":"in_progress","report_id":"report-1","now":"2026-07-07T14:00:00Z"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			closed, err := call(`{"action":"update","id":"` + itemID + `","state":"done","now":"2026-07-07T15:00:00Z"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			list, err := call(`{"action":"list"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if updated["item_id"] != itemID || updated["state"] != "in_progress" || closed["item_id"] != itemID || closed["state"] != "done" {
+				return localScenarioResult{}, fmt.Errorf("unexpected roadmap lifecycle: filed=%#v updated=%#v closed=%#v", filed, updated, closed)
+			}
+			report := map[string]any{
+				"kind":          "roadmap_pinpoint_lifecycle",
+				"item_id":       itemID,
+				"first_action":  filed["action"],
+				"update_action": updated["action"],
+				"update_state":  updated["state"],
+				"closed_state":  closed["state"],
+				"record_count":  list["count"],
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "roadmap pinpoint lifecycle harness ok",
+				RequestCount: 4,
+				MessageCount: 1,
+				ToolCalls:    4,
+				ToolUses:     []string{"roadmap_pinpoint", "roadmap_pinpoint", "roadmap_pinpoint", "roadmap_pinpoint"},
 			}, nil
 		},
 	}

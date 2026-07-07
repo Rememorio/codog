@@ -48,6 +48,7 @@ import (
 	"github.com/Rememorio/codog/internal/policyengine"
 	"github.com/Rememorio/codog/internal/powershellvalidation"
 	"github.com/Rememorio/codog/internal/recovery"
+	"github.com/Rememorio/codog/internal/roadmap"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/shellstate"
 	"github.com/Rememorio/codog/internal/skills"
@@ -172,6 +173,8 @@ var claudeToolAliases = map[string]string{
 	"cronlisttool":                 "cron_list",
 	"nudge":                        "nudge",
 	"nudgetool":                    "nudge",
+	"roadmappinpoint":              "roadmap_pinpoint",
+	"roadmappinpointtool":          "roadmap_pinpoint",
 	"edit":                         "edit_file",
 	"editfile":                     "edit_file",
 	"edittool":                     "edit_file",
@@ -445,6 +448,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"RecoveryRecipeTool":           "recovery_recipe",
 	"RecoveryStatus":               "recovery_status",
 	"RecoveryStatusTool":           "recovery_status",
+	"RoadmapPinpoint":              "roadmap_pinpoint",
+	"RoadmapPinpointTool":          "roadmap_pinpoint",
 	"RemoteTrigger":                "remote_trigger",
 	"RemoteTriggerTool":            "remote_trigger",
 	"RunTaskPacket":                "run_task_packet",
@@ -681,6 +686,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(RecoveryRecipeTool{ConfigHome: opts.ConfigHome})
 	r.Register(RecoveryAttemptTool{ConfigHome: opts.ConfigHome})
 	r.Register(RecoveryStatusTool{ConfigHome: opts.ConfigHome})
+	r.Register(RoadmapPinpointTool{ConfigHome: opts.ConfigHome})
 	r.Register(NudgeTool{ConfigHome: opts.ConfigHome})
 	r.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
 	r.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
@@ -8813,6 +8819,101 @@ func nudgeDeliveryFromPayload(nudgeID string, cycleID string, prompt string, del
 		delivery.DeliveredAt = parsed
 	}
 	return delivery, nil
+}
+
+type RoadmapPinpointTool struct {
+	ConfigHome string
+}
+
+func (RoadmapPinpointTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "roadmap_pinpoint",
+		Description: "Create, update, inspect, or list machine-readable roadmap pinpoints.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"action":        map[string]any{"type": "string", "enum": []string{"file", "update", "get", "list"}},
+				"id":            map[string]any{"type": "string"},
+				"title":         map[string]any{"type": "string"},
+				"description":   map[string]any{"type": "string"},
+				"state":         map[string]any{"type": "string", "enum": []string{"filed", "acknowledged", "in_progress", "blocked", "done", "superseded"}},
+				"supersedes":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"superseded_by": map[string]any{"type": "string"},
+				"related":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"report_id":     map[string]any{"type": "string"},
+				"now":           map[string]any{"type": "string", "format": "date-time"},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (RoadmapPinpointTool) Permission() Permission { return PermissionReadOnly }
+
+func (t RoadmapPinpointTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Action       string   `json:"action"`
+		ID           string   `json:"id"`
+		Title        string   `json:"title"`
+		Description  string   `json:"description"`
+		State        string   `json:"state"`
+		Supersedes   []string `json:"supersedes"`
+		SupersededBy string   `json:"superseded_by"`
+		Related      []string `json:"related"`
+		ReportID     string   `json:"report_id"`
+		Now          string   `json:"now"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	action := strings.ToLower(strings.TrimSpace(payload.Action))
+	if action == "" {
+		action = "file"
+	}
+	store := roadmap.NewStore(t.ConfigHome)
+	switch action {
+	case "get":
+		item, err := store.Get(payload.ID)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"kind": "roadmap_pinpoint_status", "item": item}), nil
+	case "list":
+		items, err := store.List()
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"kind": "roadmap_pinpoint_list", "items": items, "count": len(items)}), nil
+	case "file", "update":
+		now, err := parseOptionalRFC3339(payload.Now)
+		if err != nil {
+			return "", err
+		}
+		result, err := store.File(roadmap.Filing{
+			ID:           payload.ID,
+			Title:        payload.Title,
+			Description:  payload.Description,
+			State:        roadmap.State(payload.State),
+			Supersedes:   payload.Supersedes,
+			SupersededBy: payload.SupersededBy,
+			Related:      payload.Related,
+			ReportID:     payload.ReportID,
+			Now:          now,
+		})
+		if err != nil {
+			return "", err
+		}
+		return pretty(result), nil
+	default:
+		return "", fmt.Errorf("unknown roadmap action %q", payload.Action)
+	}
+}
+
+func parseOptionalRFC3339(value string) (time.Time, error) {
+	if strings.TrimSpace(value) == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339, value)
 }
 
 type TaskLaneBoardTool struct {

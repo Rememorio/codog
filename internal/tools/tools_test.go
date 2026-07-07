@@ -1452,7 +1452,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 83)
+	require.Len(t, infos, 84)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -1967,6 +1967,8 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"RecoveryAttemptTool":          "recovery_attempt",
 		"RecoveryStatus":               "recovery_status",
 		"RecoveryStatusTool":           "recovery_status",
+		"RoadmapPinpoint":              "roadmap_pinpoint",
+		"RoadmapPinpointTool":          "roadmap_pinpoint",
 	} {
 		info, ok := registry.Info(alias)
 		require.True(t, ok, alias)
@@ -4135,6 +4137,41 @@ func TestNudgeToolClassifiesAndAcknowledgesCycles(t *testing.T) {
 	listOut, err := tool.Execute(context.Background(), []byte(`{"action":"list"}`))
 	require.NoError(t, err)
 	require.Contains(t, listOut, `"kind": "nudge_list"`)
+	require.Contains(t, listOut, `"count": 1`)
+}
+
+func TestRoadmapPinpointToolFilesAndUpdatesLifecycle(t *testing.T) {
+	configHome := t.TempDir()
+	tool := RoadmapPinpointTool{ConfigHome: configHome}
+
+	fileOut, err := tool.Execute(context.Background(), []byte(`{"action":"file","title":"stable roadmap ids","description":"pinpoints need ids","now":"2026-07-07T13:00:00Z"}`))
+	require.NoError(t, err)
+	require.Contains(t, fileOut, `"action": "new_roadmap_filing"`)
+	var filed struct {
+		ItemID string `json:"item_id"`
+		Item   struct {
+			State string `json:"state"`
+		} `json:"item"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(fileOut), &filed))
+	require.NotEmpty(t, filed.ItemID)
+	require.Equal(t, "filed", filed.Item.State)
+
+	updateInput := `{"action":"update","id":"` + filed.ItemID + `","title":"stable roadmap ids after edits","state":"in_progress","related":["rp-related"],"report_id":"report-1","now":"2026-07-07T14:00:00Z"}`
+	updateOut, err := tool.Execute(context.Background(), []byte(updateInput))
+	require.NoError(t, err)
+	require.Contains(t, updateOut, `"action": "roadmap_update"`)
+	require.Contains(t, updateOut, `"item_id": "`+filed.ItemID+`"`)
+	require.Contains(t, updateOut, `"state": "in_progress"`)
+
+	statusOut, err := tool.Execute(context.Background(), []byte(`{"action":"get","id":"`+filed.ItemID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, statusOut, `"kind": "roadmap_pinpoint_status"`)
+	require.Contains(t, statusOut, `"report_id": "report-1"`)
+
+	listOut, err := tool.Execute(context.Background(), []byte(`{"action":"list"}`))
+	require.NoError(t, err)
+	require.Contains(t, listOut, `"kind": "roadmap_pinpoint_list"`)
 	require.Contains(t, listOut, `"count": 1`)
 }
 
