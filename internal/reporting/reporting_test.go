@@ -64,6 +64,7 @@ func TestGenerateCollapsesUnchangedItemsAndStoresSnapshot(t *testing.T) {
 	second, err := reportStore.GenerateWithOptions("dogfood", now.Add(2*time.Minute), GenerateOptions{
 		TriggerID:       "nudge-cycle-1",
 		CheckedSurfaces: []string{"roadmap", "sessions", "logs"},
+		CheckedWindow:   "2026-07-07T13:01:00Z/2026-07-07T13:02:00Z",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "no_change", second.Outcome)
@@ -79,6 +80,14 @@ func TestGenerateCollapsesUnchangedItemsAndStoresSnapshot(t *testing.T) {
 	require.Equal(t, first.ReportID, second.LastMeaningfulReportID)
 	require.Equal(t, first.SnapshotID, second.LastMeaningfulSnapshotID)
 	require.Equal(t, []string{firstItem.ItemID}, second.LastMeaningfulItemIDs)
+	require.Len(t, second.NegativeEvidence, 2)
+	noDelta := negativeEvidenceByQuery(t, second.NegativeEvidence, "no_new_delta")
+	require.Equal(t, reportschema.NegativeNotObservedInCheckedScope, noDelta.Status)
+	require.Equal(t, []string{"roadmap", "sessions", "logs"}, noDelta.CheckedSurfaces)
+	require.Equal(t, "2026-07-07T13:01:00Z/2026-07-07T13:02:00Z", noDelta.Window)
+	noBlocker := negativeEvidenceByQuery(t, second.NegativeEvidence, "no_new_blocker")
+	require.Equal(t, reportschema.NegativeNotObservedInCheckedScope, noBlocker.Status)
+	require.NotEqual(t, noDelta.ID, noBlocker.ID)
 
 	updated, err := roadmapStore.File(roadmap.Filing{
 		ID:       firstItem.ItemID,
@@ -100,6 +109,8 @@ func TestGenerateCollapsesUnchangedItemsAndStoresSnapshot(t *testing.T) {
 	require.Zero(t, third.UnchangedCount)
 	require.Equal(t, second.ReportID, third.PreviousReportID)
 	require.Equal(t, third.ReportID, third.LastMeaningfulReportID)
+	require.Empty(t, third.NegativeEvidence)
+	require.ElementsMatch(t, []string{noBlocker.ID, noDelta.ID}, third.InvalidatesNegativeEvidence)
 }
 
 func TestGenerateLabelsAndPromotesClaims(t *testing.T) {
@@ -170,6 +181,11 @@ func TestGenerateNoChangeWithoutPriorMeaningfulReport(t *testing.T) {
 	require.Empty(t, report.LastMeaningfulReportID)
 	require.Empty(t, report.LastMeaningfulItemIDs)
 	require.Zero(t, report.TotalCount)
+	require.Len(t, report.NegativeEvidence, 2)
+	noDelta := negativeEvidenceByQuery(t, report.NegativeEvidence, "no_new_delta")
+	require.Equal(t, reportschema.NegativeUnknownNotChecked, noDelta.Status)
+	require.Empty(t, noDelta.CheckedSurfaces)
+	require.Equal(t, "2026-07-07T13:00:00Z/2026-07-07T13:00:00Z", noDelta.Window)
 }
 
 func claimByID(t *testing.T, claims []ClaimSummary, id string) ClaimSummary {
@@ -189,6 +205,17 @@ func claimKinds(claims []ClaimSummary) []string {
 		kinds = append(kinds, claim.Kind)
 	}
 	return kinds
+}
+
+func negativeEvidenceByQuery(t *testing.T, values []reportschema.NegativeEvidence, query string) reportschema.NegativeEvidence {
+	t.Helper()
+	for _, value := range values {
+		if value.Query == query {
+			return value
+		}
+	}
+	t.Fatalf("missing negative evidence query %q in %#v", query, values)
+	return reportschema.NegativeEvidence{}
 }
 
 func TestGenerateMarksStaleAndMixedFreshness(t *testing.T) {

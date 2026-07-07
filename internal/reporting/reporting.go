@@ -29,6 +29,7 @@ type Cursor struct {
 	LastMeaningfulReportID   string            `json:"last_meaningful_report_id,omitempty"`
 	LastMeaningfulSnapshotID string            `json:"last_meaningful_snapshot_id,omitempty"`
 	LastMeaningfulItemIDs    []string          `json:"last_meaningful_item_ids,omitempty"`
+	LastNegativeEvidenceIDs  []string          `json:"last_negative_evidence_ids,omitempty"`
 	ItemHashes               map[string]string `json:"item_hashes,omitempty"`
 }
 
@@ -64,29 +65,31 @@ type ClaimSummary struct {
 }
 
 type Report struct {
-	Kind                     string         `json:"kind"`
-	Channel                  string         `json:"channel"`
-	ReportID                 string         `json:"report_id"`
-	TriggerID                string         `json:"trigger_id,omitempty"`
-	SnapshotID               string         `json:"snapshot_id"`
-	GeneratedAt              time.Time      `json:"generated_at"`
-	Outcome                  string         `json:"outcome"`
-	Checked                  bool           `json:"checked"`
-	CheckedSurfaces          []string       `json:"checked_surfaces,omitempty"`
-	NoChange                 bool           `json:"no_change"`
-	MixedFreshness           bool           `json:"mixed_freshness"`
-	FreshnessCounts          map[string]int `json:"freshness_counts,omitempty"`
-	Claims                   []ClaimSummary `json:"claims,omitempty"`
-	NewItems                 []ItemSummary  `json:"new_items,omitempty"`
-	ChangedItems             []ItemSummary  `json:"changed_items,omitempty"`
-	UnchangedCount           int            `json:"unchanged_count"`
-	TotalCount               int            `json:"total_count"`
-	Collapsed                bool           `json:"collapsed"`
-	FullSnapshotStored       bool           `json:"full_snapshot_stored"`
-	PreviousReportID         string         `json:"previous_report_id,omitempty"`
-	LastMeaningfulReportID   string         `json:"last_meaningful_report_id,omitempty"`
-	LastMeaningfulSnapshotID string         `json:"last_meaningful_snapshot_id,omitempty"`
-	LastMeaningfulItemIDs    []string       `json:"last_meaningful_item_ids,omitempty"`
+	Kind                        string                          `json:"kind"`
+	Channel                     string                          `json:"channel"`
+	ReportID                    string                          `json:"report_id"`
+	TriggerID                   string                          `json:"trigger_id,omitempty"`
+	SnapshotID                  string                          `json:"snapshot_id"`
+	GeneratedAt                 time.Time                       `json:"generated_at"`
+	Outcome                     string                          `json:"outcome"`
+	Checked                     bool                            `json:"checked"`
+	CheckedSurfaces             []string                        `json:"checked_surfaces,omitempty"`
+	NoChange                    bool                            `json:"no_change"`
+	MixedFreshness              bool                            `json:"mixed_freshness"`
+	FreshnessCounts             map[string]int                  `json:"freshness_counts,omitempty"`
+	Claims                      []ClaimSummary                  `json:"claims,omitempty"`
+	NegativeEvidence            []reportschema.NegativeEvidence `json:"negative_evidence,omitempty"`
+	InvalidatesNegativeEvidence []string                        `json:"invalidates_negative_evidence,omitempty"`
+	NewItems                    []ItemSummary                   `json:"new_items,omitempty"`
+	ChangedItems                []ItemSummary                   `json:"changed_items,omitempty"`
+	UnchangedCount              int                             `json:"unchanged_count"`
+	TotalCount                  int                             `json:"total_count"`
+	Collapsed                   bool                            `json:"collapsed"`
+	FullSnapshotStored          bool                            `json:"full_snapshot_stored"`
+	PreviousReportID            string                          `json:"previous_report_id,omitempty"`
+	LastMeaningfulReportID      string                          `json:"last_meaningful_report_id,omitempty"`
+	LastMeaningfulSnapshotID    string                          `json:"last_meaningful_snapshot_id,omitempty"`
+	LastMeaningfulItemIDs       []string                        `json:"last_meaningful_item_ids,omitempty"`
 }
 
 type Snapshot struct {
@@ -105,7 +108,17 @@ type Store struct {
 type GenerateOptions struct {
 	TriggerID       string
 	CheckedSurfaces []string
+	CheckedWindow   string
+	NegativeQueries []NegativeQuery
 	FreshnessTTL    time.Duration
+}
+
+// NegativeQuery describes one absence check that should be attached to a no-change report.
+type NegativeQuery struct {
+	ID              string
+	Query           string
+	CheckedSurfaces []string
+	Window          string
 }
 
 func NewStore(configHome string) Store {
@@ -126,6 +139,8 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 	}
 	options.TriggerID = strings.TrimSpace(options.TriggerID)
 	options.CheckedSurfaces = cleanStrings(options.CheckedSurfaces)
+	options.CheckedWindow = strings.TrimSpace(options.CheckedWindow)
+	options.NegativeQueries = cleanNegativeQueries(options.NegativeQueries)
 	if options.FreshnessTTL <= 0 {
 		options.FreshnessTTL = DefaultFreshnessTTL
 	}
@@ -209,33 +224,51 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 		lastMeaningfulSnapshotID = snapshot.SnapshotID
 		lastMeaningfulItemIDs = meaningfulItemIDs
 	}
+	negativeEvidence := []reportschema.NegativeEvidence{}
+	if noChange {
+		negativeEvidence, err = buildNegativeEvidence(channel, now, cursor, options)
+		if err != nil {
+			return Report{}, err
+		}
+	}
+	invalidatesNegativeEvidence := []string{}
+	if !noChange && len(cursor.LastNegativeEvidenceIDs) > 0 {
+		invalidatesNegativeEvidence = append(invalidatesNegativeEvidence, cursor.LastNegativeEvidenceIDs...)
+		sort.Strings(invalidatesNegativeEvidence)
+	}
 	report := Report{
-		Kind:                     "report_backpressure",
-		Channel:                  channel,
-		ReportID:                 "report-" + reportID,
-		TriggerID:                options.TriggerID,
-		SnapshotID:               snapshot.SnapshotID,
-		GeneratedAt:              now,
-		Outcome:                  outcome,
-		Checked:                  true,
-		CheckedSurfaces:          options.CheckedSurfaces,
-		NoChange:                 noChange,
-		MixedFreshness:           len(freshnessCounts) > 1,
-		FreshnessCounts:          freshnessCounts,
-		Claims:                   claims,
-		NewItems:                 newItems,
-		ChangedItems:             changedItems,
-		UnchangedCount:           unchangedCount,
-		TotalCount:               len(summaries),
-		Collapsed:                unchangedCount > 0,
-		FullSnapshotStored:       true,
-		PreviousReportID:         cursor.LastReportID,
-		LastMeaningfulReportID:   lastMeaningfulReportID,
-		LastMeaningfulSnapshotID: lastMeaningfulSnapshotID,
-		LastMeaningfulItemIDs:    lastMeaningfulItemIDs,
+		Kind:                        "report_backpressure",
+		Channel:                     channel,
+		ReportID:                    "report-" + reportID,
+		TriggerID:                   options.TriggerID,
+		SnapshotID:                  snapshot.SnapshotID,
+		GeneratedAt:                 now,
+		Outcome:                     outcome,
+		Checked:                     true,
+		CheckedSurfaces:             options.CheckedSurfaces,
+		NoChange:                    noChange,
+		MixedFreshness:              len(freshnessCounts) > 1,
+		FreshnessCounts:             freshnessCounts,
+		Claims:                      claims,
+		NegativeEvidence:            negativeEvidence,
+		InvalidatesNegativeEvidence: invalidatesNegativeEvidence,
+		NewItems:                    newItems,
+		ChangedItems:                changedItems,
+		UnchangedCount:              unchangedCount,
+		TotalCount:                  len(summaries),
+		Collapsed:                   unchangedCount > 0,
+		FullSnapshotStored:          true,
+		PreviousReportID:            cursor.LastReportID,
+		LastMeaningfulReportID:      lastMeaningfulReportID,
+		LastMeaningfulSnapshotID:    lastMeaningfulSnapshotID,
+		LastMeaningfulItemIDs:       lastMeaningfulItemIDs,
 	}
 	if err := s.saveSnapshot(snapshot); err != nil {
 		return Report{}, err
+	}
+	lastNegativeEvidenceIDs := []string{}
+	if noChange {
+		lastNegativeEvidenceIDs = negativeEvidenceIDs(negativeEvidence)
 	}
 	cursor = Cursor{
 		Channel:                  channel,
@@ -245,12 +278,103 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 		LastMeaningfulReportID:   lastMeaningfulReportID,
 		LastMeaningfulSnapshotID: lastMeaningfulSnapshotID,
 		LastMeaningfulItemIDs:    lastMeaningfulItemIDs,
+		LastNegativeEvidenceIDs:  lastNegativeEvidenceIDs,
 		ItemHashes:               hashes,
 	}
 	if err := s.saveCursor(cursor); err != nil {
 		return Report{}, err
 	}
 	return report, nil
+}
+
+func buildNegativeEvidence(channel string, now time.Time, cursor Cursor, options GenerateOptions) ([]reportschema.NegativeEvidence, error) {
+	queries := options.NegativeQueries
+	if len(queries) == 0 {
+		queries = []NegativeQuery{
+			{ID: "no_new_delta", Query: "no_new_delta"},
+			{ID: "no_new_blocker", Query: "no_new_blocker"},
+		}
+	}
+	out := make([]reportschema.NegativeEvidence, 0, len(queries))
+	defaultWindow := checkedWindow(cursor.LastReportedAt, now)
+	if options.CheckedWindow != "" {
+		defaultWindow = options.CheckedWindow
+	}
+	for _, query := range queries {
+		surfaces := cleanStrings(query.CheckedSurfaces)
+		if len(surfaces) == 0 {
+			surfaces = append([]string(nil), options.CheckedSurfaces...)
+		}
+		window := strings.TrimSpace(query.Window)
+		if window == "" {
+			window = defaultWindow
+		}
+		queryText := strings.TrimSpace(query.Query)
+		if queryText == "" {
+			queryText = strings.TrimSpace(query.ID)
+		}
+		status := reportschema.NegativeUnknownNotChecked
+		if len(surfaces) > 0 {
+			status = reportschema.NegativeNotObservedInCheckedScope
+		}
+		id, err := stableHash(map[string]any{
+			"channel":          channel,
+			"query":            queryText,
+			"status":           status,
+			"checked_surfaces": surfaces,
+			"window":           window,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, reportschema.NegativeEvidence{
+			ID:              "neg-" + id,
+			Status:          status,
+			CheckedSurfaces: surfaces,
+			Query:           queryText,
+			Window:          window,
+			Sensitivity:     reportschema.SensitivityInternal,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func checkedWindow(previous time.Time, now time.Time) string {
+	end := now.UTC().Format(time.RFC3339)
+	if previous.IsZero() {
+		return end + "/" + end
+	}
+	return previous.UTC().Format(time.RFC3339) + "/" + end
+}
+
+func cleanNegativeQueries(values []NegativeQuery) []NegativeQuery {
+	out := []NegativeQuery{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		value.ID = strings.TrimSpace(value.ID)
+		value.Query = strings.TrimSpace(value.Query)
+		value.CheckedSurfaces = cleanStrings(value.CheckedSurfaces)
+		value.Window = strings.TrimSpace(value.Window)
+		key := value.ID + "\x00" + value.Query + "\x00" + strings.Join(value.CheckedSurfaces, "\x00") + "\x00" + value.Window
+		if (value.ID == "" && value.Query == "") || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func negativeEvidenceIDs(values []reportschema.NegativeEvidence) []string {
+	ids := make([]string, 0, len(values))
+	for _, value := range values {
+		if value.ID != "" {
+			ids = append(ids, value.ID)
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func meaningfulIDs(newItems []ItemSummary, changedItems []ItemSummary) []string {

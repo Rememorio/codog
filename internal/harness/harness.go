@@ -9990,7 +9990,7 @@ func reportBackpressureScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			second, err := call("ReportBackpressureTool", `{"action":"generate","channel":"dogfood","trigger_id":"nudge-cycle-1","checked_surfaces":["roadmap","sessions"],"freshness_ttl_seconds":30,"now":"2026-07-07T16:02:00Z"}`)
+			second, err := call("ReportBackpressureTool", `{"action":"generate","channel":"dogfood","trigger_id":"nudge-cycle-1","checked_surfaces":["roadmap","sessions"],"checked_window":"2026-07-07T16:01:00Z/2026-07-07T16:02:00Z","freshness_ttl_seconds":30,"now":"2026-07-07T16:02:00Z"}`)
 			if err != nil {
 				return localScenarioResult{}, err
 			}
@@ -10019,11 +10019,15 @@ func reportBackpressureScenario() scenario {
 			lastMeaningful, _ := second["last_meaningful_report_id"].(string)
 			freshnessCounts, _ := second["freshness_counts"].(map[string]any)
 			staleCount, _ := freshnessCounts["stale"].(float64)
+			secondNegative, _ := second["negative_evidence"].([]any)
+			negativeStatus := negativeEvidenceField(secondNegative, "no_new_delta", "status")
+			negativeWindow := negativeEvidenceField(secondNegative, "no_new_delta", "window")
 			firstRootKind := claimKind(firstClaims, "root-cause")
 			thirdRootKind := claimKind(thirdClaims, "root-cause")
 			thirdPromotedFrom := claimPromotedFrom(thirdClaims, "root-cause")
+			invalidates, _ := third["invalidates_negative_evidence"].([]any)
 			snapshotBody, _ := snapshot["snapshot"].(map[string]any)
-			if itemID == "" || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || firstRootKind != "hypothesis" || thirdRootKind != "observed_fact" || thirdPromotedFrom != "hypothesis" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
+			if itemID == "" || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || len(secondNegative) != 2 || negativeStatus != "not_observed_in_checked_scope" || negativeWindow != "2026-07-07T16:01:00Z/2026-07-07T16:02:00Z" || len(invalidates) != 2 || firstRootKind != "hypothesis" || thirdRootKind != "observed_fact" || thirdPromotedFrom != "hypothesis" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
 				return localScenarioResult{}, fmt.Errorf("unexpected backpressure report: filed=%#v first=%#v second=%#v third=%#v snapshot=%#v", filed, first, second, third, snapshot)
 			}
 			output := map[string]any{
@@ -10037,6 +10041,10 @@ func reportBackpressureScenario() scenario {
 				"second_collapsed": secondCollapsed,
 				"last_meaningful":  lastMeaningful,
 				"stale_count":      int(staleCount),
+				"negative_count":   len(secondNegative),
+				"negative_status":  negativeStatus,
+				"negative_window":  negativeWindow,
+				"invalidates":      len(invalidates),
 				"first_root_claim": firstRootKind,
 				"third_root_claim": thirdRootKind,
 				"promoted_from":    thirdPromotedFrom,
@@ -10084,6 +10092,21 @@ func claimPromotedFrom(claims []any, idFragment string) string {
 		if strings.Contains(id, idFragment) {
 			promotedFrom, _ := claim["promoted_from"].(string)
 			return promotedFrom
+		}
+	}
+	return ""
+}
+
+func negativeEvidenceField(values []any, query string, field string) string {
+	for _, value := range values {
+		evidence, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		evidenceQuery, _ := evidence["query"].(string)
+		if evidenceQuery == query {
+			result, _ := evidence[field].(string)
+			return result
 		}
 	}
 	return ""

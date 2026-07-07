@@ -4238,7 +4238,7 @@ func TestReportBackpressureToolCollapsesRepeatedRoadmapReports(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(firstOut), &first))
 	require.NotEmpty(t, first.SnapshotID)
 
-	secondOut, err := reportTool.Execute(context.Background(), []byte(`{"action":"generate","channel":"dogfood","trigger_id":"nudge-cycle-1","checked_surfaces":["roadmap","sessions"],"freshness_ttl_seconds":30,"now":"2026-07-07T13:02:00Z"}`))
+	secondOut, err := reportTool.Execute(context.Background(), []byte(`{"action":"generate","channel":"dogfood","trigger_id":"nudge-cycle-1","checked_surfaces":["roadmap","sessions"],"checked_window":"2026-07-07T13:01:00Z/2026-07-07T13:02:00Z","freshness_ttl_seconds":30,"now":"2026-07-07T13:02:00Z"}`))
 	require.NoError(t, err)
 	require.Contains(t, secondOut, `"outcome": "no_change"`)
 	require.Contains(t, secondOut, `"trigger_id": "nudge-cycle-1"`)
@@ -4252,6 +4252,10 @@ func TestReportBackpressureToolCollapsesRepeatedRoadmapReports(t *testing.T) {
 	require.Contains(t, secondOut, `"collapsed": true`)
 	require.NotContains(t, secondOut, `"new_items"`)
 	require.Contains(t, secondOut, `"previous_report_id": "`+first.ReportID+`"`)
+	require.Contains(t, secondOut, `"negative_evidence": [`)
+	require.Contains(t, secondOut, `"query": "no_new_delta"`)
+	require.Contains(t, secondOut, `"status": "not_observed_in_checked_scope"`)
+	require.Contains(t, secondOut, `"window": "2026-07-07T13:01:00Z/2026-07-07T13:02:00Z"`)
 
 	_, err = roadmapTool.Execute(context.Background(), []byte(`{"action":"update","id":"`+filed.ItemID+`","priority":"p0","severity":"critical","evidence":[{"role":"verification","type":"test","reference":"go-test","preview":"cursor collapse test passes"}],"now":"2026-07-07T13:03:00Z"}`))
 	require.NoError(t, err)
@@ -4260,6 +4264,7 @@ func TestReportBackpressureToolCollapsesRepeatedRoadmapReports(t *testing.T) {
 	require.Contains(t, thirdOut, `"changed_items": [`)
 	require.Contains(t, thirdOut, `"priority": "p0"`)
 	require.Contains(t, thirdOut, `"promoted_from": "hypothesis"`)
+	require.Contains(t, thirdOut, `"invalidates_negative_evidence": [`)
 
 	snapshotOut, err := reportTool.Execute(context.Background(), []byte(`{"action":"snapshot","snapshot_id":"`+first.SnapshotID+`"}`))
 	require.NoError(t, err)

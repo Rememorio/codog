@@ -9078,6 +9078,23 @@ func (ReportBackpressureTool) Definition() anthropic.ToolDefinition {
 					"type":  "array",
 					"items": map[string]any{"type": "string"},
 				},
+				"checked_window": map[string]any{"type": "string"},
+				"negative_queries": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"id":    map[string]any{"type": "string"},
+							"query": map[string]any{"type": "string"},
+							"checked_surfaces": map[string]any{
+								"type":  "array",
+								"items": map[string]any{"type": "string"},
+							},
+							"window": map[string]any{"type": "string"},
+						},
+						"additionalProperties": false,
+					},
+				},
 				"freshness_ttl_seconds": map[string]any{"type": "integer", "minimum": 1},
 				"snapshot_id":           map[string]any{"type": "string"},
 				"now":                   map[string]any{"type": "string", "format": "date-time"},
@@ -9091,13 +9108,20 @@ func (ReportBackpressureTool) Permission() Permission { return PermissionReadOnl
 
 func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Action              string   `json:"action"`
-		Channel             string   `json:"channel"`
-		TriggerID           string   `json:"trigger_id"`
-		CheckedSurfaces     []string `json:"checked_surfaces"`
-		FreshnessTTLSeconds int      `json:"freshness_ttl_seconds"`
-		SnapshotID          string   `json:"snapshot_id"`
-		Now                 string   `json:"now"`
+		Action          string   `json:"action"`
+		Channel         string   `json:"channel"`
+		TriggerID       string   `json:"trigger_id"`
+		CheckedSurfaces []string `json:"checked_surfaces"`
+		CheckedWindow   string   `json:"checked_window"`
+		NegativeQueries []struct {
+			ID              string   `json:"id"`
+			Query           string   `json:"query"`
+			CheckedSurfaces []string `json:"checked_surfaces"`
+			Window          string   `json:"window"`
+		} `json:"negative_queries"`
+		FreshnessTTLSeconds int    `json:"freshness_ttl_seconds"`
+		SnapshotID          string `json:"snapshot_id"`
+		Now                 string `json:"now"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -9113,9 +9137,20 @@ func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage
 		if err != nil {
 			return "", err
 		}
+		negativeQueries := make([]reporting.NegativeQuery, 0, len(payload.NegativeQueries))
+		for _, query := range payload.NegativeQueries {
+			negativeQueries = append(negativeQueries, reporting.NegativeQuery{
+				ID:              query.ID,
+				Query:           query.Query,
+				CheckedSurfaces: query.CheckedSurfaces,
+				Window:          query.Window,
+			})
+		}
 		report, err := store.GenerateWithOptions(payload.Channel, now, reporting.GenerateOptions{
 			TriggerID:       payload.TriggerID,
 			CheckedSurfaces: payload.CheckedSurfaces,
+			CheckedWindow:   payload.CheckedWindow,
+			NegativeQueries: negativeQueries,
 			FreshnessTTL:    time.Duration(payload.FreshnessTTLSeconds) * time.Second,
 		})
 		if err != nil {
