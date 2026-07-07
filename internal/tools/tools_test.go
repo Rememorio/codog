@@ -5023,6 +5023,58 @@ func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 	require.Contains(t, listOut, `"token": "tok-main"`)
 }
 
+func TestApprovalTokenToolApprovesPendingGrant(t *testing.T) {
+	configHome := t.TempDir()
+	tool := ApprovalTokenTool{ConfigHome: configHome}
+
+	pendingOut, err := tool.Execute(context.Background(), []byte(`{
+		"action":"pending",
+		"token":"tok-pending-main",
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"approving_actor":"owner",
+		"approved_executor":"release-bot"
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, pendingOut, `"action": "pending"`)
+	require.Contains(t, pendingOut, `"status": "approval_pending"`)
+
+	deniedOut, err := tool.Execute(context.Background(), []byte(`{
+		"action":"verify",
+		"token":"tok-pending-main",
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"executing_actor":"release-bot"
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, deniedOut, `"status": "denied"`)
+	require.Contains(t, deniedOut, `"error_kind": "approval_pending"`)
+
+	approveOut, err := tool.Execute(context.Background(), []byte(`{
+		"action":"approve",
+		"token":"tok-pending-main",
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"approving_actor":"owner",
+		"approved_executor":"release-bot",
+		"max_uses":2,
+		"delegation_chain":[{"actor":"owner","session_id":"session-owner","reason":"owner approval"}]
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, approveOut, `"action": "approve"`)
+	require.Contains(t, approveOut, `"status": "ok"`)
+	require.Contains(t, approveOut, `"status": "approval_granted"`)
+	require.Contains(t, approveOut, `"max_uses": 2`)
+
+	verifyOut, err := tool.Execute(context.Background(), []byte(`{
+		"action":"verify",
+		"token":"tok-pending-main",
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"executing_actor":"release-bot"
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, verifyOut, `"status": "ok"`)
+	require.Contains(t, verifyOut, `"status": "approval_granted"`)
+	require.Contains(t, verifyOut, `"delegated_execution": true`)
+}
+
 func TestCommandToolPermissionDefaultsToDanger(t *testing.T) {
 	require.Equal(t, PermissionDanger, CommandTool{}.Permission())
 	require.Equal(t, PermissionReadOnly, CommandTool{Required: PermissionReadOnly}.Permission())

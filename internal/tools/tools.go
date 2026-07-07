@@ -1773,7 +1773,7 @@ func (ApprovalTokenTool) Definition() anthropic.ToolDefinition {
 			"type":                 "object",
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"action": map[string]any{"type": "string", "enum": []string{"grant", "pending", "verify", "consume", "revoke", "list"}},
+				"action": map[string]any{"type": "string", "enum": []string{"grant", "pending", "approve", "verify", "consume", "revoke", "list"}},
 				"token":  map[string]any{"type": "string"},
 				"scope": map[string]any{
 					"type":                 "object",
@@ -1853,6 +1853,24 @@ func (t ApprovalTokenTool) Execute(_ context.Context, input json.RawMessage) (st
 		})
 		if err != nil {
 			return "", err
+		}
+		return pretty(map[string]any{"kind": "approval_token", "action": action, "status": "ok", "grant": grant}), nil
+	case "approve":
+		expiresAt, err := approvalExpiry(payload.ExpiresAt, payload.TTLSeconds, now)
+		if err != nil {
+			return "", err
+		}
+		grant, err := store.Approve(payload.Token, approval.GrantOptions{
+			Scope:            payload.Scope,
+			ApprovingActor:   payload.ApprovingActor,
+			ApprovedExecutor: payload.ApprovedExecutor,
+			ExpiresAt:        expiresAt,
+			MaxUses:          payload.MaxUses,
+			DelegationChain:  payload.DelegationChain,
+			Now:              now,
+		})
+		if err != nil {
+			return approvalTokenDeniedReport(action, err), nil
 		}
 		return pretty(map[string]any{"kind": "approval_token", "action": action, "status": "ok", "grant": grant}), nil
 	case "verify":

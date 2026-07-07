@@ -218,12 +218,14 @@ func TestRunUsesMockProvider(t *testing.T) {
 	policyApproval := findScenario(t, report, "policy_approval_roundtrip")
 	require.True(t, policyApproval.OK)
 	require.Equal(t, "policy-safety", policyApproval.Category)
-	require.Equal(t, 8, policyApproval.ToolCalls)
-	require.Equal(t, 8, policyApproval.RequestCount)
+	require.Equal(t, 10, policyApproval.ToolCalls)
+	require.Equal(t, 10, policyApproval.RequestCount)
 	require.Equal(t, []string{
 		"policy_evaluate",
 		"policy_evaluate",
 		"policy_evaluate",
+		"approval_token",
+		"approval_token",
 		"approval_token",
 		"approval_token",
 		"approval_token",
@@ -236,6 +238,9 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, policyApproval.Output, `"blocked_status":"blocked_by_policy"`)
 	require.Contains(t, policyApproval.Output, `"blocked_reason":"main_push_forbidden"`)
 	require.Contains(t, policyApproval.Output, `"fallback":["create_branch","open_pr"]`)
+	require.Contains(t, policyApproval.Output, `"pending":"approval_pending"`)
+	require.Contains(t, policyApproval.Output, `"pending_verify_error":"approval_pending"`)
+	require.Contains(t, policyApproval.Output, `"verified":"approval_granted"`)
 	require.Contains(t, policyApproval.Output, `"delegated":true`)
 	require.Contains(t, policyApproval.Output, `"consumed":"approval_consumed"`)
 	require.Contains(t, policyApproval.Output, `"replay_error":"approval_already_consumed"`)

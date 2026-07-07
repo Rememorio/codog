@@ -55,6 +55,69 @@ func TestApprovalTokenBlocksUntilGranted(t *testing.T) {
 	}, audit.DelegationChain)
 }
 
+func TestApprovalTokenApprovesPendingGrantInPlace(t *testing.T) {
+	store := NewStore(t.TempDir())
+	scope := Scope{Policy: "main_push_forbidden", Action: "git push", Repository: "owner/repo", Branch: "main"}
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	expiresAt := now.Add(time.Hour)
+
+	pending, err := store.Grant(GrantOptions{
+		Token:            "tok-pending",
+		Scope:            scope,
+		ApprovingActor:   "repo-owner",
+		ApprovedExecutor: "release-bot",
+		Status:           StatusPending,
+		Now:              now,
+	})
+	require.NoError(t, err)
+	require.Equal(t, StatusPending, pending.Status)
+
+	approved, err := store.Approve("tok-pending", GrantOptions{
+		Scope:            scope,
+		ApprovingActor:   "repo-owner",
+		ApprovedExecutor: "release-bot",
+		ExpiresAt:        &expiresAt,
+		MaxUses:          2,
+		DelegationChain: []DelegationHop{
+			{Actor: "repo-owner", SessionID: "session-owner", Reason: "owner approval"},
+			{Actor: "lead-agent", SessionID: "session-lead", Reason: "handoff"},
+		},
+		Now: now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.Equal(t, "tok-pending", approved.Token)
+	require.Equal(t, StatusGranted, approved.Status)
+	require.Equal(t, 2, approved.MaxUses)
+	require.Equal(t, &expiresAt, approved.ExpiresAt)
+	require.Equal(t, []string{"repo-owner", "lead-agent"}, delegationActors(approved.DelegationChain))
+
+	audit, err := store.Verify("tok-pending", scope, "release-bot", now.Add(2*time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, StatusGranted, audit.Status)
+	require.Equal(t, []string{"repo-owner", "lead-agent", "release-bot"}, delegationActors(audit.DelegationChain))
+}
+
+func TestApprovalTokenRejectsApproveWhenNotPending(t *testing.T) {
+	store := NewStore(t.TempDir())
+	scope := Scope{Policy: "main_push_forbidden", Action: "git push", Repository: "owner/repo", Branch: "main"}
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	_, err := store.Approve("missing", GrantOptions{Scope: scope, Now: now})
+	requireApprovalError(t, err, "no_approval")
+
+	_, err = store.Grant(GrantOptions{
+		Token:            "tok-granted",
+		Scope:            scope,
+		ApprovingActor:   "repo-owner",
+		ApprovedExecutor: "release-bot",
+		Now:              now,
+	})
+	require.NoError(t, err)
+
+	_, err = store.Approve("tok-granted", GrantOptions{Scope: scope, Now: now.Add(time.Minute)})
+	requireApprovalError(t, err, "approval_not_pending")
+}
+
 func TestApprovalTokenConsumeRejectsReplay(t *testing.T) {
 	store := NewStore(t.TempDir())
 	scope := Scope{Policy: "release_requires_owner", Action: "release publish", Repository: "owner/repo"}

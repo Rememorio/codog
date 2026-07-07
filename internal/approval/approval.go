@@ -162,6 +162,62 @@ func (s Store) Grant(opts GrantOptions) (Grant, error) {
 	return grant, s.save(ledger)
 }
 
+// Approve transitions an existing pending token into a granted approval.
+func (s Store) Approve(token string, opts GrantOptions) (Grant, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return Grant{}, errors.New("token is required")
+	}
+	ledger, err := s.load()
+	if err != nil {
+		return Grant{}, err
+	}
+	grant, ok := ledger[token]
+	if !ok {
+		return Grant{}, tokenError("no_approval", "approval token was not found", nil, token)
+	}
+	if grant.Status != StatusPending {
+		return Grant{}, tokenError("approval_not_pending", "approval token is not pending", StatusPending, grant.Status)
+	}
+	if opts.Scope != (Scope{}) && normalizeScope(opts.Scope) != normalizeScope(grant.Scope) {
+		return Grant{}, tokenError("approval_scope_mismatch", "approval token scope does not match requested action", grant.Scope, normalizeScope(opts.Scope))
+	}
+	approvingActor := strings.TrimSpace(opts.ApprovingActor)
+	if approvingActor != "" {
+		grant.ApprovingActor = approvingActor
+	}
+	if grant.ApprovingActor == "" {
+		return Grant{}, errors.New("approving_actor is required")
+	}
+	approvedExecutor := strings.TrimSpace(opts.ApprovedExecutor)
+	if approvedExecutor != "" {
+		grant.ApprovedExecutor = approvedExecutor
+	}
+	if grant.ApprovedExecutor == "" {
+		return Grant{}, errors.New("approved_executor is required")
+	}
+	if opts.ExpiresAt != nil {
+		grant.ExpiresAt = normalizeExpiry(opts.ExpiresAt)
+	}
+	if opts.MaxUses > 0 {
+		grant.MaxUses = opts.MaxUses
+	}
+	if grant.MaxUses <= 0 {
+		grant.MaxUses = 1
+	}
+	if opts.DelegationChain != nil {
+		grant.DelegationChain = normalizeDelegation(opts.DelegationChain)
+	}
+	grant.Status = StatusGranted
+	grant.LastAuditErrorKind = ""
+	grant.UpdatedAt = normalizedNow(opts.Now)
+	ledger[token] = grant
+	if err := s.save(ledger); err != nil {
+		return Grant{}, err
+	}
+	return grant, nil
+}
+
 func (s Store) Verify(token string, scope Scope, executingActor string, now time.Time) (Audit, error) {
 	ledger, err := s.load()
 	if err != nil {

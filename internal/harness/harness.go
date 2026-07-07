@@ -7012,8 +7012,54 @@ func policyApprovalScenario() scenario {
 			}
 
 			scope := `"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"}`
+			pendingOut, err := registry.Execute(ctx, "ApprovalTokenTool", json.RawMessage(`{
+				"action": "pending",
+				"token": "tok-main",
+				`+scope+`,
+				"approving_actor": "owner",
+				"approved_executor": "release-bot"
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var pending struct {
+				Kind   string `json:"kind"`
+				Action string `json:"action"`
+				Status string `json:"status"`
+				Grant  struct {
+					Token  string `json:"token"`
+					Status string `json:"status"`
+				} `json:"grant"`
+			}
+			if err := json.Unmarshal([]byte(pendingOut), &pending); err != nil {
+				return localScenarioResult{}, err
+			}
+			if pending.Kind != "approval_token" || pending.Action != "pending" || pending.Status != "ok" || pending.Grant.Token != "tok-main" || pending.Grant.Status != "approval_pending" {
+				return localScenarioResult{}, fmt.Errorf("unexpected approval pending output: %s", pendingOut)
+			}
+
+			pendingVerifyOut, err := registry.Execute(ctx, "approval_token", json.RawMessage(`{
+				"action": "verify",
+				"token": "tok-main",
+				`+scope+`,
+				"executing_actor": "release-bot"
+			}`), nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var pendingVerify struct {
+				Status    string `json:"status"`
+				ErrorKind string `json:"error_kind"`
+			}
+			if err := json.Unmarshal([]byte(pendingVerifyOut), &pendingVerify); err != nil {
+				return localScenarioResult{}, err
+			}
+			if pendingVerify.Status != "denied" || pendingVerify.ErrorKind != "approval_pending" {
+				return localScenarioResult{}, fmt.Errorf("unexpected pending verify output: %s", pendingVerifyOut)
+			}
+
 			grantOut, err := registry.Execute(ctx, "ApprovalTokenTool", json.RawMessage(`{
-				"action": "grant",
+				"action": "approve",
 				"token": "tok-main",
 				`+scope+`,
 				"approving_actor": "owner",
@@ -7039,8 +7085,8 @@ func policyApprovalScenario() scenario {
 			if err := json.Unmarshal([]byte(grantOut), &grant); err != nil {
 				return localScenarioResult{}, err
 			}
-			if grant.Kind != "approval_token" || grant.Action != "grant" || grant.Status != "ok" || grant.Grant.Token != "tok-main" || grant.Grant.Status != "approval_granted" || grant.Grant.ApprovingActor != "owner" || grant.Grant.ApprovedExecutor != "release-bot" || grant.Grant.MaxUses != 1 {
-				return localScenarioResult{}, fmt.Errorf("unexpected approval grant output: %s", grantOut)
+			if grant.Kind != "approval_token" || grant.Action != "approve" || grant.Status != "ok" || grant.Grant.Token != "tok-main" || grant.Grant.Status != "approval_granted" || grant.Grant.ApprovingActor != "owner" || grant.Grant.ApprovedExecutor != "release-bot" || grant.Grant.MaxUses != 1 {
+				return localScenarioResult{}, fmt.Errorf("unexpected approval approve output: %s", grantOut)
 			}
 
 			verifyOut, err := registry.Execute(ctx, "approval_token", json.RawMessage(`{
@@ -7148,6 +7194,8 @@ func policyApprovalScenario() scenario {
 				},
 				"approval": map[string]any{
 					"token":                grant.Grant.Token,
+					"pending":              pending.Grant.Status,
+					"pending_verify_error": pendingVerify.ErrorKind,
 					"verified":             verify.Audit.Status,
 					"delegated":            verify.Audit.DelegatedExecution,
 					"consumed":             consume.Audit.Status,
@@ -7164,13 +7212,15 @@ func policyApprovalScenario() scenario {
 			return localScenarioResult{
 				Output:       string(data),
 				FinalMessage: "policy approval harness ok",
-				RequestCount: 8,
+				RequestCount: 10,
 				MessageCount: 1,
-				ToolCalls:    8,
+				ToolCalls:    10,
 				ToolUses: []string{
 					"policy_evaluate",
 					"policy_evaluate",
 					"policy_evaluate",
+					"approval_token",
+					"approval_token",
 					"approval_token",
 					"approval_token",
 					"approval_token",
