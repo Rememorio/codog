@@ -4144,9 +4144,13 @@ func TestRoadmapPinpointToolFilesAndUpdatesLifecycle(t *testing.T) {
 	configHome := t.TempDir()
 	tool := RoadmapPinpointTool{ConfigHome: configHome}
 
-	fileOut, err := tool.Execute(context.Background(), []byte(`{"action":"file","title":"stable roadmap ids","description":"pinpoints need ids","evidence":[{"role":"symptom","type":"session","reference":"session-1","preview":"first observed in dogfood"}],"now":"2026-07-07T13:00:00Z"}`))
+	fileOut, err := tool.Execute(context.Background(), []byte(`{"action":"file","title":"stable roadmap ids","description":"pinpoints need ids","priority":"p1","severity":"high","impact":"user_facing_breakage","priority_reason":{"blast_radius":"all dogfood reports","reproducibility":"always","automation_breakage":"blocks queue ranking","merge_risk":"low","rationale":"fresh blocker"},"evidence":[{"role":"symptom","type":"session","reference":"session-1","preview":"first observed in dogfood"}],"now":"2026-07-07T13:00:00Z"}`))
 	require.NoError(t, err)
 	require.Contains(t, fileOut, `"action": "new_roadmap_filing"`)
+	require.Contains(t, fileOut, `"priority": "p1"`)
+	require.Contains(t, fileOut, `"severity": "high"`)
+	require.Contains(t, fileOut, `"impact": "user_facing_breakage"`)
+	require.Contains(t, fileOut, `"rationale": "fresh blocker"`)
 	require.Contains(t, fileOut, `"evidence": [`)
 	require.Contains(t, fileOut, `"reference": "session-1"`)
 	var filed struct {
@@ -4165,18 +4169,22 @@ func TestRoadmapPinpointToolFilesAndUpdatesLifecycle(t *testing.T) {
 	require.Len(t, filed.Item.Evidence, 1)
 	require.Equal(t, "symptom", filed.Item.Evidence[0].Role)
 
-	updateInput := `{"action":"update","id":"` + filed.ItemID + `","title":"stable roadmap ids after edits","state":"in_progress","related":["rp-related"],"report_id":"report-1","evidence":[{"role":"verification","type":"commit","reference":"abc1234","preview":"go test ./..."}],"now":"2026-07-07T14:00:00Z"}`
+	updateInput := `{"action":"update","id":"` + filed.ItemID + `","title":"stable roadmap ids after edits","state":"in_progress","related":["rp-related"],"report_id":"report-1","priority":"p0","severity":"critical","impact":"operator_friction","priority_reason":{"blast_radius":"implementation queue","reproducibility":"reproducible","automation_breakage":"blocks queue ranking","merge_risk":"medium"},"evidence":[{"role":"verification","type":"commit","reference":"abc1234","preview":"go test ./..."}],"now":"2026-07-07T14:00:00Z"}`
 	updateOut, err := tool.Execute(context.Background(), []byte(updateInput))
 	require.NoError(t, err)
 	require.Contains(t, updateOut, `"action": "roadmap_update"`)
 	require.Contains(t, updateOut, `"item_id": "`+filed.ItemID+`"`)
 	require.Contains(t, updateOut, `"state": "in_progress"`)
+	require.Contains(t, updateOut, `"priority": "p0"`)
+	require.Contains(t, updateOut, `"severity": "critical"`)
+	require.Contains(t, updateOut, `"impact": "operator_friction"`)
 	require.Contains(t, updateOut, `"reference": "abc1234"`)
 
 	statusOut, err := tool.Execute(context.Background(), []byte(`{"action":"get","id":"`+filed.ItemID+`"}`))
 	require.NoError(t, err)
 	require.Contains(t, statusOut, `"kind": "roadmap_pinpoint_status"`)
 	require.Contains(t, statusOut, `"report_id": "report-1"`)
+	require.Contains(t, statusOut, `"priority": "p0"`)
 	require.Contains(t, statusOut, `"reference": "session-1"`)
 	require.Contains(t, statusOut, `"reference": "abc1234"`)
 

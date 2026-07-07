@@ -8841,6 +8841,20 @@ func (RoadmapPinpointTool) Definition() anthropic.ToolDefinition {
 				"superseded_by": map[string]any{"type": "string"},
 				"related":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 				"report_id":     map[string]any{"type": "string"},
+				"priority":      map[string]any{"type": "string", "enum": []string{"p0", "p1", "p2", "p3"}},
+				"severity":      map[string]any{"type": "string", "enum": []string{"critical", "high", "medium", "low"}},
+				"impact":        map[string]any{"type": "string", "enum": []string{"user_facing_breakage", "operator_friction", "observability_debt", "long_tail_hardening"}},
+				"priority_reason": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"blast_radius":        map[string]any{"type": "string"},
+						"reproducibility":     map[string]any{"type": "string"},
+						"automation_breakage": map[string]any{"type": "string"},
+						"merge_risk":          map[string]any{"type": "string"},
+						"rationale":           map[string]any{"type": "string"},
+					},
+				},
 				"evidence": map[string]any{
 					"type": "array",
 					"items": map[string]any{
@@ -8868,17 +8882,27 @@ func (RoadmapPinpointTool) Permission() Permission { return PermissionReadOnly }
 
 func (t RoadmapPinpointTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Action       string                   `json:"action"`
-		ID           string                   `json:"id"`
-		Title        string                   `json:"title"`
-		Description  string                   `json:"description"`
-		State        string                   `json:"state"`
-		Supersedes   []string                 `json:"supersedes"`
-		SupersededBy string                   `json:"superseded_by"`
-		Related      []string                 `json:"related"`
-		ReportID     string                   `json:"report_id"`
-		Evidence     []roadmapEvidencePayload `json:"evidence"`
-		Now          string                   `json:"now"`
+		Action         string                   `json:"action"`
+		ID             string                   `json:"id"`
+		Title          string                   `json:"title"`
+		Description    string                   `json:"description"`
+		State          string                   `json:"state"`
+		Supersedes     []string                 `json:"supersedes"`
+		SupersededBy   string                   `json:"superseded_by"`
+		Related        []string                 `json:"related"`
+		ReportID       string                   `json:"report_id"`
+		Evidence       []roadmapEvidencePayload `json:"evidence"`
+		Priority       string                   `json:"priority"`
+		Severity       string                   `json:"severity"`
+		Impact         string                   `json:"impact"`
+		PriorityReason struct {
+			BlastRadius        string `json:"blast_radius"`
+			Reproducibility    string `json:"reproducibility"`
+			AutomationBreakage string `json:"automation_breakage"`
+			MergeRisk          string `json:"merge_risk"`
+			Rationale          string `json:"rationale"`
+		} `json:"priority_reason"`
+		Now string `json:"now"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -8920,7 +8944,17 @@ func (t RoadmapPinpointTool) Execute(_ context.Context, input json.RawMessage) (
 			Related:      payload.Related,
 			ReportID:     payload.ReportID,
 			Evidence:     evidence,
-			Now:          now,
+			Priority:     roadmap.Priority(payload.Priority),
+			Severity:     roadmap.Severity(payload.Severity),
+			Impact:       roadmap.ImpactClass(payload.Impact),
+			PriorityReason: roadmap.PriorityReason{
+				BlastRadius:        payload.PriorityReason.BlastRadius,
+				Reproducibility:    payload.PriorityReason.Reproducibility,
+				AutomationBreakage: payload.PriorityReason.AutomationBreakage,
+				MergeRisk:          payload.PriorityReason.MergeRisk,
+				Rationale:          payload.PriorityReason.Rationale,
+			},
+			Now: now,
 		})
 		if err != nil {
 			return "", err

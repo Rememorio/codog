@@ -107,6 +107,66 @@ func TestFileAppendsEvidenceWithoutChangingIdentity(t *testing.T) {
 	require.Equal(t, []string{first.ItemID}, update.Item.Lineage)
 }
 
+func TestFileTracksPrioritySeverityAndListOrder(t *testing.T) {
+	store := NewStore(t.TempDir())
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	defaulted, err := store.File(Filing{
+		Title: "default priority",
+		Now:   now,
+	})
+	require.NoError(t, err)
+	require.Equal(t, PriorityP2, defaulted.Item.Priority)
+	require.Equal(t, SeverityMedium, defaulted.Item.Severity)
+	require.Equal(t, ImpactLongTailHardening, defaulted.Item.Impact)
+	require.NotNil(t, defaulted.Item.PriorityUpdatedAt)
+
+	urgent, err := store.File(Filing{
+		Title:    "user breakage",
+		Priority: PriorityP1,
+		Severity: SeverityHigh,
+		Impact:   ImpactUserFacingBreakage,
+		PriorityReason: PriorityReason{
+			BlastRadius:        "users cannot complete prompts",
+			Reproducibility:    "reproducible",
+			AutomationBreakage: "blocks dogfood loop",
+			MergeRisk:          "low",
+			Rationale:          "active user-facing regression",
+		},
+		Now: now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.Equal(t, PriorityP1, urgent.Item.Priority)
+	require.Equal(t, "active user-facing regression", urgent.Item.PriorityReason.Rationale)
+
+	updated, err := store.File(Filing{
+		ID:       urgent.ItemID,
+		Priority: PriorityP0,
+		Severity: SeverityCritical,
+		Impact:   ImpactUserFacingBreakage,
+		PriorityReason: PriorityReason{
+			BlastRadius:        "all interactive sessions",
+			Reproducibility:    "always",
+			AutomationBreakage: "prevents merge queue",
+			MergeRisk:          "high until fixed",
+		},
+		Now: now.Add(2 * time.Minute),
+	})
+	require.NoError(t, err)
+	require.Equal(t, urgent.ItemID, updated.ItemID)
+	require.Equal(t, PriorityP0, updated.Item.Priority)
+	require.Equal(t, SeverityCritical, updated.Item.Severity)
+	require.Equal(t, "prevents merge queue", updated.Item.PriorityReason.AutomationBreakage)
+	require.Equal(t, now.Add(2*time.Minute), *updated.Item.PriorityUpdatedAt)
+	require.Equal(t, []string{urgent.ItemID}, updated.Item.Lineage)
+
+	items, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	require.Equal(t, updated.ItemID, items[0].ID)
+	require.Equal(t, defaulted.ItemID, items[1].ID)
+}
+
 func TestFileMarksSupersededLineage(t *testing.T) {
 	store := NewStore(t.TempDir())
 	now := time.Date(2026, 7, 7, 14, 0, 0, 0, time.UTC)
@@ -132,6 +192,15 @@ func TestRejectsInvalidRoadmapInput(t *testing.T) {
 
 	_, err = store.File(Filing{Title: "bad state", State: "fresh"})
 	require.ErrorContains(t, err, "invalid roadmap lifecycle state")
+
+	_, err = store.File(Filing{Title: "bad priority", Priority: "p9"})
+	require.ErrorContains(t, err, "invalid roadmap priority")
+
+	_, err = store.File(Filing{Title: "bad severity", Severity: "urgent"})
+	require.ErrorContains(t, err, "invalid roadmap severity")
+
+	_, err = store.File(Filing{Title: "bad impact", Impact: "unknown"})
+	require.ErrorContains(t, err, "invalid roadmap impact")
 
 	_, err = store.File(Filing{
 		Title: "bad evidence",

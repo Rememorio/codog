@@ -16,6 +16,15 @@ import (
 // State is the lifecycle state for a roadmap pinpoint.
 type State string
 
+// Priority ranks roadmap pinpoints for implementation queues.
+type Priority string
+
+// Severity describes user or operator impact independently from queue order.
+type Severity string
+
+// ImpactClass identifies the kind of gap a pinpoint represents.
+type ImpactClass string
+
 const (
 	StateFiled        State = "filed"
 	StateAcknowledged State = "acknowledged"
@@ -24,6 +33,21 @@ const (
 	StateDone         State = "done"
 	StateSuperseded   State = "superseded"
 
+	PriorityP0 Priority = "p0"
+	PriorityP1 Priority = "p1"
+	PriorityP2 Priority = "p2"
+	PriorityP3 Priority = "p3"
+
+	SeverityCritical Severity = "critical"
+	SeverityHigh     Severity = "high"
+	SeverityMedium   Severity = "medium"
+	SeverityLow      Severity = "low"
+
+	ImpactUserFacingBreakage ImpactClass = "user_facing_breakage"
+	ImpactOperatorFriction   ImpactClass = "operator_friction"
+	ImpactObservabilityDebt  ImpactClass = "observability_debt"
+	ImpactLongTailHardening  ImpactClass = "long_tail_hardening"
+
 	EvidenceRepro         EvidenceRole = "repro"
 	EvidenceSymptom       EvidenceRole = "symptom"
 	EvidenceRootCauseHint EvidenceRole = "root_cause_hint"
@@ -31,6 +55,15 @@ const (
 
 	MaxEvidencePreviewRunes = 240
 )
+
+// PriorityReason records why a pinpoint received its current priority.
+type PriorityReason struct {
+	BlastRadius        string `json:"blast_radius,omitempty"`
+	Reproducibility    string `json:"reproducibility,omitempty"`
+	AutomationBreakage string `json:"automation_breakage,omitempty"`
+	MergeRisk          string `json:"merge_risk,omitempty"`
+	Rationale          string `json:"rationale,omitempty"`
+}
 
 // EvidenceRole classifies how an attachment supports a roadmap pinpoint.
 type EvidenceRole string
@@ -60,20 +93,29 @@ type Item struct {
 	Lineage           []string             `json:"lineage,omitempty"`
 	ReportID          string               `json:"report_id,omitempty"`
 	Evidence          []EvidenceAttachment `json:"evidence,omitempty"`
+	Priority          Priority             `json:"priority"`
+	Severity          Severity             `json:"severity"`
+	Impact            ImpactClass          `json:"impact"`
+	PriorityReason    PriorityReason       `json:"priority_reason,omitempty"`
+	PriorityUpdatedAt *time.Time           `json:"priority_updated_at,omitempty"`
 }
 
 // Filing is a create or update request for a roadmap pinpoint.
 type Filing struct {
-	ID           string
-	Title        string
-	Description  string
-	State        State
-	Supersedes   []string
-	SupersededBy string
-	Related      []string
-	ReportID     string
-	Evidence     []EvidenceAttachment
-	Now          time.Time
+	ID             string
+	Title          string
+	Description    string
+	State          State
+	Supersedes     []string
+	SupersededBy   string
+	Related        []string
+	ReportID       string
+	Evidence       []EvidenceAttachment
+	Priority       Priority
+	Severity       Severity
+	Impact         ImpactClass
+	PriorityReason PriorityReason
+	Now            time.Time
 }
 
 // Result describes whether a filing created or updated an item.
@@ -108,6 +150,9 @@ func (s Store) File(filing Filing) (Result, error) {
 	if err := validateState(filing.State); err != nil {
 		return Result{}, err
 	}
+	if err := validatePriorityFields(filing); err != nil {
+		return Result{}, err
+	}
 	id := filing.ID
 	if id == "" {
 		id = stableID(filing.Title, filing.Description)
@@ -129,6 +174,7 @@ func (s Store) File(filing Filing) (Result, error) {
 			LastStateChangeAt: filing.Now,
 			Lineage:           []string{id},
 		}
+		applyPriority(&item, filing)
 	} else {
 		if filing.Title != "" {
 			item.Title = filing.Title
@@ -141,7 +187,9 @@ func (s Store) File(filing Filing) (Result, error) {
 			item.State = filing.State
 			item.LastStateChangeAt = filing.Now
 		}
+		applyPriority(&item, filing)
 	}
+	ensurePriorityDefaults(&item, filing.Now)
 	item.Supersedes = mergeStrings(item.Supersedes, filing.Supersedes)
 	item.Related = mergeStrings(item.Related, filing.Related)
 	evidence, err := normalizeEvidence(filing.Evidence, filing.Now)
@@ -186,6 +234,7 @@ func (s Store) Get(id string) (Item, error) {
 	if err := json.Unmarshal(data, &item); err != nil {
 		return Item{}, err
 	}
+	ensurePriorityDefaults(&item, fallbackTime(item.UpdatedAt))
 	return item, nil
 }
 
@@ -211,9 +260,15 @@ func (s Store) List() ([]Item, error) {
 		if err := json.Unmarshal(data, &item); err != nil {
 			return nil, err
 		}
+		ensurePriorityDefaults(&item, fallbackTime(item.UpdatedAt))
 		items = append(items, item)
 	}
-	sort.Slice(items, func(i, j int) bool {
+	sort.SliceStable(items, func(i, j int) bool {
+		leftRank := priorityRank(items[i].Priority)
+		rightRank := priorityRank(items[j].Priority)
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
 		return items[i].UpdatedAt.After(items[j].UpdatedAt)
 	})
 	return items, nil
@@ -251,6 +306,10 @@ func normalizeFiling(filing Filing) Filing {
 	filing.Description = strings.TrimSpace(filing.Description)
 	filing.SupersededBy = strings.TrimSpace(filing.SupersededBy)
 	filing.ReportID = strings.TrimSpace(filing.ReportID)
+	filing.Priority = Priority(strings.TrimSpace(string(filing.Priority)))
+	filing.Severity = Severity(strings.TrimSpace(string(filing.Severity)))
+	filing.Impact = ImpactClass(strings.TrimSpace(string(filing.Impact)))
+	filing.PriorityReason = normalizePriorityReason(filing.PriorityReason)
 	if filing.Now.IsZero() {
 		filing.Now = time.Now().UTC()
 	} else {
@@ -268,6 +327,136 @@ func validateState(state State) error {
 	default:
 		return errors.New("invalid roadmap lifecycle state")
 	}
+}
+
+func validatePriorityFields(filing Filing) error {
+	if filing.Priority != "" {
+		if err := validatePriority(filing.Priority); err != nil {
+			return err
+		}
+	}
+	if filing.Severity != "" {
+		if err := validateSeverity(filing.Severity); err != nil {
+			return err
+		}
+	}
+	if filing.Impact != "" {
+		if err := validateImpact(filing.Impact); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePriority(priority Priority) error {
+	switch priority {
+	case PriorityP0, PriorityP1, PriorityP2, PriorityP3:
+		return nil
+	default:
+		return errors.New("invalid roadmap priority")
+	}
+}
+
+func validateSeverity(severity Severity) error {
+	switch severity {
+	case SeverityCritical, SeverityHigh, SeverityMedium, SeverityLow:
+		return nil
+	default:
+		return errors.New("invalid roadmap severity")
+	}
+}
+
+func validateImpact(impact ImpactClass) error {
+	switch impact {
+	case ImpactUserFacingBreakage, ImpactOperatorFriction, ImpactObservabilityDebt, ImpactLongTailHardening:
+		return nil
+	default:
+		return errors.New("invalid roadmap impact")
+	}
+}
+
+func applyPriority(item *Item, filing Filing) {
+	changed := false
+	if filing.Priority != "" && item.Priority != filing.Priority {
+		item.Priority = filing.Priority
+		changed = true
+	}
+	if filing.Severity != "" && item.Severity != filing.Severity {
+		item.Severity = filing.Severity
+		changed = true
+	}
+	if filing.Impact != "" && item.Impact != filing.Impact {
+		item.Impact = filing.Impact
+		changed = true
+	}
+	if !isZeroPriorityReason(filing.PriorityReason) {
+		item.PriorityReason = filing.PriorityReason
+		changed = true
+	}
+	if changed {
+		updatedAt := filing.Now
+		item.PriorityUpdatedAt = &updatedAt
+	}
+}
+
+func ensurePriorityDefaults(item *Item, now time.Time) {
+	changed := false
+	if item.Priority == "" {
+		item.Priority = PriorityP2
+		changed = true
+	}
+	if item.Severity == "" {
+		item.Severity = SeverityMedium
+		changed = true
+	}
+	if item.Impact == "" {
+		item.Impact = ImpactLongTailHardening
+		changed = true
+	}
+	if changed && item.PriorityUpdatedAt == nil {
+		updatedAt := now
+		item.PriorityUpdatedAt = &updatedAt
+	}
+}
+
+func normalizePriorityReason(reason PriorityReason) PriorityReason {
+	return PriorityReason{
+		BlastRadius:        strings.TrimSpace(reason.BlastRadius),
+		Reproducibility:    strings.TrimSpace(reason.Reproducibility),
+		AutomationBreakage: strings.TrimSpace(reason.AutomationBreakage),
+		MergeRisk:          strings.TrimSpace(reason.MergeRisk),
+		Rationale:          strings.TrimSpace(reason.Rationale),
+	}
+}
+
+func isZeroPriorityReason(reason PriorityReason) bool {
+	return reason.BlastRadius == "" &&
+		reason.Reproducibility == "" &&
+		reason.AutomationBreakage == "" &&
+		reason.MergeRisk == "" &&
+		reason.Rationale == ""
+}
+
+func priorityRank(priority Priority) int {
+	switch priority {
+	case PriorityP0:
+		return 0
+	case PriorityP1:
+		return 1
+	case PriorityP2, "":
+		return 2
+	case PriorityP3:
+		return 3
+	default:
+		return 4
+	}
+}
+
+func fallbackTime(value time.Time) time.Time {
+	if value.IsZero() {
+		return time.Now().UTC()
+	}
+	return value
 }
 
 func normalizeEvidence(values []EvidenceAttachment, now time.Time) ([]EvidenceAttachment, error) {

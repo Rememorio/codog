@@ -9816,7 +9816,7 @@ func roadmapPinpointLifecycleScenario() scenario {
 				return report, nil
 			}
 
-			filed, err := call(`{"action":"file","title":"stable pinpoint ids","description":"dogfood reports need ids","evidence":[{"role":"symptom","type":"session","reference":"session-dogfood-1","preview":"pinpoint was only prose in the report"}],"now":"2026-07-07T13:00:00Z"}`)
+			filed, err := call(`{"action":"file","title":"stable pinpoint ids","description":"dogfood reports need ids","priority":"p1","severity":"high","impact":"observability_debt","priority_reason":{"blast_radius":"dogfood reports","reproducibility":"always","automation_breakage":"prevents queue ranking","merge_risk":"low","rationale":"fresh structured reporting gap"},"evidence":[{"role":"symptom","type":"session","reference":"session-dogfood-1","preview":"pinpoint was only prose in the report"}],"now":"2026-07-07T13:00:00Z"}`)
 			if err != nil {
 				return localScenarioResult{}, err
 			}
@@ -9824,7 +9824,7 @@ func roadmapPinpointLifecycleScenario() scenario {
 			if itemID == "" || filed["action"] != "new_roadmap_filing" {
 				return localScenarioResult{}, fmt.Errorf("unexpected roadmap filing: %#v", filed)
 			}
-			updated, err := call(`{"action":"update","id":"` + itemID + `","title":"stable pinpoint ids after edit","state":"in_progress","report_id":"report-1","evidence":[{"role":"verification","type":"commit","reference":"commit-1","preview":"roadmap pinpoint lifecycle test covers the update"}],"now":"2026-07-07T14:00:00Z"}`)
+			updated, err := call(`{"action":"update","id":"` + itemID + `","title":"stable pinpoint ids after edit","state":"in_progress","report_id":"report-1","priority":"p0","severity":"critical","impact":"operator_friction","priority_reason":{"blast_radius":"implementation queue","reproducibility":"always","automation_breakage":"blocks queue ranking","merge_risk":"medium"},"evidence":[{"role":"verification","type":"commit","reference":"commit-1","preview":"roadmap pinpoint lifecycle test covers the update"}],"now":"2026-07-07T14:00:00Z"}`)
 			if err != nil {
 				return localScenarioResult{}, err
 			}
@@ -9850,6 +9850,9 @@ func roadmapPinpointLifecycleScenario() scenario {
 				"closed_state":   closed["state"],
 				"record_count":   list["count"],
 				"evidence_count": len(evidence),
+				"priority":       updatedItem["priority"],
+				"severity":       updatedItem["severity"],
+				"impact":         updatedItem["impact"],
 			}
 			data, err := json.Marshal(report)
 			if err != nil {
