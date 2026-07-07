@@ -5221,6 +5221,35 @@ func TestMCPAuthToolReportsOAuthReadiness(t *testing.T) {
 	require.Contains(t, report.OAuthStatus.Token.RefreshToken, "refr")
 }
 
+func TestMCPAuthToolClearsStoredOAuthToken(t *testing.T) {
+	configHome := t.TempDir()
+	_, err := oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "access-token-1234",
+		RefreshToken: "refresh-token-1234",
+	})
+	require.NoError(t, err)
+	server := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestMCPToolHelperProcess"},
+		Env:     []string{"CODOG_MCP_TOOL_HELPER=1"},
+	}
+
+	out, err := MCPAuthTool{
+		Servers:      map[string]config.MCPServerConfig{"test": server},
+		ConfigHome:   configHome,
+		OAuthProfile: "work",
+	}.Execute(context.Background(), []byte(`{"server":"test","action":"clear"}`))
+
+	require.NoError(t, err)
+	require.Contains(t, out, `"cleared": true`)
+	require.Contains(t, out, `"deleted": true`)
+	require.Contains(t, out, `"token_present": false`)
+	require.NotContains(t, out, "access-token-1234")
+	require.NotContains(t, out, "refresh-token-1234")
+	_, err = oauth.LoadToken(configHome)
+	require.ErrorIs(t, err, oauth.ErrNoToken)
+}
+
 func TestMCPResourceToolsListAndReadRemoteResources(t *testing.T) {
 	servers := map[string]config.MCPServerConfig{
 		"test": {

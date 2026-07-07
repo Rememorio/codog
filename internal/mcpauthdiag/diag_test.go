@@ -98,6 +98,30 @@ func TestRefreshStoredOAuthToken(t *testing.T) {
 	require.Equal(t, "refresh-2", loaded.RefreshToken)
 }
 
+func TestClearDeletesStoredOAuthToken(t *testing.T) {
+	configHome := t.TempDir()
+	now := time.Now().UTC()
+	_, err := oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "access-token-1234",
+		RefreshToken: "refresh-token-1234",
+		CreatedAt:    now.Add(-time.Hour),
+	})
+	require.NoError(t, err)
+
+	report := Clear(context.Background(), mcp.AuthStatusResult{Server: "repo", Status: "ok"}, configHome, "work", now)
+
+	require.True(t, report.Cleared)
+	require.Empty(t, report.ClearError)
+	require.NotNil(t, report.Logout)
+	require.True(t, report.Logout.Deleted)
+	require.Equal(t, "unavailable", report.Logout.Revocation)
+	require.NotNil(t, report.OAuthStatus)
+	require.False(t, report.OAuthStatus.TokenPresent)
+	require.Equal(t, "no oauth token saved", report.OAuthStatus.Issue)
+	_, err = oauth.LoadToken(configHome)
+	require.ErrorIs(t, err, oauth.ErrNoToken)
+}
+
 func actionCommands(actions []NextAction) []string {
 	commands := make([]string, 0, len(actions))
 	for _, action := range actions {

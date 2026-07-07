@@ -24274,6 +24274,52 @@ func TestMCPAuthRefreshCommand(t *testing.T) {
 	require.Equal(t, "refreshed-access", loaded.AccessToken)
 }
 
+func TestMCPAuthClearCommand(t *testing.T) {
+	configHome := t.TempDir()
+	_, err := oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "access-token-1234",
+		RefreshToken: "refresh-token-1234",
+	})
+	require.NoError(t, err)
+	mcpServer := config.MCPServerConfig{
+		Command:  os.Args[0],
+		Args:     []string{"-test.run=TestAgentMCPHelperProcess"},
+		Env:      []string{"CODOG_AGENT_MCP_HELPER=1"},
+		Required: true,
+	}
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome, MCPServers: map[string]config.MCPServerConfig{"test": mcpServer}},
+		Out:    &out,
+		Err:    io.Discard,
+	}
+
+	require.NoError(t, app.MCP(context.Background(), []string{"auth", "clear", "test"}))
+	var report mcpauthdiag.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "test", report.Server)
+	require.True(t, report.Cleared)
+	require.Empty(t, report.ClearError)
+	require.NotNil(t, report.Logout)
+	require.True(t, report.Logout.Deleted)
+	require.NotNil(t, report.OAuthStatus)
+	require.False(t, report.OAuthStatus.TokenPresent)
+	_, err = oauth.LoadToken(configHome)
+	require.ErrorIs(t, err, oauth.ErrNoToken)
+	out.Reset()
+
+	_, err = oauth.SaveToken(configHome, oauth.Token{AccessToken: "second-access-token"})
+	require.NoError(t, err)
+	require.Error(t, app.MCP(context.Background(), []string{"auth", "clear", "--json"}))
+	var missing mcpRemoteActionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &missing))
+	require.Equal(t, "missing_argument", missing.ErrorKind)
+	require.Equal(t, "server", missing.Argument)
+	loaded, err := oauth.LoadToken(configHome)
+	require.NoError(t, err)
+	require.Equal(t, "second-access-token", loaded.AccessToken)
+}
+
 func TestXAAIDPRefreshCommand(t *testing.T) {
 	server := oauthRefreshTestServer(t)
 	defer server.Close()

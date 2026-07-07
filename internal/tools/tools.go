@@ -1369,8 +1369,8 @@ func (t MCPDispatchTool) Execute(ctx context.Context, input json.RawMessage) (st
 	return string(result.Result), nil
 }
 
-// MCPAuthTool reports or refreshes authentication readiness for a configured
-// MCP server.
+// MCPAuthTool reports, refreshes, or clears authentication readiness for a
+// configured MCP server.
 type MCPAuthTool struct {
 	Servers      map[string]config.MCPServerConfig
 	ConfigHome   string
@@ -1396,8 +1396,8 @@ func (MCPAuthTool) Definition() anthropic.ToolDefinition {
 				},
 				"action": map[string]any{
 					"type":        "string",
-					"enum":        []string{"status", "refresh"},
-					"description": "status inspects readiness; refresh refreshes a saved OAuth token when possible.",
+					"enum":        []string{"status", "refresh", "clear", "logout"},
+					"description": "status inspects readiness; refresh refreshes a saved OAuth token when possible; clear/logout revokes when possible and deletes the saved token.",
 				},
 			},
 			"required": []string{"server"},
@@ -1421,7 +1421,7 @@ func (t MCPAuthTool) Execute(ctx context.Context, input json.RawMessage) (string
 	if action == "" {
 		action = "status"
 	}
-	if action != "status" && action != "refresh" {
+	if action != "status" && action != "refresh" && action != "clear" && action != "logout" {
 		return "", fmt.Errorf("unsupported mcp_auth action %q", payload.Action)
 	}
 	now := time.Now().UTC()
@@ -1434,12 +1434,17 @@ func (t MCPAuthTool) Execute(ctx context.Context, input json.RawMessage) (string
 		}, t.ConfigHome, t.OAuthProfile, now)
 		if action == "refresh" {
 			report = mcpauthdiag.Refresh(ctx, report.AuthStatusResult, t.ConfigHome, t.OAuthProfile, now)
+		} else if action == "clear" || action == "logout" {
+			report = mcpauthdiag.Clear(ctx, report.AuthStatusResult, t.ConfigHome, t.OAuthProfile, now)
 		}
 		return pretty(report), nil
 	}
 	result := mcp.InspectAuth(ctx, payload.Server, server)
 	if action == "refresh" {
 		return pretty(mcpauthdiag.Refresh(ctx, result, t.ConfigHome, t.OAuthProfile, now)), nil
+	}
+	if action == "clear" || action == "logout" {
+		return pretty(mcpauthdiag.Clear(ctx, result, t.ConfigHome, t.OAuthProfile, now)), nil
 	}
 	return pretty(mcpauthdiag.Build(result, t.ConfigHome, t.OAuthProfile, now)), nil
 }

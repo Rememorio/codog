@@ -22,12 +22,15 @@ type NextAction struct {
 // recovery actions.
 type Report struct {
 	mcp.AuthStatusResult
-	OAuthProfile string           `json:"oauth_profile,omitempty"`
-	OAuthStatus  *oauth.Status    `json:"oauth_status,omitempty"`
-	NextActions  []NextAction     `json:"next_actions,omitempty"`
-	Refreshed    bool             `json:"refreshed,omitempty"`
-	RefreshError string           `json:"refresh_error,omitempty"`
-	Token        *oauth.TokenView `json:"token,omitempty"`
+	OAuthProfile string              `json:"oauth_profile,omitempty"`
+	OAuthStatus  *oauth.Status       `json:"oauth_status,omitempty"`
+	NextActions  []NextAction        `json:"next_actions,omitempty"`
+	Refreshed    bool                `json:"refreshed,omitempty"`
+	RefreshError string              `json:"refresh_error,omitempty"`
+	Cleared      bool                `json:"cleared,omitempty"`
+	ClearError   string              `json:"clear_error,omitempty"`
+	Logout       *oauth.LogoutResult `json:"logout,omitempty"`
+	Token        *oauth.TokenView    `json:"token,omitempty"`
 }
 
 // Build returns a recovery-oriented report without mutating local state.
@@ -66,6 +69,22 @@ func Refresh(ctx context.Context, result mcp.AuthStatusResult, configHome string
 	report.Refreshed = true
 	report.Token = &view
 	report.attachOAuth(configHome, profileName, now)
+	report.NextActions = nextActions(report, strings.TrimSpace(profileName))
+	return report
+}
+
+// Clear revokes when possible, deletes the saved OAuth token, and returns a
+// fresh diagnostic report.
+func Clear(ctx context.Context, result mcp.AuthStatusResult, configHome string, profileName string, now time.Time) Report {
+	logout, err := oauth.Logout(ctx, configHome, profileName)
+	report := Build(result, configHome, profileName, now)
+	if err != nil {
+		report.ClearError = err.Error()
+		report.NextActions = nextActions(report, strings.TrimSpace(profileName))
+		return report
+	}
+	report.Cleared = logout.Deleted
+	report.Logout = &logout
 	report.NextActions = nextActions(report, strings.TrimSpace(profileName))
 	return report
 }
