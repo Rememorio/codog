@@ -11438,6 +11438,80 @@ func TestPromptWithAttachmentsBuildsStructuredUserContent(t *testing.T) {
 	require.NotEmpty(t, body.Messages[0].Content[2].Source.Data)
 }
 
+func TestPromptWithDirectoryAttachmentBuildsTextContext(t *testing.T) {
+	captured := make(chan json.RawMessage, 1)
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "directory attachment done",
+		OnRequest: func(raw json.RawMessage) {
+			select {
+			case captured <- append(json.RawMessage(nil), raw...):
+			default:
+			}
+		},
+	}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]any{
+		"config_home":     configHome,
+		"base_url":        server.URL,
+		"api_key":         "test-key",
+		"model":           "mock",
+		"max_turns":       1,
+		"permission_mode": "read-only",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "docs", "nested"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "docs", "README.md"), []byte("# Docs\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "docs", "nested", "guide.txt"), []byte("nested guide\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "docs", "binary.bin"), []byte{0xff, 0x00, 0x01}, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--cwd", workspace,
+			"prompt", "Describe directory",
+			"--attach", "docs",
+			"--output-format", "json",
+		}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report promptReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "directory attachment done", report.Response)
+
+	var raw json.RawMessage
+	select {
+	case raw = <-captured:
+	default:
+		require.FailNow(t, "expected provider request to be captured")
+	}
+	var body struct {
+		Messages []struct {
+			Content []struct {
+				Type  string `json:"type"`
+				Text  string `json:"text"`
+				Title string `json:"title"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &body))
+	require.Len(t, body.Messages, 1)
+	require.Len(t, body.Messages[0].Content, 2)
+	attachment := body.Messages[0].Content[1]
+	require.Equal(t, "text", attachment.Type)
+	require.Equal(t, "docs", attachment.Title)
+	require.Contains(t, attachment.Text, `<attachment_directory path="docs" files=2`)
+	require.Contains(t, attachment.Text, `<file path="README.md"`)
+	require.Contains(t, attachment.Text, "# Docs")
+	require.Contains(t, attachment.Text, `<file path="nested/guide.txt"`)
+	require.Contains(t, attachment.Text, "nested guide")
+	require.Contains(t, attachment.Text, "<skipped>")
+	require.Contains(t, attachment.Text, "binary.bin")
+}
+
 func TestPrintPromptAcceptsGlobalAttachments(t *testing.T) {
 	captured := make(chan json.RawMessage, 1)
 	server := httptest.NewServer(mockanthropic.Server{

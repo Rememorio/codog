@@ -35782,7 +35782,11 @@ func mergePromptWithStdin(prompt string, stdin string) string {
 	return prompt + "\n\n" + stdin
 }
 
-const maxPromptAttachmentBytes int64 = 5 * 1024 * 1024
+const (
+	maxPromptAttachmentBytes          int64 = 5 * 1024 * 1024
+	maxPromptDirectoryAttachmentBytes int64 = 5 * 1024 * 1024
+	maxPromptDirectoryAttachmentFiles       = 64
+)
 
 func (a *App) promptContentBlocks(prompt string, attachmentPaths []string) ([]anthropic.ContentBlock, error) {
 	blocks := []anthropic.ContentBlock{{Type: "text", Text: prompt}}
@@ -35810,7 +35814,7 @@ func (a *App) promptAttachmentBlock(attachmentPath string) (anthropic.ContentBlo
 		return anthropic.ContentBlock{}, fmt.Errorf("read prompt attachment %q: %w", displayPath, err)
 	}
 	if info.IsDir() {
-		return anthropic.ContentBlock{}, fmt.Errorf("prompt attachment %q is a directory", displayPath)
+		return a.promptDirectoryAttachmentBlock(displayPath, path)
 	}
 	if info.Size() > maxPromptAttachmentBytes {
 		return anthropic.ContentBlock{}, fmt.Errorf("prompt attachment %q is too large: %d bytes exceeds %d", displayPath, info.Size(), maxPromptAttachmentBytes)
@@ -35847,6 +35851,105 @@ func (a *App) promptAttachmentBlock(attachmentPath string) (anthropic.ContentBlo
 	}
 	text := fmt.Sprintf("<attachment path=%q media_type=%q bytes=%d>\n%s\n</attachment>", displayPath, mediaType, len(data), string(data))
 	return anthropic.ContentBlock{Type: "text", Text: text, Title: displayPath}, nil
+}
+
+func (a *App) promptDirectoryAttachmentBlock(displayPath string, path string) (anthropic.ContentBlock, error) {
+	entries := []promptDirectoryAttachmentEntry{}
+	skipped := []string{}
+	totalBytes := int64(0)
+	err := filepath.WalkDir(path, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if current == path {
+			return nil
+		}
+		rel, err := filepath.Rel(path, current)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if entry.IsDir() {
+			if strings.HasPrefix(entry.Name(), ".") {
+				skipped = append(skipped, rel+"/")
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if len(entries) >= maxPromptDirectoryAttachmentFiles {
+			skipped = append(skipped, rel)
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Size() > maxPromptAttachmentBytes {
+			skipped = append(skipped, rel)
+			return nil
+		}
+		if totalBytes+info.Size() > maxPromptDirectoryAttachmentBytes {
+			skipped = append(skipped, rel)
+			return nil
+		}
+		data, err := os.ReadFile(current)
+		if err != nil {
+			return err
+		}
+		if !utf8.Valid(data) {
+			skipped = append(skipped, rel)
+			return nil
+		}
+		totalBytes += int64(len(data))
+		entries = append(entries, promptDirectoryAttachmentEntry{
+			Path:      rel,
+			MediaType: promptAttachmentMediaType(current, data),
+			Bytes:     len(data),
+			Content:   string(data),
+		})
+		return nil
+	})
+	if err != nil {
+		return anthropic.ContentBlock{}, fmt.Errorf("read prompt attachment directory %q: %w", displayPath, err)
+	}
+	if len(entries) == 0 {
+		return anthropic.ContentBlock{}, fmt.Errorf("prompt attachment directory %q has no supported text files", displayPath)
+	}
+	text := renderPromptDirectoryAttachment(displayPath, entries, skipped, totalBytes)
+	return anthropic.ContentBlock{Type: "text", Text: text, Title: displayPath}, nil
+}
+
+type promptDirectoryAttachmentEntry struct {
+	Path      string
+	MediaType string
+	Bytes     int
+	Content   string
+}
+
+func renderPromptDirectoryAttachment(displayPath string, entries []promptDirectoryAttachmentEntry, skipped []string, totalBytes int64) string {
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "<attachment_directory path=%q files=%d bytes=%d", displayPath, len(entries), totalBytes)
+	if len(skipped) > 0 {
+		fmt.Fprintf(&builder, " skipped=%d", len(skipped))
+	}
+	builder.WriteString(">\n")
+	for _, entry := range entries {
+		fmt.Fprintf(&builder, "<file path=%q media_type=%q bytes=%d>\n", entry.Path, entry.MediaType, entry.Bytes)
+		builder.WriteString(entry.Content)
+		if !strings.HasSuffix(entry.Content, "\n") {
+			builder.WriteByte('\n')
+		}
+		builder.WriteString("</file>\n")
+	}
+	if len(skipped) > 0 {
+		builder.WriteString("<skipped>\n")
+		for _, path := range skipped {
+			fmt.Fprintf(&builder, "%s\n", path)
+		}
+		builder.WriteString("</skipped>\n")
+	}
+	builder.WriteString("</attachment_directory>")
+	return builder.String()
 }
 
 func promptAttachmentMediaType(path string, data []byte) string {

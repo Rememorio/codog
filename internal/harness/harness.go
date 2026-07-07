@@ -184,6 +184,7 @@ type localScenarioResult struct {
 var scenarioOrder = []string{
 	"streaming_text",
 	"prompt_attachments_roundtrip",
+	"prompt_directory_attachment_roundtrip",
 	"read_file_roundtrip",
 	"write_file_allowed",
 	"write_file_denied",
@@ -333,6 +334,7 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		promptDirectoryAttachmentScenario(),
 		{
 			name: "read_file_roundtrip",
 			turns: []mockanthropic.Turn{
@@ -1347,6 +1349,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "attachments",
 		Description: "Sends structured user content with an image attachment through the provider request path.",
 		ParityRefs:  []string{"Prompt attachments", "Anthropic content blocks"},
+	},
+	"prompt_directory_attachment_roundtrip": {
+		Category:    "attachments",
+		Description: "Runs the real prompt CLI with a directory attachment and verifies text file aggregation plus binary skip metadata.",
+		ParityRefs:  []string{"Prompt attachments", "Directory attachments", "Anthropic content blocks", "Workspace context"},
 	},
 	"read_file_roundtrip": {
 		Category:    "file-tools",
@@ -5729,6 +5736,126 @@ func findRepoRoot() (string, error) {
 			return "", fmt.Errorf("go.mod not found from %s", dir)
 		}
 		dir = parent
+	}
+}
+
+func promptDirectoryAttachmentScenario() scenario {
+	return scenario{
+		name: "prompt_directory_attachment_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			captured := make(chan json.RawMessage, 1)
+			server := httptest.NewServer(mockanthropic.Server{
+				Text: "directory attachment harness ok",
+				OnRequest: func(raw json.RawMessage) {
+					select {
+					case captured <- append(json.RawMessage(nil), raw...):
+					default:
+					}
+				},
+			}.Handler())
+			defer server.Close()
+
+			configHome := filepath.Join(workspace, "config-home")
+			docsDir := filepath.Join(workspace, "docs", "nested")
+			if err := os.MkdirAll(docsDir, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "docs", "README.md"), []byte("# Harness Docs\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(docsDir, "guide.txt"), []byte("nested guide\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "docs", "binary.bin"), []byte{0xff, 0x00, 0x01}, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			configPath := filepath.Join(workspace, "codog-config.json")
+			configData, err := json.Marshal(map[string]any{
+				"config_home":     configHome,
+				"base_url":        server.URL,
+				"api_key":         "test-key",
+				"model":           "mock",
+				"max_turns":       1,
+				"permission_mode": "read-only",
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			out, err := runHarnessCodog(ctx, workspace, "--config", configPath, "prompt", "Describe directory attachment", "--attach", "docs", "--output-format", "json")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var promptReport struct {
+				Response string `json:"response"`
+			}
+			if err := json.Unmarshal([]byte(out), &promptReport); err != nil {
+				return localScenarioResult{}, err
+			}
+			if promptReport.Response != "directory attachment harness ok" {
+				return localScenarioResult{}, fmt.Errorf("unexpected directory attachment response: %q", promptReport.Response)
+			}
+
+			var raw json.RawMessage
+			select {
+			case raw = <-captured:
+			default:
+				return localScenarioResult{}, fmt.Errorf("expected provider request for directory attachment")
+			}
+			var body struct {
+				Messages []struct {
+					Content []struct {
+						Type  string `json:"type"`
+						Text  string `json:"text"`
+						Title string `json:"title"`
+					} `json:"content"`
+				} `json:"messages"`
+			}
+			if err := json.Unmarshal(raw, &body); err != nil {
+				return localScenarioResult{}, err
+			}
+			if len(body.Messages) != 1 || len(body.Messages[0].Content) != 2 {
+				return localScenarioResult{}, fmt.Errorf("unexpected directory attachment content blocks: %s", string(raw))
+			}
+			attachment := body.Messages[0].Content[1]
+			for _, expected := range []string{
+				`<attachment_directory path="docs" files=2`,
+				`<file path="README.md"`,
+				"# Harness Docs",
+				`<file path="nested/guide.txt"`,
+				"nested guide",
+				"<skipped>",
+				"binary.bin",
+			} {
+				if !strings.Contains(attachment.Text, expected) {
+					return localScenarioResult{}, fmt.Errorf("directory attachment missing %s: %s", expected, attachment.Text)
+				}
+			}
+			report := map[string]any{
+				"kind": "prompt_directory_attachment",
+				"attachment": map[string]any{
+					"title":          attachment.Title,
+					"type":           attachment.Type,
+					"files":          2,
+					"skipped_binary": strings.Contains(attachment.Text, "binary.bin"),
+					"nested":         strings.Contains(attachment.Text, `nested/guide.txt`),
+					"text_rendered":  strings.Contains(attachment.Text, `<attachment_directory path="docs"`),
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "directory attachment harness ok",
+				RequestCount: 1,
+				MessageCount: 1,
+			}, nil
+		},
 	}
 }
 
