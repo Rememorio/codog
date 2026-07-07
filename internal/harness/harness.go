@@ -242,6 +242,7 @@ var scenarioOrder = []string{
 	"runtime_output_tools_roundtrip",
 	"repl_runtime_roundtrip",
 	"config_precedence_roundtrip",
+	"config_validation_status_roundtrip",
 	"provider_routing_roundtrip",
 	"session_resume_jsonl_roundtrip",
 	"resume_slash_command_roundtrip",
@@ -801,6 +802,7 @@ func Run(ctx context.Context) (Report, error) {
 		runtimeOutputToolsScenario(),
 		replRuntimeScenario(),
 		configPrecedenceScenario(),
+		configValidationStatusScenario(),
 		providerRoutingScenario(),
 		sessionResumeJSONLRoundtripScenario(),
 		resumeSlashCommandScenario(),
@@ -1587,6 +1589,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Description: "Confirms config precedence across file, environment, and runtime overrides.",
 		ParityRefs:  []string{"Configuration", "Precedence rules"},
 	},
+	"config_validation_status_roundtrip": {
+		Category:    "config",
+		Description: "Runs the real status CLI and verifies config validation is surfaced in status JSON and text.",
+		ParityRefs:  []string{"Configuration", "Status diagnostics", "Config validation"},
+	},
 	"provider_routing_roundtrip": {
 		Category:    "provider-routing",
 		Description: "Confirms OpenAI-compatible, Ollama, DashScope, and custom base URL provider routing without contacting external providers.",
@@ -1968,6 +1975,48 @@ func configPrecedenceScenario() scenario {
 				return fmt.Errorf("unexpected loaded hook order: %v", loadedSessionStart)
 			}
 			return nil
+		},
+	}
+}
+
+func configValidationStatusScenario() scenario {
+	return scenario{
+		name: "config_validation_status_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configPath := filepath.Join(workspace, "config-warning.json")
+			if err := os.WriteFile(configPath, []byte(`{"model":"claude-status","permission_mode":"workspace-write","modle":"typo"}`), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			statusOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "status")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var snapshot localstatus.Snapshot
+			if err := json.Unmarshal([]byte(statusOut), &snapshot); err != nil {
+				return localScenarioResult{}, err
+			}
+			if snapshot.ConfigValidation.Status != "warning" ||
+				snapshot.ConfigValidation.FileCount != 1 ||
+				snapshot.ConfigValidation.PresentCount != 1 ||
+				snapshot.ConfigValidation.ErrorCount != 0 ||
+				snapshot.ConfigValidation.WarningCount != 1 {
+				return localScenarioResult{}, fmt.Errorf("unexpected config validation summary: %#v", snapshot.ConfigValidation)
+			}
+			if len(snapshot.ConfigValidation.Paths) != 1 || snapshot.ConfigValidation.Paths[0] != configPath {
+				return localScenarioResult{}, fmt.Errorf("unexpected config validation paths: %v", snapshot.ConfigValidation.Paths)
+			}
+			textOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "status")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			expected := "Config validation status=warning files=1 present=1 errors=0 warnings=1"
+			if !strings.Contains(textOut, expected) {
+				return localScenarioResult{}, fmt.Errorf("missing status text config validation summary %q in %s", expected, textOut)
+			}
+			return localScenarioResult{
+				Output:       statusOut,
+				FinalMessage: "config validation status harness ok",
+			}, nil
 		},
 	}
 }

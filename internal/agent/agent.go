@@ -1638,6 +1638,14 @@ func configInspectionFallbackPaths(configHome string, explicit string) []string 
 	}
 	return []string{
 		filepath.Join(configHome, "config.json"),
+		filepath.Join(".claude", "settings.json"),
+		filepath.Join(".claude", "settings.local.json"),
+		filepath.Join(".omc", "settings.json"),
+		filepath.Join(".omc", "settings.local.json"),
+		filepath.Join(".omc", "config.json"),
+		filepath.Join(".claw", "settings.json"),
+		filepath.Join(".claw", "settings.local.json"),
+		filepath.Join(".claw", "config.json"),
 		".codog.json",
 		".codog.local.json",
 	}
@@ -25993,7 +26001,7 @@ func (a *App) Status(args []string, overrides config.FlagOverrides) error {
 	if len(overrides.AllowedTools) != 0 {
 		allowedToolSource = "flag"
 	}
-	a.renderStatus(format, active, allowedToolSource, formatSource, formatRaw, formatOverridden)
+	a.renderStatus(format, active, allowedToolSource, formatSource, formatRaw, formatOverridden, overrides.ConfigPath)
 	return nil
 }
 
@@ -27370,12 +27378,13 @@ func (a *App) renderPromptHistory(format string, sessionID string, entries []ses
 	return nil
 }
 
-func (a *App) renderStatus(format string, active *session.Session, allowedToolSource string, formatSource string, formatRaw string, formatOverridden bool) {
+func (a *App) renderStatus(format string, active *session.Session, allowedToolSource string, formatSource string, formatRaw string, formatOverridden bool, configPath string) {
 	snapshot := a.statusSnapshotWithOptions(active, statusSnapshotOptions{
 		AllowedToolSource: allowedToolSource,
 		FormatSource:      formatSource,
 		FormatRaw:         formatRaw,
 		FormatOverridden:  formatOverridden,
+		ConfigPath:        configPath,
 	})
 	if format == "json" {
 		data, _ := json.MarshalIndent(snapshot, "", "  ")
@@ -27394,6 +27403,7 @@ type statusSnapshotOptions struct {
 	FormatSource      string
 	FormatRaw         string
 	FormatOverridden  bool
+	ConfigPath        string
 }
 
 func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnapshotOptions) localstatus.Snapshot {
@@ -27444,6 +27454,7 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 		executable = path
 	}
 	planState, _ := planmode.Load(a.Workspace)
+	configValidation := buildStatusConfigValidation(configInspectionFallbackPaths(a.Config.ConfigHome, opts.ConfigPath))
 	mcpValidation := buildMCPValidation(a.Config.MCPServers)
 	runtimeHooks := a.Config.Hooks
 	if a.Config.EffectiveDisableAllHooks() {
@@ -27511,6 +27522,7 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 		InstructionsLoadedHookCount: len(runtimeHooks.InstructionsLoaded),
 		FileChangedHookCount:        len(runtimeHooks.FileChanged),
 		EnabledSkillCount:           len(a.Config.EnabledSkills),
+		ConfigValidation:            configValidation,
 		MCPValidation:               mcpValidation,
 		HookValidation:              hookValidation,
 		PlanActive:                  planState.Active,
@@ -27604,6 +27616,18 @@ func buildMCPValidation(servers map[string]config.MCPServerConfig) localstatus.M
 	}
 	status.InvalidCount = len(status.InvalidServers)
 	return status
+}
+
+func buildStatusConfigValidation(paths []string) localstatus.ConfigValidationStatus {
+	report := configvalidate.ValidateFiles(paths)
+	return localstatus.ConfigValidationStatus{
+		Status:       report.Status,
+		FileCount:    report.FileCount,
+		PresentCount: report.PresentCount,
+		ErrorCount:   report.ErrorCount,
+		WarningCount: report.WarningCount,
+		Paths:        append([]string(nil), report.Paths...),
+	}
 }
 
 type hookValidationGroup struct {
@@ -36449,7 +36473,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	case "/help":
 		a.renderSlashHelp(a.Err)
 	case "/status":
-		a.renderStatus("text", sess, "", "default", "", false)
+		a.renderStatus("text", sess, "", "default", "", false, "")
 	case "/statusline":
 		if err := a.Statusline(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)

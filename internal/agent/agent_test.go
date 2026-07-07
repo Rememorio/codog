@@ -16055,6 +16055,36 @@ func TestStatusValidationReportsDegradedConfig(t *testing.T) {
 	require.Contains(t, out.String(), "Hook validation  valid=4 invalid=3")
 }
 
+func TestStatusSurfacesConfigValidation(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permission_mode":42}`), 0o644))
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: t.TempDir(),
+			Model:      "claude-test",
+		},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{ConfigPath: configPath}))
+	var snapshot localstatus.Snapshot
+	require.NoError(t, json.Unmarshal(out.Bytes(), &snapshot))
+	require.Equal(t, "degraded", snapshot.Status)
+	require.Equal(t, "error", snapshot.ConfigValidation.Status)
+	require.Equal(t, 1, snapshot.ConfigValidation.FileCount)
+	require.Equal(t, 1, snapshot.ConfigValidation.PresentCount)
+	require.Equal(t, 1, snapshot.ConfigValidation.ErrorCount)
+	require.Equal(t, []string{configPath}, snapshot.ConfigValidation.Paths)
+	out.Reset()
+
+	require.NoError(t, app.Status(nil, config.FlagOverrides{ConfigPath: configPath}))
+	require.Contains(t, out.String(), "Config validation status=error files=1 present=1 errors=1 warnings=0")
+}
+
 func TestStatuslineReadsClaudeStdinContract(t *testing.T) {
 	workspace := t.TempDir()
 	var out bytes.Buffer

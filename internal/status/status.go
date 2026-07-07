@@ -73,6 +73,7 @@ type Options struct {
 	InstructionsLoadedHookCount int
 	FileChangedHookCount        int
 	EnabledSkillCount           int
+	ConfigValidation            ConfigValidationStatus
 	MCPValidation               MCPValidationStatus
 	HookValidation              HookValidationStatus
 	PlanActive                  bool
@@ -108,28 +109,29 @@ type Options struct {
 
 // Snapshot is the stable JSON payload returned by `codog status --json`.
 type Snapshot struct {
-	Kind                string               `json:"kind"`
-	Action              string               `json:"action"`
-	Status              string               `json:"status"`
-	FormatSource        string               `json:"format_source"`
-	FormatRaw           string               `json:"format_raw"`
-	FormatOverridden    bool                 `json:"format_overridden"`
-	ConfigLoadError     string               `json:"config_load_error,omitempty"`
-	ConfigLoadErrorKind string               `json:"config_load_error_kind,omitempty"`
-	Version             string               `json:"version"`
-	Workspace           WorkspaceStatus      `json:"workspace"`
-	Config              ConfigStatus         `json:"config"`
-	Session             SessionStatus        `json:"session"`
-	Plan                PlanStatus           `json:"plan"`
-	Tools               ToolsStatus          `json:"tools"`
-	AllowedTools        AllowedToolsStatus   `json:"allowed_tools"`
-	Git                 GitStatus            `json:"git"`
-	LaneBoard           LaneBoardStatus      `json:"lane_board"`
-	Sandbox             SandboxStatus        `json:"sandbox"`
-	Runtime             RuntimeStatus        `json:"runtime"`
-	BootPreflight       BootPreflightStatus  `json:"boot_preflight"`
-	MCPValidation       MCPValidationStatus  `json:"mcp_validation"`
-	HookValidation      HookValidationStatus `json:"hook_validation"`
+	Kind                string                 `json:"kind"`
+	Action              string                 `json:"action"`
+	Status              string                 `json:"status"`
+	FormatSource        string                 `json:"format_source"`
+	FormatRaw           string                 `json:"format_raw"`
+	FormatOverridden    bool                   `json:"format_overridden"`
+	ConfigLoadError     string                 `json:"config_load_error,omitempty"`
+	ConfigLoadErrorKind string                 `json:"config_load_error_kind,omitempty"`
+	Version             string                 `json:"version"`
+	Workspace           WorkspaceStatus        `json:"workspace"`
+	Config              ConfigStatus           `json:"config"`
+	Session             SessionStatus          `json:"session"`
+	Plan                PlanStatus             `json:"plan"`
+	Tools               ToolsStatus            `json:"tools"`
+	AllowedTools        AllowedToolsStatus     `json:"allowed_tools"`
+	Git                 GitStatus              `json:"git"`
+	LaneBoard           LaneBoardStatus        `json:"lane_board"`
+	Sandbox             SandboxStatus          `json:"sandbox"`
+	Runtime             RuntimeStatus          `json:"runtime"`
+	BootPreflight       BootPreflightStatus    `json:"boot_preflight"`
+	ConfigValidation    ConfigValidationStatus `json:"config_validation"`
+	MCPValidation       MCPValidationStatus    `json:"mcp_validation"`
+	HookValidation      HookValidationStatus   `json:"hook_validation"`
 }
 
 // WorkspaceStatus describes the active workspace and loaded project memory.
@@ -365,6 +367,16 @@ type MCPValidationStatus struct {
 	InvalidServers  []ValidationIssue `json:"invalid_servers,omitempty"`
 }
 
+// ConfigValidationStatus summarizes static configuration file validation.
+type ConfigValidationStatus struct {
+	Status       string   `json:"status"`
+	FileCount    int      `json:"file_count"`
+	PresentCount int      `json:"present_count"`
+	ErrorCount   int      `json:"error_count"`
+	WarningCount int      `json:"warning_count"`
+	Paths        []string `json:"paths,omitempty"`
+}
+
 // HookValidationStatus summarizes static hook configuration validation.
 type HookValidationStatus struct {
 	ValidCount   int               `json:"valid_count"`
@@ -404,10 +416,12 @@ func Build(opts Options) Snapshot {
 		status = "degraded"
 	} else if !endpoint.Valid {
 		status = "degraded"
-	} else if opts.MCPValidation.InvalidCount > 0 || opts.HookValidation.InvalidCount > 0 {
+	} else if opts.ConfigValidation.ErrorCount > 0 || opts.MCPValidation.InvalidCount > 0 || opts.HookValidation.InvalidCount > 0 {
 		status = "degraded"
 	} else if strings.TrimSpace(bootPreflight.PluginStartup.Error) != "" {
 		status = "degraded"
+	} else if opts.ConfigValidation.WarningCount > 0 {
+		status = "warn"
 	} else if strings.TrimSpace(auth.Warning) != "" {
 		status = "warn"
 	} else if git.Freshness != nil {
@@ -513,9 +527,10 @@ func Build(opts Options) Snapshot {
 			GoVersion:  runtime.Version(),
 			Executable: opts.Executable,
 		},
-		BootPreflight:  bootPreflight,
-		MCPValidation:  opts.MCPValidation,
-		HookValidation: opts.HookValidation,
+		BootPreflight:    bootPreflight,
+		ConfigValidation: opts.ConfigValidation,
+		MCPValidation:    opts.MCPValidation,
+		HookValidation:   opts.HookValidation,
 	}
 }
 
@@ -939,6 +954,15 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 		}
 	} else {
 		fmt.Fprintf(w, "  Git              unavailable: %s\n", snapshot.Git.Error)
+	}
+	if snapshot.ConfigValidation.FileCount > 0 || snapshot.ConfigValidation.ErrorCount > 0 || snapshot.ConfigValidation.WarningCount > 0 {
+		fmt.Fprintf(w, "  Config validation status=%s files=%d present=%d errors=%d warnings=%d\n",
+			snapshot.ConfigValidation.Status,
+			snapshot.ConfigValidation.FileCount,
+			snapshot.ConfigValidation.PresentCount,
+			snapshot.ConfigValidation.ErrorCount,
+			snapshot.ConfigValidation.WarningCount,
+		)
 	}
 	if snapshot.MCPValidation.TotalConfigured > 0 || snapshot.MCPValidation.InvalidCount > 0 {
 		fmt.Fprintf(w, "  MCP validation   valid=%d invalid=%d required=%d optional=%d\n",

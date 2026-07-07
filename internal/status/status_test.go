@@ -238,6 +238,28 @@ func TestBuildMarksInvalidValidationDegraded(t *testing.T) {
 	require.Contains(t, out.String(), "Hook validation  valid=1 invalid=1")
 }
 
+func TestBuildMarksInvalidConfigValidationDegraded(t *testing.T) {
+	snapshot := Build(Options{
+		Version:   "test-version",
+		GitStatus: "## main",
+		ConfigValidation: ConfigValidationStatus{
+			Status:       "error",
+			FileCount:    1,
+			PresentCount: 1,
+			ErrorCount:   1,
+			Paths:        []string{".codog.json"},
+		},
+	})
+
+	require.Equal(t, "degraded", snapshot.Status)
+	require.Equal(t, 1, snapshot.ConfigValidation.ErrorCount)
+	require.Equal(t, []string{".codog.json"}, snapshot.ConfigValidation.Paths)
+
+	var out bytes.Buffer
+	RenderText(&out, snapshot)
+	require.Contains(t, out.String(), "Config validation status=error files=1 present=1 errors=1 warnings=0")
+}
+
 func TestBuildBootPreflightReportsStartupReadiness(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(workspace, ".git"), 0o755))

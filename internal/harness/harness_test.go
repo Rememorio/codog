@@ -745,6 +745,14 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 0, configPrecedence.ToolCalls)
 	require.Contains(t, configPrecedence.Output, "config precedence harness ok")
 
+	configValidationStatus := findScenario(t, report, "config_validation_status_roundtrip")
+	require.True(t, configValidationStatus.OK)
+	require.Equal(t, "config", configValidationStatus.Category)
+	require.Equal(t, 0, configValidationStatus.ToolCalls)
+	require.Equal(t, "config validation status harness ok", configValidationStatus.FinalMessage)
+	require.Contains(t, configValidationStatus.Output, `"config_validation"`)
+	require.Contains(t, configValidationStatus.Output, `"warning_count": 1`)
+
 	providerRouting := findScenario(t, report, "provider_routing_roundtrip")
 	require.True(t, providerRouting.OK)
 	require.Equal(t, "provider-routing", providerRouting.Category)
@@ -1107,6 +1115,11 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	replRuntime := findManifestScenario(t, manifest, "repl_runtime_roundtrip")
 	require.Equal(t, "runtime-tools", replRuntime.Category)
 	require.Contains(t, replRuntime.ParityRefs, "REPL tool")
+
+	configValidationStatus := findManifestScenario(t, manifest, "config_validation_status_roundtrip")
+	require.Equal(t, "config", configValidationStatus.Category)
+	require.Contains(t, configValidationStatus.ParityRefs, "Config validation")
+	require.Contains(t, configValidationStatus.ParityRefs, "Status diagnostics")
 
 	remoteAPI := findManifestScenario(t, manifest, "remote_api_listener_roundtrip")
 	require.Equal(t, "remote-control", remoteAPI.Category)
