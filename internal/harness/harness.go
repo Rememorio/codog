@@ -218,6 +218,7 @@ var scenarioOrder = []string{
 	"lsp_static_roundtrip",
 	"plugin_tool_roundtrip",
 	"command_skill_template_roundtrip",
+	"skill_activation_roundtrip",
 	"onboarding_bookmarks_roundtrip",
 	"memory_lifecycle_roundtrip",
 	"session_summary_roundtrip",
@@ -773,6 +774,7 @@ func Run(ctx context.Context) (Report, error) {
 			},
 		},
 		commandSkillTemplateScenario(),
+		skillActivationScenario(),
 		onboardingBookmarksScenario(),
 		memoryLifecycleScenario(),
 		sessionSummaryScenario(),
@@ -1187,7 +1189,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "permissions and sandbox", RequiredRefs: []string{"Permission enforcement", "Workspace-write permissions", "Sandbox", "Permission safety", "Workspace scope denial"}},
 	{Capability: "policy and approval control plane", RequiredRefs: []string{"Policy evaluation", "Approval tokens", "Delegation audit", "Replay denial"}},
 	{Capability: "sessions, resume, and project memory", RequiredRefs: []string{"Session JSONL", "Resume", "Session context management", "Project memory", "Session summary"}},
-	{Capability: "slash commands and custom workflows", RequiredRefs: []string{"Slash commands", "Skills", "Templates", "Project workflow surfaces"}},
+	{Capability: "slash commands and custom workflows", RequiredRefs: []string{"Slash commands", "Skills", "Skill activation", "Templates", "Project workflow surfaces"}},
 	{Capability: "hooks", RequiredRefs: []string{"Hooks", "PreToolUse", "PostToolUse hooks", "UserPromptSubmit", "Stop"}},
 	{Capability: "configuration and provider routing", RequiredRefs: []string{"Configuration", "Precedence rules", "Provider routing", "OpenAI-compatible APIs"}},
 	{Capability: "MCP client and auth", RequiredRefs: []string{"MCP client", "MCP lifecycle", "MCP tool calls", "MCP auth", "OAuth refresh"}},
@@ -1453,6 +1455,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "command-workflows",
 		Description: "Discovers and renders project slash commands, skills, and prompt templates without contacting a provider.",
 		ParityRefs:  []string{"Slash commands", "Skills", "Templates", "Project workflow surfaces"},
+	},
+	"skill_activation_roundtrip": {
+		Category:    "command-workflows",
+		Description: "Runs the real skills CLI through enable, status, list rendering, disable, and persisted enabled-skill configuration.",
+		ParityRefs:  []string{"Skills", "Skill activation", "Preference persistence", "Configuration", "Interactive rendering"},
 	},
 	"onboarding_bookmarks_roundtrip": {
 		Category:    "command-workflows",
@@ -2202,6 +2209,167 @@ Review skill body for $TARGET during ${CLAUDE_SESSION_ID}.`
 			}, nil
 		},
 	}
+}
+
+func skillActivationScenario() scenario {
+	return scenario{
+		name: "skill_activation_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			skillDir := filepath.Join(workspace, ".codog", "skills", "review")
+			if err := os.MkdirAll(skillDir, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			skillDoc := `---
+name: review
+description: Review project changes.
+allowed-tools: read_file, grep
+---
+# Review
+
+Review the requested change with repository context.
+`
+			if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillDoc), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			configPath := filepath.Join(workspace, "codog-config.json")
+			configData, err := json.Marshal(map[string]any{"config_home": configHome})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			initialOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "skills", "status")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initial, err := decodeSkillActivationHarnessReport(initialOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initial.Kind != "skills" || initial.Action != "status" || initial.Status != "ok" || len(initial.EnabledSkills) != 0 {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial skills status: %#v", initial)
+			}
+			if initial.AvailableSkillCount == 0 {
+				return localScenarioResult{}, fmt.Errorf("expected at least one available skill in initial status")
+			}
+
+			enableOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "skills", "enable", "review", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			enabled, err := decodeSkillActivationHarnessReport(enableOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if enabled.Action != "enable" || !slices.Contains(enabled.EnabledSkills, "review") || !slices.Contains(enabled.Added, "review") {
+				return localScenarioResult{}, fmt.Errorf("unexpected skills enable report: %#v", enabled)
+			}
+			if enabled.Path == "" || !strings.HasSuffix(enabled.Path, "codog-config.json") {
+				return localScenarioResult{}, fmt.Errorf("unexpected skills enable path: %q", enabled.Path)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(configData), `"enabled_skills":`) || !strings.Contains(string(configData), `"review"`) {
+				return localScenarioResult{}, fmt.Errorf("enabled skills config did not persist review: %s", string(configData))
+			}
+
+			statusOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "skills", "status")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			status, err := decodeSkillActivationHarnessReport(statusOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if status.Action != "status" || status.Status != "ok" || !slices.Contains(status.EnabledSkills, "review") || !slices.Contains(status.ResolvedSkills, "review") || len(status.MissingSkills) != 0 {
+				return localScenarioResult{}, fmt.Errorf("unexpected persisted skills status: %#v", status)
+			}
+
+			textOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "skills", "status")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(textOut, "Skill Status") || !strings.Contains(textOut, "Enabled skills   review") || !strings.Contains(textOut, "All enabled skills resolved.") {
+				return localScenarioResult{}, fmt.Errorf("skills status text missing expected values: %s", textOut)
+			}
+
+			disableOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "skills", "disable", "review", "--path", configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			disabled, err := decodeSkillActivationHarnessReport(disableOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if disabled.Action != "disable" || len(disabled.EnabledSkills) != 0 || !slices.Contains(disabled.Removed, "review") {
+				return localScenarioResult{}, fmt.Errorf("unexpected skills disable report: %#v", disabled)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if strings.Contains(string(configData), `"enabled_skills"`) {
+				return localScenarioResult{}, fmt.Errorf("enabled skills config still present after disable: %s", string(configData))
+			}
+
+			report := map[string]any{
+				"kind": "skill_activation",
+				"skills": map[string]any{
+					"available":        initial.AvailableSkillCount,
+					"enabled":          enabled.EnabledSkills,
+					"added":            enabled.Added,
+					"resolved":         status.ResolvedSkills,
+					"missing":          status.MissingSkills,
+					"removed":          disabled.Removed,
+					"final_enabled":    disabled.EnabledSkills,
+					"path_persisted":   enabled.Path != "" && strings.HasSuffix(enabled.Path, "codog-config.json"),
+					"text_rendered":    strings.Contains(textOut, "Enabled skills   review"),
+					"config_unset":     !strings.Contains(string(configData), `"enabled_skills"`),
+					"status_message":   status.Message,
+					"disabled_message": disabled.Message,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "skill activation harness ok",
+				RequestCount: 5,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+type skillActivationHarnessReport struct {
+	Kind                string   `json:"kind"`
+	Action              string   `json:"action"`
+	Status              string   `json:"status"`
+	Target              string   `json:"target,omitempty"`
+	Path                string   `json:"path,omitempty"`
+	EnabledSkills       []string `json:"enabled_skills"`
+	Added               []string `json:"added,omitempty"`
+	Removed             []string `json:"removed,omitempty"`
+	Unchanged           []string `json:"unchanged,omitempty"`
+	AvailableSkillCount int      `json:"available_skill_count,omitempty"`
+	ResolvedSkills      []string `json:"resolved_skills,omitempty"`
+	MissingSkills       []string `json:"missing_skills,omitempty"`
+	Message             string   `json:"message,omitempty"`
+}
+
+func decodeSkillActivationHarnessReport(output string) (skillActivationHarnessReport, error) {
+	var report skillActivationHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return report, err
+	}
+	return report, nil
 }
 
 func onboardingBookmarksScenario() scenario {
