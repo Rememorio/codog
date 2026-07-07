@@ -19,6 +19,11 @@ const (
 	LaneCommitCreated      = "lane.commit.created"
 	LanePROpened           = "lane.pr.opened"
 	LaneMergeReady         = "lane.merge.ready"
+	ShipPrepared           = "ship.prepared"
+	ShipCommitsSelected    = "ship.commits_selected"
+	ShipMerged             = "ship.merged"
+	ShipPushedMain         = "ship.pushed_main"
+	ShipProvenance         = "ship.provenance"
 	LaneFinished           = "lane.finished"
 	LaneFailed             = "lane.failed"
 	BranchStaleAgainstMain = "branch.stale_against_main"
@@ -84,6 +89,11 @@ func RequiredLaneEvents() []string {
 		LaneCommitCreated,
 		LanePROpened,
 		LaneMergeReady,
+		ShipPrepared,
+		ShipCommitsSelected,
+		ShipMerged,
+		ShipPushedMain,
+		ShipProvenance,
 		LaneFinished,
 		LaneFailed,
 		BranchStaleAgainstMain,
@@ -188,6 +198,8 @@ func CanonicalLaneEvent(eventType string, status string, finishReason string) st
 		return LanePROpened
 	case "merge_ready":
 		return LaneMergeReady
+	case ShipPrepared, ShipCommitsSelected, ShipMerged, ShipPushedMain, ShipProvenance:
+		return eventType
 	case "stale_against_main":
 		return BranchStaleAgainstMain
 	case "terminated":

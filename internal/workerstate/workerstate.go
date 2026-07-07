@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Rememorio/codog/internal/ship"
 )
 
 // FileName is the workspace-local JSON file used for worker state snapshots.
@@ -29,24 +31,26 @@ type Options struct {
 	PermissionMode string
 	PID            int
 	LastError      string
+	Ship           *ship.Report
 	Now            time.Time
 }
 
 // State is the stable JSON payload written by prompt and REPL workers.
 type State struct {
-	Kind           string    `json:"kind"`
-	WorkerID       string    `json:"worker_id"`
-	Version        string    `json:"version"`
-	Mode           string    `json:"mode"`
-	Status         string    `json:"status"`
-	Workspace      string    `json:"workspace"`
-	SessionID      string    `json:"session_id,omitempty"`
-	SessionPath    string    `json:"session_path,omitempty"`
-	Model          string    `json:"model,omitempty"`
-	PermissionMode string    `json:"permission_mode,omitempty"`
-	PID            int       `json:"pid"`
-	LastError      string    `json:"last_error,omitempty"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	Kind           string       `json:"kind"`
+	WorkerID       string       `json:"worker_id"`
+	Version        string       `json:"version"`
+	Mode           string       `json:"mode"`
+	Status         string       `json:"status"`
+	Workspace      string       `json:"workspace"`
+	SessionID      string       `json:"session_id,omitempty"`
+	SessionPath    string       `json:"session_path,omitempty"`
+	Model          string       `json:"model,omitempty"`
+	PermissionMode string       `json:"permission_mode,omitempty"`
+	PID            int          `json:"pid"`
+	LastError      string       `json:"last_error,omitempty"`
+	Ship           *ship.Report `json:"ship,omitempty"`
+	UpdatedAt      time.Time    `json:"updated_at"`
 }
 
 // New builds a worker state snapshot, filling process-local defaults when
@@ -85,6 +89,7 @@ func New(opts Options) State {
 		PermissionMode: opts.PermissionMode,
 		PID:            pid,
 		LastError:      opts.LastError,
+		Ship:           opts.Ship,
 		UpdatedAt:      now,
 	}
 }
@@ -173,6 +178,11 @@ func RenderText(w io.Writer, state State) {
 	fmt.Fprintf(w, "  Updated          %s\n", state.UpdatedAt.Format(time.RFC3339))
 	if state.LastError != "" {
 		fmt.Fprintf(w, "  Last error       %s\n", state.LastError)
+	}
+	if state.Ship != nil {
+		fmt.Fprintf(w, "  Ship             %s\n", state.Ship.Summary)
+		fmt.Fprintf(w, "  Ship method      %s\n", state.Ship.Provenance.MergeMethod)
+		fmt.Fprintf(w, "  Ship range       %s\n", state.Ship.Provenance.CommitRange)
 	}
 }
 

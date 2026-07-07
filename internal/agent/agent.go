@@ -21498,6 +21498,16 @@ func (a *App) CommitPushPR(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if report.Ship != nil {
+		_ = workerstate.Save(a.Workspace, workerstate.New(workerstate.Options{
+			Version:        version,
+			Mode:           "ship",
+			Status:         report.Status,
+			Workspace:      a.Workspace,
+			PermissionMode: a.Config.PermissionMode,
+			Ship:           report.Ship,
+		}))
+	}
 	if req.Format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -21617,6 +21627,12 @@ func renderCommitPushPRReport(out io.Writer, report prworkflow.Report) {
 	}
 	if report.PRURL != "" {
 		fmt.Fprintf(out, "  PR URL           %s\n", report.PRURL)
+	}
+	if report.Ship != nil {
+		fmt.Fprintf(out, "  Ship             %s\n", report.Ship.Summary)
+		fmt.Fprintf(out, "  Ship method      %s\n", report.Ship.Provenance.MergeMethod)
+		fmt.Fprintf(out, "  Ship range       %s\n", emptyAsNone(report.Ship.Provenance.CommitRange))
+		fmt.Fprintf(out, "  Ship actor       %s\n", emptyAsNone(report.Ship.Provenance.Actor))
 	}
 	for _, step := range report.Steps {
 		fmt.Fprintf(out, "  Step             %-12s %s", step.Name, step.Status)

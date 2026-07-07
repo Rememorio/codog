@@ -7,9 +7,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Rememorio/codog/internal/gitops"
+	"github.com/Rememorio/codog/internal/laneevents"
+	"github.com/Rememorio/codog/internal/ship"
 )
 
 type Options struct {
@@ -34,17 +38,19 @@ type Step struct {
 }
 
 type Report struct {
-	Kind    string `json:"kind"`
-	Status  string `json:"status"`
-	DryRun  bool   `json:"dry_run"`
-	Branch  string `json:"branch"`
-	Base    string `json:"base,omitempty"`
-	Remote  string `json:"remote"`
-	Title   string `json:"title"`
-	Commit  string `json:"commit,omitempty"`
-	PRURL   string `json:"pr_url,omitempty"`
-	Message string `json:"message,omitempty"`
-	Steps   []Step `json:"steps"`
+	Kind       string             `json:"kind"`
+	Status     string             `json:"status"`
+	DryRun     bool               `json:"dry_run"`
+	Branch     string             `json:"branch"`
+	Base       string             `json:"base,omitempty"`
+	Remote     string             `json:"remote"`
+	Title      string             `json:"title"`
+	Commit     string             `json:"commit,omitempty"`
+	PRURL      string             `json:"pr_url,omitempty"`
+	Message    string             `json:"message,omitempty"`
+	Steps      []Step             `json:"steps"`
+	Ship       *ship.Report       `json:"ship,omitempty"`
+	ShipEvents []laneevents.Event `json:"ship_events,omitempty"`
 }
 
 func Run(ctx context.Context, opts Options) (Report, error) {
@@ -66,6 +72,8 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
+	baseCommit := gitTrim(opts.Workspace, "rev-parse", "HEAD")
+	actor := gitActor(opts.Workspace)
 	branch := strings.TrimSpace(opts.Branch)
 	if branch == "" {
 		branch = current
@@ -95,6 +103,16 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 		Title:   title,
 		Message: opts.Message,
 	}
+	report.Ship = plannedShipReport(ship.Provenance{
+		SourceBranch: branch,
+		BaseBranch:   base,
+		BaseCommit:   baseCommit,
+		MergeMethod:  mergeMethod(branch, base, opts.NoPR),
+		Actor:        actor,
+		Remote:       opts.Remote,
+		TargetBranch: targetBranch(branch, base, opts.NoPR),
+	})
+	report.ShipEvents = ship.LaneEvents(*report.Ship)
 	if branch != current {
 		report.Steps = append(report.Steps, Step{Name: "branch", Command: []string{"git", "switch", "-c", branch}, Status: statusForDryRun(opts.DryRun)})
 	}
@@ -123,6 +141,8 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 		return report, err
 	}
 	report.Commit = commit.Commit
+	report.Ship = completedShipReport(*report.Ship, commit.Commit)
+	report.ShipEvents = ship.LaneEvents(*report.Ship)
 	report.Steps = markStep(report.Steps, "stage", "ok", "")
 	report.Steps = markStep(report.Steps, "commit", "ok", commit.Summary)
 	pushOut, err := gitops.Run(opts.Workspace, "push", "-u", opts.Remote, branch)
@@ -136,9 +156,83 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 			return report, err
 		}
 		report.PRURL = prURL
+		report.Ship.Provenance.PRURL = prURL
+		report.Ship.Provenance.PRNumber = parsePRNumber(prURL)
+		report.Ship = completedShipReport(*report.Ship, report.Commit)
+		report.ShipEvents = ship.LaneEvents(*report.Ship)
 		report.Steps = markStep(report.Steps, "pull_request", "ok", prOut)
 	}
 	return report, nil
+}
+
+func plannedShipReport(provenance ship.Provenance) *ship.Report {
+	report := ship.NewReport("planned", provenance, ship.Classification{Intentional: max(1, provenance.CommitCount), Riders: 0}, time.Now().UTC())
+	return &report
+}
+
+func completedShipReport(previous ship.Report, commit string) *ship.Report {
+	provenance := previous.Provenance
+	commit = strings.TrimSpace(commit)
+	if commit != "" {
+		provenance.FirstCommit = commit
+		provenance.LastCommit = commit
+		provenance.CommitCount = 1
+	}
+	report := ship.NewReport("confirmed", provenance, ship.Classification{Intentional: max(1, provenance.CommitCount), Riders: 0}, time.Now().UTC())
+	return &report
+}
+
+func mergeMethod(branch string, base string, noPR bool) string {
+	if noPR {
+		if branch == base || branch == "main" || branch == "master" {
+			return "direct_push"
+		}
+		return "branch_push"
+	}
+	return "pull_request"
+}
+
+func targetBranch(branch string, base string, noPR bool) string {
+	if noPR {
+		return branch
+	}
+	return base
+}
+
+func gitTrim(workspace string, args ...string) string {
+	out, err := gitops.Run(workspace, args...)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+func gitActor(workspace string) string {
+	name := gitTrim(workspace, "config", "user.name")
+	email := gitTrim(workspace, "config", "user.email")
+	switch {
+	case name != "" && email != "":
+		return name + " <" + email + ">"
+	case name != "":
+		return name
+	case email != "":
+		return email
+	default:
+		return "unknown"
+	}
+}
+
+func parsePRNumber(prURL string) int {
+	prURL = strings.TrimSpace(prURL)
+	if prURL == "" {
+		return 0
+	}
+	parts := strings.Split(strings.Trim(prURL, "/"), "/")
+	if len(parts) == 0 {
+		return 0
+	}
+	number, _ := strconv.Atoi(parts[len(parts)-1])
+	return number
 }
 
 func normalizeOptions(opts Options) Options {

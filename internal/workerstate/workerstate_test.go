@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rememorio/codog/internal/ship"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,7 +25,15 @@ func TestSaveLoadAndRenderState(t *testing.T) {
 		Model:          "claude-test",
 		PermissionMode: "workspace-write",
 		PID:            1234,
-		Now:            now,
+		Ship: func() *ship.Report {
+			report := ship.NewReport("confirmed", ship.Provenance{
+				SourceBranch: "topic",
+				CommitRange:  "abc123",
+				MergeMethod:  "direct_push",
+			}, ship.Classification{Intentional: 1}, now)
+			return &report
+		}(),
+		Now: now,
 	})
 
 	require.NoError(t, Save(workspace, state))
@@ -35,6 +44,8 @@ func TestSaveLoadAndRenderState(t *testing.T) {
 	require.Equal(t, "worker_state", loaded.Kind)
 	require.Equal(t, "worker-1", loaded.WorkerID)
 	require.Equal(t, "session-1", loaded.SessionID)
+	require.NotNil(t, loaded.Ship)
+	require.Equal(t, "direct_push", loaded.Ship.Provenance.MergeMethod)
 	require.Equal(t, now, loaded.UpdatedAt)
 
 	var out bytes.Buffer
@@ -43,6 +54,7 @@ func TestSaveLoadAndRenderState(t *testing.T) {
 	require.Contains(t, out.String(), "Worker           worker-1")
 	require.Contains(t, out.String(), "Status           idle")
 	require.Contains(t, out.String(), "Session          session-1")
+	require.Contains(t, out.String(), "Ship method      direct_push")
 }
 
 func TestSavePathAndLoadPath(t *testing.T) {

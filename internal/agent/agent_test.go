@@ -21939,7 +21939,19 @@ func TestCommitPushPRDryRunCommandAndSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, cliOut, `"kind": "commit_push_pr"`)
 	require.Contains(t, cliOut, `"status": "planned"`)
+	require.Contains(t, cliOut, `"ship"`)
+	require.Contains(t, cliOut, `"ship_events"`)
+	require.Contains(t, cliOut, `"ship.provenance"`)
+	require.Contains(t, cliOut, `"merge_method": "pull_request"`)
 	require.Contains(t, cliOut, `"pull_request"`)
+
+	stateOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "state", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, stateOut, `"mode": "ship"`)
+	require.Contains(t, stateOut, `"ship"`)
+	require.Contains(t, stateOut, `"merge_method": "pull_request"`)
 
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -21947,6 +21959,8 @@ func TestCommitPushPRDryRunCommandAndSlash(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/commit-push-pr feat: slash dry run --dry-run --no-pr", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Commit Push PR")
 	require.Contains(t, out.String(), "Dry run          true")
+	require.Contains(t, out.String(), "Ship")
+	require.Contains(t, out.String(), "Ship method")
 	require.NotContains(t, out.String(), "pull_request")
 	require.Empty(t, errOut.String())
 }
