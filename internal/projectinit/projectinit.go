@@ -9,11 +9,12 @@ import (
 )
 
 const (
-	StatusCreated = "created"
-	StatusUpdated = "updated"
-	StatusSkipped = "skipped"
-	StatusPartial = "partial"
-	NextStep      = "Review and tailor the generated project guidance"
+	StatusCreated  = "created"
+	StatusDeferred = "deferred"
+	StatusUpdated  = "updated"
+	StatusSkipped  = "skipped"
+	StatusPartial  = "partial"
+	NextStep       = "Review and tailor the generated project guidance"
 )
 
 const starterConfig = `{
@@ -34,6 +35,7 @@ var gitignoreEntries = []string{
 	".codog/undo.jsonl",
 	".codog/safer-scope.json",
 	".codog/additional-dirs.json",
+	".codog/sessions/",
 	".codog/heap/",
 	".codog/share/",
 	".codog/feedback/",
@@ -61,6 +63,7 @@ type Report struct {
 	ProjectPath        string     `json:"project_path"`
 	Created            []string   `json:"created"`
 	Updated            []string   `json:"updated"`
+	Deferred           []string   `json:"deferred"`
 	Skipped            []string   `json:"skipped"`
 	Partial            []string   `json:"partial"`
 	Artifacts          []Artifact `json:"artifacts"`
@@ -94,6 +97,7 @@ func Initialize(workspace string) (Report, error) {
 	artifacts = append(artifacts,
 		Artifact{Name: ".codog/", Status: dirStatus},
 		Artifact{Name: ".codog/instructions.md", Status: instructionsStatus},
+		Artifact{Name: ".codog/sessions/", Status: StatusDeferred},
 	)
 
 	configStatus, err := writeFileIfMissing(filepath.Join(abs, ".codog.json"), starterConfig)
@@ -172,6 +176,7 @@ func newReport(projectPath string, artifacts []Artifact) Report {
 		ProjectPath: projectPath,
 		Created:     []string{},
 		Updated:     []string{},
+		Deferred:    []string{},
 		Skipped:     []string{},
 		Partial:     []string{},
 		Artifacts:   append([]Artifact(nil), artifacts...),
@@ -183,6 +188,8 @@ func newReport(projectPath string, artifacts []Artifact) Report {
 			report.Created = append(report.Created, artifact.Name)
 		case StatusUpdated:
 			report.Updated = append(report.Updated, artifact.Name)
+		case StatusDeferred:
+			report.Deferred = append(report.Deferred, artifact.Name)
 		case StatusSkipped:
 			report.Skipped = append(report.Skipped, artifact.Name)
 		case StatusPartial:

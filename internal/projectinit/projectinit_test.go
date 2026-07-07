@@ -21,12 +21,15 @@ func TestInitializeCreatesExpectedArtifacts(t *testing.T) {
 	require.Equal(t, "ok", report.Status)
 	require.Contains(t, report.Created, ".codog/")
 	require.NotNil(t, report.Updated)
+	require.Contains(t, report.Deferred, ".codog/sessions/")
 	require.NotNil(t, report.Skipped)
 	require.NotNil(t, report.Partial)
 	require.Contains(t, report.Created, ".codog/instructions.md")
 	require.Contains(t, report.Created, ".codog.json")
 	require.Contains(t, report.Created, ".gitignore")
+	require.Equal(t, StatusDeferred, artifactByName(t, report, ".codog/sessions/").Status)
 	require.FileExists(t, filepath.Join(workspace, ".codog", "instructions.md"))
+	require.NoDirExists(t, filepath.Join(workspace, ".codog", "sessions"))
 	require.FileExists(t, filepath.Join(workspace, ".codog.json"))
 	require.FileExists(t, filepath.Join(workspace, ".gitignore"))
 
@@ -52,6 +55,7 @@ func TestInitializeCreatesExpectedArtifacts(t *testing.T) {
 	require.Contains(t, string(gitignore), ".codog/undo.jsonl")
 	require.Contains(t, string(gitignore), ".codog/safer-scope.json")
 	require.Contains(t, string(gitignore), ".codog/additional-dirs.json")
+	require.Contains(t, string(gitignore), ".codog/sessions/")
 	require.Contains(t, string(gitignore), ".codog/heap/")
 	require.Contains(t, string(gitignore), ".codog/share/")
 	require.Contains(t, string(gitignore), ".codog/feedback/")
@@ -78,6 +82,7 @@ func TestInitializeIsIdempotentAndPreservesFiles(t *testing.T) {
 	require.True(t, report.AlreadyInitialized)
 	require.Empty(t, report.Created)
 	require.Empty(t, report.Updated)
+	require.Contains(t, report.Deferred, ".codog/sessions/")
 	require.Contains(t, report.Skipped, ".codog/")
 	require.Contains(t, report.Skipped, ".codog/instructions.md")
 	require.Contains(t, report.Skipped, ".codog.json")
@@ -125,6 +130,7 @@ func TestEnsureGitignoreEntriesUpdatesExistingFile(t *testing.T) {
 	require.Contains(t, string(data), ".codog/undo.jsonl")
 	require.Contains(t, string(data), ".codog/safer-scope.json")
 	require.Contains(t, string(data), ".codog/additional-dirs.json")
+	require.Contains(t, string(data), ".codog/sessions/")
 	require.Contains(t, string(data), ".codog/heap/")
 	require.Contains(t, string(data), ".codog/share/")
 	require.Contains(t, string(data), ".codog/feedback/")
@@ -141,6 +147,7 @@ func TestEnsureGitignoreEntriesUpdatesExistingFile(t *testing.T) {
 func TestRenderText(t *testing.T) {
 	report := newReport("/repo", []Artifact{
 		{Name: ".codog/", Status: StatusCreated},
+		{Name: ".codog/sessions/", Status: StatusDeferred},
 		{Name: ".codog.json", Status: StatusSkipped},
 	})
 
@@ -150,6 +157,8 @@ func TestRenderText(t *testing.T) {
 	require.Contains(t, rendered, "Project          /repo")
 	require.Contains(t, rendered, ".codog/")
 	require.Contains(t, rendered, "created")
+	require.Contains(t, rendered, ".codog/sessions/")
+	require.Contains(t, rendered, "deferred")
 	require.Contains(t, rendered, NextStep)
 }
 

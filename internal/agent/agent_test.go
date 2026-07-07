@@ -22884,6 +22884,8 @@ func TestInitCommandAndSlash(t *testing.T) {
 	require.NoError(t, app.Init([]string{"--json"}))
 	require.Contains(t, out.String(), `"kind": "init"`)
 	require.Contains(t, out.String(), `"already_initialized": true`)
+	require.Contains(t, out.String(), `"deferred": [`)
+	require.Contains(t, out.String(), `".codog/sessions/"`)
 	require.Len(t, setupPayloads, 2)
 	out.Reset()
 
