@@ -47,6 +47,7 @@ import (
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/policyengine"
 	"github.com/Rememorio/codog/internal/powershellvalidation"
+	"github.com/Rememorio/codog/internal/provisional"
 	"github.com/Rememorio/codog/internal/recovery"
 	"github.com/Rememorio/codog/internal/reportconformance"
 	"github.com/Rememorio/codog/internal/reporting"
@@ -176,6 +177,8 @@ var claudeToolAliases = map[string]string{
 	"cronlisttool":                 "cron_list",
 	"nudge":                        "nudge",
 	"nudgetool":                    "nudge",
+	"provisionalstatus":            "provisional_status",
+	"provisionalstatustool":        "provisional_status",
 	"roadmappinpoint":              "roadmap_pinpoint",
 	"roadmappinpointtool":          "roadmap_pinpoint",
 	"reportbackpressure":           "report_backpressure",
@@ -438,6 +441,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"NotebookReadTool":             "notebook_read",
 	"Nudge":                        "nudge",
 	"NudgeTool":                    "nudge",
+	"ProvisionalStatus":            "provisional_status",
+	"ProvisionalStatusTool":        "provisional_status",
 	"PowerShell":                   "powershell",
 	"PowerShellTool":               "powershell",
 	"PolicyEvaluate":               "policy_evaluate",
@@ -701,6 +706,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(ReportBackpressureTool{ConfigHome: opts.ConfigHome})
 	r.Register(ReportSchemaTool{})
 	r.Register(NudgeTool{ConfigHome: opts.ConfigHome})
+	r.Register(ProvisionalStatusTool{ConfigHome: opts.ConfigHome})
 	r.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
 	r.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
 	r.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -8832,6 +8838,107 @@ func nudgeDeliveryFromPayload(nudgeID string, cycleID string, prompt string, del
 		delivery.DeliveredAt = parsed
 	}
 	return delivery, nil
+}
+
+type ProvisionalStatusTool struct {
+	ConfigHome string
+}
+
+func (ProvisionalStatusTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "provisional_status",
+		Description: "Deduplicate provisional in-flight acknowledgements while preserving raw repeats for audit.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"action":         map[string]any{"type": "string", "enum": []string{"observe", "get", "status", "list"}},
+				"channel":        map[string]any{"type": "string"},
+				"owner":          map[string]any{"type": "string"},
+				"status":         map[string]any{"type": "string"},
+				"progress_state": map[string]any{"type": "string"},
+				"blocker":        map[string]any{"type": "string"},
+				"eta":            map[string]any{"type": "string"},
+				"message":        map[string]any{"type": "string"},
+				"observed_at":    map[string]any{"type": "string", "format": "date-time"},
+				"window_seconds": map[string]any{"type": "integer", "minimum": 1},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (ProvisionalStatusTool) Permission() Permission { return PermissionReadOnly }
+
+func (t ProvisionalStatusTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Action        string `json:"action"`
+		Channel       string `json:"channel"`
+		Owner         string `json:"owner"`
+		Status        string `json:"status"`
+		ProgressState string `json:"progress_state"`
+		Blocker       string `json:"blocker"`
+		ETA           string `json:"eta"`
+		Message       string `json:"message"`
+		ObservedAt    string `json:"observed_at"`
+		WindowSeconds int    `json:"window_seconds"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	action := strings.ToLower(strings.TrimSpace(payload.Action))
+	if action == "" {
+		action = "observe"
+	}
+	store := provisional.NewStore(t.ConfigHome)
+	switch action {
+	case "list":
+		states, err := store.List()
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"kind": "provisional_status_list", "states": states, "count": len(states)}), nil
+	case "get", "status":
+		state, err := store.Get(payload.Channel)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"kind": "provisional_status_state", "state": state}), nil
+	case "observe":
+		update, err := provisionalUpdateFromPayload(payload.Channel, payload.Owner, payload.Status, payload.ProgressState, payload.Blocker, payload.ETA, payload.Message, payload.ObservedAt, payload.WindowSeconds)
+		if err != nil {
+			return "", err
+		}
+		observation, err := store.Observe(update)
+		if err != nil {
+			return "", err
+		}
+		return pretty(observation), nil
+	default:
+		return "", fmt.Errorf("unknown provisional_status action %q", payload.Action)
+	}
+}
+
+func provisionalUpdateFromPayload(channel string, owner string, status string, progressState string, blocker string, eta string, message string, observedAt string, windowSeconds int) (provisional.Update, error) {
+	update := provisional.Update{
+		Channel:       channel,
+		Owner:         owner,
+		Status:        status,
+		ProgressState: progressState,
+		Blocker:       blocker,
+		ETA:           eta,
+		Message:       message,
+	}
+	if strings.TrimSpace(observedAt) != "" {
+		parsed, err := time.Parse(time.RFC3339, observedAt)
+		if err != nil {
+			return provisional.Update{}, err
+		}
+		update.ObservedAt = parsed
+	}
+	if windowSeconds > 0 {
+		update.Window = time.Duration(windowSeconds) * time.Second
+	}
+	return update, nil
 }
 
 type RoadmapPinpointTool struct {

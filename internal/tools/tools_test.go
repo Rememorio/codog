@@ -1160,6 +1160,7 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "structured_output", CanonicalToolName("StructuredOutputTool"))
 	require.Equal(t, "report_backpressure", CanonicalToolName("ReportBackpressureTool"))
 	require.Equal(t, "report_schema", CanonicalToolName("ReportSchemaTool"))
+	require.Equal(t, "provisional_status", CanonicalToolName("ProvisionalStatusTool"))
 	require.Equal(t, "tool_search", CanonicalToolName("ToolSearch"))
 	require.Equal(t, "sleep", CanonicalToolName("SleepTool"))
 	require.Equal(t, "repl", CanonicalToolName("REPLTool"))
@@ -1187,6 +1188,7 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "structured_output", aliases["StructuredOutputTool"])
 	require.Equal(t, "report_backpressure", aliases["ReportBackpressureTool"])
 	require.Equal(t, "report_schema", aliases["ReportSchemaTool"])
+	require.Equal(t, "provisional_status", aliases["ProvisionalStatusTool"])
 	require.Equal(t, "testing_permission", aliases["TestingPermission"])
 	require.Equal(t, "tool_search", aliases["ToolSearch"])
 	require.Equal(t, "sleep", aliases["SleepTool"])
@@ -1457,13 +1459,17 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 86)
+	require.Len(t, infos, 87)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
 	info, ok = registry.Info("powershell")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
+	info, ok = registry.Info("ProvisionalStatus")
+	require.True(t, ok)
+	require.Equal(t, "provisional_status", info.Name)
+	require.Equal(t, PermissionReadOnly, info.Permission)
 	info, ok = registry.Info("BashOutput")
 	require.True(t, ok)
 	require.Equal(t, "bash_output", info.Name)
@@ -4144,6 +4150,61 @@ func TestNudgeToolClassifiesAndAcknowledgesCycles(t *testing.T) {
 	listOut, err := tool.Execute(context.Background(), []byte(`{"action":"list"}`))
 	require.NoError(t, err)
 	require.Contains(t, listOut, `"kind": "nudge_list"`)
+	require.Contains(t, listOut, `"count": 1`)
+}
+
+func TestProvisionalStatusToolSuppressesInFlightDuplicates(t *testing.T) {
+	configHome := t.TempDir()
+	tool := ProvisionalStatusTool{ConfigHome: configHome}
+
+	firstOut, err := tool.Execute(context.Background(), []byte(`{"action":"observe","channel":"dogfood","owner":"worker-1","progress_state":"implementing","message":"working on it","observed_at":"2026-07-07T17:00:00Z","window_seconds":300}`))
+	require.NoError(t, err)
+	require.Contains(t, firstOut, `"kind": "provisional_status"`)
+	require.Contains(t, firstOut, `"decision": "new_provisional"`)
+	require.Contains(t, firstOut, `"exposed": true`)
+	var first struct {
+		Fingerprint string `json:"fingerprint"`
+		Event       struct {
+			EventID string `json:"event_id"`
+			Status  string `json:"status"`
+		} `json:"event"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(firstOut), &first))
+	require.Equal(t, "in_flight", first.Event.Status)
+
+	secondOut, err := tool.Execute(context.Background(), []byte(`{"action":"observe","channel":"dogfood","owner":"worker-1","progress_state":"implementing","message":"please wait","observed_at":"2026-07-07T17:01:00Z","window_seconds":300}`))
+	require.NoError(t, err)
+	require.Contains(t, secondOut, `"decision": "suppressed_duplicate"`)
+	require.Contains(t, secondOut, `"exposed": false`)
+	var second struct {
+		Fingerprint string `json:"fingerprint"`
+		Event       struct {
+			EventID string `json:"event_id"`
+		} `json:"event"`
+		State struct {
+			RawEventCount   int `json:"raw_event_count"`
+			SuppressedCount int `json:"suppressed_count"`
+		} `json:"state"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(secondOut), &second))
+	require.Equal(t, first.Fingerprint, second.Fingerprint)
+	require.NotEqual(t, first.Event.EventID, second.Event.EventID)
+	require.Equal(t, 2, second.State.RawEventCount)
+	require.Equal(t, 1, second.State.SuppressedCount)
+
+	changedOut, err := tool.Execute(context.Background(), []byte(`{"action":"observe","channel":"dogfood","owner":"worker-1","progress_state":"implementing","blocker":"waiting for CI","message":"working on it","observed_at":"2026-07-07T17:02:00Z","window_seconds":300}`))
+	require.NoError(t, err)
+	require.Contains(t, changedOut, `"decision": "material_change"`)
+	require.Contains(t, changedOut, `"exposed": true`)
+
+	statusOut, err := tool.Execute(context.Background(), []byte(`{"action":"get","channel":"dogfood"}`))
+	require.NoError(t, err)
+	require.Contains(t, statusOut, `"kind": "provisional_status_state"`)
+	require.Contains(t, statusOut, `"blocker": "waiting for CI"`)
+
+	listOut, err := tool.Execute(context.Background(), []byte(`{"action":"list"}`))
+	require.NoError(t, err)
+	require.Contains(t, listOut, `"kind": "provisional_status_list"`)
 	require.Contains(t, listOut, `"count": 1`)
 }
 

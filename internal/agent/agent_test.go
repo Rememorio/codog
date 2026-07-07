@@ -15939,7 +15939,7 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Model            claude-test")
 	require.Contains(t, out.String(), "Memory files     1")
 	require.Contains(t, out.String(), "Task lanes       active=0 blocked=0 finished=0")
-	require.Contains(t, out.String(), "Tools            86")
+	require.Contains(t, out.String(), "Tools            87")
 	out.Reset()
 
 	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{Resume: "source"}))
