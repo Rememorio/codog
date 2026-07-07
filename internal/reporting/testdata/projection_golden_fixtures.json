@@ -1,0 +1,169 @@
+{
+  "schema_version": "codog.reporting.projection_fixtures.v1",
+  "fixture_set": "reporting-projection-golden-v1",
+  "validates": [
+    "deterministic_projection_identity",
+    "redaction_regression_lock",
+    "capability_downgrade_regression_lock",
+    "audience_view_regression_lock"
+  ],
+  "sources": [
+    {
+      "name": "new_internal_evidence",
+      "channel": "dogfood",
+      "filings": [
+        {
+          "id": "rp-golden-redaction",
+          "title": "projection golden redaction",
+          "priority": "p1",
+          "severity": "high",
+          "impact": "observability_debt",
+          "root_cause_preview": "operator trace includes internal queue names",
+          "verification_commands": [
+            "go test ./internal/reporting"
+          ],
+          "now": "2026-07-07T13:00:00Z"
+        }
+      ],
+      "reports": [
+        {
+          "name": "first",
+          "now": "2026-07-07T13:01:00Z"
+        }
+      ]
+    },
+    {
+      "name": "no_change_negative_evidence",
+      "channel": "dogfood",
+      "filings": [
+        {
+          "id": "rp-golden-no-change",
+          "title": "projection golden no change",
+          "priority": "p2",
+          "severity": "medium",
+          "impact": "operator_friction",
+          "now": "2026-07-07T14:00:00Z"
+        }
+      ],
+      "reports": [
+        {
+          "name": "first",
+          "now": "2026-07-07T14:01:00Z"
+        },
+        {
+          "name": "no_change",
+          "trigger_id": "golden-nudge-1",
+          "checked_surfaces": [
+            "roadmap",
+            "sessions"
+          ],
+          "checked_window": "2026-07-07T14:01:00Z/2026-07-07T14:02:00Z",
+          "now": "2026-07-07T14:02:00Z"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "public_full_redacts_internal_claims_and_item_detail",
+      "source": "new_internal_evidence",
+      "report": "first",
+      "consumer": {
+        "consumer": "public-viewer",
+        "schema_versions": [
+          "codog.reporting.report.v1"
+        ],
+        "max_sensitivity": "public"
+      },
+      "view": "full",
+      "verbosity": "verbose",
+      "expected_projection_id": "8726177642a65d63",
+      "expected_identity_input_hash": "489860dba1de8ce9",
+      "expected_payload_hash": "1418431db5c78dc5",
+      "expected_canonical_equivalence_hash": "8726177642a65d63",
+      "expected_redaction_paths": [
+        "claims[0].text",
+        "claims[2].text",
+        "new_items[0].claims",
+        "new_items[0].evidence_refs",
+        "new_items[0].handoff"
+      ],
+      "expected_omitted_field_families": []
+    },
+    {
+      "name": "legacy_claim_delta_projection_downgrades_capabilities",
+      "source": "new_internal_evidence",
+      "report": "first",
+      "consumer": {
+        "consumer": "legacy-claw",
+        "schema_versions": [
+          "legacy.report.v1"
+        ],
+        "field_families": [
+          "claims",
+          "field_deltas"
+        ],
+        "max_sensitivity": "internal"
+      },
+      "view": "legacy",
+      "verbosity": "normal",
+      "expected_projection_id": "cb803e478e96aa95",
+      "expected_identity_input_hash": "8c94aeb04ffd69b8",
+      "expected_payload_hash": "fd52dcd55f9f0a96",
+      "expected_canonical_equivalence_hash": "cb803e478e96aa95",
+      "expected_redaction_paths": [],
+      "expected_omitted_field_families": [
+        "compatibility",
+        "freshness",
+        "items",
+        "negative_evidence"
+      ]
+    },
+    {
+      "name": "brief_audience_projection_locks_summary_shape",
+      "source": "new_internal_evidence",
+      "report": "first",
+      "consumer": {
+        "consumer": "clawhip",
+        "schema_versions": [
+          "codog.reporting.report.v1"
+        ],
+        "max_sensitivity": "internal"
+      },
+      "view": "delta_brief",
+      "verbosity": "brief",
+      "expected_projection_id": "cbaf320e33ad2207",
+      "expected_identity_input_hash": "3b1d23dab5a2f800",
+      "expected_payload_hash": "7c1f959130336280",
+      "expected_canonical_equivalence_hash": "cbaf320e33ad2207",
+      "expected_redaction_paths": [],
+      "expected_omitted_field_families": [
+        "compatibility",
+        "negative_evidence",
+        "freshness"
+      ]
+    },
+    {
+      "name": "public_ops_audit_omits_negative_evidence",
+      "source": "no_change_negative_evidence",
+      "report": "no_change",
+      "consumer": {
+        "consumer": "public-audit",
+        "schema_versions": [
+          "codog.reporting.report.v1"
+        ],
+        "max_sensitivity": "public"
+      },
+      "view": "ops_audit",
+      "verbosity": "normal",
+      "expected_projection_id": "001261a0da099142",
+      "expected_identity_input_hash": "fa9091fcf7a54f69",
+      "expected_payload_hash": "cf01cacb1d29d6c9",
+      "expected_canonical_equivalence_hash": "001261a0da099142",
+      "expected_redaction_paths": [
+        "negative_evidence"
+      ],
+      "expected_omitted_field_families": []
+    }
+  ]
+}
