@@ -124,6 +124,21 @@ type DiffOptions struct {
 	Paths  []string
 }
 
+type PreservedUntrackedFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+type PreservedGitState struct {
+	RemoteBaseSHA  string                   `json:"remote_base_sha,omitempty"`
+	RemoteBase     string                   `json:"remote_base,omitempty"`
+	Patch          string                   `json:"patch"`
+	UntrackedFiles []PreservedUntrackedFile `json:"untracked_files"`
+	FormatPatch    string                   `json:"format_patch,omitempty"`
+	HeadSHA        string                   `json:"head_sha,omitempty"`
+	BranchName     string                   `json:"branch_name,omitempty"`
+}
+
 func Status(workspace string) (string, error) {
 	return git(workspace, "status", "--short", "--branch")
 }
@@ -303,6 +318,44 @@ func StashPush(workspace string, options StashPushOptions) (string, error) {
 		args = append(args, "-m", strings.TrimSpace(options.Message))
 	}
 	return git(workspace, args...)
+}
+
+func PreserveStateForIssue(workspace string) (*PreservedGitState, error) {
+	if _, err := git(workspace, "rev-parse", "--is-inside-work-tree"); err != nil {
+		return nil, nil
+	}
+	untracked, err := captureUntrackedFiles(workspace, 20, 512*1024, 2*1024*1024)
+	if err != nil {
+		return nil, err
+	}
+	identity, _ := InspectIdentity(workspace)
+	headSHA := identity.HeadSHA
+	branchName := identity.HeadRef
+	if isShallowClone(workspace) {
+		patch := bestEffortGit(workspace, "diff", "HEAD")
+		return &PreservedGitState{Patch: patch, UntrackedFiles: untracked, HeadSHA: headSHA, BranchName: branchName}, nil
+	}
+	remoteBase := findRemoteBase(workspace)
+	if remoteBase == "" {
+		patch := bestEffortGit(workspace, "diff", "HEAD")
+		return &PreservedGitState{Patch: patch, UntrackedFiles: untracked, HeadSHA: headSHA, BranchName: branchName}, nil
+	}
+	remoteBaseSHA, err := git(workspace, "merge-base", "HEAD", remoteBase)
+	if err != nil || strings.TrimSpace(remoteBaseSHA) == "" {
+		patch := bestEffortGit(workspace, "diff", "HEAD")
+		return &PreservedGitState{Patch: patch, UntrackedFiles: untracked, HeadSHA: headSHA, BranchName: branchName}, nil
+	}
+	remoteBaseSHA = strings.TrimSpace(remoteBaseSHA)
+	formatPatch := bestEffortGit(workspace, "format-patch", remoteBaseSHA+"..HEAD", "--stdout")
+	return &PreservedGitState{
+		RemoteBaseSHA:  remoteBaseSHA,
+		RemoteBase:     remoteBase,
+		Patch:          bestEffortGit(workspace, "diff", remoteBaseSHA),
+		UntrackedFiles: untracked,
+		FormatPatch:    formatPatch,
+		HeadSHA:        headSHA,
+		BranchName:     branchName,
+	}, nil
 }
 
 func StashApply(workspace string, ref string) (string, error) {
@@ -915,6 +968,95 @@ func isLinkedWorktree(workspace, gitDir string) bool {
 		}
 	}
 	return false
+}
+
+func findRemoteBase(workspace string) string {
+	if upstream, err := git(workspace, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"); err == nil && strings.TrimSpace(upstream) != "" {
+		return strings.TrimSpace(upstream)
+	}
+	if head, err := git(workspace, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); err == nil && strings.TrimSpace(head) != "" {
+		return strings.TrimSpace(head)
+	}
+	if show, err := git(workspace, "remote", "show", "origin"); err == nil {
+		for _, line := range strings.Split(show, "\n") {
+			line = strings.TrimSpace(line)
+			if branch, ok := strings.CutPrefix(line, "HEAD branch: "); ok && strings.TrimSpace(branch) != "" {
+				return "origin/" + strings.TrimSpace(branch)
+			}
+		}
+	}
+	for _, candidate := range []string{"origin/main", "origin/staging", "origin/master"} {
+		if _, err := git(workspace, "rev-parse", "--verify", candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func isShallowClone(workspace string) bool {
+	gitDir, err := git(workspace, "rev-parse", "--git-dir")
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(normalizeGitDir(workspace, gitDir), "shallow"))
+	return err == nil
+}
+
+func captureUntrackedFiles(workspace string, maxFiles int, maxFileSize int64, maxTotalSize int64) ([]PreservedUntrackedFile, error) {
+	raw, err := git(workspace, "ls-files", "--others", "--exclude-standard")
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var out []PreservedUntrackedFile
+	var total int64
+	for _, path := range strings.Split(raw, "\n") {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if maxFiles > 0 && len(out) >= maxFiles {
+			break
+		}
+		fullPath := filepath.Join(workspace, filepath.FromSlash(path))
+		info, err := os.Stat(fullPath)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		size := info.Size()
+		if maxFileSize > 0 && size > maxFileSize {
+			continue
+		}
+		if maxTotalSize > 0 && total+size > maxTotalSize {
+			break
+		}
+		data, err := os.ReadFile(fullPath)
+		if err != nil || looksBinary(data) {
+			continue
+		}
+		out = append(out, PreservedUntrackedFile{Path: filepath.ToSlash(path), Content: string(data)})
+		total += size
+	}
+	return out, nil
+}
+
+func looksBinary(data []byte) bool {
+	for i, b := range data {
+		if i >= 8192 {
+			break
+		}
+		if b == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func bestEffortGit(workspace string, args ...string) string {
+	out, err := git(workspace, args...)
+	if err != nil {
+		return ""
+	}
+	return out
 }
 
 func git(workspace string, args ...string) (string, error) {

@@ -292,6 +292,19 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, gitWorkspace.Output, `"status": "stale"`)
 	require.Contains(t, gitWorkspace.Output, `"verification_blocked": true`)
 
+	gitPreserveState := findScenario(t, report, "git_preserve_state_roundtrip")
+	require.True(t, gitPreserveState.OK)
+	require.Equal(t, "git-workspace", gitPreserveState.Category)
+	require.Equal(t, 0, gitPreserveState.ToolCalls)
+	require.Equal(t, "git preserve state harness ok", gitPreserveState.FinalMessage)
+	require.Contains(t, gitPreserveState.Output, `"kind":"git_preserve_state"`)
+	require.Contains(t, gitPreserveState.Output, `"remote_base":"origin/main"`)
+	require.Contains(t, gitPreserveState.Output, `"branch_name":"main"`)
+	require.Contains(t, gitPreserveState.Output, `"patch_has_feature":true`)
+	require.Contains(t, gitPreserveState.Output, `"patch_has_dirty":true`)
+	require.Contains(t, gitPreserveState.Output, `"format_patch":true`)
+	require.Contains(t, gitPreserveState.Output, `"untracked_files":1`)
+
 	worktreeLifecycle := findScenario(t, report, "worktree_lifecycle_roundtrip")
 	require.True(t, worktreeLifecycle.OK)
 	require.Equal(t, "git-workspace", worktreeLifecycle.Category)
@@ -302,8 +315,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, worktreeLifecycle.Output, "worktree lifecycle harness ok")
 	gitWorkspaceCategory := findCategory(t, report, "git-workspace")
 	require.True(t, gitWorkspaceCategory.OK)
-	require.Equal(t, 2, gitWorkspaceCategory.Total)
-	require.ElementsMatch(t, []string{"git_workspace_roundtrip", "worktree_lifecycle_roundtrip"}, gitWorkspaceCategory.Scenarios)
+	require.Equal(t, 3, gitWorkspaceCategory.Total)
+	require.ElementsMatch(t, []string{"git_workspace_roundtrip", "git_preserve_state_roundtrip", "worktree_lifecycle_roundtrip"}, gitWorkspaceCategory.Scenarios)
 
 	planTodo := findScenario(t, report, "plan_todo_roundtrip")
 	require.True(t, planTodo.OK)
@@ -1214,6 +1227,11 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	gitWorkspace := findManifestScenario(t, manifest, "git_workspace_roundtrip")
 	require.Equal(t, "git-workspace", gitWorkspace.Category)
 	require.Contains(t, gitWorkspace.ParityRefs, "Branch freshness")
+
+	gitPreserveState := findManifestScenario(t, manifest, "git_preserve_state_roundtrip")
+	require.Equal(t, "git-workspace", gitPreserveState.Category)
+	require.Contains(t, gitPreserveState.ParityRefs, "Issue draft")
+	require.Contains(t, gitPreserveState.ParityRefs, "Pull request draft")
 
 	worktreeLifecycle := findManifestScenario(t, manifest, "worktree_lifecycle_roundtrip")
 	require.Equal(t, "git-workspace", worktreeLifecycle.Category)

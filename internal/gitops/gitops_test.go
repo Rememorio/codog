@@ -106,6 +106,67 @@ func TestInspectIdentityReportsHeadAndDetachedState(t *testing.T) {
 	require.NotEmpty(t, identity.HeadShortSHA)
 }
 
+func TestPreserveStateForIssueFallsBackWithoutRemote(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runGit(t, workspace, "init", "-b", "main")
+	runGit(t, workspace, "config", "user.email", "codog@example.test")
+	runGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("base\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "chore: base")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("base\nchange\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "scratch.txt"), []byte("scratch\n"), 0o644))
+
+	state, err := PreserveStateForIssue(workspace)
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Empty(t, state.RemoteBase)
+	require.Empty(t, state.RemoteBaseSHA)
+	require.Empty(t, state.FormatPatch)
+	require.NotEmpty(t, state.HeadSHA)
+	require.Equal(t, "main", state.BranchName)
+	require.Contains(t, state.Patch, "+change")
+	require.Equal(t, []PreservedUntrackedFile{{Path: "scratch.txt", Content: "scratch\n"}}, state.UntrackedFiles)
+}
+
+func TestPreserveStateForIssueUsesRemoteBase(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	runGit(t, t.TempDir(), "init", "--bare", remote)
+	workspace := t.TempDir()
+	runGit(t, workspace, "init", "-b", "main")
+	runGit(t, workspace, "config", "user.email", "codog@example.test")
+	runGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("base\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "chore: base")
+	baseSHA, err := Run(workspace, "rev-parse", "HEAD")
+	require.NoError(t, err)
+	runGit(t, workspace, "remote", "add", "origin", remote)
+	runGit(t, workspace, "push", "-u", "origin", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "feature.txt"), []byte("feature\n"), 0o644))
+	runGit(t, workspace, "add", "feature.txt")
+	runGit(t, workspace, "commit", "-m", "feat: preserve state")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("base\nworktree\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "scratch.txt"), []byte("scratch\n"), 0o644))
+
+	state, err := PreserveStateForIssue(workspace)
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Equal(t, "origin/main", state.RemoteBase)
+	require.Equal(t, baseSHA, state.RemoteBaseSHA)
+	require.Equal(t, "main", state.BranchName)
+	require.Contains(t, state.Patch, "+feature")
+	require.Contains(t, state.Patch, "+worktree")
+	require.Contains(t, state.FormatPatch, "feat: preserve state")
+	require.Equal(t, []PreservedUntrackedFile{{Path: "scratch.txt", Content: "scratch\n"}}, state.UntrackedFiles)
+}
+
 func TestIsNoGitRepoError(t *testing.T) {
 	require.False(t, IsNoGitRepoError(nil))
 	require.False(t, IsNoGitRepoError(errors.New("permission denied")))

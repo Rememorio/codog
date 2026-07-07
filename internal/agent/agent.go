@@ -21128,17 +21128,28 @@ type draftRequest struct {
 }
 
 type draftReport struct {
-	Kind            string `json:"kind"`
-	Action          string `json:"action"`
-	Status          string `json:"status"`
-	File            string `json:"file"`
-	Bytes           int    `json:"bytes"`
-	Title           string `json:"title"`
-	Context         string `json:"context,omitempty"`
-	Branch          string `json:"branch,omitempty"`
-	GitClean        bool   `json:"git_clean"`
-	SessionID       string `json:"session_id,omitempty"`
-	SessionMessages int    `json:"session_messages,omitempty"`
+	Kind            string               `json:"kind"`
+	Action          string               `json:"action"`
+	Status          string               `json:"status"`
+	File            string               `json:"file"`
+	Bytes           int                  `json:"bytes"`
+	Title           string               `json:"title"`
+	Context         string               `json:"context,omitempty"`
+	Branch          string               `json:"branch,omitempty"`
+	GitClean        bool                 `json:"git_clean"`
+	SessionID       string               `json:"session_id,omitempty"`
+	SessionMessages int                  `json:"session_messages,omitempty"`
+	GitState        *draftGitStateReport `json:"git_state,omitempty"`
+}
+
+type draftGitStateReport struct {
+	RemoteBase     string `json:"remote_base,omitempty"`
+	RemoteBaseSHA  string `json:"remote_base_sha,omitempty"`
+	HeadSHA        string `json:"head_sha,omitempty"`
+	BranchName     string `json:"branch_name,omitempty"`
+	PatchBytes     int    `json:"patch_bytes"`
+	UntrackedFiles int    `json:"untracked_files"`
+	FormatPatch    bool   `json:"format_patch"`
 }
 
 type draftBundle struct {
@@ -21152,6 +21163,7 @@ type draftBundle struct {
 	StagedStat string
 	RecentLog  string
 	Remote     string
+	GitState   *gitops.PreservedGitState
 }
 
 func (a *App) PullRequestDraft(args []string, overrides config.FlagOverrides) error {
@@ -22990,6 +23002,9 @@ func (a *App) writeDraft(kind string, args []string, overrides config.FlagOverri
 		RecentLog:  boundedGitOutput(a.Workspace, 12000, "log", "--oneline", "--decorate", "--max-count=12"),
 		Remote:     boundedGitOutput(a.Workspace, 2000, "remote", "get-url", "origin"),
 	}
+	if state, err := gitops.PreserveStateForIssue(a.Workspace); err == nil {
+		bundle.GitState = state
+	}
 	bundle.Title = draftTitle(kind, bundle)
 	path := a.draftOutputPath(kind, req.Output, createdAt)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -23014,6 +23029,7 @@ func (a *App) writeDraft(kind string, args []string, overrides config.FlagOverri
 		GitClean:        bundle.Status.Git.Clean,
 		SessionID:       bundle.Status.Session.ID,
 		SessionMessages: bundle.Status.Session.MessageCount,
+		GitState:        draftGitStateSummary(bundle.GitState),
 	}
 	if req.Format == "json" {
 		encoded, _ := json.MarshalIndent(report, "", "  ")
@@ -23135,6 +23151,14 @@ func renderDraftReport(out io.Writer, report draftReport) {
 	if report.SessionID != "" {
 		fmt.Fprintf(out, "  Session          %s (%d messages)\n", report.SessionID, report.SessionMessages)
 	}
+	if report.GitState != nil {
+		fmt.Fprintf(out, "  Git state        branch=%s remote_base=%s patch_bytes=%d untracked=%d\n",
+			emptyAs(report.GitState.BranchName, "detached"),
+			emptyAs(report.GitState.RemoteBase, "none"),
+			report.GitState.PatchBytes,
+			report.GitState.UntrackedFiles,
+		)
+	}
 }
 
 func renderDraftMarkdown(bundle draftBundle) string {
@@ -23171,6 +23195,30 @@ func renderDraftMarkdown(bundle draftBundle) string {
 	writeDraftCodeBlock(&builder, emptyAs(bundle.StagedStat, "No staged changes."))
 	builder.WriteString("\n## Recent Commits\n\n")
 	writeDraftCodeBlock(&builder, bundle.RecentLog)
+	if bundle.GitState != nil {
+		builder.WriteString("\n## Preserved Git State\n\n")
+		builder.WriteString(fmt.Sprintf("- Remote base: %s\n", emptyAs(bundle.GitState.RemoteBase, "none")))
+		builder.WriteString(fmt.Sprintf("- Remote base SHA: %s\n", emptyAs(bundle.GitState.RemoteBaseSHA, "none")))
+		builder.WriteString(fmt.Sprintf("- HEAD SHA: %s\n", emptyAs(bundle.GitState.HeadSHA, "unknown")))
+		builder.WriteString(fmt.Sprintf("- Branch: %s\n", emptyAs(bundle.GitState.BranchName, "detached")))
+		builder.WriteString(fmt.Sprintf("- Patch bytes: %d\n", len(bundle.GitState.Patch)))
+		builder.WriteString(fmt.Sprintf("- Untracked files: %d\n", len(bundle.GitState.UntrackedFiles)))
+		builder.WriteString(fmt.Sprintf("- Format patch: %t\n", strings.TrimSpace(bundle.GitState.FormatPatch) != ""))
+		builder.WriteString("\n### Patch\n\n")
+		writeDraftCodeBlock(&builder, boundedString(bundle.GitState.Patch, 20000))
+		if strings.TrimSpace(bundle.GitState.FormatPatch) != "" {
+			builder.WriteString("\n### Format Patch\n\n")
+			writeDraftCodeBlock(&builder, boundedString(bundle.GitState.FormatPatch, 20000))
+		}
+		if len(bundle.GitState.UntrackedFiles) != 0 {
+			builder.WriteString("\n### Untracked Files\n\n")
+			for _, file := range bundle.GitState.UntrackedFiles {
+				builder.WriteString(fmt.Sprintf("#### %s\n\n", file.Path))
+				writeDraftCodeBlock(&builder, boundedString(file.Content, 12000))
+				builder.WriteString("\n")
+			}
+		}
+	}
 	if bundle.Kind == "pr" {
 		builder.WriteString("\n## Checklist\n\n")
 		builder.WriteString("- [ ] Tests pass\n")
@@ -23185,6 +23233,21 @@ func renderDraftMarkdown(bundle draftBundle) string {
 	return builder.String()
 }
 
+func draftGitStateSummary(state *gitops.PreservedGitState) *draftGitStateReport {
+	if state == nil {
+		return nil
+	}
+	return &draftGitStateReport{
+		RemoteBase:     state.RemoteBase,
+		RemoteBaseSHA:  state.RemoteBaseSHA,
+		HeadSHA:        state.HeadSHA,
+		BranchName:     state.BranchName,
+		PatchBytes:     len(state.Patch),
+		UntrackedFiles: len(state.UntrackedFiles),
+		FormatPatch:    strings.TrimSpace(state.FormatPatch) != "",
+	}
+}
+
 func writeDraftCodeBlock(builder *strings.Builder, text string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -23193,6 +23256,15 @@ func writeDraftCodeBlock(builder *strings.Builder, text string) {
 	builder.WriteString("```text\n")
 	builder.WriteString(text)
 	builder.WriteString("\n```\n")
+}
+
+func boundedString(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	if limit <= 0 || len([]rune(text)) <= limit {
+		return text
+	}
+	runes := []rune(text)
+	return string(runes[:limit]) + "\n[truncated]"
 }
 
 func boundedGitOutput(workspace string, limit int, args ...string) string {

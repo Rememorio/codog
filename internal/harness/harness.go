@@ -214,6 +214,7 @@ var scenarioOrder = []string{
 	"web_access_roundtrip",
 	"web_access_limits_roundtrip",
 	"git_workspace_roundtrip",
+	"git_preserve_state_roundtrip",
 	"worktree_lifecycle_roundtrip",
 	"plan_todo_roundtrip",
 	"todo_completion_verification_roundtrip",
@@ -744,6 +745,7 @@ func Run(ctx context.Context) (Report, error) {
 		webAccessScenario(),
 		webAccessLimitsScenario(),
 		gitWorkspaceScenario(),
+		gitPreserveStateScenario(),
 		worktreeLifecycleScenario(),
 		planTodoScenario(),
 		todoCompletionVerificationScenario(),
@@ -1658,6 +1660,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "git-workspace",
 		Description: "Exercises git status, diff, log, show, blame, and stale-branch freshness checks against a local repository.",
 		ParityRefs:  []string{"Git tools", "Branch freshness", "Workspace state"},
+	},
+	"git_preserve_state_roundtrip": {
+		Category:    "git-workspace",
+		Description: "Preserves issue and pull-request draft git state from a remote merge-base, including patch, committed format-patch data, and untracked files.",
+		ParityRefs:  []string{"Git tools", "Issue draft", "Pull request draft", "Workspace state"},
 	},
 	"worktree_lifecycle_roundtrip": {
 		Category:    "git-workspace",
@@ -7420,6 +7427,108 @@ func gitWorkspaceScenario() scenario {
 				ToolCalls:    6,
 				ToolUses:     []string{"git_status", "git_diff", "git_log", "git_show", "git_blame", "branch_freshness"},
 				RequestCount: 6,
+			}, nil
+		},
+	}
+}
+
+func gitPreserveStateScenario() scenario {
+	return scenario{
+		name: "git_preserve_state_roundtrip",
+		runLocal: func(_ context.Context, workspace string) (localScenarioResult, error) {
+			remote := filepath.Join(workspace, "origin.git")
+			if err := runHarnessGit(workspace, "init", "-q", "--bare", remote); err != nil {
+				return localScenarioResult{}, err
+			}
+			repo := filepath.Join(workspace, "repo")
+			if err := os.MkdirAll(repo, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := runHarnessGit(repo, "init", "-q", "-b", "main"); err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, args := range [][]string{
+				{"config", "user.email", "codog@example.test"},
+				{"config", "user.name", "Codog Test"},
+			} {
+				if err := runHarnessGit(repo, args...); err != nil {
+					return localScenarioResult{}, err
+				}
+			}
+			notesPath := filepath.Join(repo, "notes.txt")
+			if err := os.WriteFile(notesPath, []byte("base\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, args := range [][]string{
+				{"add", "notes.txt"},
+				{"commit", "-q", "-m", "chore: base"},
+				{"remote", "add", "origin", remote},
+				{"push", "-q", "-u", "origin", "main"},
+			} {
+				if err := runHarnessGit(repo, args...); err != nil {
+					return localScenarioResult{}, err
+				}
+			}
+			baseSHA, err := gitops.Run(repo, "rev-parse", "HEAD")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(repo, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, args := range [][]string{
+				{"add", "feature.txt"},
+				{"commit", "-q", "-m", "feat: preserve state"},
+			} {
+				if err := runHarnessGit(repo, args...); err != nil {
+					return localScenarioResult{}, err
+				}
+			}
+			if err := os.WriteFile(notesPath, []byte("base\nworktree\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(repo, "scratch.txt"), []byte("scratch\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			state, err := gitops.PreserveStateForIssue(repo)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if state == nil {
+				return localScenarioResult{}, errors.New("git preserve state returned nil")
+			}
+			if state.RemoteBase != "origin/main" || state.RemoteBaseSHA != baseSHA || state.BranchName != "main" {
+				return localScenarioResult{}, fmt.Errorf("unexpected preserved git identity: %#v", state)
+			}
+			for _, expected := range []string{"+feature", "+worktree"} {
+				if !strings.Contains(state.Patch, expected) {
+					return localScenarioResult{}, fmt.Errorf("preserved patch missing %s", expected)
+				}
+			}
+			if !strings.Contains(state.FormatPatch, "feat: preserve state") {
+				return localScenarioResult{}, fmt.Errorf("format patch missing commit subject")
+			}
+			if len(state.UntrackedFiles) != 1 || state.UntrackedFiles[0].Path != "scratch.txt" || state.UntrackedFiles[0].Content != "scratch\n" {
+				return localScenarioResult{}, fmt.Errorf("unexpected untracked preservation: %#v", state.UntrackedFiles)
+			}
+			output, err := json.Marshal(map[string]any{
+				"kind":              "git_preserve_state",
+				"remote_base":       state.RemoteBase,
+				"remote_base_sha":   state.RemoteBaseSHA,
+				"branch_name":       state.BranchName,
+				"patch_has_feature": strings.Contains(state.Patch, "+feature"),
+				"patch_has_dirty":   strings.Contains(state.Patch, "+worktree"),
+				"format_patch":      strings.TrimSpace(state.FormatPatch) != "",
+				"untracked_files":   len(state.UntrackedFiles),
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(output),
+				FinalMessage: "git preserve state harness ok",
+				RequestCount: 1,
 			}, nil
 		},
 	}
