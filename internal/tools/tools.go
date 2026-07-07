@@ -6281,6 +6281,10 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		if err != nil {
 			return "", err
 		}
+		organized, err := codeintel.OrganizeGoImports(t.Workspace, rel, false)
+		if err != nil {
+			return "", err
+		}
 		actions := []map[string]any{}
 		if format.Changed {
 			actions = append(actions, map[string]any{
@@ -6288,6 +6292,14 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 				"kind":  "source.format",
 				"path":  rel,
 				"edit":  format,
+			})
+		}
+		if organized.ImportCount > 0 && organized.Changed {
+			actions = append(actions, map[string]any{
+				"title": "Organize Go imports",
+				"kind":  "source.organizeImports",
+				"path":  rel,
+				"edit":  organized,
 			})
 		}
 		if len(diagnostics) > 0 {
@@ -6323,6 +6335,13 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 				return "", err
 			}
 			resolved := map[string]any{"title": "Format Go file", "kind": "source.format", "path": rel, "edit": format}
+			return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "selected": title, "resolved": resolved})), nil
+		case "organize go imports", "organize imports", "source.organizeimports", "gopls.organize_imports", "gopls.organizeimports":
+			organized, err := codeintel.OrganizeGoImports(t.Workspace, rel, false)
+			if err != nil {
+				return "", err
+			}
+			resolved := map[string]any{"title": "Organize Go imports", "kind": "source.organizeImports", "path": rel, "edit": organized}
 			return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "selected": title, "resolved": resolved})), nil
 		case "review go diagnostics", "diagnostics", "quickfix":
 			diagnostics, err := codeintel.GoDiagnostics(ctx, t.Workspace, []string{rel})
@@ -6492,6 +6511,19 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 				return "", err
 			}
 			return pretty(staticLSPToolReport(action, fallback, map[string]any{"command": command, "path": rel, "format": result})), nil
+		case "organize_imports", "organize-imports", "organize imports", "source.organizeimports", "gopls.organize_imports", "gopls.organizeimports":
+			if strings.TrimSpace(commandPath) == "" {
+				return "", errors.New("path or first string argument is required for lsp execute_command organize_imports")
+			}
+			rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, commandPath)
+			if err != nil {
+				return "", err
+			}
+			result, err := codeintel.OrganizeGoImports(t.Workspace, rel, false)
+			if err != nil {
+				return "", err
+			}
+			return pretty(staticLSPToolReport(action, fallback, map[string]any{"command": command, "path": rel, "organize_imports": result})), nil
 		case "diagnostics", "go.diagnostics":
 			patterns := []string{}
 			if strings.TrimSpace(commandPath) != "" {

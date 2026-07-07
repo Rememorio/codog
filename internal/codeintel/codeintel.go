@@ -296,6 +296,16 @@ type FormatResult struct {
 	Content string `json:"content,omitempty"`
 }
 
+// OrganizeImportsResult reports the result of static Go import organization.
+type OrganizeImportsResult struct {
+	FormatResult
+	ImportCount                int      `json:"import_count"`
+	RemovedImports             []string `json:"removed_imports,omitempty"`
+	DuplicateImports           []string `json:"duplicate_imports,omitempty"`
+	MissingImportInference     bool     `json:"missing_import_inference"`
+	MissingImportInferenceNote string   `json:"missing_import_inference_note,omitempty"`
+}
+
 // MapEntry describes one file or directory in a workspace code map.
 type MapEntry struct {
 	Path  string `json:"path"`
@@ -2496,6 +2506,146 @@ func FormatGoFile(workspace string, requested string, write bool) (FormatResult,
 		Bytes:   len(formatted),
 		Content: string(formatted),
 	}, nil
+}
+
+// OrganizeGoImports removes unused and duplicate Go imports, sorts import
+// declarations, formats the file, and optionally writes the organized content.
+func OrganizeGoImports(workspace string, requested string, write bool) (OrganizeImportsResult, error) {
+	if strings.TrimSpace(requested) == "" {
+		return OrganizeImportsResult{}, errors.New("path is required")
+	}
+	path, rel, err := resolveWorkspaceFile(workspace, requested)
+	if err != nil {
+		return OrganizeImportsResult{}, err
+	}
+	if !strings.HasSuffix(strings.ToLower(path), ".go") {
+		return OrganizeImportsResult{}, errors.New("path must point to a .go file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return OrganizeImportsResult{}, err
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, data, parser.ParseComments)
+	if err != nil {
+		return OrganizeImportsResult{}, err
+	}
+	importCount := len(file.Imports)
+	used := usedImportNames(file)
+	seen := map[string]bool{}
+	removed := []string{}
+	duplicates := []string{}
+	decls := make([]ast.Decl, 0, len(file.Decls))
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.IMPORT {
+			decls = append(decls, decl)
+			continue
+		}
+		specs := make([]ast.Spec, 0, len(gen.Specs))
+		for _, spec := range gen.Specs {
+			importSpec, ok := spec.(*ast.ImportSpec)
+			if !ok {
+				specs = append(specs, spec)
+				continue
+			}
+			importPath := importSpecPath(importSpec)
+			importName := importSpecName(importSpec)
+			key := importName + "\x00" + importPath
+			switch {
+			case seen[key]:
+				duplicates = append(duplicates, importPath)
+				continue
+			case !importSpecAlwaysUsed(importSpec) && !used[importName]:
+				removed = append(removed, importPath)
+				continue
+			default:
+				seen[key] = true
+				specs = append(specs, spec)
+			}
+		}
+		if len(specs) == 0 {
+			continue
+		}
+		gen.Specs = specs
+		decls = append(decls, gen)
+	}
+	file.Decls = decls
+	ast.SortImports(fset, file)
+	var buf bytes.Buffer
+	if err := goformat.Node(&buf, fset, file); err != nil {
+		return OrganizeImportsResult{}, err
+	}
+	formatted, err := goformat.Source(buf.Bytes())
+	if err != nil {
+		return OrganizeImportsResult{}, err
+	}
+	changed := !bytes.Equal(data, formatted)
+	if write && changed {
+		info, statErr := os.Stat(path)
+		mode := os.FileMode(0o644)
+		if statErr == nil {
+			mode = info.Mode()
+		}
+		if err := os.WriteFile(path, formatted, mode); err != nil {
+			return OrganizeImportsResult{}, err
+		}
+	}
+	sort.Strings(removed)
+	sort.Strings(duplicates)
+	return OrganizeImportsResult{
+		FormatResult: FormatResult{
+			Kind:    "organize_imports",
+			Path:    rel,
+			Changed: changed,
+			Bytes:   len(formatted),
+			Content: string(formatted),
+		},
+		ImportCount:                importCount,
+		RemovedImports:             removed,
+		DuplicateImports:           duplicates,
+		MissingImportInference:     false,
+		MissingImportInferenceNote: "static organizer removes unused imports and sorts existing imports; it does not infer missing imports",
+	}, nil
+}
+
+func usedImportNames(file *ast.File) map[string]bool {
+	used := map[string]bool{}
+	ast.Inspect(file, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if ident, ok := selector.X.(*ast.Ident); ok {
+			used[ident.Name] = true
+		}
+		return true
+	})
+	return used
+}
+
+func importSpecAlwaysUsed(spec *ast.ImportSpec) bool {
+	return spec.Name != nil && (spec.Name.Name == "_" || spec.Name.Name == ".")
+}
+
+func importSpecName(spec *ast.ImportSpec) string {
+	if spec.Name != nil {
+		return spec.Name.Name
+	}
+	path := importSpecPath(spec)
+	base := filepath.Base(path)
+	if base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	return strings.ReplaceAll(base, "-", "_")
+}
+
+func importSpecPath(spec *ast.ImportSpec) string {
+	value, err := strconv.Unquote(spec.Path.Value)
+	if err != nil {
+		return strings.Trim(spec.Path.Value, `"`)
+	}
+	return value
 }
 
 // CodeMap returns a bounded map of files and directories in the workspace.

@@ -421,6 +421,31 @@ func TestCompletionsAndFormatGoFile(t *testing.T) {
 	_, err = FormatGoFile(workspace, "../escape.go", false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "escapes workspace")
+
+	importsSource := "package main\n\nimport (\n\t\"strings\"\n\t\"fmt\"\n\t\"bytes\"\n\t\"fmt\"\n\t_ \"net/http/pprof\"\n)\n\nfunc main(){ fmt.Println(strings.TrimSpace(\" hi \")) }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "imports.go"), []byte(importsSource), 0o644))
+	organized, err := OrganizeGoImports(workspace, "imports.go", false)
+	require.NoError(t, err)
+	require.Equal(t, "organize_imports", organized.Kind)
+	require.Equal(t, "imports.go", organized.Path)
+	require.True(t, organized.Changed)
+	require.Contains(t, organized.RemovedImports, "bytes")
+	require.Contains(t, organized.DuplicateImports, "fmt")
+	require.False(t, organized.MissingImportInference)
+	require.Contains(t, organized.Content, `"fmt"`)
+	require.Contains(t, organized.Content, `"strings"`)
+	require.Contains(t, organized.Content, `_ "net/http/pprof"`)
+	require.NotContains(t, organized.Content, `"bytes"`)
+	data, err = os.ReadFile(filepath.Join(workspace, "imports.go"))
+	require.NoError(t, err)
+	require.Equal(t, importsSource, string(data))
+
+	organized, err = OrganizeGoImports(workspace, "imports.go", true)
+	require.NoError(t, err)
+	require.True(t, organized.Changed)
+	data, err = os.ReadFile(filepath.Join(workspace, "imports.go"))
+	require.NoError(t, err)
+	require.Equal(t, organized.Content, string(data))
 }
 
 func TestEditNotebookCell(t *testing.T) {

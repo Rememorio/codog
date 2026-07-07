@@ -2789,6 +2789,8 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "inline.go"), []byte(inlineSource), 0o644))
 	hintArgChar := strings.Index(strings.Split(hintSource, "\n")[3], `"codog"`)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "messy.go"), []byte("package demo\n\nfunc messy(){return}\n"), 0o644))
+	importsSource := "package demo\n\nimport (\n\t\"strings\"\n\t\"fmt\"\n\t\"bytes\"\n\t\"fmt\"\n)\n\nfunc ImportsDemo(){ fmt.Println(strings.TrimSpace(\" hi \")) }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "imports.go"), []byte(importsSource), 0o644))
 	tool := LSPTool{Workspace: workspace}
 	definition := tool.Definition()
 	properties := definition.InputSchema["properties"].(map[string]any)
@@ -3262,6 +3264,16 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, codeActionOut, `"kind": "source.format"`)
 	require.Contains(t, codeActionOut, `"total": 1`)
 
+	organizeActionOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_action","path":"imports.go","line":2,"character":10}`))
+	require.NoError(t, err)
+	require.Contains(t, organizeActionOut, `"action": "code-action"`)
+	require.Contains(t, organizeActionOut, `"title": "Organize Go imports"`)
+	require.Contains(t, organizeActionOut, `"kind": "source.organizeImports"`)
+	require.Contains(t, organizeActionOut, `"removed_imports": [`)
+	require.Contains(t, organizeActionOut, `"bytes"`)
+	require.Contains(t, organizeActionOut, `"duplicate_imports": [`)
+	require.Contains(t, organizeActionOut, `"fmt"`)
+
 	codeActionResolveOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_action_resolve","path":"messy.go","query":"Format Go file"}`))
 	require.NoError(t, err)
 	require.Contains(t, codeActionResolveOut, `"action": "code-action-resolve"`)
@@ -3269,6 +3281,14 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, codeActionResolveOut, `"selected": "Format Go file"`)
 	require.Contains(t, codeActionResolveOut, `"title": "Format Go file"`)
 	require.Contains(t, codeActionResolveOut, `func messy()`)
+
+	organizeResolveOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_action_resolve","path":"imports.go","query":"source.organizeImports"}`))
+	require.NoError(t, err)
+	require.Contains(t, organizeResolveOut, `"action": "code-action-resolve"`)
+	require.Contains(t, organizeResolveOut, `"selected": "source.organizeImports"`)
+	require.Contains(t, organizeResolveOut, `"title": "Organize Go imports"`)
+	require.Contains(t, organizeResolveOut, `"kind": "organize_imports"`)
+	require.Contains(t, organizeResolveOut, `"removed_imports": [`)
 
 	inlineValueOut, err := tool.Execute(context.Background(), []byte(`{"action":"inline_value","path":"inline.go","limit":5}`))
 	require.NoError(t, err)
@@ -3284,6 +3304,17 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, executeCommandOut, `"source": "static"`)
 	require.Contains(t, executeCommandOut, `"command": "format"`)
 	require.Contains(t, executeCommandOut, `func messy()`)
+
+	organizeCommandOut, err := tool.Execute(context.Background(), []byte(`{"action":"execute_command","query":"source.organizeImports","path":"imports.go"}`))
+	require.NoError(t, err)
+	require.Contains(t, organizeCommandOut, `"action": "execute-command"`)
+	require.Contains(t, organizeCommandOut, `"command": "source.organizeimports"`)
+	require.Contains(t, organizeCommandOut, `"organize_imports": {`)
+	require.Contains(t, organizeCommandOut, `"removed_imports": [`)
+	require.Contains(t, organizeCommandOut, `"bytes"`)
+	data, err := os.ReadFile(filepath.Join(workspace, "imports.go"))
+	require.NoError(t, err)
+	require.Equal(t, importsSource, string(data))
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"execute_command","query":"unsupported.command"}`))
 	require.Error(t, err)
