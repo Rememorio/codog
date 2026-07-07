@@ -147,6 +147,51 @@ func TestApprovalTokenConsumeRejectsReplay(t *testing.T) {
 	require.Equal(t, 1, ledger.Grants[0].Uses)
 }
 
+func TestApprovalTokenListSurfacesUsageStates(t *testing.T) {
+	store := NewStore(t.TempDir())
+	scope := Scope{Policy: "main_push_forbidden", Action: "git push", Repository: "owner/repo", Branch: "main", Commit: "abc123"}
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	expiredAt := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	_, err := store.Grant(GrantOptions{Token: "tok-pending", Scope: scope, ApprovingActor: "owner", ApprovedExecutor: "bot", Status: StatusPending, Now: now})
+	require.NoError(t, err)
+	_, err = store.Grant(GrantOptions{Token: "tok-unused", Scope: scope, ApprovingActor: "owner", ApprovedExecutor: "bot", MaxUses: 2, Now: now.Add(time.Second)})
+	require.NoError(t, err)
+	_, err = store.Grant(GrantOptions{Token: "tok-partial", Scope: scope, ApprovingActor: "owner", ApprovedExecutor: "bot", MaxUses: 2, Now: now.Add(2 * time.Second)})
+	require.NoError(t, err)
+	_, err = store.Consume("tok-partial", scope, "bot", now.Add(3*time.Second))
+	require.NoError(t, err)
+	_, err = store.Grant(GrantOptions{Token: "tok-consumed", Scope: scope, ApprovingActor: "owner", ApprovedExecutor: "bot", Now: now.Add(4 * time.Second)})
+	require.NoError(t, err)
+	_, err = store.Consume("tok-consumed", scope, "bot", now.Add(5*time.Second))
+	require.NoError(t, err)
+	_, err = store.Grant(GrantOptions{Token: "tok-expired", Scope: scope, ApprovingActor: "owner", ApprovedExecutor: "bot", ExpiresAt: &expiredAt, Now: now.Add(6 * time.Second)})
+	require.NoError(t, err)
+	_, err = store.Grant(GrantOptions{Token: "tok-revoked", Scope: scope, ApprovingActor: "owner", ApprovedExecutor: "bot", Now: now.Add(7 * time.Second)})
+	require.NoError(t, err)
+	_, err = store.Revoke("tok-revoked", now.Add(8*time.Second))
+	require.NoError(t, err)
+
+	ledger, err := store.List()
+	require.NoError(t, err)
+	grants := grantsByToken(ledger.Grants)
+	require.Equal(t, UsagePending, grants["tok-pending"].State)
+	require.False(t, grants["tok-pending"].Usable)
+	require.Equal(t, UsageUnused, grants["tok-unused"].State)
+	require.True(t, grants["tok-unused"].Usable)
+	require.Equal(t, 2, grants["tok-unused"].RemainingUses)
+	require.Equal(t, UsagePartiallyConsumed, grants["tok-partial"].State)
+	require.True(t, grants["tok-partial"].Usable)
+	require.Equal(t, 1, grants["tok-partial"].RemainingUses)
+	require.Equal(t, UsageConsumed, grants["tok-consumed"].State)
+	require.False(t, grants["tok-consumed"].Usable)
+	require.Equal(t, 0, grants["tok-consumed"].RemainingUses)
+	require.Equal(t, UsageExpired, grants["tok-expired"].State)
+	require.False(t, grants["tok-expired"].Usable)
+	require.Equal(t, UsageRevoked, grants["tok-revoked"].State)
+	require.False(t, grants["tok-revoked"].Usable)
+}
+
 func TestApprovalTokenRejectsScopeExpiryRevocationAndDelegateMismatch(t *testing.T) {
 	store := NewStore(t.TempDir())
 	scope := Scope{Policy: "main_push_forbidden", Action: "git push", Repository: "owner/repo", Branch: "main", Commit: "abc123"}
@@ -242,6 +287,14 @@ func delegationActors(chain []DelegationHop) []string {
 	out := make([]string, 0, len(chain))
 	for _, hop := range chain {
 		out = append(out, hop.Actor)
+	}
+	return out
+}
+
+func grantsByToken(grants []Grant) map[string]Grant {
+	out := make(map[string]Grant, len(grants))
+	for _, grant := range grants {
+		out[grant.Token] = grant
 	}
 	return out
 }

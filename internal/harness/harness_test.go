@@ -244,6 +244,9 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, policyApproval.Output, `"verified":"approval_granted"`)
 	require.Contains(t, policyApproval.Output, `"delegated":true`)
 	require.Contains(t, policyApproval.Output, `"consumed":"approval_consumed"`)
+	require.Contains(t, policyApproval.Output, `"ledger_state":"consumed"`)
+	require.Contains(t, policyApproval.Output, `"ledger_usable":false`)
+	require.Contains(t, policyApproval.Output, `"remaining_uses":0`)
 	require.Contains(t, policyApproval.Output, `"replay_error":"approval_already_consumed"`)
 	require.Contains(t, policyApproval.Output, `"last_audit_error":"approval_already_consumed"`)
 

@@ -5023,6 +5023,9 @@ func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 	require.Contains(t, listOut, `"kind": "approval_token_ledger"`)
 	require.Contains(t, listOut, `"token": "tok-main"`)
 	require.Contains(t, listOut, `"commit": "abc123"`)
+	require.Contains(t, listOut, `"state": "consumed"`)
+	require.Contains(t, listOut, `"usable": false`)
+	require.Contains(t, listOut, `"remaining_uses": 0`)
 }
 
 func TestApprovalTokenToolApprovesPendingGrant(t *testing.T) {

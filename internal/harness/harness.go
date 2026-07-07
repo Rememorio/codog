@@ -7174,7 +7174,10 @@ func policyApprovalScenario() scenario {
 					Grants []struct {
 						Token              string `json:"token"`
 						Status             string `json:"status"`
+						State              string `json:"state"`
+						Usable             bool   `json:"usable"`
 						Uses               int    `json:"uses"`
+						RemainingUses      int    `json:"remaining_uses"`
 						LastAuditErrorKind string `json:"last_audit_error_kind"`
 					} `json:"grants"`
 				} `json:"ledger"`
@@ -7182,7 +7185,7 @@ func policyApprovalScenario() scenario {
 			if err := json.Unmarshal([]byte(listOut), &list); err != nil {
 				return localScenarioResult{}, err
 			}
-			if list.Status != "ok" || list.Ledger.Kind != "approval_token_ledger" || len(list.Ledger.Grants) != 1 || list.Ledger.Grants[0].Token != "tok-main" || list.Ledger.Grants[0].Status != "approval_consumed" || list.Ledger.Grants[0].Uses != 1 || list.Ledger.Grants[0].LastAuditErrorKind != "approval_already_consumed" {
+			if list.Status != "ok" || list.Ledger.Kind != "approval_token_ledger" || len(list.Ledger.Grants) != 1 || list.Ledger.Grants[0].Token != "tok-main" || list.Ledger.Grants[0].Status != "approval_consumed" || list.Ledger.Grants[0].State != "consumed" || list.Ledger.Grants[0].Usable || list.Ledger.Grants[0].Uses != 1 || list.Ledger.Grants[0].RemainingUses != 0 || list.Ledger.Grants[0].LastAuditErrorKind != "approval_already_consumed" {
 				return localScenarioResult{}, fmt.Errorf("unexpected approval token ledger output: %s", listOut)
 			}
 
@@ -7205,6 +7208,9 @@ func policyApprovalScenario() scenario {
 					"consumed":             consume.Audit.Status,
 					"replay_error":         replay.ErrorKind,
 					"ledger_status":        list.Ledger.Grants[0].Status,
+					"ledger_state":         list.Ledger.Grants[0].State,
+					"ledger_usable":        list.Ledger.Grants[0].Usable,
+					"remaining_uses":       list.Ledger.Grants[0].RemainingUses,
 					"last_audit_error":     list.Ledger.Grants[0].LastAuditErrorKind,
 					"delegation_hop_count": len(verify.Audit.DelegationChain),
 				},

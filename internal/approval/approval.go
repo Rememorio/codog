@@ -23,6 +23,24 @@ const (
 	StatusRevoked  Status = "approval_revoked"
 )
 
+// UsageState summarizes whether an approval token can still authorize work.
+type UsageState string
+
+const (
+	// UsagePending means the token exists but is not owner-approved yet.
+	UsagePending UsageState = "pending"
+	// UsageUnused means the token is granted and has all uses available.
+	UsageUnused UsageState = "unused"
+	// UsagePartiallyConsumed means the token is granted and has some remaining uses.
+	UsagePartiallyConsumed UsageState = "partially_consumed"
+	// UsageConsumed means the token exhausted its allowed uses.
+	UsageConsumed UsageState = "consumed"
+	// UsageExpired means the token's time window has elapsed.
+	UsageExpired UsageState = "expired"
+	// UsageRevoked means the token was explicitly revoked.
+	UsageRevoked UsageState = "revoked"
+)
+
 type Scope struct {
 	Policy     string `json:"policy"`
 	Action     string `json:"action"`
@@ -43,9 +61,12 @@ type Grant struct {
 	ApprovingActor     string          `json:"approving_actor"`
 	ApprovedExecutor   string          `json:"approved_executor"`
 	Status             Status          `json:"status"`
+	State              UsageState      `json:"state"`
+	Usable             bool            `json:"usable"`
 	ExpiresAt          *time.Time      `json:"expires_at,omitempty"`
 	MaxUses            int             `json:"max_uses"`
 	Uses               int             `json:"uses"`
+	RemainingUses      int             `json:"remaining_uses"`
 	DelegationChain    []DelegationHop `json:"delegation_chain,omitempty"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
@@ -159,6 +180,7 @@ func (s Store) Grant(opts GrantOptions) (Grant, error) {
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
+	grant = decorateGrant(grant, now)
 	ledger[token] = grant
 	return grant, s.save(ledger)
 }
@@ -212,6 +234,7 @@ func (s Store) Approve(token string, opts GrantOptions) (Grant, error) {
 	grant.Status = StatusGranted
 	grant.LastAuditErrorKind = ""
 	grant.UpdatedAt = normalizedNow(opts.Now)
+	grant = decorateGrant(grant, grant.UpdatedAt)
 	ledger[token] = grant
 	if err := s.save(ledger); err != nil {
 		return Grant{}, err
@@ -256,6 +279,7 @@ func (s Store) Consume(token string, scope Scope, executingActor string, now tim
 		grant.Status = StatusConsumed
 	}
 	grant.UpdatedAt = normalizedNow(now)
+	grant = decorateGrant(grant, grant.UpdatedAt)
 	ledger[token] = grant
 	if err := s.save(ledger); err != nil {
 		return Audit{}, err
@@ -275,6 +299,7 @@ func (s Store) Revoke(token string, now time.Time) (Audit, error) {
 	}
 	grant.Status = StatusRevoked
 	grant.UpdatedAt = normalizedNow(now)
+	grant = decorateGrant(grant, grant.UpdatedAt)
 	ledger[token] = grant
 	if err := s.save(ledger); err != nil {
 		return Audit{}, err
@@ -288,8 +313,9 @@ func (s Store) List() (Ledger, error) {
 		return Ledger{}, err
 	}
 	grants := make([]Grant, 0, len(ledger))
+	now := time.Now().UTC()
 	for _, grant := range ledger {
-		grants = append(grants, grant)
+		grants = append(grants, decorateGrant(grant, now))
 	}
 	sort.Slice(grants, func(i, j int) bool {
 		return grants[i].CreatedAt.Before(grants[j].CreatedAt)
@@ -303,6 +329,44 @@ func GenerateToken() (string, error) {
 		return "", err
 	}
 	return "codog-approval-" + hex.EncodeToString(bytes[:]), nil
+}
+
+func decorateGrant(grant Grant, now time.Time) Grant {
+	now = normalizedNow(now)
+	if grant.MaxUses <= 0 {
+		grant.MaxUses = 1
+	}
+	remaining := grant.MaxUses - grant.Uses
+	if remaining < 0 {
+		remaining = 0
+	}
+	grant.RemainingUses = remaining
+	grant.State = usageState(grant, now)
+	grant.Usable = grant.State == UsageUnused || grant.State == UsagePartiallyConsumed
+	return grant
+}
+
+func usageState(grant Grant, now time.Time) UsageState {
+	switch grant.Status {
+	case StatusPending:
+		return UsagePending
+	case StatusRevoked:
+		return UsageRevoked
+	case StatusExpired:
+		return UsageExpired
+	case StatusConsumed:
+		return UsageConsumed
+	}
+	if grant.ExpiresAt != nil && normalizedNow(now).After(*grant.ExpiresAt) {
+		return UsageExpired
+	}
+	if grant.Uses >= grant.MaxUses {
+		return UsageConsumed
+	}
+	if grant.Uses > 0 {
+		return UsagePartiallyConsumed
+	}
+	return UsageUnused
 }
 
 func validateGrant(grant Grant, scope Scope, executingActor string, now time.Time) error {
