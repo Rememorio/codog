@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -2651,6 +2652,134 @@ func TestGlobalCWDInvalidPathJSONContract(t *testing.T) {
 	require.Equal(t, "error", report.Status)
 	require.Equal(t, missing, report.Path)
 	require.Contains(t, report.Hint, "--cwd")
+}
+
+func TestCLIErrorTypedEnvelopeMatrix(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	cases := []struct {
+		name      string
+		err       error
+		kind      string
+		operation string
+		target    string
+		errno     string
+		retryable bool
+	}{
+		{
+			name:      "filesystem",
+			err:       &os.PathError{Op: "write", Path: missing, Err: os.ErrNotExist},
+			kind:      "filesystem",
+			operation: "write",
+			target:    missing,
+			errno:     "ENOENT",
+			retryable: true,
+		},
+		{
+			name: "auth",
+			err: anthropic.MissingCredentialsError{
+				Provider: "anthropic",
+				EnvVars:  []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
+				Hint:     "export ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN",
+			},
+			kind:      "auth",
+			operation: "resolve_anthropic_auth",
+			target:    "ANTHROPIC_API_KEY",
+		},
+		{
+			name:      "session",
+			err:       fmt.Errorf("%w: missing-session", session.ErrSessionNotFound),
+			kind:      "session",
+			operation: "resolve_session_id",
+			target:    "missing-session",
+		},
+		{
+			name:      "parse",
+			err:       promptJSONSchemaValidationError{Path: "$.answer", Reason: "must be a string"},
+			kind:      "parse",
+			operation: "parse",
+			target:    "$.answer",
+		},
+		{
+			name:      "usage",
+			err:       requiredArgumentError{Command: "commit", Argument: "commit message", Usage: "codog commit MESSAGE"},
+			kind:      "usage",
+			operation: "parse_args",
+			target:    "commit message",
+		},
+		{
+			name:      "policy",
+			err:       errors.New("invalid_permission_mode: unknown permission mode \"bogus\""),
+			kind:      "policy",
+			operation: "evaluate_policy",
+		},
+		{
+			name:      "mcp",
+			err:       errors.New("mcp initialize handshake failed"),
+			kind:      "mcp",
+			operation: "mcp",
+			retryable: true,
+		},
+		{
+			name:      "delivery",
+			err:       errors.New("github pull request delivery failed"),
+			kind:      "delivery",
+			operation: "deliver",
+			retryable: true,
+		},
+		{
+			name:      "runtime",
+			err:       errors.New("worker exited before startup completed"),
+			kind:      "runtime",
+			operation: "run",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			report := buildCLIErrorReport(tc.err)
+			require.Equal(t, "error", report.Type)
+			require.Equal(t, "error", report.Status)
+			require.NotEmpty(t, report.Message)
+			require.NotEmpty(t, report.Error.Detail)
+			require.Equal(t, tc.kind, report.Error.Kind)
+			require.Equal(t, tc.operation, report.Error.Operation)
+			require.Equal(t, tc.target, report.Error.Target)
+			require.Equal(t, tc.errno, report.Error.Errno)
+			require.Equal(t, tc.retryable, report.Error.Retryable)
+		})
+	}
+}
+
+func TestCLIErrorTypedEnvelopeJSONOutput(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--output-format", "YAML", "status"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+
+	var report cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "error", report.Type)
+	require.Equal(t, "usage", report.Error.Kind)
+	require.Equal(t, "parse_args", report.Error.Operation)
+	require.Equal(t, "--output-format", report.Error.Target)
+	require.Equal(t, report.Hint, report.Error.Hint)
+	require.False(t, report.Error.Retryable)
+}
+
+func TestCLIErrorTextUsageTrailerOnlyForUsage(t *testing.T) {
+	usageReport := buildCLIErrorReport(requiredArgumentError{Command: "commit", Argument: "commit message"})
+	usageText := renderCLIErrorText(usageReport)
+	require.Contains(t, usageText, "kind=usage")
+	require.Contains(t, usageText, "Run `codog --help` for usage.")
+
+	filesystemReport := buildCLIErrorReport(&os.PathError{Op: "write", Path: filepath.Join(t.TempDir(), "missing", "out.md"), Err: os.ErrNotExist})
+	filesystemText := renderCLIErrorText(filesystemReport)
+	require.Contains(t, filesystemText, "kind=filesystem")
+	require.Contains(t, filesystemText, "errno=ENOENT")
+	require.NotContains(t, filesystemText, "Run `codog --help` for usage.")
 }
 
 func TestApprovalSlashAliasesReturnInteractiveOnly(t *testing.T) {

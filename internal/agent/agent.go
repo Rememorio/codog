@@ -29867,9 +29867,11 @@ type slashErrorReport struct {
 }
 
 type cliErrorReport struct {
+	Type              string            `json:"type"`
 	Kind              string            `json:"kind"`
 	ErrorKind         string            `json:"error_kind"`
 	Status            string            `json:"status"`
+	Error             cliErrorEnvelope  `json:"error"`
 	Action            string            `json:"action,omitempty"`
 	Command           string            `json:"command,omitempty"`
 	Args              []string          `json:"args,omitempty"`
@@ -29888,6 +29890,16 @@ type cliErrorReport struct {
 	Path              string            `json:"path,omitempty"`
 	ExpectedWorkspace string            `json:"expected_workspace,omitempty"`
 	ActualWorkspace   string            `json:"actual_workspace,omitempty"`
+}
+
+type cliErrorEnvelope struct {
+	Kind      string `json:"kind"`
+	Operation string `json:"operation,omitempty"`
+	Target    string `json:"target,omitempty"`
+	Errno     string `json:"errno,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+	Hint      string `json:"hint,omitempty"`
+	Retryable bool   `json:"retryable"`
 }
 
 type actionErrorReport struct {
@@ -30438,7 +30450,7 @@ func renderMissingActionArgument(out io.Writer, kind string, action string, argu
 
 func renderCLIError(out io.Writer, err error, format string) error {
 	report := buildCLIErrorReport(err)
-	exitErr := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	exitErr := errors.New(renderCLIErrorText(report))
 	var formatErr outputFormatError
 	forceJSON := errors.As(err, &formatErr)
 	if strings.EqualFold(format, "json") || forceJSON {
@@ -30465,21 +30477,25 @@ func buildCLIErrorReport(err error) cliErrorReport {
 	message := strings.TrimSpace(err.Error())
 	kind := "config_load_failed"
 	hint := "Check `codog config paths` and fix the active configuration."
+	finish := func(report cliErrorReport) cliErrorReport {
+		return finalizeCLIErrorReport(err, report)
+	}
 	var formatErr outputFormatError
 	if errors.As(err, &formatErr) {
 		expected := append([]string(nil), formatErr.Expected...)
 		if len(expected) == 0 {
 			expected = []string{"text", "json"}
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "invalid_output_format",
 			ErrorKind: "invalid_output_format",
 			Status:    "error",
+			Option:    "--output-format",
 			Message:   fmt.Sprintf("unknown output format %q", formatErr.Value),
 			Hint:      "Use `--output-format json` or `--output-format text`.",
 			Value:     formatErr.Value,
 			Expected:  expected,
-		}
+		})
 	}
 	var jsonSchemaErr promptJSONSchemaValidationError
 	if errors.As(err, &jsonSchemaErr) {
@@ -30487,7 +30503,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		if path == "" {
 			path = "$"
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "json_schema_validation_failed",
 			ErrorKind: "json_schema_validation_failed",
 			Status:    "error",
@@ -30495,11 +30511,11 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Message:   jsonSchemaErr.Error(),
 			Hint:      "Adjust the prompt or --json-schema so the final assistant response is valid JSON matching the schema.",
 			Path:      path,
-		}
+		})
 	}
 	var directoryErr session.PathIsDirectoryError
 	if errors.As(err, &directoryErr) {
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "session_path_is_directory",
 			ErrorKind: "session_path_is_directory",
 			Status:    "error",
@@ -30507,11 +30523,11 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Message:   fmt.Sprintf("session path is a directory: %s", directoryErr.Path),
 			Hint:      "Pass a readable .jsonl or .json session file, or a managed session id from `codog sessions list`.",
 			Path:      directoryErr.Path,
-		}
+		})
 	}
 	var mismatchErr session.WorkspaceMismatchError
 	if errors.As(err, &mismatchErr) {
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:              "session_workspace_mismatch",
 			ErrorKind:         "session_workspace_mismatch",
 			Status:            "error",
@@ -30521,56 +30537,56 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Path:              mismatchErr.Path,
 			ExpectedWorkspace: mismatchErr.Expected,
 			ActualWorkspace:   mismatchErr.Actual,
-		}
+		})
 	}
 	if errors.Is(err, session.ErrNoSessions) {
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "no_managed_sessions",
 			ErrorKind: "no_managed_sessions",
 			Status:    "error",
 			Action:    "abort",
 			Message:   "no saved sessions found",
 			Hint:      "Run `codog prompt <text>` to create a session, or pass an existing .jsonl/.json session path.",
-		}
+		})
 	}
 	if errors.Is(err, session.ErrSessionNotFound) {
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "session_not_found",
 			ErrorKind: "session_not_found",
 			Status:    "error",
 			Action:    "abort",
 			Message:   sessionNotFoundMessage(message),
 			Hint:      "Run `codog sessions list` to see saved sessions, or pass an existing .jsonl/.json session path.",
-		}
+		})
 	}
 	if errors.Is(err, oauth.ErrNoToken) {
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "oauth_token_missing",
 			ErrorKind: "oauth_token_missing",
 			Status:    "error",
 			Message:   "no oauth token is saved",
 			Hint:      "Run `codog oauth token save ACCESS_TOKEN` or complete `codog login` before using token-dependent OAuth commands.",
-		}
+		})
 	}
 	if errors.Is(err, undo.ErrNoUndo) {
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "no_undo_records",
 			ErrorKind: "no_undo_records",
 			Status:    "error",
 			Message:   "no undo records are available",
 			Hint:      "Run an editing command that records undo state before using `codog undo`.",
-		}
+		})
 	}
 	var outputStyleNotFound outputstyle.NotFoundError
 	if errors.As(err, &outputStyleNotFound) {
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "output_style_not_found",
 			ErrorKind: "output_style_not_found",
 			Status:    "error",
 			Value:     outputStyleNotFound.Name,
 			Message:   fmt.Sprintf("output style %q was not found", outputStyleNotFound.Name),
 			Hint:      "Run `codog output-style list` to see available output styles.",
-		}
+		})
 	}
 	var credentialsErr anthropic.MissingCredentialsError
 	if errors.As(err, &credentialsErr) {
@@ -30586,7 +30602,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		if hint == "" {
 			hint = fmt.Sprintf("Set %s before using %s models.", strings.Join(envVars, " or "), provider)
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "missing_credentials",
 			ErrorKind: "missing_credentials",
 			Status:    "error",
@@ -30594,7 +30610,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Hint:      hint,
 			Provider:  provider,
 			EnvVars:   envVars,
-		}
+		})
 	}
 	var missingErr missingArgumentError
 	if errors.As(err, &missingErr) {
@@ -30606,14 +30622,14 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		if example == "" {
 			example = argument + " read_file,grep"
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "missing_argument",
 			ErrorKind: "missing_argument",
 			Status:    "error",
 			Message:   fmt.Sprintf("%s requires a value", argument),
 			Hint:      fmt.Sprintf("Provide a comma-separated tool list, for example `%s`.", example),
 			Argument:  argument,
-		}
+		})
 	}
 	var requiredArgErr requiredArgumentError
 	if errors.As(err, &requiredArgErr) {
@@ -30627,7 +30643,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		if usage != "" {
 			hint = "Usage: " + usage
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "missing_argument",
 			ErrorKind: "missing_argument",
 			Status:    "error",
@@ -30635,7 +30651,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Argument:  argument,
 			Message:   fmt.Sprintf("%s is required", argument),
 			Hint:      hint,
-		}
+		})
 	}
 	var missingFlagErr missingFlagValueError
 	if errors.As(err, &missingFlagErr) {
@@ -30649,7 +30665,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		if usage != "" {
 			hint = "Usage: " + usage
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "missing_flag_value",
 			ErrorKind: "missing_flag_value",
 			Status:    "error",
@@ -30657,34 +30673,34 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Option:    flag,
 			Message:   fmt.Sprintf("%s requires a value", flag),
 			Hint:      hint,
-		}
+		})
 	}
 	if rest, ok := strings.CutPrefix(message, "missing_flag_value:"); ok {
 		message = strings.TrimSpace(rest)
 		if message == "" {
 			message = "flag requires a value"
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "missing_flag_value",
 			ErrorKind: "missing_flag_value",
 			Status:    "error",
 			Message:   message,
 			Hint:      "Provide the required flag value.",
-		}
+		})
 	}
 	if rest, ok := strings.CutPrefix(message, "missing_manifests:"); ok {
 		message = strings.TrimSpace(rest)
 		if message == "" {
 			message = "manifest discovery directory is missing"
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "missing_manifests",
 			ErrorKind: "missing_manifests",
 			Status:    "error",
 			Command:   "dump-manifests",
 			Message:   message,
 			Hint:      "Pass an existing workspace directory with --manifests-dir, or omit the flag to inspect the current workspace.",
-		}
+		})
 	}
 	var duplicateFlagErr duplicateFlagError
 	if errors.As(err, &duplicateFlagErr) {
@@ -30697,7 +30713,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		if usage != "" {
 			hint = "Usage: " + usage
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "duplicate_flag",
 			ErrorKind: "duplicate_flag",
 			Status:    "error",
@@ -30706,7 +30722,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Values:    append([]string(nil), duplicateFlagErr.Values...),
 			Message:   fmt.Sprintf("%s was specified multiple times", flag),
 			Hint:      hint,
-		}
+		})
 	}
 	var invalidFlagErr invalidFlagValueError
 	if errors.As(err, &invalidFlagErr) {
@@ -30724,7 +30740,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		if usage != "" {
 			hint = "Usage: " + usage
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "invalid_flag_value",
 			ErrorKind: "invalid_flag_value",
 			Status:    "error",
@@ -30732,7 +30748,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Value:     value,
 			Message:   message,
 			Hint:      hint,
-		}
+		})
 	}
 	var cwdErr invalidCWDError
 	if errors.As(err, &cwdErr) {
@@ -30740,14 +30756,14 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		if path == "" {
 			path = "."
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "invalid_cwd",
 			ErrorKind: "invalid_cwd",
 			Status:    "error",
 			Message:   fmt.Sprintf("cannot use cwd %q", path),
 			Hint:      "Pass an existing directory with --cwd, -C, or --directory.",
 			Path:      path,
-		}
+		})
 	}
 	var toolErr toolNameError
 	if errors.As(err, &toolErr) {
@@ -30756,7 +30772,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			argument = "--allowed-tools"
 		}
 		toolName := strings.TrimSpace(toolErr.ToolName)
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:        "invalid_tool_name",
 			ErrorKind:   "invalid_tool_name",
 			Status:      "error",
@@ -30766,7 +30782,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			ToolName:    toolName,
 			Available:   append([]string(nil), toolErr.Available...),
 			ToolAliases: copyStringMap(toolErr.Aliases),
-		}
+		})
 	}
 	var missingToolErr missingToolNameError
 	if errors.As(err, &missingToolErr) {
@@ -30778,14 +30794,14 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		if usage == "" {
 			usage = "codog " + command + " TOOL"
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "missing_tool_name",
 			ErrorKind: "missing_tool_name",
 			Status:    "error",
 			Command:   command,
 			Message:   command + " requires a tool name",
 			Hint:      "Usage: " + usage,
-		}
+		})
 	}
 	var optionErr unknownOptionError
 	if errors.As(err, &optionErr) {
@@ -30800,7 +30816,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		if usage != "" {
 			hint = "Usage: " + usage
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      kind,
 			ErrorKind: kind,
 			Status:    "error",
@@ -30808,7 +30824,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Option:    option,
 			Message:   fmt.Sprintf("unknown option %q for %s", option, command),
 			Hint:      hint,
-		}
+		})
 	}
 	var extraArgsErr unexpectedExtraArgsError
 	if errors.As(err, &extraArgsErr) {
@@ -30818,7 +30834,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		if usage == "" {
 			usage = "codog " + command
 		}
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "unexpected_extra_args",
 			ErrorKind: "unexpected_extra_args",
 			Status:    "error",
@@ -30826,7 +30842,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Args:      args,
 			Message:   fmt.Sprintf("%s does not accept extra arguments: %s", command, strings.Join(args, " ")),
 			Hint:      "Usage: " + usage,
-		}
+		})
 	}
 	var resumeArgErr invalidResumeArgumentError
 	if errors.As(err, &resumeArgErr) {
@@ -30837,7 +30853,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			resume = "latest"
 		}
 		slashCommand := "/" + strings.TrimPrefix(command, "/")
-		return cliErrorReport{
+		return finish(cliErrorReport{
 			Kind:      "invalid_resume_argument",
 			ErrorKind: "invalid_resume_argument",
 			Status:    "error",
@@ -30845,20 +30861,253 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Args:      args,
 			Message:   fmt.Sprintf("%s cannot be used after --resume without a leading slash", command),
 			Hint:      fmt.Sprintf("Use `codog --resume %s %s` for a resume slash command, or `codog --resume %s prompt \"...\"` to continue the session with a prompt. Local commands that support sessions accept command-specific `--session` or `--resume` flags after the command.", shellQuote(resume), slashCommand, shellQuote(resume)),
-		}
+		})
 	}
 	if rest, ok := strings.CutPrefix(message, "invalid_permission_mode:"); ok {
 		kind = "invalid_permission_mode"
 		message = strings.TrimSpace(rest)
 		hint = "Use one of: read-only, workspace-write, danger-full-access, prompt, allow."
 	}
-	return cliErrorReport{
+	return finish(cliErrorReport{
 		Kind:      kind,
 		ErrorKind: kind,
 		Status:    "error",
 		Message:   message,
 		Hint:      hint,
+	})
+}
+
+func finalizeCLIErrorReport(err error, report cliErrorReport) cliErrorReport {
+	report.Type = "error"
+	if strings.TrimSpace(report.Status) == "" {
+		report.Status = "error"
 	}
+	if strings.TrimSpace(report.Kind) == "" {
+		report.Kind = "unknown"
+	}
+	if strings.TrimSpace(report.ErrorKind) == "" {
+		report.ErrorKind = report.Kind
+	}
+	report.Error = buildCLIErrorEnvelope(err, report)
+	return report
+}
+
+func buildCLIErrorEnvelope(err error, report cliErrorReport) cliErrorEnvelope {
+	kind := classifyCLIErrorEnvelopeKind(err, report)
+	operation := cliErrorOperation(err, report, kind)
+	target := cliErrorTarget(err, report)
+	errno := cliErrorErrno(err)
+	hint := strings.TrimSpace(report.Hint)
+	return cliErrorEnvelope{
+		Kind:      kind,
+		Operation: operation,
+		Target:    target,
+		Errno:     errno,
+		Detail:    cliErrorDetail(err, report),
+		Hint:      hint,
+		Retryable: cliErrorRetryable(err, kind, errno),
+	}
+}
+
+func renderCLIErrorText(report cliErrorReport) string {
+	parts := []string{
+		fmt.Sprintf("%s: %s", report.ErrorKind, report.Message),
+		fmt.Sprintf("kind=%s operation=%s retryable=%t", report.Error.Kind, emptyAsCLIError(report.Error.Operation, "unknown"), report.Error.Retryable),
+	}
+	if target := strings.TrimSpace(report.Error.Target); target != "" {
+		parts = append(parts, "target="+target)
+	}
+	if errno := strings.TrimSpace(report.Error.Errno); errno != "" {
+		parts = append(parts, "errno="+errno)
+	}
+	if detail := strings.TrimSpace(report.Error.Detail); detail != "" && detail != strings.TrimSpace(report.Message) {
+		parts = append(parts, "detail="+detail)
+	}
+	if hint := strings.TrimSpace(report.Error.Hint); hint != "" {
+		parts = append(parts, "hint="+hint)
+	}
+	if report.Error.Kind == "usage" {
+		parts = append(parts, "Run `codog --help` for usage.")
+	}
+	return strings.Join(parts, "\n")
+}
+
+func classifyCLIErrorEnvelopeKind(err error, report cliErrorReport) string {
+	errorKind := strings.ToLower(strings.TrimSpace(report.ErrorKind))
+	switch errorKind {
+	case "invalid_cwd", "missing_manifests":
+		return "filesystem"
+	case "missing_credentials", "oauth_token_missing":
+		return "auth"
+	case "session_path_is_directory", "session_workspace_mismatch", "no_managed_sessions", "session_not_found":
+		return "session"
+	case "json_schema_validation_failed":
+		return "parse"
+	case "missing_argument", "missing_flag_value", "duplicate_flag", "invalid_flag_value", "invalid_output_format", "invalid_resume_argument", "invalid_tool_name", "missing_tool_name", "unknown_option", "unexpected_extra_args":
+		return "usage"
+	case "invalid_permission_mode":
+		return "policy"
+	}
+	if err != nil {
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) {
+			return "filesystem"
+		}
+		message := strings.ToLower(err.Error())
+		switch {
+		case strings.Contains(message, "credential"), strings.Contains(message, "api key"), strings.Contains(message, "auth token"), strings.Contains(message, "oauth token"):
+			return "auth"
+		case strings.Contains(message, "session"):
+			return "session"
+		case strings.Contains(message, "mcp"):
+			return "mcp"
+		case strings.Contains(message, "json") || strings.Contains(message, "parse"):
+			return "parse"
+		case strings.Contains(message, "permission") || strings.Contains(message, "policy") || strings.Contains(message, "sandbox"):
+			return "policy"
+		case strings.Contains(message, "github") || strings.Contains(message, "pull request") || strings.Contains(message, "deliver"):
+			return "delivery"
+		}
+	}
+	if strings.Contains(errorKind, "mcp") {
+		return "mcp"
+	}
+	if strings.Contains(errorKind, "github") || strings.Contains(errorKind, "pr_") || strings.Contains(errorKind, "delivery") {
+		return "delivery"
+	}
+	if errorKind == "config_load_failed" {
+		return "runtime"
+	}
+	return "unknown"
+}
+
+func cliErrorOperation(err error, report cliErrorReport, kind string) string {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) && strings.TrimSpace(pathErr.Op) != "" {
+		return strings.TrimSpace(pathErr.Op)
+	}
+	switch kind {
+	case "auth":
+		if strings.EqualFold(report.ErrorKind, "oauth_token_missing") {
+			return "resolve_oauth_token"
+		}
+		return "resolve_anthropic_auth"
+	case "filesystem":
+		if report.ErrorKind == "invalid_cwd" {
+			return "resolve_cwd"
+		}
+		return firstNonEmpty(report.Command, "filesystem")
+	case "session":
+		return "resolve_session_id"
+	case "parse":
+		return firstNonEmpty(report.Command, "parse")
+	case "mcp":
+		return firstNonEmpty(report.Command, "mcp")
+	case "delivery":
+		return firstNonEmpty(report.Command, "deliver")
+	case "policy":
+		return firstNonEmpty(report.Command, report.Option, "evaluate_policy")
+	case "usage":
+		return "parse_args"
+	case "runtime":
+		return firstNonEmpty(report.Command, report.Action, "run")
+	default:
+		return firstNonEmpty(report.Command, report.Action, report.ErrorKind, "unknown")
+	}
+}
+
+func cliErrorTarget(err error, report cliErrorReport) string {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) && strings.TrimSpace(pathErr.Path) != "" {
+		return strings.TrimSpace(pathErr.Path)
+	}
+	if target := firstNonEmpty(report.Path, report.Option, report.Argument, report.Value, report.ToolName, report.Command); target != "" {
+		return target
+	}
+	if len(report.EnvVars) > 0 {
+		return report.EnvVars[0]
+	}
+	if report.ErrorKind == "session_not_found" {
+		if target := sessionErrorTarget(report.Message); target != "" {
+			return target
+		}
+		if err != nil {
+			return sessionErrorTarget(err.Error())
+		}
+	}
+	if strings.TrimSpace(report.Provider) != "" {
+		return strings.TrimSpace(report.Provider)
+	}
+	return ""
+}
+
+func sessionErrorTarget(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return ""
+	}
+	if _, after, ok := strings.Cut(message, "\""); ok {
+		if value, _, ok := strings.Cut(after, "\""); ok {
+			return strings.TrimSpace(value)
+		}
+	}
+	if _, after, ok := strings.Cut(message, ":"); ok {
+		return strings.TrimSpace(after)
+	}
+	return ""
+}
+
+func cliErrorErrno(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return "ENOENT"
+	case errors.Is(err, os.ErrPermission):
+		return "EACCES"
+	case errors.Is(err, os.ErrExist):
+		return "EEXIST"
+	case errors.Is(err, os.ErrClosed):
+		return "EBADF"
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) && pathErr.Err != nil {
+		return strings.ToUpper(strings.ReplaceAll(pathErr.Err.Error(), " ", "_"))
+	}
+	return ""
+}
+
+func cliErrorDetail(err error, report cliErrorReport) string {
+	if err == nil {
+		return strings.TrimSpace(report.Message)
+	}
+	detail := strings.TrimSpace(err.Error())
+	if detail == "" {
+		return strings.TrimSpace(report.Message)
+	}
+	return detail
+}
+
+func cliErrorRetryable(err error, kind string, errno string) bool {
+	switch kind {
+	case "filesystem":
+		return errno == "ENOENT"
+	case "mcp", "delivery":
+		return true
+	case "runtime":
+		return errors.Is(err, os.ErrClosed)
+	default:
+		return false
+	}
+}
+
+func emptyAsCLIError(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func normalizeDirectSlashInvocation(out io.Writer, command string, args []string, format string, extraSuggestions []string) (string, []string, error) {
