@@ -995,8 +995,12 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, "report backpressure harness ok", reportBackpressure.FinalMessage)
 	require.Contains(t, reportBackpressure.Output, `"kind":"report_backpressure_roundtrip"`)
 	require.Contains(t, reportBackpressure.Output, `"first_new":1`)
+	require.Contains(t, reportBackpressure.Output, `"second_outcome":"no_change"`)
+	require.Contains(t, reportBackpressure.Output, `"second_no_change":true`)
+	require.Contains(t, reportBackpressure.Output, `"second_trigger":"nudge-cycle-1"`)
 	require.Contains(t, reportBackpressure.Output, `"second_unchanged":1`)
 	require.Contains(t, reportBackpressure.Output, `"second_collapsed":true`)
+	require.Contains(t, reportBackpressure.Output, `"last_meaningful":"report-`)
 	require.Contains(t, reportBackpressure.Output, `"third_changed":1`)
 
 	agentMarkdown := findScenario(t, report, "agent_markdown_definition_roundtrip")

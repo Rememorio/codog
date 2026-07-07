@@ -18,11 +18,14 @@ import (
 const SnapshotSchemaVersion = "codog.reporting.snapshot.v1"
 
 type Cursor struct {
-	Channel        string            `json:"channel"`
-	LastReportID   string            `json:"last_report_id,omitempty"`
-	LastSnapshotID string            `json:"last_snapshot_id,omitempty"`
-	LastReportedAt time.Time         `json:"last_reported_at,omitempty"`
-	ItemHashes     map[string]string `json:"item_hashes,omitempty"`
+	Channel                  string            `json:"channel"`
+	LastReportID             string            `json:"last_report_id,omitempty"`
+	LastSnapshotID           string            `json:"last_snapshot_id,omitempty"`
+	LastReportedAt           time.Time         `json:"last_reported_at,omitempty"`
+	LastMeaningfulReportID   string            `json:"last_meaningful_report_id,omitempty"`
+	LastMeaningfulSnapshotID string            `json:"last_meaningful_snapshot_id,omitempty"`
+	LastMeaningfulItemIDs    []string          `json:"last_meaningful_item_ids,omitempty"`
+	ItemHashes               map[string]string `json:"item_hashes,omitempty"`
 }
 
 type ItemSummary struct {
@@ -41,18 +44,26 @@ type ItemSummary struct {
 }
 
 type Report struct {
-	Kind               string        `json:"kind"`
-	Channel            string        `json:"channel"`
-	ReportID           string        `json:"report_id"`
-	SnapshotID         string        `json:"snapshot_id"`
-	GeneratedAt        time.Time     `json:"generated_at"`
-	NewItems           []ItemSummary `json:"new_items,omitempty"`
-	ChangedItems       []ItemSummary `json:"changed_items,omitempty"`
-	UnchangedCount     int           `json:"unchanged_count"`
-	TotalCount         int           `json:"total_count"`
-	Collapsed          bool          `json:"collapsed"`
-	FullSnapshotStored bool          `json:"full_snapshot_stored"`
-	PreviousReportID   string        `json:"previous_report_id,omitempty"`
+	Kind                     string        `json:"kind"`
+	Channel                  string        `json:"channel"`
+	ReportID                 string        `json:"report_id"`
+	TriggerID                string        `json:"trigger_id,omitempty"`
+	SnapshotID               string        `json:"snapshot_id"`
+	GeneratedAt              time.Time     `json:"generated_at"`
+	Outcome                  string        `json:"outcome"`
+	Checked                  bool          `json:"checked"`
+	CheckedSurfaces          []string      `json:"checked_surfaces,omitempty"`
+	NoChange                 bool          `json:"no_change"`
+	NewItems                 []ItemSummary `json:"new_items,omitempty"`
+	ChangedItems             []ItemSummary `json:"changed_items,omitempty"`
+	UnchangedCount           int           `json:"unchanged_count"`
+	TotalCount               int           `json:"total_count"`
+	Collapsed                bool          `json:"collapsed"`
+	FullSnapshotStored       bool          `json:"full_snapshot_stored"`
+	PreviousReportID         string        `json:"previous_report_id,omitempty"`
+	LastMeaningfulReportID   string        `json:"last_meaningful_report_id,omitempty"`
+	LastMeaningfulSnapshotID string        `json:"last_meaningful_snapshot_id,omitempty"`
+	LastMeaningfulItemIDs    []string      `json:"last_meaningful_item_ids,omitempty"`
 }
 
 type Snapshot struct {
@@ -68,6 +79,11 @@ type Store struct {
 	Roadmap roadmap.Store
 }
 
+type GenerateOptions struct {
+	TriggerID       string
+	CheckedSurfaces []string
+}
+
 func NewStore(configHome string) Store {
 	return Store{
 		Dir:     filepath.Join(configHome, "reporting"),
@@ -76,10 +92,16 @@ func NewStore(configHome string) Store {
 }
 
 func (s Store) Generate(channel string, now time.Time) (Report, error) {
+	return s.GenerateWithOptions(channel, now, GenerateOptions{})
+}
+
+func (s Store) GenerateWithOptions(channel string, now time.Time, options GenerateOptions) (Report, error) {
 	channel = strings.TrimSpace(channel)
 	if channel == "" {
 		return Report{}, errors.New("reporting channel is required")
 	}
+	options.TriggerID = strings.TrimSpace(options.TriggerID)
+	options.CheckedSurfaces = cleanStrings(options.CheckedSurfaces)
 	if now.IsZero() {
 		now = time.Now().UTC()
 	} else {
@@ -133,40 +155,80 @@ func (s Store) Generate(channel string, now time.Time) (Report, error) {
 	snapshot.SnapshotID = "snapshot-" + snapshotID
 	reportID, err := stableHash(map[string]any{
 		"channel":      channel,
+		"trigger_id":   options.TriggerID,
 		"snapshot_id":  snapshot.SnapshotID,
 		"generated_at": now.Format(time.RFC3339Nano),
 	})
 	if err != nil {
 		return Report{}, err
 	}
+	meaningfulItemIDs := meaningfulIDs(newItems, changedItems)
+	noChange := len(newItems) == 0 && len(changedItems) == 0
+	outcome := "changed"
+	if noChange {
+		outcome = "no_change"
+	} else if len(newItems) > 0 && len(changedItems) == 0 {
+		outcome = "new"
+	}
+	lastMeaningfulReportID := cursor.LastMeaningfulReportID
+	lastMeaningfulSnapshotID := cursor.LastMeaningfulSnapshotID
+	lastMeaningfulItemIDs := append([]string(nil), cursor.LastMeaningfulItemIDs...)
+	if !noChange {
+		lastMeaningfulReportID = "report-" + reportID
+		lastMeaningfulSnapshotID = snapshot.SnapshotID
+		lastMeaningfulItemIDs = meaningfulItemIDs
+	}
 	report := Report{
-		Kind:               "report_backpressure",
-		Channel:            channel,
-		ReportID:           "report-" + reportID,
-		SnapshotID:         snapshot.SnapshotID,
-		GeneratedAt:        now,
-		NewItems:           newItems,
-		ChangedItems:       changedItems,
-		UnchangedCount:     unchangedCount,
-		TotalCount:         len(summaries),
-		Collapsed:          unchangedCount > 0,
-		FullSnapshotStored: true,
-		PreviousReportID:   cursor.LastReportID,
+		Kind:                     "report_backpressure",
+		Channel:                  channel,
+		ReportID:                 "report-" + reportID,
+		TriggerID:                options.TriggerID,
+		SnapshotID:               snapshot.SnapshotID,
+		GeneratedAt:              now,
+		Outcome:                  outcome,
+		Checked:                  true,
+		CheckedSurfaces:          options.CheckedSurfaces,
+		NoChange:                 noChange,
+		NewItems:                 newItems,
+		ChangedItems:             changedItems,
+		UnchangedCount:           unchangedCount,
+		TotalCount:               len(summaries),
+		Collapsed:                unchangedCount > 0,
+		FullSnapshotStored:       true,
+		PreviousReportID:         cursor.LastReportID,
+		LastMeaningfulReportID:   lastMeaningfulReportID,
+		LastMeaningfulSnapshotID: lastMeaningfulSnapshotID,
+		LastMeaningfulItemIDs:    lastMeaningfulItemIDs,
 	}
 	if err := s.saveSnapshot(snapshot); err != nil {
 		return Report{}, err
 	}
 	cursor = Cursor{
-		Channel:        channel,
-		LastReportID:   report.ReportID,
-		LastSnapshotID: snapshot.SnapshotID,
-		LastReportedAt: now,
-		ItemHashes:     hashes,
+		Channel:                  channel,
+		LastReportID:             report.ReportID,
+		LastSnapshotID:           snapshot.SnapshotID,
+		LastReportedAt:           now,
+		LastMeaningfulReportID:   lastMeaningfulReportID,
+		LastMeaningfulSnapshotID: lastMeaningfulSnapshotID,
+		LastMeaningfulItemIDs:    lastMeaningfulItemIDs,
+		ItemHashes:               hashes,
 	}
 	if err := s.saveCursor(cursor); err != nil {
 		return Report{}, err
 	}
 	return report, nil
+}
+
+func meaningfulIDs(newItems []ItemSummary, changedItems []ItemSummary) []string {
+	ids := make([]string, 0, len(newItems)+len(changedItems))
+	for _, item := range newItems {
+		ids = append(ids, item.ID)
+	}
+	for _, item := range changedItems {
+		ids = append(ids, item.ID)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func (s Store) GetCursor(channel string) (Cursor, error) {
@@ -298,6 +360,20 @@ func (s Store) snapshotPath(snapshotID string) (string, error) {
 func safeID(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:8])
+}
+
+func cleanStrings(values []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func stableHash(value any) (string, error) {

@@ -9071,8 +9071,13 @@ func (ReportBackpressureTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":      map[string]any{"type": "string", "enum": []string{"generate", "snapshot"}},
-				"channel":     map[string]any{"type": "string"},
+				"action":     map[string]any{"type": "string", "enum": []string{"generate", "snapshot"}},
+				"channel":    map[string]any{"type": "string"},
+				"trigger_id": map[string]any{"type": "string"},
+				"checked_surfaces": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+				},
 				"snapshot_id": map[string]any{"type": "string"},
 				"now":         map[string]any{"type": "string", "format": "date-time"},
 			},
@@ -9085,10 +9090,12 @@ func (ReportBackpressureTool) Permission() Permission { return PermissionReadOnl
 
 func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Action     string `json:"action"`
-		Channel    string `json:"channel"`
-		SnapshotID string `json:"snapshot_id"`
-		Now        string `json:"now"`
+		Action          string   `json:"action"`
+		Channel         string   `json:"channel"`
+		TriggerID       string   `json:"trigger_id"`
+		CheckedSurfaces []string `json:"checked_surfaces"`
+		SnapshotID      string   `json:"snapshot_id"`
+		Now             string   `json:"now"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -9104,7 +9111,10 @@ func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage
 		if err != nil {
 			return "", err
 		}
-		report, err := store.Generate(payload.Channel, now)
+		report, err := store.GenerateWithOptions(payload.Channel, now, reporting.GenerateOptions{
+			TriggerID:       payload.TriggerID,
+			CheckedSurfaces: payload.CheckedSurfaces,
+		})
 		if err != nil {
 			return "", err
 		}

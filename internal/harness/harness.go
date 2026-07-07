@@ -9990,7 +9990,7 @@ func reportBackpressureScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			second, err := call("ReportBackpressureTool", `{"action":"generate","channel":"dogfood","now":"2026-07-07T16:02:00Z"}`)
+			second, err := call("ReportBackpressureTool", `{"action":"generate","channel":"dogfood","trigger_id":"nudge-cycle-1","checked_surfaces":["roadmap","sessions"],"now":"2026-07-07T16:02:00Z"}`)
 			if err != nil {
 				return localScenarioResult{}, err
 			}
@@ -10011,16 +10011,24 @@ func reportBackpressureScenario() scenario {
 			thirdChanged, _ := third["changed_items"].([]any)
 			secondUnchanged, _ := second["unchanged_count"].(float64)
 			secondCollapsed, _ := second["collapsed"].(bool)
+			secondNoChange, _ := second["no_change"].(bool)
+			secondOutcome, _ := second["outcome"].(string)
+			secondTrigger, _ := second["trigger_id"].(string)
+			lastMeaningful, _ := second["last_meaningful_report_id"].(string)
 			snapshotBody, _ := snapshot["snapshot"].(map[string]any)
-			if itemID == "" || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
+			if itemID == "" || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
 				return localScenarioResult{}, fmt.Errorf("unexpected backpressure report: filed=%#v first=%#v second=%#v third=%#v snapshot=%#v", filed, first, second, third, snapshot)
 			}
 			output := map[string]any{
 				"kind":             "report_backpressure_roundtrip",
 				"item_id":          itemID,
 				"first_new":        len(firstNew),
+				"second_outcome":   secondOutcome,
+				"second_no_change": secondNoChange,
+				"second_trigger":   secondTrigger,
 				"second_unchanged": int(secondUnchanged),
 				"second_collapsed": secondCollapsed,
+				"last_meaningful":  lastMeaningful,
 				"third_changed":    len(thirdChanged),
 				"snapshot_id":      snapshotID,
 			}
