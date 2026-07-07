@@ -2821,9 +2821,15 @@ func TestSessionRestoreErrorReportIncludesLookupNamespace(t *testing.T) {
 	require.Equal(t, store.Workspace, report.Workspace)
 	require.Equal(t, session.WorkspaceFingerprint(store.Workspace), report.WorkspaceFingerprint)
 	require.Contains(t, report.Hint, "current workspace session namespace")
+	require.Equal(t, "session", report.Error.Kind)
+	require.Equal(t, "resolve_session_id", report.Error.Operation)
+	require.Equal(t, "missing-session", report.Error.Target)
+	require.False(t, report.Error.Retryable)
+	require.Contains(t, report.Error.Hint, "current workspace session namespace")
 
 	cliReport := buildCLIErrorReport(err)
 	require.Equal(t, `session "missing-session" was not found`, cliReport.Message)
+	require.Equal(t, "missing-session", cliReport.Error.Target)
 	require.NotContains(t, cliReport.Message, "searched")
 }
 
@@ -12721,6 +12727,10 @@ func TestResumeMissingSessionReportsTypedError(t *testing.T) {
 	require.Equal(t, "error", report.Status)
 	require.Equal(t, "session_not_found", report.ErrorKind)
 	require.Equal(t, "missing-session", report.RequestedSession)
+	require.Equal(t, "session", report.Error.Kind)
+	require.Equal(t, "resolve_session_id", report.Error.Operation)
+	require.Equal(t, "missing-session", report.Error.Target)
+	require.False(t, report.Error.Retryable)
 	require.Contains(t, report.Hint, "codog sessions list")
 	store := session.NewWorkspaceStore(configHome, workspace)
 	require.NoFileExists(t, filepath.Join(store.Dir, "missing-session.jsonl"))
@@ -12735,6 +12745,8 @@ func TestResumeMissingSessionReportsTypedError(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "session_not_found", report.ErrorKind)
 	require.Equal(t, "missing-session", report.RequestedSession)
+	require.Equal(t, "session", report.Error.Kind)
+	require.Equal(t, "missing-session", report.Error.Target)
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "resume", "missing-session"}, config.FlagOverrides{})
@@ -12775,6 +12787,9 @@ func TestResumeDirectoryPathReportsTypedError(t *testing.T) {
 	require.Equal(t, "status", report.Action)
 	require.Equal(t, "session_path_is_directory", report.ErrorKind)
 	require.Equal(t, directoryPath, report.Path)
+	require.Equal(t, "session", report.Error.Kind)
+	require.Equal(t, "resolve_session_id", report.Error.Operation)
+	require.Equal(t, directoryPath, report.Error.Target)
 	require.Contains(t, report.Hint, ".jsonl")
 	require.Contains(t, report.Hint, "codog sessions list --json")
 }
@@ -12814,6 +12829,9 @@ func TestResumeCrossWorkspaceSessionReportsTypedError(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "session_workspace_mismatch", report.ErrorKind)
 	require.Equal(t, created.Path, report.Path)
+	require.Equal(t, "session", report.Error.Kind)
+	require.Equal(t, "resolve_session_id", report.Error.Operation)
+	require.Equal(t, created.Path, report.Error.Target)
 	require.Equal(t, canonicalB, report.ExpectedWorkspace)
 	require.Equal(t, canonicalA, report.ActualWorkspace)
 	require.Contains(t, report.Hint, "original workspace")

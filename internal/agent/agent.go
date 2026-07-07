@@ -29934,21 +29934,22 @@ type actionErrorReport struct {
 }
 
 type sessionRestoreErrorReport struct {
-	Kind                     string `json:"kind"`
-	Action                   string `json:"action"`
-	Status                   string `json:"status"`
-	ErrorKind                string `json:"error_kind"`
-	RequestedSession         string `json:"requested_session,omitempty"`
-	Path                     string `json:"path,omitempty"`
-	SessionSearchPath        string `json:"session_search_path,omitempty"`
-	Workspace                string `json:"workspace,omitempty"`
-	WorkspaceFingerprint     string `json:"workspace_fingerprint,omitempty"`
-	OtherWorkspacePartitions int    `json:"other_workspace_partitions,omitempty"`
-	OtherWorkspaceSessions   int    `json:"other_workspace_sessions,omitempty"`
-	ExpectedWorkspace        string `json:"expected_workspace,omitempty"`
-	ActualWorkspace          string `json:"actual_workspace,omitempty"`
-	Message                  string `json:"message"`
-	Hint                     string `json:"hint"`
+	Kind                     string           `json:"kind"`
+	Action                   string           `json:"action"`
+	Status                   string           `json:"status"`
+	ErrorKind                string           `json:"error_kind"`
+	Error                    cliErrorEnvelope `json:"error"`
+	RequestedSession         string           `json:"requested_session,omitempty"`
+	Path                     string           `json:"path,omitempty"`
+	SessionSearchPath        string           `json:"session_search_path,omitempty"`
+	Workspace                string           `json:"workspace,omitempty"`
+	WorkspaceFingerprint     string           `json:"workspace_fingerprint,omitempty"`
+	OtherWorkspacePartitions int              `json:"other_workspace_partitions,omitempty"`
+	OtherWorkspaceSessions   int              `json:"other_workspace_sessions,omitempty"`
+	ExpectedWorkspace        string           `json:"expected_workspace,omitempty"`
+	ActualWorkspace          string           `json:"actual_workspace,omitempty"`
+	Message                  string           `json:"message"`
+	Hint                     string           `json:"hint"`
 }
 
 func renderSessionRestoreError(out io.Writer, action string, requested string, err error, format string) error {
@@ -30019,7 +30020,31 @@ func buildSessionRestoreErrorReport(action string, requested string, err error) 
 			applySessionRestoreLookupError(&report, lookupErr)
 		}
 	}
+	report.Error = buildSessionRestoreErrorEnvelope(err, report)
 	return report
+}
+
+func buildSessionRestoreErrorEnvelope(err error, report sessionRestoreErrorReport) cliErrorEnvelope {
+	cliReport := cliErrorReport{
+		Kind:                     report.ErrorKind,
+		ErrorKind:                report.ErrorKind,
+		Status:                   report.Status,
+		Action:                   report.Action,
+		Message:                  report.Message,
+		Hint:                     report.Hint,
+		Path:                     report.Path,
+		SessionSearchPath:        report.SessionSearchPath,
+		Workspace:                report.Workspace,
+		WorkspaceFingerprint:     report.WorkspaceFingerprint,
+		OtherWorkspacePartitions: report.OtherWorkspacePartitions,
+		OtherWorkspaceSessions:   report.OtherWorkspaceSessions,
+		ExpectedWorkspace:        report.ExpectedWorkspace,
+		ActualWorkspace:          report.ActualWorkspace,
+	}
+	if strings.TrimSpace(report.RequestedSession) != "" {
+		cliReport.Value = strings.TrimSpace(report.RequestedSession)
+	}
+	return buildCLIErrorEnvelope(err, cliReport)
 }
 
 func applySessionRestoreLookupError(report *sessionRestoreErrorReport, lookup session.LookupError) {
@@ -31175,19 +31200,22 @@ func cliErrorTarget(err error, report cliErrorReport) string {
 	if errors.As(err, &pathErr) && strings.TrimSpace(pathErr.Path) != "" {
 		return strings.TrimSpace(pathErr.Path)
 	}
-	if target := firstNonEmpty(report.SessionSearchPath, report.Path, report.Option, report.Argument, report.Value, report.ToolName, report.Command); target != "" {
-		return target
-	}
-	if len(report.EnvVars) > 0 {
-		return report.EnvVars[0]
-	}
 	if report.ErrorKind == "session_not_found" {
+		if strings.TrimSpace(report.Value) != "" {
+			return strings.TrimSpace(report.Value)
+		}
 		if target := sessionErrorTarget(report.Message); target != "" {
 			return target
 		}
 		if err != nil {
 			return sessionErrorTarget(err.Error())
 		}
+	}
+	if target := firstNonEmpty(report.SessionSearchPath, report.Path, report.Option, report.Argument, report.Value, report.ToolName, report.Command); target != "" {
+		return target
+	}
+	if len(report.EnvVars) > 0 {
+		return report.EnvVars[0]
 	}
 	if strings.TrimSpace(report.Provider) != "" {
 		return strings.TrimSpace(report.Provider)
