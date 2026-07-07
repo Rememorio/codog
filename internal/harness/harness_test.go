@@ -303,6 +303,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, gitPreserveState.Output, `"patch_has_feature":true`)
 	require.Contains(t, gitPreserveState.Output, `"patch_has_dirty":true`)
 	require.Contains(t, gitPreserveState.Output, `"format_patch":true`)
+	require.Contains(t, gitPreserveState.Output, `"share_sidecar":true`)
 	require.Contains(t, gitPreserveState.Output, `"untracked_files":1`)
 
 	worktreeLifecycle := findScenario(t, report, "worktree_lifecycle_roundtrip")
@@ -1232,6 +1233,7 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Equal(t, "git-workspace", gitPreserveState.Category)
 	require.Contains(t, gitPreserveState.ParityRefs, "Issue draft")
 	require.Contains(t, gitPreserveState.ParityRefs, "Pull request draft")
+	require.Contains(t, gitPreserveState.ParityRefs, "Share")
 
 	worktreeLifecycle := findManifestScenario(t, manifest, "worktree_lifecycle_roundtrip")
 	require.Equal(t, "git-workspace", worktreeLifecycle.Category)

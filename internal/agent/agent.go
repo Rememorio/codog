@@ -43861,14 +43861,16 @@ type shareRequest struct {
 }
 
 type shareReport struct {
-	Kind      string `json:"kind"`
-	Action    string `json:"action"`
-	Status    string `json:"status"`
-	SessionID string `json:"session_id"`
-	File      string `json:"file"`
-	Format    string `json:"format"`
-	Messages  int    `json:"messages"`
-	Bytes     int    `json:"bytes"`
+	Kind         string               `json:"kind"`
+	Action       string               `json:"action"`
+	Status       string               `json:"status"`
+	SessionID    string               `json:"session_id"`
+	File         string               `json:"file"`
+	Format       string               `json:"format"`
+	Messages     int                  `json:"messages"`
+	Bytes        int                  `json:"bytes"`
+	GitStateFile string               `json:"git_state_file,omitempty"`
+	GitState     *draftGitStateReport `json:"git_state,omitempty"`
 }
 
 type copyRequest struct {
@@ -44297,18 +44299,42 @@ func (a *App) Share(args []string, overrides config.FlagOverrides) error {
 	if err := session.ValidateExportOutputPath(path); err != nil {
 		return err
 	}
+	gitStateFile := ""
+	var gitStateSummary *draftGitStateReport
+	var gitStateData []byte
+	if state, err := gitops.PreserveStateForIssue(a.Workspace); err != nil {
+		return err
+	} else if state != nil {
+		gitStateFile = filepath.Join(outputDir, shareGitStateFileName(sess.ID))
+		stateData, err := json.MarshalIndent(state, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := session.ValidateExportOutputPath(gitStateFile); err != nil {
+			return err
+		}
+		gitStateData = stateData
+		gitStateSummary = draftGitStateSummary(state)
+	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return err
 	}
+	if gitStateFile != "" {
+		if err := os.WriteFile(gitStateFile, gitStateData, 0o644); err != nil {
+			return err
+		}
+	}
 	report := shareReport{
-		Kind:      "share",
-		Action:    "create",
-		Status:    "ok",
-		SessionID: sess.ID,
-		File:      path,
-		Format:    format,
-		Messages:  len(sess.Messages),
-		Bytes:     len(data),
+		Kind:         "share",
+		Action:       "create",
+		Status:       "ok",
+		SessionID:    sess.ID,
+		File:         path,
+		Format:       format,
+		Messages:     len(sess.Messages),
+		Bytes:        len(data),
+		GitStateFile: gitStateFile,
+		GitState:     gitStateSummary,
 	}
 	if req.JSON {
 		encoded, _ := json.MarshalIndent(report, "", "  ")
@@ -44316,6 +44342,9 @@ func (a *App) Share(args []string, overrides config.FlagOverrides) error {
 		return nil
 	}
 	fmt.Fprintf(a.Out, "Shared session %s to %s (%d bytes).\n", report.SessionID, report.File, report.Bytes)
+	if report.GitStateFile != "" {
+		fmt.Fprintf(a.Out, "Git state saved to %s.\n", report.GitStateFile)
+	}
 	return nil
 }
 
@@ -44385,6 +44414,10 @@ func shareFileName(sessionID string, format string) string {
 		ext = "html"
 	}
 	return shareSafeSessionID(sessionID) + "." + ext
+}
+
+func shareGitStateFileName(sessionID string) string {
+	return shareSafeSessionID(sessionID) + ".git-state.json"
 }
 
 func shareSafeSessionID(sessionID string) string {

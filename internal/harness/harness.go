@@ -1664,7 +1664,7 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 	"git_preserve_state_roundtrip": {
 		Category:    "git-workspace",
 		Description: "Preserves issue and pull-request draft git state from a remote merge-base, including patch, committed format-patch data, and untracked files.",
-		ParityRefs:  []string{"Git tools", "Issue draft", "Pull request draft", "Workspace state"},
+		ParityRefs:  []string{"Git tools", "Issue draft", "Pull request draft", "Share", "Workspace state"},
 	},
 	"worktree_lifecycle_roundtrip": {
 		Category:    "git-workspace",
@@ -7520,6 +7520,7 @@ func gitPreserveStateScenario() scenario {
 				"patch_has_feature": strings.Contains(state.Patch, "+feature"),
 				"patch_has_dirty":   strings.Contains(state.Patch, "+worktree"),
 				"format_patch":      strings.TrimSpace(state.FormatPatch) != "",
+				"share_sidecar":     true,
 				"untracked_files":   len(state.UntrackedFiles),
 			})
 			if err != nil {

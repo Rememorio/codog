@@ -26759,7 +26759,12 @@ func TestExportSlashWritesCurrentSession(t *testing.T) {
 }
 
 func TestShareCommandAndSlashWritesLocalArtifact(t *testing.T) {
-	workspace := t.TempDir()
+	workspace := initGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("base\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "chore: base")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("base\nshare change\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "share-note.txt"), []byte("share note\n"), 0o644))
 	store := session.NewWorkspaceStore(t.TempDir(), workspace)
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "share me")))
 	sess, err := store.Open("source")
@@ -26771,17 +26776,28 @@ func TestShareCommandAndSlashWritesLocalArtifact(t *testing.T) {
 	require.NoError(t, app.Share([]string{"--session", "source", "--format=json", "--json"}, config.FlagOverrides{}))
 	require.Contains(t, out.String(), `"kind": "share"`)
 	require.Contains(t, out.String(), `"format": "json"`)
+	require.Contains(t, out.String(), `"git_state_file":`)
+	require.Contains(t, out.String(), `"git_state": {`)
+	require.Contains(t, out.String(), `"untracked_files": 1`)
 	sharedJSON := filepath.Join(workspace, ".codog", "share", "source.json")
 	data, err := os.ReadFile(sharedJSON)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"id": "source"`)
+	gitStatePath := filepath.Join(workspace, ".codog", "share", "source.git-state.json")
+	data, err = os.ReadFile(gitStatePath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "+share change")
+	require.Contains(t, string(data), "share-note.txt")
 	out.Reset()
 
 	require.NoError(t, app.Share([]string{"--session", "source", "--format=html", "html-share"}, config.FlagOverrides{}))
 	require.Contains(t, out.String(), "Shared session source")
+	require.Contains(t, out.String(), "Git state saved")
 	data, err = os.ReadFile(filepath.Join(workspace, "html-share", "source.html"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "<!doctype html>")
+	_, err = os.Stat(filepath.Join(workspace, "html-share", "source.git-state.json"))
+	require.NoError(t, err)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/share shared", sess))
@@ -26791,6 +26807,8 @@ func TestShareCommandAndSlashWritesLocalArtifact(t *testing.T) {
 	data, err = os.ReadFile(sharedMarkdown)
 	require.NoError(t, err)
 	require.Contains(t, string(data), "share me")
+	_, err = os.Stat(filepath.Join(workspace, "shared", "source.git-state.json"))
+	require.NoError(t, err)
 }
 
 func TestCopyCommandAndSlash(t *testing.T) {
