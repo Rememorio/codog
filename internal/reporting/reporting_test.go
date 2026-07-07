@@ -361,6 +361,61 @@ func TestProjectReportBuildsAudienceViews(t *testing.T) {
 	require.Equal(t, brief.Provenance.SourceContentHash, briefAgain.Provenance.SourceContentHash)
 }
 
+func TestProjectReportCacheMarksDuplicatesAndSupersededViews(t *testing.T) {
+	configHome := t.TempDir()
+	roadmapStore := roadmap.NewStore(configHome)
+	reportStore := NewStore(configHome)
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	filed, err := roadmapStore.File(roadmap.Filing{
+		Title:    "cached projection",
+		Priority: roadmap.PriorityP1,
+		Now:      now,
+	})
+	require.NoError(t, err)
+	report, err := reportStore.Generate("dogfood", now.Add(time.Minute))
+	require.NoError(t, err)
+	capabilities := reportschema.ConsumerCapabilities{
+		Consumer:       "clawhip",
+		SchemaVersions: []string{reportschema.ReportingReportSchemaV1},
+	}
+
+	first, err := reportStore.ProjectReportCached(report, capabilities, "delta_brief", "brief")
+	require.NoError(t, err)
+	require.NotEmpty(t, first.Provenance.CacheKey)
+	require.True(t, first.Provenance.LatestCompatible)
+	require.False(t, first.Provenance.StaleCached)
+	require.False(t, first.Provenance.SourceChanged)
+	require.Empty(t, first.Provenance.SupersedesProjectionID)
+
+	duplicate, err := reportStore.ProjectReportCached(report, capabilities, "delta_brief", "brief")
+	require.NoError(t, err)
+	require.Equal(t, first.ProjectionID, duplicate.ProjectionID)
+	require.Equal(t, first.ProjectionID, duplicate.Provenance.DuplicateOfProjectionID)
+	require.Equal(t, first.Provenance.CacheKey, duplicate.Provenance.CacheKey)
+	require.False(t, duplicate.Provenance.SourceChanged)
+
+	_, err = roadmapStore.File(roadmap.Filing{
+		ID:       filed.ItemID,
+		Priority: roadmap.PriorityP0,
+		Now:      now.Add(2 * time.Minute),
+	})
+	require.NoError(t, err)
+	changed, err := reportStore.Generate("dogfood", now.Add(3*time.Minute))
+	require.NoError(t, err)
+	second, err := reportStore.ProjectReportCached(changed, capabilities, "delta_brief", "brief")
+	require.NoError(t, err)
+
+	require.NotEqual(t, first.Provenance.SourceContentHash, second.Provenance.SourceContentHash)
+	require.NotEqual(t, first.ProjectionID, second.ProjectionID)
+	require.True(t, second.Provenance.SourceChanged)
+	require.True(t, second.Provenance.RenderingChanged)
+	require.True(t, second.Provenance.LatestCompatible)
+	require.False(t, second.Provenance.StaleCached)
+	require.Equal(t, first.ProjectionID, second.Provenance.SupersedesProjectionID)
+	require.Empty(t, second.Provenance.DuplicateOfProjectionID)
+}
+
 func claimByID(t *testing.T, claims []ClaimSummary, id string) ClaimSummary {
 	t.Helper()
 	for _, claim := range claims {

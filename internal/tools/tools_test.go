@@ -4300,6 +4300,9 @@ func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
 			SourceContentHash    string   `json:"source_content_hash"`
 			SourceChanged        bool     `json:"source_changed"`
 			RenderingChanged     bool     `json:"rendering_changed"`
+			LatestCompatible     bool     `json:"latest_compatible"`
+			StaleCached          bool     `json:"stale_cached"`
+			CacheKey             string   `json:"cache_key"`
 			Consumer             struct {
 				Consumer string `json:"consumer"`
 			} `json:"consumer"`
@@ -4314,6 +4317,9 @@ func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
 	require.NotEmpty(t, projection.Provenance.SourceContentHash)
 	require.False(t, projection.Provenance.SourceChanged)
 	require.True(t, projection.Provenance.RenderingChanged)
+	require.True(t, projection.Provenance.LatestCompatible)
+	require.False(t, projection.Provenance.StaleCached)
+	require.NotEmpty(t, projection.Provenance.CacheKey)
 	require.Equal(t, "legacy-claw", projection.Provenance.Consumer.Consumer)
 	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "items")
 	require.Contains(t, projection.Provenance.OmittedFieldFamilies, "negative_evidence")
@@ -4337,6 +4343,9 @@ func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
 			Verbosity         string `json:"verbosity"`
 			SourceChanged     bool   `json:"source_changed"`
 			RenderingChanged  bool   `json:"rendering_changed"`
+			LatestCompatible  bool   `json:"latest_compatible"`
+			StaleCached       bool   `json:"stale_cached"`
+			CacheKey          string `json:"cache_key"`
 			Downgraded        bool   `json:"downgraded"`
 		} `json:"provenance"`
 		CanonicalReport map[string]any `json:"canonical_report"`
@@ -4350,6 +4359,9 @@ func TestReportBackpressureToolProjectsForConsumerCapabilities(t *testing.T) {
 	require.Equal(t, "brief", brief.Provenance.Verbosity)
 	require.False(t, brief.Provenance.SourceChanged)
 	require.True(t, brief.Provenance.RenderingChanged)
+	require.True(t, brief.Provenance.LatestCompatible)
+	require.False(t, brief.Provenance.StaleCached)
+	require.NotEmpty(t, brief.Provenance.CacheKey)
 	require.Contains(t, brief.Payload, "summary")
 	require.Contains(t, brief.Payload, "identity")
 	require.Contains(t, brief.Payload, "top_items")

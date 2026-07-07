@@ -9998,6 +9998,10 @@ func reportBackpressureScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
+			firstProjection, err := call("ReportBackpressureTool", `{"action":"generate","channel":"dogfood","consumer":"clawhip","schema_versions":["codog.reporting.report.v1"],"projection_view":"delta_brief","projection_verbosity":"brief","now":"2026-07-07T16:02:30Z"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
 			_, err = call("RoadmapPinpointTool", `{"action":"update","id":"`+itemID+`","priority":"p0","severity":"critical","evidence":[{"role":"verification","type":"test","reference":"go-test","preview":"cursor collapse test passes"}],"now":"2026-07-07T16:03:00Z"}`)
 			if err != nil {
 				return localScenarioResult{}, err
@@ -10044,9 +10048,14 @@ func reportBackpressureScenario() scenario {
 			thirdPriorityState := fieldDeltaStateSuffix(thirdFieldDeltas, ".priority")
 			snapshotBody, _ := snapshot["snapshot"].(map[string]any)
 			provenance, _ := projected["provenance"].(map[string]any)
+			firstProjectionID, _ := firstProjection["projection_id"].(string)
 			projectedDowngraded, _ := provenance["downgraded"].(bool)
 			projectedSourceHash, _ := provenance["source_content_hash"].(string)
 			projectedRenderingChanged, _ := provenance["rendering_changed"].(bool)
+			projectedSourceChanged, _ := provenance["source_changed"].(bool)
+			projectedLatest, _ := provenance["latest_compatible"].(bool)
+			projectedStale, _ := provenance["stale_cached"].(bool)
+			projectedSupersedes, _ := provenance["supersedes_projection_id"].(string)
 			omittedFamilies, _ := provenance["omitted_field_families"].([]any)
 			projectedPayload, _ := projected["payload"].(map[string]any)
 			projectedCanonical, _ := projected["canonical_report"].(map[string]any)
@@ -10058,8 +10067,17 @@ func reportBackpressureScenario() scenario {
 			projectedTopItems, _ := projectedPayload["top_items"].([]any)
 			schemaRegistry, _ := schema["registry"].(map[string]any)
 			schemaFields, _ := schemaRegistry["fields"].([]any)
-			if itemID == "" || firstSchemaVersion != "codog.reporting.report.v1" || compatibilityPolicy != "codog.reporting.compatibility.v1" || len(stableCore) == 0 || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || len(secondNegative) != 2 || negativeStatus != "not_observed_in_checked_scope" || negativeWindow != "2026-07-07T16:01:00Z/2026-07-07T16:02:00Z" || len(secondFieldDeltas) == 0 || secondDeltaState != "cleared" || len(invalidates) != 2 || thirdPriorityState != "changed" || !projectedDowngraded || !projectedRenderingChanged || projectedSourceHash == "" || projectedSourceHash != canonicalHash || projectedView != "delta_brief" || projectedVerbosity != "brief" || len(omittedFamilies) == 0 || projectedPayload["field_deltas"] == nil || projectedPayload["new_items"] != nil || projectedSummary["outcome"] == nil || len(projectedTopItems) != 0 || projectedCanonical["schema_compatibility"] == nil || len(schemaFields) != 2 || firstRootKind != "hypothesis" || thirdRootKind != "observed_fact" || thirdPromotedFrom != "hypothesis" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
-				return localScenarioResult{}, fmt.Errorf("unexpected backpressure report: filed=%#v first=%#v second=%#v third=%#v snapshot=%#v", filed, first, second, third, snapshot)
+			if itemID == "" || firstSchemaVersion != "codog.reporting.report.v1" || compatibilityPolicy != "codog.reporting.compatibility.v1" || len(stableCore) == 0 || firstProjectionID == "" || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || len(secondNegative) != 2 || negativeStatus != "not_observed_in_checked_scope" || negativeWindow != "2026-07-07T16:01:00Z/2026-07-07T16:02:00Z" || len(secondFieldDeltas) == 0 || secondDeltaState != "cleared" || len(invalidates) != 2 || thirdPriorityState != "changed" || !projectedDowngraded || !projectedRenderingChanged || !projectedSourceChanged || !projectedLatest || projectedStale || projectedSupersedes != firstProjectionID || projectedSourceHash == "" || projectedSourceHash != canonicalHash || projectedView != "delta_brief" || projectedVerbosity != "brief" || len(omittedFamilies) == 0 || projectedPayload["field_deltas"] == nil || projectedPayload["new_items"] != nil || projectedSummary["outcome"] == nil || len(projectedTopItems) != 0 || projectedCanonical["schema_compatibility"] == nil || len(schemaFields) != 2 || firstRootKind != "hypothesis" || thirdRootKind != "observed_fact" || thirdPromotedFrom != "hypothesis" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
+				return localScenarioResult{}, fmt.Errorf("unexpected backpressure report: checks=%#v", map[string]any{
+					"item_id": itemID, "first_projection_id": firstProjectionID, "projected_downgraded": projectedDowngraded,
+					"rendering_changed": projectedRenderingChanged, "source_changed": projectedSourceChanged, "latest": projectedLatest,
+					"stale": projectedStale, "supersedes": projectedSupersedes, "source_hash": projectedSourceHash,
+					"canonical_hash": canonicalHash, "projected_view": projectedView, "projected_verbosity": projectedVerbosity,
+					"omitted": len(omittedFamilies), "has_field_deltas": projectedPayload["field_deltas"] != nil,
+					"has_new_items": projectedPayload["new_items"] != nil, "summary_outcome": projectedSummary["outcome"],
+					"top_items": len(projectedTopItems), "schema_fields": len(schemaFields), "third_changed": len(thirdChanged),
+					"snapshot_schema": snapshotBody["schema_version"],
+				})
 			}
 			output := map[string]any{
 				"kind":             "report_backpressure_roundtrip",
@@ -10086,6 +10104,9 @@ func reportBackpressureScenario() scenario {
 				"projected_level":  projectedVerbosity,
 				"projected_omits":  len(omittedFamilies),
 				"source_anchor":    projectedSourceHash,
+				"source_changed":   projectedSourceChanged,
+				"latest":           projectedLatest,
+				"supersedes":       projectedSupersedes,
 				"schema_fields":    len(schemaFields),
 				"first_root_claim": firstRootKind,
 				"third_root_claim": thirdRootKind,
@@ -10100,10 +10121,10 @@ func reportBackpressureScenario() scenario {
 			return localScenarioResult{
 				Output:       string(data),
 				FinalMessage: "report backpressure harness ok",
-				RequestCount: 8,
+				RequestCount: 9,
 				MessageCount: 1,
-				ToolCalls:    8,
-				ToolUses:     []string{"roadmap_pinpoint", "report_backpressure", "report_backpressure", "roadmap_pinpoint", "report_backpressure", "report_backpressure", "report_backpressure", "report_schema"},
+				ToolCalls:    9,
+				ToolUses:     []string{"roadmap_pinpoint", "report_backpressure", "report_backpressure", "report_backpressure", "roadmap_pinpoint", "report_backpressure", "report_backpressure", "report_backpressure", "report_schema"},
 			}, nil
 		},
 	}

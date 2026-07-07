@@ -115,6 +115,7 @@ type ReportProjection struct {
 
 type ReportProjectionProvenance struct {
 	PolicyID                string                            `json:"policy_id"`
+	CacheKey                string                            `json:"cache_key,omitempty"`
 	SourceSchemaVersion     string                            `json:"source_schema_version"`
 	SourceReportID          string                            `json:"source_report_id"`
 	SourceSnapshotID        string                            `json:"source_snapshot_id"`
@@ -125,8 +126,23 @@ type ReportProjectionProvenance struct {
 	SourceChanged           bool                              `json:"source_changed"`
 	RenderingChanged        bool                              `json:"rendering_changed"`
 	DuplicateOfProjectionID string                            `json:"duplicate_of_projection_id,omitempty"`
+	SupersedesProjectionID  string                            `json:"supersedes_projection_id,omitempty"`
+	LatestCompatible        bool                              `json:"latest_compatible"`
+	StaleCached             bool                              `json:"stale_cached"`
 	Downgraded              bool                              `json:"downgraded"`
 	OmittedFieldFamilies    []string                          `json:"omitted_field_families,omitempty"`
+}
+
+type ReportProjectionCacheEntry struct {
+	SchemaVersion     string    `json:"schema_version"`
+	CacheKey          string    `json:"cache_key"`
+	ProjectionID      string    `json:"projection_id"`
+	SourceReportID    string    `json:"source_report_id"`
+	SourceContentHash string    `json:"source_content_hash"`
+	View              string    `json:"view"`
+	Verbosity         string    `json:"verbosity"`
+	Consumer          string    `json:"consumer"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type Snapshot struct {
@@ -167,6 +183,56 @@ func NewStore(configHome string) Store {
 
 func (s Store) Generate(channel string, now time.Time) (Report, error) {
 	return s.GenerateWithOptions(channel, now, GenerateOptions{})
+}
+
+func (s Store) ProjectReportCached(report Report, capabilities reportschema.ConsumerCapabilities, view string, verbosity string) (ReportProjection, error) {
+	projection, err := ProjectReport(report, capabilities, view, verbosity)
+	if err != nil {
+		return ReportProjection{}, err
+	}
+	cacheKey, err := projectionCacheKey(report, capabilities, projection.View, projection.Verbosity)
+	if err != nil {
+		return ReportProjection{}, err
+	}
+	projection.Provenance.CacheKey = cacheKey
+	projection.Provenance.LatestCompatible = true
+	projection.Provenance.StaleCached = false
+
+	previous, err := s.getProjectionCache(cacheKey)
+	if err != nil && !os.IsNotExist(err) {
+		return ReportProjection{}, err
+	}
+	if err == nil {
+		switch {
+		case previous.ProjectionID == projection.ProjectionID:
+			projection.Provenance.DuplicateOfProjectionID = previous.ProjectionID
+		case previous.SourceContentHash != "" && previous.SourceContentHash != projection.Provenance.SourceContentHash:
+			projection.Provenance.SourceChanged = true
+			projection.Provenance.RenderingChanged = true
+			projection.Provenance.SupersedesProjectionID = previous.ProjectionID
+		default:
+			projection.Provenance.RenderingChanged = true
+			projection.Provenance.SupersedesProjectionID = previous.ProjectionID
+		}
+	}
+	entry := ReportProjectionCacheEntry{
+		SchemaVersion:     reportschema.ReportingReportSchemaV1,
+		CacheKey:          cacheKey,
+		ProjectionID:      projection.ProjectionID,
+		SourceReportID:    projection.Provenance.SourceReportID,
+		SourceContentHash: projection.Provenance.SourceContentHash,
+		View:              projection.View,
+		Verbosity:         projection.Verbosity,
+		Consumer:          projection.Provenance.Consumer.Consumer,
+		UpdatedAt:         report.GeneratedAt,
+	}
+	if entry.UpdatedAt.IsZero() {
+		entry.UpdatedAt = time.Now().UTC()
+	}
+	if err := s.saveProjectionCache(entry); err != nil {
+		return ReportProjection{}, err
+	}
+	return projection, nil
 }
 
 func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities, view string, verbosity string) (ReportProjection, error) {
@@ -221,6 +287,8 @@ func ProjectReport(report Report, capabilities reportschema.ConsumerCapabilities
 			Verbosity:            verbosity,
 			SourceChanged:        false,
 			RenderingChanged:     renderingChanged,
+			LatestCompatible:     true,
+			StaleCached:          false,
 			Downgraded:           !supportsSchema || len(omitted) > 0 || isAudienceReportView(view),
 			OmittedFieldFamilies: omitted,
 		},
@@ -740,6 +808,24 @@ func supportsReportFamily(capabilities reportschema.ConsumerCapabilities, family
 	return false
 }
 
+func projectionCacheKey(report Report, capabilities reportschema.ConsumerCapabilities, view string, verbosity string) (string, error) {
+	capabilities.Consumer = strings.TrimSpace(capabilities.Consumer)
+	capabilities.SchemaVersions = cleanStrings(capabilities.SchemaVersions)
+	capabilities.FieldFamilies = cleanStrings(capabilities.FieldFamilies)
+	hash, err := stableHash(map[string]any{
+		"channel":         report.Channel,
+		"consumer":        capabilities.Consumer,
+		"schema_versions": capabilities.SchemaVersions,
+		"field_families":  capabilities.FieldFamilies,
+		"view":            view,
+		"verbosity":       verbosity,
+	})
+	if err != nil {
+		return "", err
+	}
+	return "projection-" + hash, nil
+}
+
 func buildNegativeEvidence(channel string, now time.Time, cursor Cursor, options GenerateOptions) ([]reportschema.NegativeEvidence, error) {
 	queries := options.NegativeQueries
 	if len(queries) == 0 {
@@ -1000,6 +1086,22 @@ func (s Store) GetSnapshot(snapshotID string) (Snapshot, error) {
 	return snapshot, nil
 }
 
+func (s Store) getProjectionCache(cacheKey string) (ReportProjectionCacheEntry, error) {
+	path, err := s.projectionCachePath(cacheKey)
+	if err != nil {
+		return ReportProjectionCacheEntry{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ReportProjectionCacheEntry{}, err
+	}
+	var entry ReportProjectionCacheEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return ReportProjectionCacheEntry{}, err
+	}
+	return entry, nil
+}
+
 func summarizeItem(item roadmap.Item, now time.Time, freshnessTTL time.Duration) (ItemSummary, error) {
 	observedAt := item.UpdatedAt
 	if observedAt.IsZero() {
@@ -1175,6 +1277,21 @@ func (s Store) saveSnapshot(snapshot Snapshot) error {
 	return os.WriteFile(path, append(data, '\n'), 0o644)
 }
 
+func (s Store) saveProjectionCache(entry ReportProjectionCacheEntry) error {
+	if err := os.MkdirAll(filepath.Join(s.Dir, "projection-cache"), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		return err
+	}
+	path, err := s.projectionCachePath(entry.CacheKey)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
 func (s Store) cursorPath(channel string) (string, error) {
 	channel = strings.TrimSpace(channel)
 	if channel == "" {
@@ -1192,6 +1309,17 @@ func (s Store) snapshotPath(snapshotID string) (string, error) {
 		return "", errors.New("snapshot_id must be a path component")
 	}
 	return filepath.Join(s.Dir, "snapshots", snapshotID+".json"), nil
+}
+
+func (s Store) projectionCachePath(cacheKey string) (string, error) {
+	cacheKey = strings.TrimSpace(cacheKey)
+	if cacheKey == "" {
+		return "", errors.New("projection cache key is required")
+	}
+	if strings.ContainsAny(cacheKey, `/\`) || cacheKey == "." || cacheKey == ".." {
+		return "", errors.New("projection cache key must be a path component")
+	}
+	return filepath.Join(s.Dir, "projection-cache", cacheKey+".json"), nil
 }
 
 func safeID(value string) string {

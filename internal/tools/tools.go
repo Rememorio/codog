@@ -9270,7 +9270,7 @@ func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage
 			return "", err
 		}
 		if payload.Consumer != "" || len(payload.SchemaVersions) > 0 || len(payload.FieldFamilies) > 0 || payload.ProjectionView != "" || payload.ProjectionVerbosity != "" {
-			projection, err := reporting.ProjectReport(report, reportschema.ConsumerCapabilities{
+			projection, err := store.ProjectReportCached(report, reportschema.ConsumerCapabilities{
 				Consumer:       payload.Consumer,
 				SchemaVersions: payload.SchemaVersions,
 				FieldFamilies:  payload.FieldFamilies,
