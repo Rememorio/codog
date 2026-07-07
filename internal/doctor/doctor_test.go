@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/sandbox"
@@ -593,9 +594,59 @@ func TestRunWarnsForStaleBranchFreshness(t *testing.T) {
 	git := findCheck(t, report, "Git")
 	require.Equal(t, StatusWarn, git.Status)
 	require.Contains(t, git.Summary, "behind or diverged")
+	identity, ok := git.Data["identity"].(gitops.Identity)
+	require.True(t, ok)
+	require.Equal(t, "topic", identity.HeadRef)
+	freshness, ok := git.Data["freshness"].(gitops.BranchFreshness)
+	require.True(t, ok)
+	require.Equal(t, "stale", freshness.Status)
+	baseCommit, ok := git.Data["base_commit"].(gitops.BaseCommitCheck)
+	require.True(t, ok)
+	require.Equal(t, "no_expected_base", baseCommit.Status)
 	require.Contains(t, strings.Join(git.Details, "\n"), "Freshness: stale")
 	require.Contains(t, strings.Join(git.Details, "\n"), "Behind: 1")
 	require.Contains(t, strings.Join(git.Details, "\n"), "Missing: fix: main update")
+}
+
+func TestRunReportsGitIdentityData(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runTestGit(t, workspace, "init", "-b", "main")
+	runTestGit(t, workspace, "config", "user.email", "codog@example.test")
+	runTestGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "base.txt"), []byte("base\n"), 0o644))
+	runTestGit(t, workspace, "add", ".")
+	runTestGit(t, workspace, "commit", "-m", "chore: base")
+
+	report := Run(Options{
+		Workspace:      workspace,
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	git := findCheck(t, report, "Git")
+	require.Equal(t, StatusOK, git.Status)
+	identity, ok := git.Data["identity"].(gitops.Identity)
+	require.True(t, ok)
+	require.Equal(t, "main", identity.HeadRef)
+	require.NotEmpty(t, identity.HeadSHA)
+	require.NotEmpty(t, identity.HeadShortSHA)
+	freshness, ok := git.Data["freshness"].(gitops.BranchFreshness)
+	require.True(t, ok)
+	require.True(t, freshness.Fresh)
+	baseCommit, ok := git.Data["base_commit"].(gitops.BaseCommitCheck)
+	require.True(t, ok)
+	require.Equal(t, "no_expected_base", baseCommit.Status)
+	require.Contains(t, strings.Join(git.Details, "\n"), "Head: "+identity.HeadShortSHA)
 }
 
 func TestRunWarnsForDivergedBaseCommit(t *testing.T) {
@@ -631,6 +682,14 @@ func TestRunWarnsForDivergedBaseCommit(t *testing.T) {
 	git := findCheck(t, report, "Git")
 	require.Equal(t, StatusWarn, git.Status)
 	require.Contains(t, git.Summary, "expected base commit")
+	identity, ok := git.Data["identity"].(gitops.Identity)
+	require.True(t, ok)
+	require.Equal(t, "main", identity.HeadRef)
+	baseCommit, ok := git.Data["base_commit"].(gitops.BaseCommitCheck)
+	require.True(t, ok)
+	require.Equal(t, "diverged", baseCommit.Status)
+	require.False(t, baseCommit.Matches)
+	require.Equal(t, baseSHA, baseCommit.Expected)
 	require.Contains(t, strings.Join(git.Details, "\n"), "Base commit: diverged")
 	require.Contains(t, strings.Join(git.Details, "\n"), "Expected base: "+baseSHA)
 	require.Contains(t, git.Hint, "codog stale-base --json")

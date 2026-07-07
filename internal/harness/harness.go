@@ -4975,6 +4975,28 @@ func diagnosticsStatusScenario() scenario {
 			if err := os.WriteFile(profilePath, []byte("# shell profile\n"), 0o644); err != nil {
 				return localScenarioResult{}, err
 			}
+			if err := runHarnessGit(workspace, "init", "-q", "-b", "main"); err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, args := range [][]string{
+				{"config", "user.email", "codog@example.test"},
+				{"config", "user.name", "Codog Test"},
+			} {
+				if err := runHarnessGit(workspace, args...); err != nil {
+					return localScenarioResult{}, err
+				}
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("diagnostics parity\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, args := range [][]string{
+				{"add", "README.md"},
+				{"commit", "-q", "-m", "chore: diagnostics parity"},
+			} {
+				if err := runHarnessGit(workspace, args...); err != nil {
+					return localScenarioResult{}, err
+				}
+			}
 
 			permissionRules := config.PermissionRules{
 				DefaultMode: "workspace-write",
@@ -5068,6 +5090,19 @@ func diagnosticsStatusScenario() scenario {
 			if doctorReport.Summary.Total != len(doctorReport.Checks) || doctorReport.Summary.Total == 0 {
 				return localScenarioResult{}, fmt.Errorf("unexpected doctor check summary: %#v", doctorReport.Summary)
 			}
+			var gitCheck doctor.Check
+			for _, check := range doctorReport.Checks {
+				if check.Name == "Git" {
+					gitCheck = check
+					break
+				}
+			}
+			gitIdentity, _ := gitCheck.Data["identity"].(gitops.Identity)
+			gitFreshness, _ := gitCheck.Data["freshness"].(gitops.BranchFreshness)
+			gitBaseCommit, _ := gitCheck.Data["base_commit"].(gitops.BaseCommitCheck)
+			if gitIdentity.HeadSHA == "" || gitFreshness.Status == "" || gitBaseCommit.Status == "" {
+				return localScenarioResult{}, fmt.Errorf("doctor git check missing structured data: %#v", gitCheck.Data)
+			}
 
 			terminalStatus, err := terminalsetup.Run(terminalsetup.Options{
 				Action: "status",
@@ -5107,12 +5142,15 @@ func diagnosticsStatusScenario() scenario {
 					"base_commit_matches": statusReport.Git.BaseCommit.Matches,
 				},
 				"doctor": map[string]any{
-					"kind":        doctorReport.Kind,
-					"status":      doctorReport.Status,
-					"checks":      doctorReport.Summary.Total,
-					"has_auth":    slices.Contains(doctorReport.CheckNames, "auth"),
-					"has_hooks":   slices.Contains(doctorReport.CheckNames, "hooks"),
-					"has_sandbox": slices.Contains(doctorReport.CheckNames, "sandbox"),
+					"kind":            doctorReport.Kind,
+					"status":          doctorReport.Status,
+					"checks":          doctorReport.Summary.Total,
+					"has_auth":        slices.Contains(doctorReport.CheckNames, "auth"),
+					"has_hooks":       slices.Contains(doctorReport.CheckNames, "hooks"),
+					"has_sandbox":     slices.Contains(doctorReport.CheckNames, "sandbox"),
+					"git_head_ref":    gitIdentity.HeadRef,
+					"git_freshness":   gitFreshness.Status,
+					"git_base_commit": gitBaseCommit.Status,
 				},
 				"terminal_setup": map[string]any{
 					"status_action":  terminalStatus.Action,

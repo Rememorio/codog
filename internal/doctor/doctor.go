@@ -970,6 +970,19 @@ func checkGit(workspace string) Check {
 		branch = strings.TrimSpace(rawBranch)
 		details = append(details, "Branch: "+branch)
 	}
+	var identity *gitops.Identity
+	if value, err := gitops.InspectIdentity(workspace); err == nil {
+		identity = &value
+		if value.HeadShortSHA != "" {
+			details = append(details, "Head: "+value.HeadShortSHA)
+		}
+		if value.IsDetached {
+			details = append(details, "Detached HEAD: true")
+		}
+		if value.IsWorktree {
+			details = append(details, "Linked worktree: true")
+		}
+	}
 	var baseCommit *gitops.BaseCommitCheck
 	if check, err := gitops.CheckBaseCommitForWorkspace(workspace, ""); err == nil {
 		baseCommit = &check
@@ -981,7 +994,9 @@ func checkGit(workspace string) Check {
 			details = append(details, "Actual base: "+check.Actual)
 		}
 	}
+	var branchFreshness *gitops.BranchFreshness
 	if freshness, err := gitops.CheckBranchFreshness(workspace, branch, "main"); err == nil {
+		branchFreshness = &freshness
 		details = append(details,
 			"Base: "+freshness.Base,
 			fmt.Sprintf("Ahead: %d", freshness.Ahead),
@@ -998,6 +1013,7 @@ func checkGit(workspace string) Check {
 				Summary: "Current branch is behind or diverged from base.",
 				Details: details,
 				Hint:    "Review `codog branch freshness` and update the branch before risky edits or PR work.",
+				Data:    gitCheckData(identity, branchFreshness, baseCommit),
 			}
 		}
 	}
@@ -1008,12 +1024,27 @@ func checkGit(workspace string) Check {
 			Summary: "Worktree HEAD does not match the expected base commit.",
 			Details: details,
 			Hint:    "Review `codog stale-base --json` and refresh the worktree before risky edits or PR work.",
-			Data: map[string]any{
-				"base_commit": *baseCommit,
-			},
+			Data:    gitCheckData(identity, branchFreshness, baseCommit),
 		}
 	}
-	return Check{Name: "Git", Status: StatusOK, Summary: "git worktree is available.", Details: details}
+	return Check{Name: "Git", Status: StatusOK, Summary: "git worktree is available.", Details: details, Data: gitCheckData(identity, branchFreshness, baseCommit)}
+}
+
+func gitCheckData(identity *gitops.Identity, freshness *gitops.BranchFreshness, baseCommit *gitops.BaseCommitCheck) map[string]any {
+	data := map[string]any{}
+	if identity != nil {
+		data["identity"] = *identity
+	}
+	if freshness != nil {
+		data["freshness"] = *freshness
+	}
+	if baseCommit != nil {
+		data["base_commit"] = *baseCommit
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	return data
 }
 
 func checkSandbox(opts Options) Check {
