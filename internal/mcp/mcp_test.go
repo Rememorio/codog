@@ -157,6 +157,90 @@ func TestHTTPMCPTransportListsCallsAndReads(t *testing.T) {
 	require.NotContains(t, ServerConfigHash(cfg), "dynamic")
 }
 
+func TestMCPRuntimeExpandsEnvironmentAndHomeSyntax(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODOG_MCP_COMMAND", os.Args[0])
+	t.Setenv("CODOG_MCP_ARG", "-test.run=TestMCPHelperProcess")
+	t.Setenv("CODOG_MCP_HELPER_VALUE", "1")
+
+	resolved := resolveMCPServerConfig(config.MCPServerConfig{
+		Command:       "~/bin/server",
+		Args:          []string{"--config=~/mcp.json"},
+		Env:           []string{"CONFIG=~/mcp.json"},
+		HeadersHelper: "~/bin/helper",
+	})
+	require.Equal(t, filepath.Join(home, "bin", "server"), resolved.Command)
+	require.Equal(t, []string{"--config=" + filepath.Join(home, "mcp.json")}, resolved.Args)
+	require.Equal(t, []string{"CONFIG=" + filepath.Join(home, "mcp.json")}, resolved.Env)
+	require.Equal(t, filepath.Join(home, "bin", "helper"), resolved.HeadersHelper)
+
+	cfg := config.MCPServerConfig{
+		Command: "${CODOG_MCP_COMMAND}",
+		Args:    []string{"${CODOG_MCP_ARG}"},
+		Env:     []string{"CODOG_MCP_HELPER=${CODOG_MCP_HELPER_VALUE}"},
+	}
+	status := Preflight(context.Background(), "expanded", cfg)
+	require.Equal(t, "ok", status.Status)
+	require.Equal(t, os.Args[0], status.Command)
+	require.NotEmpty(t, status.ResolvedPath)
+
+	tools := ListTools(context.Background(), "expanded", cfg)
+	require.Empty(t, tools.Error)
+	require.Len(t, tools.Tools, 1)
+	require.Equal(t, "echo", tools.Tools[0].Name)
+}
+
+func TestHTTPMCPRuntimeExpandsURLAndHeaderValues(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "Bearer expanded-token", r.Header.Get("Authorization"))
+		var req map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		id := req["id"]
+		switch req["method"] {
+		case "initialize":
+			writeHTTPMCP(t, w, id, map[string]any{
+				"protocolVersion": "2024-11-05",
+				"capabilities":    map[string]any{"tools": map[string]any{}},
+				"serverInfo":      map[string]any{"name": "expanded-http", "version": "1.0.0"},
+			})
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			writeHTTPMCP(t, w, id, map[string]any{"tools": []map[string]any{{"name": "remote_echo"}}})
+		default:
+			writeHTTPMCPError(t, w, id, "unsupported method")
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("CODOG_MCP_BASE_URL", server.URL)
+	t.Setenv("CODOG_MCP_SECRET_TOKEN", "secret-token")
+	t.Setenv("CODOG_MCP_AUTH_TOKEN", "expanded-token")
+
+	cfg := config.MCPServerConfig{
+		URL:     "${CODOG_MCP_BASE_URL}/mcp?token=${CODOG_MCP_SECRET_TOKEN}",
+		Headers: map[string]string{"Authorization": "Bearer ${CODOG_MCP_AUTH_TOKEN}"},
+	}
+	status := Preflight(context.Background(), "expanded-http", cfg)
+	require.Equal(t, "ok", status.Status)
+	require.Contains(t, status.URL, "token=%5Bredacted%5D")
+	require.NotContains(t, status.URL, "secret-token")
+
+	tools := ListTools(context.Background(), "expanded-http", cfg)
+	require.Empty(t, tools.Error)
+	require.Len(t, tools.Tools, 1)
+	require.Equal(t, "remote_echo", tools.Tools[0].Name)
+
+	description := DescribeServer("expanded-http", cfg)
+	require.Contains(t, description.Details.URL, "token=%5Bredacted%5D")
+	data, err := json.Marshal(description)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "secret-token")
+	require.NotContains(t, string(data), "expanded-token")
+}
+
 func TestParseHeadersHelperOutput(t *testing.T) {
 	fromJSON, err := parseHeadersHelperOutput([]byte(`{"Authorization":"Bearer token","X-Trace":"trace"}`))
 	require.NoError(t, err)

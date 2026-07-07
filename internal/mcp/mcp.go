@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -310,12 +311,14 @@ func UnwrapCCRProxyURL(rawURL string) string {
 
 // URLServerSignature returns the stable MCP server signature for a URL.
 func URLServerSignature(rawURL string) string {
+	rawURL = expandMCPRuntimeString(rawURL, false)
 	return "url:" + UnwrapCCRProxyURL(rawURL)
 }
 
 // ServerSignature returns a redacted, stable signature for a configured MCP
 // server.
 func ServerSignature(server config.MCPServerConfig) string {
+	server = resolveMCPServerConfig(server)
 	if isHTTPServer(server) {
 		return "url:" + redactedURL(server.URL)
 	}
@@ -326,6 +329,7 @@ func ServerSignature(server config.MCPServerConfig) string {
 
 // ServerConfigHash returns a stable hash for an MCP server configuration.
 func ServerConfigHash(server config.MCPServerConfig) string {
+	server = resolveMCPServerConfig(server)
 	if isHTTPServer(server) {
 		rendered := fmt.Sprintf(
 			"http|%s|%s|%s|",
@@ -347,6 +351,7 @@ func ServerConfigHash(server config.MCPServerConfig) string {
 
 // DescribeServer returns a redacted descriptor for one configured MCP server.
 func DescribeServer(name string, server config.MCPServerConfig) ServerDescriptor {
+	server = resolveMCPServerConfig(server)
 	if isHTTPServer(server) {
 		return ServerDescriptor{
 			Name:      name,
@@ -405,6 +410,79 @@ func httpServerSummary(server config.MCPServerConfig) string {
 		return fmt.Sprintf("%s (%d header keys, headers helper)", url, len(server.Headers))
 	}
 	return fmt.Sprintf("%s (%d header keys)", url, len(server.Headers))
+}
+
+func resolveMCPServerConfig(server config.MCPServerConfig) config.MCPServerConfig {
+	server.Command = expandMCPRuntimeString(server.Command, true)
+	server.Args = expandMCPRuntimeStrings(server.Args, true)
+	server.Env = expandMCPEnv(server.Env)
+	server.URL = expandMCPRuntimeString(server.URL, false)
+	server.Headers = expandMCPHeaders(server.Headers)
+	server.HeadersHelper = expandMCPRuntimeString(server.HeadersHelper, true)
+	return server
+}
+
+func expandMCPRuntimeStrings(values []string, expandHome bool) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, len(values))
+	for i, value := range values {
+		out[i] = expandMCPRuntimeString(value, expandHome)
+	}
+	return out
+}
+
+func expandMCPHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(headers))
+	for key, value := range headers {
+		out[key] = expandMCPRuntimeString(value, false)
+	}
+	return out
+}
+
+func expandMCPEnv(env []string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	out := make([]string, len(env))
+	for i, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			out[i] = expandMCPRuntimeString(entry, true)
+			continue
+		}
+		out[i] = key + "=" + expandMCPRuntimeString(value, true)
+	}
+	return out
+}
+
+func expandMCPRuntimeString(value string, expandHome bool) string {
+	value = os.ExpandEnv(value)
+	if expandHome {
+		value = expandMCPHome(value)
+	}
+	return value
+}
+
+func expandMCPHome(value string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return value
+	}
+	if value == "~" {
+		return home
+	}
+	if strings.HasPrefix(value, "~/") {
+		return filepath.Join(home, value[2:])
+	}
+	if index := strings.Index(value, "=~/"); index >= 0 {
+		return value[:index+1] + filepath.Join(home, value[index+3:])
+	}
+	return value
 }
 
 func unwrapCCRProxyURLWithMarker(rawURL string) string {
@@ -595,6 +673,7 @@ func Inspect(ctx context.Context, name string, server config.MCPServerConfig) Se
 // Preflight validates one MCP server configuration and performs its initialize
 // handshake.
 func Preflight(ctx context.Context, name string, server config.MCPServerConfig) ServerStatus {
+	server = resolveMCPServerConfig(server)
 	status := ServerStatus{
 		Name:       name,
 		Required:   server.Required,
@@ -648,6 +727,7 @@ func Preflight(ctx context.Context, name string, server config.MCPServerConfig) 
 
 // Initialize performs the MCP initialize handshake for one configured server.
 func Initialize(ctx context.Context, serverName string, server config.MCPServerConfig) InitializeResult {
+	server = resolveMCPServerConfig(server)
 	if isHTTPServer(server) {
 		result, _ := initializeHTTP(ctx, serverName, server)
 		return result
@@ -768,6 +848,7 @@ func countJSONArrayField(raw json.RawMessage, field string) int {
 
 // ListTools discovers the tools exposed by one MCP server.
 func ListTools(ctx context.Context, serverName string, server config.MCPServerConfig) ToolListResult {
+	server = resolveMCPServerConfig(server)
 	if isHTTPServer(server) {
 		result, err := requestAfterInitialize(ctx, server, rpcRequest{
 			JSONRPC: "2.0",
@@ -1001,6 +1082,7 @@ func GetPrompt(ctx context.Context, serverName string, server config.MCPServerCo
 }
 
 func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, req rpcRequest) (json.RawMessage, error) {
+	server = resolveMCPServerConfig(server)
 	if isHTTPServer(server) {
 		return requestAfterInitializeHTTP(ctx, server, req)
 	}
@@ -1106,6 +1188,7 @@ func initializeHTTP(ctx context.Context, serverName string, server config.MCPSer
 }
 
 func requestAfterInitializeHTTP(ctx context.Context, server config.MCPServerConfig, req rpcRequest) (json.RawMessage, error) {
+	server = resolveMCPServerConfig(server)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -1133,6 +1216,7 @@ func requestAfterInitializeHTTP(ctx context.Context, server config.MCPServerConf
 var errHTTPNotificationNoBody = errors.New("mcp notification returned no body")
 
 func sendHTTPRPC(ctx context.Context, server config.MCPServerConfig, rpc rpcRequest, sessionID string) (rpcResponse, string, error) {
+	server = resolveMCPServerConfig(server)
 	endpoint, err := validateHTTPServerURL(server.URL)
 	if err != nil {
 		return rpcResponse{}, "", err
@@ -1196,6 +1280,7 @@ func sendHTTPRPC(ctx context.Context, server config.MCPServerConfig, rpc rpcRequ
 }
 
 func resolveHTTPHeaders(ctx context.Context, server config.MCPServerConfig) (map[string]string, error) {
+	server = resolveMCPServerConfig(server)
 	headers := map[string]string{}
 	for key, value := range server.Headers {
 		key = strings.TrimSpace(key)
