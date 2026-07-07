@@ -1921,6 +1921,39 @@ func TestReasoningCommandPersistsPreference(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("reasoning"))
 }
 
+func TestModelCommandPersistsPreference(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "model", "--path", configPath, "claude-persisted"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report modelReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "model", report.Kind)
+	require.Equal(t, "set", report.Action)
+	require.Equal(t, "claude-persisted", report.Model)
+	require.Equal(t, configPath, report.Path)
+
+	stored, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(stored), `"model": "claude-persisted"`)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "model"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var status modelReport
+	require.NoError(t, json.Unmarshal([]byte(out), &status))
+	require.Equal(t, "show", status.Action)
+	require.Equal(t, "claude-persisted", status.Model)
+	require.Empty(t, status.Path)
+}
+
 func TestResetCommandResetsConfigSections(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("CODOG_CONFIG_HOME", configHome)

@@ -32084,8 +32084,11 @@ func renderLocalRouteGuard(out io.Writer, command string, args []string, format 
 	meaningful := routeMeaningfulArgs(args)
 	lower := strings.ToLower(strings.TrimSpace(command))
 	if lower == "model" && len(meaningful) > 1 {
-		err := unexpectedExtraArgsError{Command: "model", Args: meaningful[1:], Usage: "codog model [MODEL] [--output-format text|json]"}
-		return true, renderCLIError(out, err, format)
+		positionals := modelRoutePositionals(meaningful)
+		if len(positionals) > 1 {
+			err := unexpectedExtraArgsError{Command: "model", Args: positionals[1:], Usage: modelUsage}
+			return true, renderCLIError(out, err, format)
+		}
 	}
 	interactive := false
 	slashName := "/" + lower
@@ -32111,6 +32114,26 @@ func renderLocalRouteGuard(out io.Writer, command string, args []string, format 
 	}
 	message := fmt.Sprintf("%s is only available in an interactive REPL session", invocation)
 	return true, renderInteractiveOnlyWithHint(out, invocation, message, hint, format)
+}
+
+func modelRoutePositionals(args []string) []string {
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+		case arg == "--target" || arg == "--path" || arg == "--output-format" || arg == "-o":
+			index++
+		case strings.HasPrefix(arg, "--target="),
+			strings.HasPrefix(arg, "--path="),
+			strings.HasPrefix(arg, "--output-format="):
+		default:
+			if !strings.HasPrefix(arg, "-") {
+				positionals = append(positionals, arg)
+			}
+		}
+	}
+	return positionals
 }
 
 func isSessionAction(action string) bool {
@@ -37086,6 +37109,8 @@ type advisorReport struct {
 type modelRequest struct {
 	Format string
 	Model  string
+	Target string
+	Path   string
 }
 
 type modelsRequest struct {
@@ -37101,6 +37126,7 @@ type modelReport struct {
 	Model          string `json:"model"`
 	Previous       string `json:"previous,omitempty"`
 	RequestedModel string `json:"requested_model,omitempty"`
+	Path           string `json:"path,omitempty"`
 }
 
 type modelAliasReport struct {
@@ -37209,7 +37235,15 @@ func (a *App) Model(args []string) error {
 	}
 	previous := a.Config.Model
 	action := "show"
+	path := ""
 	if req.Model != "" {
+		path, err = a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "model", req.Model); err != nil {
+			return err
+		}
 		action = "set"
 		a.Config.Model = req.Model
 	}
@@ -37219,6 +37253,7 @@ func (a *App) Model(args []string) error {
 		Status:   "ok",
 		Model:    a.Config.Model,
 		Previous: previous,
+		Path:     path,
 	}
 	if action == "show" {
 		report.Previous = ""
@@ -37404,12 +37439,12 @@ func (a *App) ResumedModel(args []string) error {
 }
 
 const (
-	modelUsage  = "codog model [MODEL] [--output-format text|json]"
+	modelUsage  = "codog model [MODEL] [--target user|project|local] [--path PATH] [--output-format text|json]"
 	modelsUsage = "codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|help] [--output-format text|json]"
 )
 
 func parseModelArgs(args []string) (modelRequest, error) {
-	req := modelRequest{Format: "text"}
+	req := modelRequest{Format: "text", Target: "user"}
 	positionals := []string{}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -37424,6 +37459,22 @@ func parseModelArgs(args []string) (modelRequest, error) {
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "model", Flag: arg, Usage: modelUsage}
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "model", Flag: arg, Usage: modelUsage}
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
 		case strings.HasPrefix(arg, "-"):
 			return req, unknownOptionError{Command: "model", Option: arg, Usage: modelUsage}
 		default:
@@ -37743,6 +37794,9 @@ func renderModelReport(out io.Writer, report modelReport, format string) error {
 	fmt.Fprintf(out, "model=%s\n", report.Model)
 	if report.RequestedModel != "" {
 		fmt.Fprintf(out, "requested_model=%s\n", report.RequestedModel)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "path=%s\n", report.Path)
 	}
 	return nil
 }

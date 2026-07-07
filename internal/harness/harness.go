@@ -227,6 +227,7 @@ var scenarioOrder = []string{
 	"privacy_keybindings_roundtrip",
 	"browser_notifications_roundtrip",
 	"model_runtime_preferences_roundtrip",
+	"model_selection_roundtrip",
 	"auth_credentials_roundtrip",
 	"output_style_lifecycle_roundtrip",
 	"diagnostics_status_roundtrip",
@@ -780,6 +781,7 @@ func Run(ctx context.Context) (Report, error) {
 		privacyKeybindingsScenario(),
 		browserNotificationsScenario(),
 		modelRuntimePreferencesScenario(),
+		modelSelectionScenario(),
 		authCredentialsScenario(),
 		outputStyleLifecycleScenario(),
 		diagnosticsStatusScenario(),
@@ -1207,7 +1209,7 @@ var capabilityTargets = []capabilityTarget{
 	{Capability: "context view and focus", RequiredRefs: []string{"Context view", "Focused paths", "Context signals"}},
 	{Capability: "statusline rendering", RequiredRefs: []string{"Statusline", "Statusline JSON", "Statusline text"}},
 	{Capability: "appearance and preferences", RequiredRefs: []string{"Theme", "Theme persistence", "Theme reset", "Language preference", "Vim mode", "Privacy settings", "Keybindings", "Chrome integration", "Notifications", "Telemetry", "Preference persistence"}},
-	{Capability: "model runtime controls", RequiredRefs: []string{"Reasoning effort", "Fast mode", "Temperature preference", "Preference persistence"}},
+	{Capability: "model runtime controls", RequiredRefs: []string{"Model preference", "Model persistence", "Model routing detail", "Reasoning effort", "Fast mode", "Temperature preference", "Preference persistence"}},
 }
 
 func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
@@ -1494,6 +1496,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "model-runtime",
 		Description: "Runs reasoning effort, fast mode, and temperature preference CLI commands through persisted configuration, status, text rendering, and reset operations.",
 		ParityRefs:  []string{"Reasoning effort", "Fast mode", "Temperature preference", "Preference persistence", "Configuration", "Interactive rendering"},
+	},
+	"model_selection_roundtrip": {
+		Category:    "model-runtime",
+		Description: "Runs the real model CLI through persisted model selection, status, model detail routing, and text rendering.",
+		ParityRefs:  []string{"Model preference", "Model persistence", "Model routing detail", "Configuration", "Interactive rendering"},
 	},
 	"auth_credentials_roundtrip": {
 		Category:    "auth",
@@ -3916,6 +3923,157 @@ func decodeTemperatureHarnessReport(output string) (temperatureHarnessReport, er
 	var report temperatureHarnessReport
 	if err := json.Unmarshal([]byte(output), &report); err != nil {
 		return temperatureHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func modelSelectionScenario() scenario {
+	return scenario{
+		name: "model_selection_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, ".codog-home")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			configPath := filepath.Join(workspace, "codog-config.json")
+			configData, err := json.Marshal(map[string]any{"config_home": configHome})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			initialOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "model")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			initial, err := decodeModelHarnessReport(initialOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if initial.Kind != "model" || initial.Action != "show" || strings.TrimSpace(initial.Model) == "" {
+				return localScenarioResult{}, fmt.Errorf("unexpected initial model report: %#v", initial)
+			}
+
+			setOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "model", "--path", configPath, "kimi")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			setReport, err := decodeModelHarnessReport(setOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if setReport.Action != "set" || setReport.Model != "kimi" || setReport.Previous != initial.Model || !strings.HasSuffix(setReport.Path, "codog-config.json") {
+				return localScenarioResult{}, fmt.Errorf("unexpected set model report: %#v", setReport)
+			}
+			configData, err = os.ReadFile(configPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(configData), `"model": "kimi"`) && !strings.Contains(string(configData), `"model":"kimi"`) {
+				return localScenarioResult{}, fmt.Errorf("model config did not persist kimi: %s", string(configData))
+			}
+
+			statusOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "model")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			status, err := decodeModelHarnessReport(statusOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if status.Action != "show" || status.Model != "kimi" {
+				return localScenarioResult{}, fmt.Errorf("unexpected persisted model status: %#v", status)
+			}
+
+			currentOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "models", "current")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			current, err := decodeModelDetailHarnessReport(currentOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if current.Kind != "models" || current.Action != "show" || current.RequestedModel != "kimi" || current.ResolvedModel != "kimi-k2.5" || current.Provider != "dashscope" || current.RequiresProviderRequest {
+				return localScenarioResult{}, fmt.Errorf("unexpected model current report: %#v", current)
+			}
+
+			textOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "models", "current")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(textOut, "Model") || !strings.Contains(textOut, "Requested        kimi") || !strings.Contains(textOut, "Resolved         kimi-k2.5") {
+				return localScenarioResult{}, fmt.Errorf("model text output missing expected values: %s", textOut)
+			}
+
+			report := map[string]any{
+				"kind": "model_selection",
+				"model": map[string]any{
+					"initial":        initial.Model,
+					"set":            setReport.Model,
+					"status":         status.Model,
+					"previous":       setReport.Previous,
+					"path_persisted": setReport.Path != "" && strings.HasSuffix(setReport.Path, "codog-config.json"),
+					"text_rendered":  strings.Contains(textOut, "Resolved         kimi-k2.5"),
+				},
+				"routing": map[string]any{
+					"requested":                 current.RequestedModel,
+					"resolved":                  current.ResolvedModel,
+					"provider":                  current.Provider,
+					"wire_protocol":             current.WireProtocol,
+					"requires_provider_request": current.RequiresProviderRequest,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "model selection harness ok",
+				RequestCount: 5,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+type modelHarnessReport struct {
+	Kind           string `json:"kind"`
+	Action         string `json:"action"`
+	Status         string `json:"status"`
+	Model          string `json:"model"`
+	Previous       string `json:"previous,omitempty"`
+	RequestedModel string `json:"requested_model,omitempty"`
+	Path           string `json:"path,omitempty"`
+}
+
+type modelDetailHarnessReport struct {
+	Kind                    string `json:"kind"`
+	Action                  string `json:"action"`
+	Status                  string `json:"status"`
+	RequestedModel          string `json:"requested_model"`
+	ResolvedModel           string `json:"resolved_model"`
+	Alias                   string `json:"alias,omitempty"`
+	Provider                string `json:"provider"`
+	WireProtocol            string `json:"wire_protocol"`
+	WireModel               string `json:"wire_model"`
+	RequiresProviderRequest bool   `json:"requires_provider_request"`
+}
+
+func decodeModelHarnessReport(output string) (modelHarnessReport, error) {
+	var report modelHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return modelHarnessReport{}, err
+	}
+	return report, nil
+}
+
+func decodeModelDetailHarnessReport(output string) (modelDetailHarnessReport, error) {
+	var report modelDetailHarnessReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return modelDetailHarnessReport{}, err
 	}
 	return report, nil
 }
