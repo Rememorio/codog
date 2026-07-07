@@ -7138,7 +7138,7 @@ func parseBackgroundBoardArgs(args []string) (time.Duration, error) {
 
 func parseBackgroundHeartbeatArgs(args []string) (string, background.LaneHeartbeat, error) {
 	if len(args) == 0 {
-		return "", background.LaneHeartbeat{}, errors.New("usage: codog background heartbeat ID [--status STATUS] [--transport-alive true|false] [--observed-at RFC3339]")
+		return "", background.LaneHeartbeat{}, errors.New("usage: codog background heartbeat ID [--status STATUS] [--transport-alive true|false] [--observed-at RFC3339] [--source-kind KIND] [--environment ENV] [--channel CHANNEL] [--emitter EMITTER] [--confidence LEVEL]")
 	}
 	id := strings.TrimSpace(args[0])
 	if id == "" {
@@ -7191,6 +7191,46 @@ func parseBackgroundHeartbeatArgs(args []string) (string, background.LaneHeartbe
 				return "", heartbeat, err
 			}
 			heartbeat.ObservedAt = observedAt
+		case arg == "--source-kind":
+			i++
+			if i >= len(args) {
+				return "", heartbeat, errors.New("missing value for --source-kind")
+			}
+			heartbeat.Provenance.SourceKind = args[i]
+		case strings.HasPrefix(arg, "--source-kind="):
+			heartbeat.Provenance.SourceKind = strings.TrimPrefix(arg, "--source-kind=")
+		case arg == "--environment":
+			i++
+			if i >= len(args) {
+				return "", heartbeat, errors.New("missing value for --environment")
+			}
+			heartbeat.Provenance.Environment = args[i]
+		case strings.HasPrefix(arg, "--environment="):
+			heartbeat.Provenance.Environment = strings.TrimPrefix(arg, "--environment=")
+		case arg == "--channel":
+			i++
+			if i >= len(args) {
+				return "", heartbeat, errors.New("missing value for --channel")
+			}
+			heartbeat.Provenance.Channel = args[i]
+		case strings.HasPrefix(arg, "--channel="):
+			heartbeat.Provenance.Channel = strings.TrimPrefix(arg, "--channel=")
+		case arg == "--emitter":
+			i++
+			if i >= len(args) {
+				return "", heartbeat, errors.New("missing value for --emitter")
+			}
+			heartbeat.Provenance.Emitter = args[i]
+		case strings.HasPrefix(arg, "--emitter="):
+			heartbeat.Provenance.Emitter = strings.TrimPrefix(arg, "--emitter=")
+		case arg == "--confidence":
+			i++
+			if i >= len(args) {
+				return "", heartbeat, errors.New("missing value for --confidence")
+			}
+			heartbeat.Provenance.Confidence = args[i]
+		case strings.HasPrefix(arg, "--confidence="):
+			heartbeat.Provenance.Confidence = strings.TrimPrefix(arg, "--confidence=")
 		default:
 			return "", heartbeat, fmt.Errorf("unknown heartbeat argument %q", arg)
 		}
@@ -8184,6 +8224,7 @@ func renderAgentRunBoardReport(out io.Writer, report agentRunBoardReport) {
 			fmt.Fprintf(out, "    Status         %s\n", entry.Status)
 			fmt.Fprintf(out, "    Freshness      %s\n", entry.Freshness)
 			fmt.Fprintf(out, "    Lifecycle      %s\n", renderLifecycleResolution(entry.Lifecycle))
+			fmt.Fprintf(out, "    Provenance     %s\n", renderEventProvenance(entry.Provenance))
 			if entry.Error != "" {
 				fmt.Fprintf(out, "    Error          %s\n", entry.Error)
 			}
@@ -8255,6 +8296,7 @@ func renderAgentRunStatus(out io.Writer, status agentRunStatus) {
 	fmt.Fprintf(out, "    Status         %s\n", status.CurrentStatus)
 	fmt.Fprintf(out, "    Freshness      %s\n", status.Freshness)
 	fmt.Fprintf(out, "    Lifecycle      %s\n", renderLifecycleResolution(status.Lifecycle))
+	fmt.Fprintf(out, "    Provenance     %s\n", renderEventProvenance(status.Provenance))
 	fmt.Fprintf(out, "    Health         %s\n", status.Health.State)
 	fmt.Fprintf(out, "    Task           %s\n", run.TaskID)
 	if status.Health.RecommendedAction != "" {
@@ -8272,6 +8314,17 @@ func renderAgentRunStatus(out io.Writer, status agentRunStatus) {
 	if status.Error != "" {
 		fmt.Fprintf(out, "    Error          %s\n", status.Error)
 	}
+}
+
+func renderEventProvenance(provenance background.EventProvenance) string {
+	provenance = background.NormalizeEventProvenance(provenance)
+	return strings.Join([]string{
+		provenance.SourceKind,
+		provenance.Environment,
+		provenance.Channel,
+		provenance.Emitter,
+		provenance.Confidence,
+	}, " ")
 }
 
 func renderLifecycleResolution(lifecycle background.LifecycleResolution) string {
@@ -8765,7 +8818,7 @@ func parseAgentRunOutputArgs(args []string) (string, int64, error) {
 
 func parseAgentRunHeartbeatArgs(args []string) (string, background.LaneHeartbeat, error) {
 	if len(args) == 0 {
-		return "", background.LaneHeartbeat{}, errors.New("usage: codog agents heartbeat RUN_ID [--status STATUS] [--transport-alive true|false] [--observed-at RFC3339]")
+		return "", background.LaneHeartbeat{}, errors.New("usage: codog agents heartbeat RUN_ID [--status STATUS] [--transport-alive true|false] [--observed-at RFC3339] [--source-kind KIND] [--environment ENV] [--channel CHANNEL] [--emitter EMITTER] [--confidence LEVEL]")
 	}
 	id := strings.TrimSpace(args[0])
 	if id == "" {
@@ -24034,6 +24087,7 @@ func (a *App) serveACP(ctx context.Context) error {
 			heartbeat := background.LaneHeartbeat{
 				TransportAlive: transportAlive,
 				Status:         req.Status,
+				Provenance:     acpHeartbeatProvenance(req.Provenance, req.SourceKind, req.Environment, req.Channel, req.Emitter, req.Confidence),
 			}
 			if req.ObservedAt != nil {
 				heartbeat.ObservedAt = *req.ObservedAt
@@ -24209,6 +24263,7 @@ func (a *App) serveACP(ctx context.Context) error {
 			heartbeat := background.LaneHeartbeat{
 				TransportAlive: transportAlive,
 				Status:         req.Status,
+				Provenance:     acpHeartbeatProvenance(req.Provenance, req.SourceKind, req.Environment, req.Channel, req.Emitter, req.Confidence),
 			}
 			if req.ObservedAt != nil {
 				heartbeat.ObservedAt = *req.ObservedAt
@@ -24642,6 +24697,25 @@ func (a *App) serveACP(ctx context.Context) error {
 			return buildACPStatusReport(), nil
 		},
 	}, acpserver.Options{Version: version, Workspace: a.Workspace})
+}
+
+func acpHeartbeatProvenance(provenance background.EventProvenance, sourceKind string, environment string, channel string, emitter string, confidence string) background.EventProvenance {
+	if strings.TrimSpace(sourceKind) != "" {
+		provenance.SourceKind = sourceKind
+	}
+	if strings.TrimSpace(environment) != "" {
+		provenance.Environment = environment
+	}
+	if strings.TrimSpace(channel) != "" {
+		provenance.Channel = channel
+	}
+	if strings.TrimSpace(emitter) != "" {
+		provenance.Emitter = emitter
+	}
+	if strings.TrimSpace(confidence) != "" {
+		provenance.Confidence = confidence
+	}
+	return provenance
 }
 
 func acpSessionSummary(workspace string, sess *session.Session) acpserver.SessionSummary {

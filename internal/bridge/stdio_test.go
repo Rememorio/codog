@@ -1511,7 +1511,7 @@ func TestBridgeBackgroundLifecycleControls(t *testing.T) {
 	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
 	observedAt := now.Format(time.RFC3339)
 	input := strings.Join([]string{
-		`{"jsonrpc":"2.0","id":1,"method":"background/heartbeat","params":{"id":"active","status":"working","transport_alive":true,"observed_at":"` + observedAt + `"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"background/heartbeat","params":{"id":"active","status":"working","transport_alive":true,"observed_at":"` + observedAt + `","source_kind":"health","environment":"dogfood","channel":"jsonrpc","emitter":"bridge-test","confidence":"high"}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"background/board","params":{"stalled_after_seconds":3600}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"background/supervise","params":{"now":"` + observedAt + `"}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"background/prune","params":{"older_than_days":1,"keep":0}}`,
@@ -1520,7 +1520,10 @@ func TestBridgeBackgroundLifecycleControls(t *testing.T) {
 	var out bytes.Buffer
 	err := Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: configHome}.Serve(strings.NewReader(input), &out)
 	require.NoError(t, err)
-	require.Contains(t, out.String(), `"heartbeat":{"observed_at":"`+observedAt+`","transport_alive":true,"status":"working"}`)
+	require.Contains(t, out.String(), `"observed_at":"`+observedAt+`"`)
+	require.Contains(t, out.String(), `"transport_alive":true`)
+	require.Contains(t, out.String(), `"source_kind":"healthcheck"`)
+	require.Contains(t, out.String(), `"emitter":"bridge-test"`)
 	require.Contains(t, out.String(), `"active":[{"task_id":"active"`)
 	require.Contains(t, out.String(), `"freshness":"healthy"`)
 	require.Contains(t, out.String(), `"restarted_from":"failed"`)
@@ -1594,7 +1597,7 @@ func TestBridgeAgentRunsLifecycle(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"agent-runs/list","params":{"agent":"reviewer","session_id":"session-bridge"}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"agent-runs/get","params":{"id":"` + run.ID + `"}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"agent-runs/logs","params":{"id":"` + run.ID + `","limit":4096}}`,
-		`{"jsonrpc":"2.0","id":4,"method":"agent-runs/heartbeat","params":{"id":"` + run.ID + `","status":"working","transport_alive":true,"observed_at":"` + observedAt + `"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"agent-runs/heartbeat","params":{"id":"` + run.ID + `","status":"working","transport_alive":true,"observed_at":"` + observedAt + `","provenance":{"source_kind":"replay","environment":"test","channel":"jsonrpc","emitter":"agent-run-test","confidence":"high"}}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"agent-runs/board","params":{"stalled_after_seconds":60}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"agent-runs/prune","params":{"older_than_days":0,"keep":0}}`,
 		`{"jsonrpc":"2.0","id":7,"method":"agent-runs/stop","params":{"id":"` + longRun.ID + `"}}`,
@@ -1609,7 +1612,9 @@ func TestBridgeAgentRunsLifecycle(t *testing.T) {
 	require.Contains(t, out.String(), `"freshness":"unknown"`)
 	require.Contains(t, out.String(), `"health":{"state":"finished"`)
 	require.Contains(t, out.String(), `"logs":"agent-bridge"`)
-	require.Contains(t, out.String(), `"heartbeat":{"observed_at":"`+observedAt+`","transport_alive":true,"status":"working"}`)
+	require.Contains(t, out.String(), `"observed_at":"`+observedAt+`"`)
+	require.Contains(t, out.String(), `"source_kind":"replay"`)
+	require.Contains(t, out.String(), `"emitter":"agent-run-test"`)
 	require.Contains(t, out.String(), `"active":[{"run":`)
 	require.Contains(t, out.String(), `"removed":["`+orphan.ID+`"]`)
 	require.Contains(t, out.String(), `"status":"stopped"`)

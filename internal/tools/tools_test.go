@@ -4074,7 +4074,7 @@ func TestTaskHeartbeatAndLaneBoardTools(t *testing.T) {
 	})
 
 	observedAt := time.Now().UTC().Truncate(time.Second)
-	heartbeatOut, err := TaskHeartbeatTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+task.ID+`","status":"running","transport_alive":true,"observed_at":"`+observedAt.Format(time.RFC3339)+`"}`))
+	heartbeatOut, err := TaskHeartbeatTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+task.ID+`","status":"running","transport_alive":true,"observed_at":"`+observedAt.Format(time.RFC3339)+`","source_kind":"test","environment":"tools","channel":"tool","emitter":"tools-test","confidence":"high"}`))
 	require.NoError(t, err)
 	var heartbeatView struct {
 		TaskID    string                   `json:"task_id"`
@@ -4086,6 +4086,8 @@ func TestTaskHeartbeatAndLaneBoardTools(t *testing.T) {
 	require.Equal(t, observedAt, heartbeatView.Heartbeat.ObservedAt)
 	require.True(t, heartbeatView.Heartbeat.TransportAlive)
 	require.Equal(t, "running", heartbeatView.Heartbeat.Status)
+	require.Equal(t, "test", heartbeatView.Heartbeat.Provenance.SourceKind)
+	require.Equal(t, "tools-test", heartbeatView.Heartbeat.Provenance.Emitter)
 	require.NotNil(t, heartbeatView.Task.Heartbeat)
 
 	boardOut, err := TaskLaneBoardTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"stalled_after_seconds":3600}`))
@@ -4093,6 +4095,7 @@ func TestTaskHeartbeatAndLaneBoardTools(t *testing.T) {
 	var board background.LaneBoard
 	require.NoError(t, json.Unmarshal([]byte(boardOut), &board))
 	require.Len(t, board.Active, 1)
+	require.Equal(t, "test", board.Active[0].Provenance.SourceKind)
 	require.Equal(t, task.ID, board.Active[0].TaskID)
 	require.Equal(t, background.LaneFreshnessHealthy, board.Active[0].Freshness)
 	require.Empty(t, board.Blocked)

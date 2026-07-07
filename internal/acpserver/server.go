@@ -378,10 +378,16 @@ type BackgroundBoardRequest struct {
 
 // BackgroundHeartbeatRequest updates task heartbeat state.
 type BackgroundHeartbeatRequest struct {
-	ID             string     `json:"id"`
-	Status         string     `json:"status,omitempty"`
-	TransportAlive *bool      `json:"transport_alive,omitempty"`
-	ObservedAt     *time.Time `json:"observed_at,omitempty"`
+	ID             string                     `json:"id"`
+	Status         string                     `json:"status,omitempty"`
+	TransportAlive *bool                      `json:"transport_alive,omitempty"`
+	ObservedAt     *time.Time                 `json:"observed_at,omitempty"`
+	Provenance     background.EventProvenance `json:"provenance,omitempty"`
+	SourceKind     string                     `json:"source_kind,omitempty"`
+	Environment    string                     `json:"environment,omitempty"`
+	Channel        string                     `json:"channel,omitempty"`
+	Emitter        string                     `json:"emitter,omitempty"`
+	Confidence     string                     `json:"confidence,omitempty"`
 }
 
 // BackgroundPruneRequest controls background task cleanup.
@@ -431,10 +437,16 @@ type AgentRunsBoardRequest struct {
 
 // AgentRunHeartbeatRequest updates an agent run heartbeat.
 type AgentRunHeartbeatRequest struct {
-	ID             string     `json:"id"`
-	Status         string     `json:"status,omitempty"`
-	TransportAlive *bool      `json:"transport_alive,omitempty"`
-	ObservedAt     *time.Time `json:"observed_at,omitempty"`
+	ID             string                     `json:"id"`
+	Status         string                     `json:"status,omitempty"`
+	TransportAlive *bool                      `json:"transport_alive,omitempty"`
+	ObservedAt     *time.Time                 `json:"observed_at,omitempty"`
+	Provenance     background.EventProvenance `json:"provenance,omitempty"`
+	SourceKind     string                     `json:"source_kind,omitempty"`
+	Environment    string                     `json:"environment,omitempty"`
+	Channel        string                     `json:"channel,omitempty"`
+	Emitter        string                     `json:"emitter,omitempty"`
+	Confidence     string                     `json:"confidence,omitempty"`
 }
 
 // AgentRunsPruneRequest controls agent run cleanup.

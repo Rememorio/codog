@@ -55,9 +55,17 @@ func TestWatchEmitsStatusAndLogEvents(t *testing.T) {
 	require.Len(t, events, 2)
 	require.Equal(t, "status", events[0].Type)
 	require.Equal(t, "completed", events[0].Status)
+	require.Equal(t, EventProvenance{
+		SourceKind:  "live_lane",
+		Environment: "local",
+		Channel:     "local",
+		Emitter:     "codog",
+		Confidence:  "medium",
+	}, events[0].Provenance)
 	require.Equal(t, "log", events[1].Type)
 	require.Equal(t, "hello watch", events[1].Data)
 	require.Equal(t, int64(len("hello watch")), events[1].Offset)
+	require.Equal(t, "live_lane", events[1].Provenance.SourceKind)
 }
 
 func TestStopRunningTask(t *testing.T) {
@@ -222,6 +230,8 @@ func TestLaneBoardGroupsTasksAndReportsFreshness(t *testing.T) {
 	require.Len(t, board.Active, 1)
 	require.Equal(t, "active", board.Active[0].TaskID)
 	require.Equal(t, LaneFreshnessHealthy, board.Active[0].Freshness)
+	require.Equal(t, "live_lane", board.Active[0].Provenance.SourceKind)
+	require.Equal(t, "local", board.Active[0].Provenance.Channel)
 	require.Equal(t, "active prompt", board.Active[0].Prompt)
 	require.Len(t, board.Blocked, 1)
 	require.Equal(t, "blocked", board.Blocked[0].TaskID)
@@ -253,6 +263,47 @@ func TestResolveLifecycleDistinguishesTransportDeathFromTerminalStatus(t *testin
 	require.True(t, exited.Terminal)
 	require.True(t, exited.TerminalStateUnknown)
 	require.Equal(t, "process_exited_without_status", exited.Reason)
+}
+
+func TestUpdateHeartbeatNormalizesEventProvenance(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	now := time.Date(2026, 7, 7, 9, 0, 0, 0, time.UTC)
+	require.NoError(t, store.save(Task{
+		ID:        "task",
+		Command:   "echo hi",
+		Status:    "running",
+		PID:       os.Getpid(),
+		StartedAt: now,
+		LogPath:   filepath.Join(store.Dir, "task.log"),
+	}))
+
+	task, err := store.UpdateHeartbeat("task", LaneHeartbeat{
+		ObservedAt:     now,
+		TransportAlive: true,
+		Status:         "working",
+		Provenance: EventProvenance{
+			SourceKind:  "health",
+			Environment: "dogfood",
+			Channel:     "bridge",
+			Emitter:     "clawhip",
+			Confidence:  "high",
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, task.Heartbeat)
+	require.Equal(t, EventProvenance{
+		SourceKind:  "healthcheck",
+		Environment: "dogfood",
+		Channel:     "bridge",
+		Emitter:     "clawhip",
+		Confidence:  "high",
+	}, task.Heartbeat.Provenance)
+
+	board, err := store.LaneBoardAt(now, time.Minute)
+	require.NoError(t, err)
+	require.Len(t, board.Active, 1)
+	require.Equal(t, "healthcheck", board.Active[0].Provenance.SourceKind)
+	require.Equal(t, "clawhip", board.Active[0].Provenance.Emitter)
 }
 
 func TestUpdateHeartbeatPersistsTaskHeartbeat(t *testing.T) {

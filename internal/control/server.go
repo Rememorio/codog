@@ -1370,14 +1370,24 @@ func parseLogLimit(r *http.Request) (int64, error) {
 
 func decodeLaneHeartbeat(reader io.Reader) (background.LaneHeartbeat, error) {
 	var payload struct {
-		Status         string `json:"status"`
-		TransportAlive *bool  `json:"transport_alive"`
-		ObservedAt     string `json:"observed_at"`
+		Status         string                     `json:"status"`
+		TransportAlive *bool                      `json:"transport_alive"`
+		ObservedAt     string                     `json:"observed_at"`
+		Provenance     background.EventProvenance `json:"provenance"`
+		SourceKind     string                     `json:"source_kind"`
+		Environment    string                     `json:"environment"`
+		Channel        string                     `json:"channel"`
+		Emitter        string                     `json:"emitter"`
+		Confidence     string                     `json:"confidence"`
 	}
 	if err := json.NewDecoder(reader).Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
 		return background.LaneHeartbeat{}, err
 	}
-	heartbeat := background.LaneHeartbeat{Status: payload.Status, TransportAlive: true}
+	heartbeat := background.LaneHeartbeat{
+		Status:         payload.Status,
+		TransportAlive: true,
+		Provenance:     controlHeartbeatProvenance(payload.Provenance, payload.SourceKind, payload.Environment, payload.Channel, payload.Emitter, payload.Confidence),
+	}
 	if payload.TransportAlive != nil {
 		heartbeat.TransportAlive = *payload.TransportAlive
 	}
@@ -1389,6 +1399,25 @@ func decodeLaneHeartbeat(reader io.Reader) (background.LaneHeartbeat, error) {
 		heartbeat.ObservedAt = observedAt
 	}
 	return heartbeat, nil
+}
+
+func controlHeartbeatProvenance(provenance background.EventProvenance, sourceKind string, environment string, channel string, emitter string, confidence string) background.EventProvenance {
+	if strings.TrimSpace(sourceKind) != "" {
+		provenance.SourceKind = sourceKind
+	}
+	if strings.TrimSpace(environment) != "" {
+		provenance.Environment = environment
+	}
+	if strings.TrimSpace(channel) != "" {
+		provenance.Channel = channel
+	}
+	if strings.TrimSpace(emitter) != "" {
+		provenance.Emitter = emitter
+	}
+	if strings.TrimSpace(confidence) != "" {
+		provenance.Confidence = confidence
+	}
+	return provenance
 }
 
 func (s Server) hooksHealth(w http.ResponseWriter, r *http.Request) {

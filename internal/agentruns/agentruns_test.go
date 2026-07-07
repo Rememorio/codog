@@ -71,6 +71,13 @@ func TestStatusForTaskReportsHealth(t *testing.T) {
 		ObservedAt:     now.Add(-5 * time.Second),
 		TransportAlive: true,
 		Status:         "working",
+		Provenance: background.EventProvenance{
+			SourceKind:  "replay",
+			Environment: "test",
+			Channel:     "harness",
+			Emitter:     "unit-test",
+			Confidence:  "high",
+		},
 	})
 	require.NoError(t, err)
 	run, err := runStore.Save(Run{ID: "run-" + task.ID, Agent: "reviewer", TaskID: task.ID, CreatedAt: now, UpdatedAt: now})
@@ -79,6 +86,8 @@ func TestStatusForTaskReportsHealth(t *testing.T) {
 	status := StatusForTaskAt(taskStore, run, now, 30*time.Second)
 	require.Equal(t, background.LaneFreshnessHealthy, status.Freshness)
 	require.NotNil(t, status.Heartbeat)
+	require.Equal(t, "replay", status.Provenance.SourceKind)
+	require.Equal(t, "unit-test", status.Provenance.Emitter)
 	require.Equal(t, "healthy", status.Health.State)
 	require.NotEmpty(t, status.Health.Summary)
 
@@ -123,6 +132,7 @@ func TestStatusForTaskReportsHealth(t *testing.T) {
 	board := BuildBoard(taskStore, []Run{run}, now, 30*time.Second)
 	require.Len(t, board.Finished, 1)
 	require.Equal(t, "stopped", board.Finished[0].Status)
+	require.Equal(t, "live_lane", board.Finished[0].Provenance.SourceKind)
 	require.True(t, board.Finished[0].Lifecycle.Terminal)
 	require.Equal(t, "canonical_terminal_status", board.Finished[0].Lifecycle.Reason)
 

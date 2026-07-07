@@ -53,9 +53,19 @@ const (
 )
 
 type LaneHeartbeat struct {
-	ObservedAt     time.Time `json:"observed_at"`
-	TransportAlive bool      `json:"transport_alive"`
-	Status         string    `json:"status,omitempty"`
+	ObservedAt     time.Time       `json:"observed_at"`
+	TransportAlive bool            `json:"transport_alive"`
+	Status         string          `json:"status,omitempty"`
+	Provenance     EventProvenance `json:"provenance"`
+}
+
+// EventProvenance labels the source and trust level of a lane event.
+type EventProvenance struct {
+	SourceKind  string `json:"source_kind"`
+	Environment string `json:"environment"`
+	Channel     string `json:"channel"`
+	Emitter     string `json:"emitter"`
+	Confidence  string `json:"confidence"`
 }
 
 // LifecycleResolution describes the canonical lifecycle state inferred from
@@ -68,15 +78,16 @@ type LifecycleResolution struct {
 }
 
 type LaneBoardEntry struct {
-	TaskID    string              `json:"task_id"`
-	Prompt    string              `json:"prompt,omitempty"`
-	Command   string              `json:"command,omitempty"`
-	Kind      string              `json:"kind,omitempty"`
-	SessionID string              `json:"session_id,omitempty"`
-	Status    string              `json:"status"`
-	Heartbeat *LaneHeartbeat      `json:"heartbeat,omitempty"`
-	Freshness LaneFreshness       `json:"freshness"`
-	Lifecycle LifecycleResolution `json:"lifecycle"`
+	TaskID     string              `json:"task_id"`
+	Prompt     string              `json:"prompt,omitempty"`
+	Command    string              `json:"command,omitempty"`
+	Kind       string              `json:"kind,omitempty"`
+	SessionID  string              `json:"session_id,omitempty"`
+	Status     string              `json:"status"`
+	Heartbeat  *LaneHeartbeat      `json:"heartbeat,omitempty"`
+	Freshness  LaneFreshness       `json:"freshness"`
+	Provenance EventProvenance     `json:"provenance"`
+	Lifecycle  LifecycleResolution `json:"lifecycle"`
 }
 
 type LaneBoard struct {
@@ -87,13 +98,14 @@ type LaneBoard struct {
 }
 
 type WatchEvent struct {
-	Type   string `json:"type"`
-	ID     string `json:"id"`
-	Offset int64  `json:"offset,omitempty"`
-	Data   string `json:"data,omitempty"`
-	Status string `json:"status,omitempty"`
-	Error  string `json:"error,omitempty"`
-	Task   *Task  `json:"task,omitempty"`
+	Type       string          `json:"type"`
+	ID         string          `json:"id"`
+	Offset     int64           `json:"offset,omitempty"`
+	Data       string          `json:"data,omitempty"`
+	Status     string          `json:"status,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	Task       *Task           `json:"task,omitempty"`
+	Provenance EventProvenance `json:"provenance"`
 }
 
 type WatchOptions struct {
@@ -434,6 +446,7 @@ func (s Store) UpdateHeartbeat(id string, heartbeat LaneHeartbeat) (Task, error)
 		heartbeat.ObservedAt = heartbeat.ObservedAt.UTC()
 	}
 	heartbeat.Status = strings.TrimSpace(heartbeat.Status)
+	heartbeat.Provenance = NormalizeEventProvenance(heartbeat.Provenance)
 	task.Heartbeat = &heartbeat
 	if err := s.save(task); err != nil {
 		return Task{}, err
@@ -505,16 +518,24 @@ func (s Store) List() ([]Task, error) {
 func laneBoardEntry(task Task, now time.Time, stalledAfter time.Duration) LaneBoardEntry {
 	freshness := taskFreshness(task.Heartbeat, now, stalledAfter)
 	return LaneBoardEntry{
-		TaskID:    task.ID,
-		Prompt:    task.Prompt,
-		Command:   task.Command,
-		Kind:      task.Kind,
-		SessionID: task.SessionID,
-		Status:    task.Status,
-		Heartbeat: task.Heartbeat,
-		Freshness: freshness,
-		Lifecycle: ResolveLifecycle(task.Status, freshness),
+		TaskID:     task.ID,
+		Prompt:     task.Prompt,
+		Command:    task.Command,
+		Kind:       task.Kind,
+		SessionID:  task.SessionID,
+		Status:     task.Status,
+		Heartbeat:  task.Heartbeat,
+		Freshness:  freshness,
+		Provenance: taskProvenance(task),
+		Lifecycle:  ResolveLifecycle(task.Status, freshness),
 	}
+}
+
+func taskProvenance(task Task) EventProvenance {
+	if task.Heartbeat != nil {
+		return NormalizeEventProvenance(task.Heartbeat.Provenance)
+	}
+	return NormalizeEventProvenance(EventProvenance{})
 }
 
 func taskFreshness(heartbeat *LaneHeartbeat, now time.Time, stalledAfter time.Duration) LaneFreshness {
@@ -579,6 +600,51 @@ func ResolveLifecycle(status string, freshness LaneFreshness) LifecycleResolutio
 	}
 }
 
+// NormalizeEventProvenance fills missing event provenance fields with stable
+// defaults and canonicalizes known values.
+func NormalizeEventProvenance(provenance EventProvenance) EventProvenance {
+	provenance.SourceKind = normalizeProvenanceValue(provenance.SourceKind, "live_lane", map[string]string{
+		"live":        "live_lane",
+		"live-lane":   "live_lane",
+		"test":        "test",
+		"health":      "healthcheck",
+		"healthcheck": "healthcheck",
+		"replay":      "replay",
+		"transport":   "transport",
+	})
+	provenance.Environment = normalizeProvenanceText(provenance.Environment, "local")
+	provenance.Channel = normalizeProvenanceText(provenance.Channel, "local")
+	provenance.Emitter = normalizeProvenanceText(provenance.Emitter, "codog")
+	provenance.Confidence = normalizeProvenanceValue(provenance.Confidence, "medium", map[string]string{
+		"low":    "low",
+		"medium": "medium",
+		"med":    "medium",
+		"high":   "high",
+	})
+	return provenance
+}
+
+func normalizeProvenanceValue(value string, fallback string, aliases map[string]string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	if normalized == "" {
+		return fallback
+	}
+	if canonical, ok := aliases[normalized]; ok {
+		return canonical
+	}
+	return normalized
+}
+
+func normalizeProvenanceText(value string, fallback string) string {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" {
+		return fallback
+	}
+	return normalized
+}
+
 func taskLaneBucket(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "running", "created", "starting", "pending":
@@ -607,6 +673,7 @@ func (s Store) Status(id string) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
+	normalizeTaskHeartbeat(&task)
 	if task.Status == "running" && !processRunning(task.PID) {
 		now := time.Now().UTC()
 		task.Status = "exited"
@@ -614,6 +681,12 @@ func (s Store) Status(id string) (Task, error) {
 		_ = s.save(task)
 	}
 	return task, nil
+}
+
+func normalizeTaskHeartbeat(task *Task) {
+	if task != nil && task.Heartbeat != nil {
+		task.Heartbeat.Provenance = NormalizeEventProvenance(task.Heartbeat.Provenance)
+	}
 }
 
 func (s Store) Stop(id string) (Task, error) {
@@ -706,7 +779,7 @@ func (s Store) Watch(ctx context.Context, id string, options WatchOptions, emit 
 		return err
 	}
 	events := 0
-	if err := emit(WatchEvent{Type: "status", ID: id, Status: task.Status, Error: task.Error, Task: &task}); err != nil {
+	if err := emit(WatchEvent{Type: "status", ID: id, Status: task.Status, Error: task.Error, Task: &task, Provenance: taskProvenance(task)}); err != nil {
 		return err
 	}
 	events++
@@ -721,7 +794,7 @@ func (s Store) Watch(ctx context.Context, id string, options WatchOptions, emit 
 		}
 		if data != "" {
 			offset = nextOffset
-			if err := emit(WatchEvent{Type: "log", ID: id, Offset: offset, Data: data}); err != nil {
+			if err := emit(WatchEvent{Type: "log", ID: id, Offset: offset, Data: data, Provenance: taskProvenance(task)}); err != nil {
 				return err
 			}
 			events++
@@ -734,7 +807,7 @@ func (s Store) Watch(ctx context.Context, id string, options WatchOptions, emit 
 			return err
 		}
 		if task.Status != lastStatus {
-			if err := emit(WatchEvent{Type: "status", ID: id, Status: task.Status, Error: task.Error, Task: &task}); err != nil {
+			if err := emit(WatchEvent{Type: "status", ID: id, Status: task.Status, Error: task.Error, Task: &task, Provenance: taskProvenance(task)}); err != nil {
 				return err
 			}
 			events++

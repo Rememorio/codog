@@ -27596,9 +27596,20 @@ func TestBackgroundHeartbeatAndBoardCommands(t *testing.T) {
 	}
 
 	observedAt := time.Now().UTC().Truncate(time.Second)
-	require.NoError(t, app.BackgroundWithOverrides([]string{"heartbeat", task.ID, "--status", "running", "--observed-at", observedAt.Format(time.RFC3339)}, config.FlagOverrides{}))
+	require.NoError(t, app.BackgroundWithOverrides([]string{
+		"heartbeat", task.ID,
+		"--status", "running",
+		"--observed-at", observedAt.Format(time.RFC3339),
+		"--source-kind", "health",
+		"--environment", "dogfood",
+		"--channel", "terminal",
+		"--emitter", "operator",
+		"--confidence", "high",
+	}, config.FlagOverrides{}))
 	require.Contains(t, out.String(), `"heartbeat": {`)
 	require.Contains(t, out.String(), `"transport_alive": true`)
+	require.Contains(t, out.String(), `"source_kind": "healthcheck"`)
+	require.Contains(t, out.String(), `"environment": "dogfood"`)
 	out.Reset()
 
 	require.NoError(t, app.BackgroundWithOverrides([]string{"board", "3600"}, config.FlagOverrides{}))
@@ -27607,6 +27618,8 @@ func TestBackgroundHeartbeatAndBoardCommands(t *testing.T) {
 	require.Len(t, board.Active, 1)
 	require.Equal(t, task.ID, board.Active[0].TaskID)
 	require.Equal(t, background.LaneFreshnessHealthy, board.Active[0].Freshness)
+	require.Equal(t, "healthcheck", board.Active[0].Provenance.SourceKind)
+	require.Equal(t, "operator", board.Active[0].Provenance.Emitter)
 }
 
 func TestResumedBackgroundLifecycleActions(t *testing.T) {

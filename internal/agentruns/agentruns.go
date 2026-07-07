@@ -41,6 +41,7 @@ type Status struct {
 	CurrentStatus string                         `json:"current_status"`
 	Heartbeat     *background.LaneHeartbeat      `json:"heartbeat,omitempty"`
 	Freshness     background.LaneFreshness       `json:"freshness"`
+	Provenance    background.EventProvenance     `json:"provenance"`
 	Lifecycle     background.LifecycleResolution `json:"lifecycle"`
 	Health        HealthReport                   `json:"health"`
 	Error         string                         `json:"error,omitempty"`
@@ -55,13 +56,14 @@ type HealthReport struct {
 
 // BoardEntry is the lane-board view for a single agent run.
 type BoardEntry struct {
-	Run       Run                            `json:"run"`
-	Task      *background.Task               `json:"task,omitempty"`
-	Status    string                         `json:"status"`
-	Freshness background.LaneFreshness       `json:"freshness"`
-	Lifecycle background.LifecycleResolution `json:"lifecycle"`
-	Heartbeat *background.LaneHeartbeat      `json:"heartbeat,omitempty"`
-	Error     string                         `json:"error,omitempty"`
+	Run        Run                            `json:"run"`
+	Task       *background.Task               `json:"task,omitempty"`
+	Status     string                         `json:"status"`
+	Freshness  background.LaneFreshness       `json:"freshness"`
+	Provenance background.EventProvenance     `json:"provenance"`
+	Lifecycle  background.LifecycleResolution `json:"lifecycle"`
+	Heartbeat  *background.LaneHeartbeat      `json:"heartbeat,omitempty"`
+	Error      string                         `json:"error,omitempty"`
 }
 
 // Board groups agent runs by current execution state for operator views.
@@ -185,6 +187,7 @@ func StatusForTaskAt(store background.Store, run Run, now time.Time, stalledAfte
 		Run:           run,
 		CurrentStatus: "unknown",
 		Freshness:     background.LaneFreshnessUnknown,
+		Provenance:    background.NormalizeEventProvenance(background.EventProvenance{}),
 		Lifecycle:     background.ResolveLifecycle("unknown", background.LaneFreshnessUnknown),
 	}
 	task, err := store.Status(run.TaskID)
@@ -197,6 +200,7 @@ func StatusForTaskAt(store background.Store, run Run, now time.Time, stalledAfte
 	status.CurrentStatus = firstNonEmpty(task.Status, "unknown")
 	status.Heartbeat = task.Heartbeat
 	status.Freshness = freshness(task.Heartbeat, now, stalledAfter)
+	status.Provenance = heartbeatProvenance(task.Heartbeat)
 	status.Lifecycle = background.ResolveLifecycle(status.CurrentStatus, status.Freshness)
 	status.Health = healthReport(status.CurrentStatus, status.Freshness, &task, "")
 	return status
@@ -220,10 +224,11 @@ func BuildBoard(store background.Store, runs []Run, now time.Time, stalledAfter 
 	}
 	for _, run := range runs {
 		entry := BoardEntry{
-			Run:       run,
-			Status:    "unknown",
-			Freshness: background.LaneFreshnessUnknown,
-			Lifecycle: background.ResolveLifecycle("unknown", background.LaneFreshnessUnknown),
+			Run:        run,
+			Status:     "unknown",
+			Freshness:  background.LaneFreshnessUnknown,
+			Provenance: background.NormalizeEventProvenance(background.EventProvenance{}),
+			Lifecycle:  background.ResolveLifecycle("unknown", background.LaneFreshnessUnknown),
 		}
 		task, err := store.Status(run.TaskID)
 		if err != nil {
@@ -235,6 +240,7 @@ func BuildBoard(store background.Store, runs []Run, now time.Time, stalledAfter 
 		entry.Status = firstNonEmpty(task.Status, "unknown")
 		entry.Heartbeat = task.Heartbeat
 		entry.Freshness = freshness(task.Heartbeat, board.GeneratedAt, stalledAfter)
+		entry.Provenance = heartbeatProvenance(task.Heartbeat)
 		entry.Lifecycle = background.ResolveLifecycle(entry.Status, entry.Freshness)
 		switch laneBucket(task.Status) {
 		case "active":
@@ -341,6 +347,13 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func heartbeatProvenance(heartbeat *background.LaneHeartbeat) background.EventProvenance {
+	if heartbeat != nil {
+		return background.NormalizeEventProvenance(heartbeat.Provenance)
+	}
+	return background.NormalizeEventProvenance(background.EventProvenance{})
 }
 
 func healthReport(status string, freshness background.LaneFreshness, task *background.Task, runError string) HealthReport {

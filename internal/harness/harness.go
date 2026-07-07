@@ -9737,6 +9737,13 @@ func backgroundAgentRunScenario() scenario {
 				ObservedAt:     now.Add(-5 * time.Second),
 				TransportAlive: true,
 				Status:         "working",
+				Provenance: background.EventProvenance{
+					SourceKind:  "health",
+					Environment: "mock-parity",
+					Channel:     "harness",
+					Emitter:     "codog-harness",
+					Confidence:  "high",
+				},
 			})
 			if err != nil {
 				return localScenarioResult{}, err
@@ -9764,6 +9771,9 @@ func backgroundAgentRunScenario() scenario {
 			}
 			if status.Lifecycle.Terminal || status.Lifecycle.Reason != "active_status" {
 				return localScenarioResult{}, fmt.Errorf("unexpected active lifecycle: %#v", status.Lifecycle)
+			}
+			if status.Provenance.SourceKind != "healthcheck" || status.Provenance.Emitter != "codog-harness" {
+				return localScenarioResult{}, fmt.Errorf("unexpected provenance: %#v", status.Provenance)
 			}
 			agentBoard := agentruns.BuildBoard(taskStore, []agentruns.Run{run}, now, 30*time.Second)
 			if len(agentBoard.Active) != 1 || agentBoard.Active[0].Run.ID != run.ID || agentBoard.Active[0].Freshness != background.LaneFreshnessHealthy {
@@ -9869,6 +9879,7 @@ func backgroundAgentRunScenario() scenario {
 					"restarted":        restarted.RestartedFrom == task.ID,
 					"lane":             "active",
 					"lane_freshness":   string(taskBoard.Active[0].Freshness),
+					"source_kind":      taskBoard.Active[0].Provenance.SourceKind,
 				},
 				"agent_run": map[string]any{
 					"agent":            run.Agent,
@@ -9876,6 +9887,7 @@ func backgroundAgentRunScenario() scenario {
 					"freshness":        string(status.Freshness),
 					"health":           status.Health.State,
 					"lifecycle_reason": status.Lifecycle.Reason,
+					"emitter":          status.Provenance.Emitter,
 					"active_lanes":     len(agentBoard.Active),
 				},
 				"supervisor": map[string]any{

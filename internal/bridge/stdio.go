@@ -1342,10 +1342,16 @@ func (s Server) backgroundBoard(params json.RawMessage) (any, error) {
 
 func (s Server) backgroundHeartbeat(params json.RawMessage) (any, error) {
 	var payload struct {
-		ID             string     `json:"id"`
-		Status         string     `json:"status"`
-		TransportAlive *bool      `json:"transport_alive"`
-		ObservedAt     *time.Time `json:"observed_at"`
+		ID             string                     `json:"id"`
+		Status         string                     `json:"status"`
+		TransportAlive *bool                      `json:"transport_alive"`
+		ObservedAt     *time.Time                 `json:"observed_at"`
+		Provenance     background.EventProvenance `json:"provenance"`
+		SourceKind     string                     `json:"source_kind"`
+		Environment    string                     `json:"environment"`
+		Channel        string                     `json:"channel"`
+		Emitter        string                     `json:"emitter"`
+		Confidence     string                     `json:"confidence"`
 	}
 	if err := json.Unmarshal(params, &payload); err != nil {
 		return nil, err
@@ -1361,6 +1367,7 @@ func (s Server) backgroundHeartbeat(params json.RawMessage) (any, error) {
 	heartbeat := background.LaneHeartbeat{
 		TransportAlive: transportAlive,
 		Status:         payload.Status,
+		Provenance:     bridgeHeartbeatProvenance(payload.Provenance, payload.SourceKind, payload.Environment, payload.Channel, payload.Emitter, payload.Confidence),
 	}
 	if payload.ObservedAt != nil {
 		heartbeat.ObservedAt = *payload.ObservedAt
@@ -1370,6 +1377,25 @@ func (s Server) backgroundHeartbeat(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return store.UpdateHeartbeat(id, heartbeat)
+}
+
+func bridgeHeartbeatProvenance(provenance background.EventProvenance, sourceKind string, environment string, channel string, emitter string, confidence string) background.EventProvenance {
+	if strings.TrimSpace(sourceKind) != "" {
+		provenance.SourceKind = sourceKind
+	}
+	if strings.TrimSpace(environment) != "" {
+		provenance.Environment = environment
+	}
+	if strings.TrimSpace(channel) != "" {
+		provenance.Channel = channel
+	}
+	if strings.TrimSpace(emitter) != "" {
+		provenance.Emitter = emitter
+	}
+	if strings.TrimSpace(confidence) != "" {
+		provenance.Confidence = confidence
+	}
+	return provenance
 }
 
 func (s Server) backgroundStop(params json.RawMessage) (any, error) {
@@ -1562,10 +1588,16 @@ func (s Server) agentRunsBoard(params json.RawMessage) (any, error) {
 
 func (s Server) agentRunsHeartbeat(params json.RawMessage) (any, error) {
 	var payload struct {
-		ID             string     `json:"id"`
-		Status         string     `json:"status"`
-		TransportAlive *bool      `json:"transport_alive"`
-		ObservedAt     *time.Time `json:"observed_at"`
+		ID             string                     `json:"id"`
+		Status         string                     `json:"status"`
+		TransportAlive *bool                      `json:"transport_alive"`
+		ObservedAt     *time.Time                 `json:"observed_at"`
+		Provenance     background.EventProvenance `json:"provenance"`
+		SourceKind     string                     `json:"source_kind"`
+		Environment    string                     `json:"environment"`
+		Channel        string                     `json:"channel"`
+		Emitter        string                     `json:"emitter"`
+		Confidence     string                     `json:"confidence"`
 	}
 	if err := json.Unmarshal(params, &payload); err != nil {
 		return nil, err
@@ -1581,6 +1613,7 @@ func (s Server) agentRunsHeartbeat(params json.RawMessage) (any, error) {
 	heartbeat := background.LaneHeartbeat{
 		TransportAlive: transportAlive,
 		Status:         payload.Status,
+		Provenance:     bridgeHeartbeatProvenance(payload.Provenance, payload.SourceKind, payload.Environment, payload.Channel, payload.Emitter, payload.Confidence),
 	}
 	if payload.ObservedAt != nil {
 		heartbeat.ObservedAt = *payload.ObservedAt

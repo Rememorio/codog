@@ -8597,6 +8597,22 @@ func (TaskHeartbeatTool) Definition() anthropic.ToolDefinition {
 				"status":          map[string]any{"type": "string"},
 				"transport_alive": map[string]any{"type": "boolean"},
 				"observed_at":     map[string]any{"type": "string", "format": "date-time"},
+				"provenance": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"source_kind": map[string]any{"type": "string"},
+						"environment": map[string]any{"type": "string"},
+						"channel":     map[string]any{"type": "string"},
+						"emitter":     map[string]any{"type": "string"},
+						"confidence":  map[string]any{"type": "string"},
+					},
+					"additionalProperties": false,
+				},
+				"source_kind": map[string]any{"type": "string"},
+				"environment": map[string]any{"type": "string"},
+				"channel":     map[string]any{"type": "string"},
+				"emitter":     map[string]any{"type": "string"},
+				"confidence":  map[string]any{"type": "string"},
 			},
 			"anyOf":                taskIDRequirement(),
 			"additionalProperties": false,
@@ -8608,12 +8624,18 @@ func (TaskHeartbeatTool) Permission() Permission { return PermissionDanger }
 
 func (t TaskHeartbeatTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		TaskID         string     `json:"task_id"`
-		TaskIDAlias    string     `json:"taskId"`
-		ID             string     `json:"id"`
-		Status         string     `json:"status"`
-		TransportAlive *bool      `json:"transport_alive"`
-		ObservedAt     *time.Time `json:"observed_at"`
+		TaskID         string                     `json:"task_id"`
+		TaskIDAlias    string                     `json:"taskId"`
+		ID             string                     `json:"id"`
+		Status         string                     `json:"status"`
+		TransportAlive *bool                      `json:"transport_alive"`
+		ObservedAt     *time.Time                 `json:"observed_at"`
+		Provenance     background.EventProvenance `json:"provenance"`
+		SourceKind     string                     `json:"source_kind"`
+		Environment    string                     `json:"environment"`
+		Channel        string                     `json:"channel"`
+		Emitter        string                     `json:"emitter"`
+		Confidence     string                     `json:"confidence"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -8634,11 +8656,31 @@ func (t TaskHeartbeatTool) Execute(_ context.Context, input json.RawMessage) (st
 		ObservedAt:     observedAt,
 		TransportAlive: transportAlive,
 		Status:         payload.Status,
+		Provenance:     toolHeartbeatProvenance(payload.Provenance, payload.SourceKind, payload.Environment, payload.Channel, payload.Emitter, payload.Confidence),
 	})
 	if err != nil {
 		return "", err
 	}
 	return pretty(taskCompatibilityFields(task)), nil
+}
+
+func toolHeartbeatProvenance(provenance background.EventProvenance, sourceKind string, environment string, channel string, emitter string, confidence string) background.EventProvenance {
+	if strings.TrimSpace(sourceKind) != "" {
+		provenance.SourceKind = sourceKind
+	}
+	if strings.TrimSpace(environment) != "" {
+		provenance.Environment = environment
+	}
+	if strings.TrimSpace(channel) != "" {
+		provenance.Channel = channel
+	}
+	if strings.TrimSpace(emitter) != "" {
+		provenance.Emitter = emitter
+	}
+	if strings.TrimSpace(confidence) != "" {
+		provenance.Confidence = confidence
+	}
+	return provenance
 }
 
 type TaskLaneBoardTool struct {

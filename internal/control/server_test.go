@@ -709,7 +709,7 @@ func TestControlAgentRunsLifecycle(t *testing.T) {
 		return resp.StatusCode == http.StatusOK && strings.Contains(string(body), "agent-http")
 	}, 2*time.Second, 50*time.Millisecond)
 
-	heartbeatBody := bytes.NewBufferString(`{"status":"working","transport_alive":true}`)
+	heartbeatBody := bytes.NewBufferString(`{"status":"working","transport_alive":true,"source_kind":"transport","environment":"dogfood","channel":"http","emitter":"control-test","confidence":"high"}`)
 	resp, err = http.Post(server.URL+"/agents/"+run.ID+"/heartbeat", "application/json", heartbeatBody)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -720,6 +720,8 @@ func TestControlAgentRunsLifecycle(t *testing.T) {
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&action))
 	require.Equal(t, "working", action.Task.Heartbeat.Status)
+	require.Equal(t, "transport", action.Task.Heartbeat.Provenance.SourceKind)
+	require.Equal(t, "control-test", action.Task.Heartbeat.Provenance.Emitter)
 
 	resp, err = http.Get(server.URL + "/agents/board?stalled_after_seconds=60")
 	require.NoError(t, err)

@@ -575,7 +575,7 @@ func TestServeHandlesBackgroundRequests(t *testing.T) {
 		`{"jsonrpc":"2.0","id":3,"method":"background/get","params":{"id":"task-1"}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"background/logs","params":{"id":"task-1","limit":4096}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"background/board","params":{"stalled_after_ms":500}}`,
-		`{"jsonrpc":"2.0","id":6,"method":"background/heartbeat","params":{"id":"task-1","status":"working","transport_alive":false,"observed_at":"` + observedAt.Format(time.RFC3339) + `"}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"background/heartbeat","params":{"id":"task-1","status":"working","transport_alive":false,"observed_at":"` + observedAt.Format(time.RFC3339) + `","source_kind":"health","environment":"dogfood","channel":"acp","emitter":"acp-test","confidence":"high"}}`,
 		`{"jsonrpc":"2.0","id":7,"method":"background/stop","params":"task-1"}`,
 		`{"jsonrpc":"2.0","id":8,"method":"background/restart","params":{"id":"task-1"}}`,
 		`{"jsonrpc":"2.0","id":9,"method":"background/prune","params":{"older_than_seconds":60,"keep":2}}`,
@@ -619,6 +619,8 @@ func TestServeHandlesBackgroundRequests(t *testing.T) {
 			require.False(t, *req.TransportAlive)
 			require.NotNil(t, req.ObservedAt)
 			require.Equal(t, observedAt, req.ObservedAt.UTC())
+			require.Equal(t, "health", req.SourceKind)
+			require.Equal(t, "acp-test", req.Emitter)
 			return map[string]any{"kind": "background_heartbeat", "id": req.ID}, nil
 		},
 		BackgroundStop: func(_ context.Context, req BackgroundIDRequest) (any, error) {
@@ -700,7 +702,7 @@ func TestServeHandlesAgentRunsRequests(t *testing.T) {
 		`{"jsonrpc":"2.0","id":2,"method":"agent-runs/get","params":{"id":"run-1"}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"agent-runs/logs","params":{"id":"run-1","limit":4096}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"agent-runs/board","params":{"agent":"reviewer","session_id":"session-1","stalled_after_ms":500}}`,
-		`{"jsonrpc":"2.0","id":5,"method":"agent-runs/heartbeat","params":{"id":"run-1","status":"working","transport_alive":false,"observed_at":"` + observedAt.Format(time.RFC3339) + `"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"agent-runs/heartbeat","params":{"id":"run-1","status":"working","transport_alive":false,"observed_at":"` + observedAt.Format(time.RFC3339) + `","provenance":{"source_kind":"replay","environment":"test","channel":"acp","emitter":"agent-acp-test","confidence":"high"}}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"agent-runs/stop","params":"run-1"}`,
 		`{"jsonrpc":"2.0","id":7,"method":"agent-runs/prune","params":{"older_than_days":2,"keep":1}}`,
 		"",
@@ -735,6 +737,8 @@ func TestServeHandlesAgentRunsRequests(t *testing.T) {
 			require.False(t, *req.TransportAlive)
 			require.NotNil(t, req.ObservedAt)
 			require.Equal(t, observedAt, req.ObservedAt.UTC())
+			require.Equal(t, "replay", req.Provenance.SourceKind)
+			require.Equal(t, "agent-acp-test", req.Provenance.Emitter)
 			return map[string]any{"id": req.ID, "kind": "agent_run_heartbeat"}, nil
 		},
 		AgentRunsStop: func(_ context.Context, req AgentRunIDRequest) (any, error) {
