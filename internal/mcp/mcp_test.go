@@ -382,6 +382,63 @@ func TestPreflightReportsReadinessAndMissingCommand(t *testing.T) {
 	require.Equal(t, []string{"echo"}, statuses[1].Tools)
 }
 
+func TestBuildStartupReportClassifiesRequiredFailures(t *testing.T) {
+	statuses := []ServerStatus{
+		{
+			Name:     "optional-missing",
+			Status:   "command_not_found",
+			Required: false,
+			Error:    "optional command not found",
+			Lifecycle: lifecycleFailure(
+				"spawn_connect",
+				"optional command not found",
+				true,
+				map[string]string{"server": "optional-missing"},
+			),
+		},
+		{
+			Name:     "required-missing",
+			Status:   "command_not_found",
+			Required: true,
+			Error:    "required command not found",
+			Lifecycle: lifecycleFailure(
+				"spawn_connect",
+				"required command not found",
+				true,
+				map[string]string{"server": "required-missing"},
+			),
+		},
+		{Name: "required-ready", Status: "ok", Required: true, Lifecycle: lifecycleReady("ready")},
+	}
+
+	report := BuildStartupReport(statuses)
+
+	require.Equal(t, "fatal", report.Status)
+	require.Equal(t, 3, report.Total)
+	require.Equal(t, 1, report.OKCount)
+	require.Equal(t, 2, report.ErrorCount)
+	require.Equal(t, 2, report.RequiredCount)
+	require.Equal(t, 1, report.RequiredOKCount)
+	require.Equal(t, 1, report.RequiredFailedCount)
+	require.Equal(t, 1, report.OptionalFailedCount)
+	require.Len(t, report.FailedRequired, 1)
+	require.Equal(t, "required-missing", report.FailedRequired[0].Name)
+	require.Equal(t, "spawn_connect", report.FailedRequired[0].Phase)
+	require.True(t, report.FailedRequired[0].Recoverable)
+	require.Len(t, report.FailedOptional, 1)
+	require.Equal(t, "optional-missing", report.FailedOptional[0].Name)
+}
+
+func TestBuildStartupReportAllowsOptionalFailuresToDegrade(t *testing.T) {
+	report := BuildStartupReport([]ServerStatus{
+		{Name: "optional-missing", Status: "command_not_found"},
+	})
+
+	require.Equal(t, "degraded", report.Status)
+	require.Equal(t, 1, report.OptionalFailedCount)
+	require.Empty(t, report.FailedRequired)
+}
+
 func TestToolNameNormalizationMatchesMCPCompatibility(t *testing.T) {
 	require.Equal(t, "github_com", NormalizeNameForTooling("github.com"))
 	require.Equal(t, "tool_name_", NormalizeNameForTooling("tool name!"))

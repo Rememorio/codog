@@ -991,7 +991,9 @@ func (s Server) mcpList(params json.RawMessage) any {
 		"descriptors": descriptors,
 	}
 	if inspect {
-		result["statuses"] = mcp.InspectAll(context.Background(), s.MCPServers)
+		statuses := mcp.InspectAll(context.Background(), s.MCPServers)
+		result["statuses"] = statuses
+		result["startup"] = mcp.BuildStartupReport(statuses)
 	}
 	return result
 }

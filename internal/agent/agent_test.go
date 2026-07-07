@@ -23996,6 +23996,9 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Equal(t, 1, listReport.ServerCount)
 	require.Equal(t, 1, listReport.RequiredCount)
 	require.Equal(t, 0, listReport.OptionalCount)
+	require.Equal(t, "ok", listReport.Startup.Status)
+	require.Equal(t, 1, listReport.Startup.RequiredOKCount)
+	require.Equal(t, 0, listReport.Startup.RequiredFailedCount)
 	require.Equal(t, 1, listReport.MCPValidation.RequiredCount)
 	require.Equal(t, 0, listReport.MCPValidation.OptionalCount)
 	require.Equal(t, "test", listReport.Servers[0].Name)
@@ -24454,7 +24457,8 @@ func TestMCPListTextReportsInvalidServers(t *testing.T) {
 
 	require.NoError(t, app.MCP(context.Background(), []string{"list"}))
 	require.Contains(t, out.String(), "MCP")
-	require.Contains(t, out.String(), "Status           degraded")
+	require.Contains(t, out.String(), "Status           fatal")
+	require.Contains(t, out.String(), "Startup gate      fatal (1 required failed)")
 	require.Contains(t, out.String(), "Configured servers 0")
 	require.Contains(t, out.String(), "Total entries     1")
 	require.Contains(t, out.String(), "Required entries  1")
@@ -24469,7 +24473,9 @@ func TestMCPListTextReportsInvalidServers(t *testing.T) {
 	require.NoError(t, app.MCP(context.Background(), []string{"list", "--json"}))
 	var report mcpListReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
-	require.Equal(t, "degraded", report.Status)
+	require.Equal(t, "fatal", report.Status)
+	require.Equal(t, "fatal", report.Startup.Status)
+	require.Equal(t, 1, report.Startup.RequiredFailedCount)
 	require.Equal(t, 1, report.TotalConfigured)
 	require.Equal(t, 1, report.RequiredCount)
 	require.Equal(t, 0, report.OptionalCount)
@@ -24481,6 +24487,40 @@ func TestMCPListTextReportsInvalidServers(t *testing.T) {
 	require.Equal(t, "missing", report.MCPValidation.InvalidServers[0].Name)
 	require.Equal(t, "missing_command", report.MCPValidation.InvalidServers[0].Kind)
 	require.Equal(t, report.MCPValidation.InvalidServers, report.InvalidServers)
+}
+
+func TestMCPListReportsFatalRequiredStartupFailures(t *testing.T) {
+	missingPath := filepath.Join(t.TempDir(), "missing-required-mcp")
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{
+			"optional": {Command: filepath.Join(t.TempDir(), "missing-optional-mcp")},
+			"required": {Command: missingPath, Required: true},
+		}},
+		Out: &out,
+		Err: io.Discard,
+	}
+
+	require.NoError(t, app.MCP(context.Background(), []string{"list"}))
+	require.Contains(t, out.String(), "Status           fatal")
+	require.Contains(t, out.String(), "Startup gate      fatal (1 required failed)")
+	require.Contains(t, out.String(), "Failed required MCP servers")
+	require.Contains(t, out.String(), "required: command_not_found | phase spawn_connect")
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"list", "--json"}))
+	var report mcpListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "fatal", report.Status)
+	require.Equal(t, "fatal", report.Startup.Status)
+	require.Equal(t, 2, report.Startup.Total)
+	require.Equal(t, 1, report.Startup.RequiredFailedCount)
+	require.Equal(t, 1, report.Startup.OptionalFailedCount)
+	require.Len(t, report.Startup.FailedRequired, 1)
+	require.Equal(t, "required", report.Startup.FailedRequired[0].Name)
+	require.Equal(t, "command_not_found", report.Startup.FailedRequired[0].Status)
+	require.Equal(t, "spawn_connect", report.Startup.FailedRequired[0].Phase)
+	require.True(t, report.Startup.FailedRequired[0].Recoverable)
 }
 
 func TestMCPRemoteActionErrorsAreStructured(t *testing.T) {

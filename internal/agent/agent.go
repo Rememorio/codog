@@ -24568,7 +24568,9 @@ func (a *App) serveACP(ctx context.Context) error {
 				"descriptors": descriptors,
 			}
 			if inspect {
-				result["statuses"] = mcp.InspectAll(ctx, a.Config.MCPServers)
+				statuses := mcp.InspectAll(ctx, a.Config.MCPServers)
+				result["statuses"] = statuses
+				result["startup"] = mcp.BuildStartupReport(statuses)
 			}
 			return result, nil
 		},
@@ -50130,6 +50132,7 @@ type mcpListReport struct {
 	OptionalCount       int                             `json:"optional_count"`
 	InvalidCount        int                             `json:"invalid_count"`
 	MCPValidation       localstatus.MCPValidationStatus `json:"mcp_validation"`
+	Startup             mcp.StartupReport               `json:"startup"`
 	ConfigLoadError     *string                         `json:"config_load_error"`
 	ConfigLoadErrorKind string                          `json:"config_load_error_kind,omitempty"`
 	Servers             []mcp.ServerStatus              `json:"servers"`
@@ -50218,6 +50221,15 @@ func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPV
 	} else if validation.InvalidCount > 0 {
 		status = "degraded"
 	}
+	startup := mcp.BuildStartupReport(statuses)
+	switch startup.Status {
+	case "fatal":
+		status = "fatal"
+	case "degraded":
+		if status == "ok" {
+			status = "degraded"
+		}
+	}
 	return mcpListReport{
 		Kind:                "mcp",
 		Action:              "list",
@@ -50231,6 +50243,7 @@ func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPV
 		OptionalCount:       validation.OptionalCount,
 		InvalidCount:        validation.InvalidCount,
 		MCPValidation:       validation,
+		Startup:             startup,
 		ConfigLoadError:     loadError,
 		ConfigLoadErrorKind: strings.TrimSpace(configLoadErrorKind),
 		Servers:             statuses,
@@ -50558,6 +50571,13 @@ func renderMCPListReport(out io.Writer, format string, report mcpListReport) {
 		fmt.Fprintf(out, "  Required entries  %d\n", report.RequiredCount)
 		fmt.Fprintf(out, "  Optional entries  %d\n", report.OptionalCount)
 		fmt.Fprintf(out, "  Invalid entries   %d\n", report.InvalidCount)
+		fmt.Fprintf(out, "  Startup gate      %s", report.Startup.Status)
+		if report.Startup.RequiredFailedCount > 0 {
+			fmt.Fprintf(out, " (%d required failed)", report.Startup.RequiredFailedCount)
+		} else if report.Startup.OptionalFailedCount > 0 {
+			fmt.Fprintf(out, " (%d optional failed)", report.Startup.OptionalFailedCount)
+		}
+		fmt.Fprintln(out)
 		if report.ConfigLoadError != nil {
 			fmt.Fprintf(out, "  Config load      degraded: %s\n", *report.ConfigLoadError)
 			fmt.Fprintln(out, "  Hint             Fix the listed config file or run `codog doctor` for details.")
@@ -50574,6 +50594,13 @@ func renderMCPListReport(out io.Writer, format string, report mcpListReport) {
 				fmt.Fprintf(out, "  %-16s %-13s %-7s %s\n", server.Name, transport, server.Status, mcpServerStatusSummary(server))
 			}
 		}
+		if len(report.Startup.FailedRequired) > 0 {
+			fmt.Fprintln(out)
+			fmt.Fprintln(out, "  Failed required MCP servers")
+			for _, failure := range report.Startup.FailedRequired {
+				fmt.Fprintf(out, "    - %s: %s\n", failure.Name, mcpStartupFailureSummary(failure))
+			}
+		}
 		if len(report.InvalidServers) > 0 {
 			fmt.Fprintln(out)
 			fmt.Fprintln(out, "  Invalid MCP servers")
@@ -50585,6 +50612,17 @@ func renderMCPListReport(out io.Writer, format string, report mcpListReport) {
 	}
 	data, _ := json.MarshalIndent(report, "", "  ")
 	fmt.Fprintln(out, string(data))
+}
+
+func mcpStartupFailureSummary(failure mcp.StartupFailure) string {
+	parts := []string{strings.TrimSpace(failure.Status)}
+	if strings.TrimSpace(failure.Phase) != "" {
+		parts = append(parts, "phase "+strings.TrimSpace(failure.Phase))
+	}
+	if strings.TrimSpace(failure.Error) != "" {
+		parts = append(parts, strings.TrimSpace(failure.Error))
+	}
+	return strings.Join(parts, " | ")
 }
 
 func mcpServerStatusSummary(server mcp.ServerStatus) string {

@@ -1163,7 +1163,7 @@ func TestBridgeMCPMethods(t *testing.T) {
 		},
 	}
 	input := strings.Join([]string{
-		`{"jsonrpc":"2.0","id":1,"method":"mcp/list","params":{"inspect":false}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"mcp/list","params":{"inspect":true}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"mcp/show","params":{"server":"test"}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"mcp/tools","params":{"server":"test"}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"mcp/call","params":{"server":"test","tool":"echo","arguments":{"text":"hi"}}}`,
@@ -1180,6 +1180,7 @@ func TestBridgeMCPMethods(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out.String(), `"kind":"mcp_list"`)
 	require.Contains(t, out.String(), `"servers":["test"]`)
+	require.Contains(t, out.String(), `"startup":{"status":"ok"`)
 	require.Contains(t, out.String(), `"kind":"mcp_show"`)
 	require.Contains(t, out.String(), `"descriptor"`)
 	require.Contains(t, out.String(), `"kind":"mcp_tools"`)

@@ -45,6 +45,35 @@ type ServerStatus struct {
 	Error           string          `json:"error,omitempty"`
 }
 
+// StartupReport summarizes whether the configured MCP set is usable at
+// session startup time. Required server failures are fatal; optional failures
+// degrade startup but keep the rest of the MCP inventory usable.
+type StartupReport struct {
+	Status              string           `json:"status"`
+	Total               int              `json:"total"`
+	OKCount             int              `json:"ok_count"`
+	ErrorCount          int              `json:"error_count"`
+	RequiredCount       int              `json:"required_count"`
+	RequiredOKCount     int              `json:"required_ok_count"`
+	RequiredFailedCount int              `json:"required_failed_count"`
+	OptionalCount       int              `json:"optional_count"`
+	OptionalOKCount     int              `json:"optional_ok_count"`
+	OptionalFailedCount int              `json:"optional_failed_count"`
+	FailedRequired      []StartupFailure `json:"failed_required_servers,omitempty"`
+	FailedOptional      []StartupFailure `json:"failed_optional_servers,omitempty"`
+}
+
+// StartupFailure records the redacted failure surface for one MCP server in a
+// startup report.
+type StartupFailure struct {
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Required    bool   `json:"required"`
+	Phase       string `json:"phase,omitempty"`
+	Recoverable bool   `json:"recoverable"`
+	Error       string `json:"error,omitempty"`
+}
+
 // InitializeResult records the outcome of an MCP initialize handshake.
 type InitializeResult struct {
 	Server          string          `json:"server"`
@@ -690,6 +719,55 @@ func InspectAll(ctx context.Context, servers map[string]config.MCPServerConfig) 
 // order.
 func PreflightAll(ctx context.Context, servers map[string]config.MCPServerConfig) []ServerStatus {
 	return inspectServers(ctx, servers, Preflight)
+}
+
+// BuildStartupReport aggregates server statuses into a startup gate result.
+func BuildStartupReport(statuses []ServerStatus) StartupReport {
+	report := StartupReport{Status: "ok", Total: len(statuses)}
+	for _, status := range statuses {
+		if status.Required {
+			report.RequiredCount++
+		} else {
+			report.OptionalCount++
+		}
+		if status.Status == "ok" {
+			report.OKCount++
+			if status.Required {
+				report.RequiredOKCount++
+			} else {
+				report.OptionalOKCount++
+			}
+			continue
+		}
+		report.ErrorCount++
+		failure := startupFailure(status)
+		if status.Required {
+			report.RequiredFailedCount++
+			report.FailedRequired = append(report.FailedRequired, failure)
+			report.Status = "fatal"
+		} else {
+			report.OptionalFailedCount++
+			report.FailedOptional = append(report.FailedOptional, failure)
+			if report.Status == "ok" {
+				report.Status = "degraded"
+			}
+		}
+	}
+	return report
+}
+
+func startupFailure(status ServerStatus) StartupFailure {
+	failure := StartupFailure{
+		Name:     status.Name,
+		Status:   status.Status,
+		Required: status.Required,
+		Error:    strings.TrimSpace(status.Error),
+	}
+	if status.Lifecycle.Error != nil {
+		failure.Phase = status.Lifecycle.Error.Phase
+		failure.Recoverable = status.Lifecycle.Error.Recoverable
+	}
+	return failure
 }
 
 func inspectServers(ctx context.Context, servers map[string]config.MCPServerConfig, inspect func(context.Context, string, config.MCPServerConfig) ServerStatus) []ServerStatus {
