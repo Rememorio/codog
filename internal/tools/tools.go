@@ -8841,7 +8841,23 @@ func (RoadmapPinpointTool) Definition() anthropic.ToolDefinition {
 				"superseded_by": map[string]any{"type": "string"},
 				"related":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 				"report_id":     map[string]any{"type": "string"},
-				"now":           map[string]any{"type": "string", "format": "date-time"},
+				"evidence": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"properties": map[string]any{
+							"id":        map[string]any{"type": "string"},
+							"role":      map[string]any{"type": "string", "enum": []string{"repro", "symptom", "root_cause_hint", "verification"}},
+							"type":      map[string]any{"type": "string"},
+							"reference": map[string]any{"type": "string"},
+							"preview":   map[string]any{"type": "string"},
+							"added_at":  map[string]any{"type": "string", "format": "date-time"},
+						},
+						"required": []string{"role", "reference"},
+					},
+				},
+				"now": map[string]any{"type": "string", "format": "date-time"},
 			},
 			"additionalProperties": false,
 		},
@@ -8852,16 +8868,17 @@ func (RoadmapPinpointTool) Permission() Permission { return PermissionReadOnly }
 
 func (t RoadmapPinpointTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Action       string   `json:"action"`
-		ID           string   `json:"id"`
-		Title        string   `json:"title"`
-		Description  string   `json:"description"`
-		State        string   `json:"state"`
-		Supersedes   []string `json:"supersedes"`
-		SupersededBy string   `json:"superseded_by"`
-		Related      []string `json:"related"`
-		ReportID     string   `json:"report_id"`
-		Now          string   `json:"now"`
+		Action       string                   `json:"action"`
+		ID           string                   `json:"id"`
+		Title        string                   `json:"title"`
+		Description  string                   `json:"description"`
+		State        string                   `json:"state"`
+		Supersedes   []string                 `json:"supersedes"`
+		SupersededBy string                   `json:"superseded_by"`
+		Related      []string                 `json:"related"`
+		ReportID     string                   `json:"report_id"`
+		Evidence     []roadmapEvidencePayload `json:"evidence"`
+		Now          string                   `json:"now"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -8889,6 +8906,10 @@ func (t RoadmapPinpointTool) Execute(_ context.Context, input json.RawMessage) (
 		if err != nil {
 			return "", err
 		}
+		evidence, err := roadmapEvidenceFromPayload(payload.Evidence, now)
+		if err != nil {
+			return "", err
+		}
 		result, err := store.File(roadmap.Filing{
 			ID:           payload.ID,
 			Title:        payload.Title,
@@ -8898,6 +8919,7 @@ func (t RoadmapPinpointTool) Execute(_ context.Context, input json.RawMessage) (
 			SupersededBy: payload.SupersededBy,
 			Related:      payload.Related,
 			ReportID:     payload.ReportID,
+			Evidence:     evidence,
 			Now:          now,
 		})
 		if err != nil {
@@ -8907,6 +8929,39 @@ func (t RoadmapPinpointTool) Execute(_ context.Context, input json.RawMessage) (
 	default:
 		return "", fmt.Errorf("unknown roadmap action %q", payload.Action)
 	}
+}
+
+type roadmapEvidencePayload struct {
+	ID        string `json:"id"`
+	Role      string `json:"role"`
+	Type      string `json:"type"`
+	Reference string `json:"reference"`
+	Preview   string `json:"preview"`
+	AddedAt   string `json:"added_at"`
+}
+
+func roadmapEvidenceFromPayload(values []roadmapEvidencePayload, defaultTime time.Time) ([]roadmap.EvidenceAttachment, error) {
+	evidence := make([]roadmap.EvidenceAttachment, 0, len(values))
+	for _, value := range values {
+		attachment := roadmap.EvidenceAttachment{
+			ID:        value.ID,
+			Role:      roadmap.EvidenceRole(value.Role),
+			Type:      value.Type,
+			Reference: value.Reference,
+			Preview:   value.Preview,
+		}
+		if strings.TrimSpace(value.AddedAt) != "" {
+			addedAt, err := time.Parse(time.RFC3339, value.AddedAt)
+			if err != nil {
+				return nil, err
+			}
+			attachment.AddedAt = addedAt
+		} else {
+			attachment.AddedAt = defaultTime
+		}
+		evidence = append(evidence, attachment)
+	}
+	return evidence, nil
 }
 
 func parseOptionalRFC3339(value string) (time.Time, error) {

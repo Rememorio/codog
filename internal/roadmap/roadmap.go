@@ -23,22 +23,43 @@ const (
 	StateBlocked      State = "blocked"
 	StateDone         State = "done"
 	StateSuperseded   State = "superseded"
+
+	EvidenceRepro         EvidenceRole = "repro"
+	EvidenceSymptom       EvidenceRole = "symptom"
+	EvidenceRootCauseHint EvidenceRole = "root_cause_hint"
+	EvidenceVerification  EvidenceRole = "verification"
+
+	MaxEvidencePreviewRunes = 240
 )
+
+// EvidenceRole classifies how an attachment supports a roadmap pinpoint.
+type EvidenceRole string
+
+// EvidenceAttachment is a bounded preview plus canonical machine reference.
+type EvidenceAttachment struct {
+	ID        string       `json:"id"`
+	Role      EvidenceRole `json:"role"`
+	Type      string       `json:"type"`
+	Reference string       `json:"reference"`
+	Preview   string       `json:"preview,omitempty"`
+	AddedAt   time.Time    `json:"added_at"`
+}
 
 // Item is one tracked roadmap pinpoint.
 type Item struct {
-	ID                string    `json:"id"`
-	Title             string    `json:"title"`
-	Description       string    `json:"description,omitempty"`
-	State             State     `json:"state"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
-	LastStateChangeAt time.Time `json:"last_state_change_at"`
-	Supersedes        []string  `json:"supersedes,omitempty"`
-	SupersededBy      string    `json:"superseded_by,omitempty"`
-	Related           []string  `json:"related,omitempty"`
-	Lineage           []string  `json:"lineage,omitempty"`
-	ReportID          string    `json:"report_id,omitempty"`
+	ID                string               `json:"id"`
+	Title             string               `json:"title"`
+	Description       string               `json:"description,omitempty"`
+	State             State                `json:"state"`
+	CreatedAt         time.Time            `json:"created_at"`
+	UpdatedAt         time.Time            `json:"updated_at"`
+	LastStateChangeAt time.Time            `json:"last_state_change_at"`
+	Supersedes        []string             `json:"supersedes,omitempty"`
+	SupersededBy      string               `json:"superseded_by,omitempty"`
+	Related           []string             `json:"related,omitempty"`
+	Lineage           []string             `json:"lineage,omitempty"`
+	ReportID          string               `json:"report_id,omitempty"`
+	Evidence          []EvidenceAttachment `json:"evidence,omitempty"`
 }
 
 // Filing is a create or update request for a roadmap pinpoint.
@@ -51,6 +72,7 @@ type Filing struct {
 	SupersededBy string
 	Related      []string
 	ReportID     string
+	Evidence     []EvidenceAttachment
 	Now          time.Time
 }
 
@@ -122,6 +144,11 @@ func (s Store) File(filing Filing) (Result, error) {
 	}
 	item.Supersedes = mergeStrings(item.Supersedes, filing.Supersedes)
 	item.Related = mergeStrings(item.Related, filing.Related)
+	evidence, err := normalizeEvidence(filing.Evidence, filing.Now)
+	if err != nil {
+		return Result{}, err
+	}
+	item.Evidence = mergeEvidence(item.Evidence, evidence)
 	if filing.SupersededBy != "" {
 		item.SupersededBy = filing.SupersededBy
 		if item.State != StateSuperseded {
@@ -243,6 +270,69 @@ func validateState(state State) error {
 	}
 }
 
+func normalizeEvidence(values []EvidenceAttachment, now time.Time) ([]EvidenceAttachment, error) {
+	out := make([]EvidenceAttachment, 0, len(values))
+	for _, value := range values {
+		value.ID = strings.TrimSpace(value.ID)
+		value.Role = EvidenceRole(strings.TrimSpace(string(value.Role)))
+		value.Type = strings.TrimSpace(value.Type)
+		value.Reference = strings.TrimSpace(value.Reference)
+		value.Preview = boundedPreview(value.Preview)
+		if value.Role == "" && value.Type == "" && value.Reference == "" && value.Preview == "" {
+			continue
+		}
+		if err := validateEvidenceRole(value.Role); err != nil {
+			return nil, err
+		}
+		if value.Type == "" {
+			value.Type = "reference"
+		}
+		if value.Reference == "" {
+			return nil, errors.New("evidence reference is required")
+		}
+		if value.AddedAt.IsZero() {
+			value.AddedAt = now
+		} else {
+			value.AddedAt = value.AddedAt.UTC()
+		}
+		if value.ID == "" {
+			value.ID = evidenceID(value)
+		}
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].AddedAt.Equal(out[j].AddedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].AddedAt.Before(out[j].AddedAt)
+	})
+	return out, nil
+}
+
+func validateEvidenceRole(role EvidenceRole) error {
+	switch role {
+	case EvidenceRepro, EvidenceSymptom, EvidenceRootCauseHint, EvidenceVerification:
+		return nil
+	default:
+		return errors.New("invalid roadmap evidence role")
+	}
+}
+
+func evidenceID(value EvidenceAttachment) string {
+	key := strings.Join([]string{string(value.Role), value.Type, value.Reference}, "\x00")
+	sum := sha256.Sum256([]byte(key))
+	return "ev-" + hex.EncodeToString(sum[:6])
+}
+
+func boundedPreview(value string) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= MaxEvidencePreviewRunes {
+		return value
+	}
+	return string(runes[:MaxEvidencePreviewRunes])
+}
+
 func stableID(title string, description string) string {
 	key := strings.ToLower(strings.TrimSpace(title)) + "\x00" + strings.ToLower(strings.TrimSpace(description))
 	sum := sha256.Sum256([]byte(key))
@@ -265,4 +355,35 @@ func cleanStrings(values []string) []string {
 
 func mergeStrings(existing []string, next []string) []string {
 	return cleanStrings(append(append([]string(nil), existing...), next...))
+}
+
+func mergeEvidence(existing []EvidenceAttachment, next []EvidenceAttachment) []EvidenceAttachment {
+	if len(next) == 0 {
+		return existing
+	}
+	merged := append([]EvidenceAttachment(nil), existing...)
+	byID := make(map[string]int, len(merged)+len(next))
+	for i, value := range merged {
+		byID[value.ID] = i
+	}
+	for _, value := range next {
+		if index, ok := byID[value.ID]; ok {
+			if value.Preview != "" {
+				merged[index].Preview = value.Preview
+			}
+			if value.AddedAt.Before(merged[index].AddedAt) {
+				merged[index].AddedAt = value.AddedAt
+			}
+			continue
+		}
+		byID[value.ID] = len(merged)
+		merged = append(merged, value)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].AddedAt.Equal(merged[j].AddedAt) {
+			return merged[i].ID < merged[j].ID
+		}
+		return merged[i].AddedAt.Before(merged[j].AddedAt)
+	})
+	return merged
 }

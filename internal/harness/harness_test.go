@@ -963,6 +963,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, roadmapPinpoint.Output, `"update_action":"roadmap_update"`)
 	require.Contains(t, roadmapPinpoint.Output, `"update_state":"in_progress"`)
 	require.Contains(t, roadmapPinpoint.Output, `"closed_state":"done"`)
+	require.Contains(t, roadmapPinpoint.Output, `"evidence_count":2`)
 	require.Contains(t, roadmapPinpoint.Output, `"item_id":"rp-`)
 	roadmapCategory := findCategory(t, report, "roadmap")
 	require.True(t, roadmapCategory.OK)
