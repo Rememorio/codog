@@ -399,6 +399,16 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.CheckNames, "Auth")
 
 	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"onboarding", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "onboarding", report.Topic)
+	require.Contains(t, report.Help, "repo-scope token guidance")
+	require.Contains(t, report.Help, ".gitignore")
+	require.Contains(t, report.Help, ".codogignore")
+	require.Contains(t, report.Help, "smallest useful")
+	require.Contains(t, report.OutputFields, "scope_guidance")
+
+	out.Reset()
 	require.NoError(t, renderHelpCommand(&out, []string{"api", "--output-format", "json"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "api", report.Topic)

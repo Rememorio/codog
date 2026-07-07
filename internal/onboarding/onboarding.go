@@ -31,24 +31,42 @@ type Check struct {
 	Path    string `json:"path,omitempty"`
 }
 
+// IgnoreBehavior documents how one ignore-file family affects Codog surfaces.
+type IgnoreBehavior struct {
+	File      string   `json:"file"`
+	HonoredBy []string `json:"honored_by"`
+	Notes     string   `json:"notes"`
+}
+
+// ScopeGuidance explains how to keep repository context small before a first
+// provider-backed run.
+type ScopeGuidance struct {
+	Recommendation         string           `json:"recommendation"`
+	HeavyDirectoryPatterns []string         `json:"heavy_directory_patterns"`
+	IgnoreBehaviors        []IgnoreBehavior `json:"ignore_behaviors"`
+	IgnoreFiles            []string         `json:"ignore_files,omitempty"`
+	HeavyPaths             []string         `json:"heavy_paths,omitempty"`
+}
+
 // Report is the stable JSON payload returned by workspace onboarding analysis.
 type Report struct {
-	Kind             string     `json:"kind"`
-	Action           string     `json:"action"`
-	Status           string     `json:"status"`
-	Workspace        string     `json:"workspace"`
-	HasReadme        bool       `json:"has_readme"`
-	HasTests         bool       `json:"has_tests"`
-	PythonFirst      bool       `json:"python_first"`
-	PrimaryLanguage  string     `json:"primary_language,omitempty"`
-	Languages        []Language `json:"languages"`
-	ReadmeFiles      []string   `json:"readme_files,omitempty"`
-	TestFiles        []string   `json:"test_files,omitempty"`
-	InstructionFiles []string   `json:"instruction_files,omitempty"`
-	ConfigFiles      []string   `json:"config_files,omitempty"`
-	GitRepository    bool       `json:"git_repository"`
-	Checks           []Check    `json:"checks"`
-	Recommendations  []string   `json:"recommendations,omitempty"`
+	Kind             string        `json:"kind"`
+	Action           string        `json:"action"`
+	Status           string        `json:"status"`
+	Workspace        string        `json:"workspace"`
+	HasReadme        bool          `json:"has_readme"`
+	HasTests         bool          `json:"has_tests"`
+	PythonFirst      bool          `json:"python_first"`
+	PrimaryLanguage  string        `json:"primary_language,omitempty"`
+	Languages        []Language    `json:"languages"`
+	ReadmeFiles      []string      `json:"readme_files,omitempty"`
+	TestFiles        []string      `json:"test_files,omitempty"`
+	InstructionFiles []string      `json:"instruction_files,omitempty"`
+	ConfigFiles      []string      `json:"config_files,omitempty"`
+	GitRepository    bool          `json:"git_repository"`
+	Checks           []Check       `json:"checks"`
+	Recommendations  []string      `json:"recommendations,omitempty"`
+	ScopeGuidance    ScopeGuidance `json:"scope_guidance"`
 }
 
 // Analyze scans a workspace and reports repository, language, README, test, and
@@ -111,6 +129,19 @@ func RenderText(out io.Writer, report Report) {
 	for _, rec := range report.Recommendations {
 		fmt.Fprintf(out, "  Recommendation   %s\n", rec)
 	}
+	if report.ScopeGuidance.Recommendation != "" {
+		fmt.Fprintln(out, "  Scope guidance")
+		fmt.Fprintf(out, "    Recommendation %s\n", report.ScopeGuidance.Recommendation)
+		if len(report.ScopeGuidance.IgnoreFiles) > 0 {
+			fmt.Fprintf(out, "    Ignore files   %s\n", strings.Join(report.ScopeGuidance.IgnoreFiles, ", "))
+		}
+		if len(report.ScopeGuidance.HeavyPaths) > 0 {
+			fmt.Fprintf(out, "    Heavy paths    %s\n", strings.Join(report.ScopeGuidance.HeavyPaths, ", "))
+		}
+		for _, behavior := range report.ScopeGuidance.IgnoreBehaviors {
+			fmt.Fprintf(out, "    %-14s %s\n", behavior.File, behavior.Notes)
+		}
+	}
 }
 
 // RenderJSON writes the structured onboarding report as indented JSON.
@@ -129,6 +160,8 @@ type scanState struct {
 	tests            []string
 	instructions     []string
 	configs          []string
+	ignoreFiles      []string
+	heavyPaths       []string
 	gitRepository    bool
 	languageCounts   map[string]int
 	packageTestFound bool
@@ -152,6 +185,9 @@ func (s *scanState) visit(path string, entry os.DirEntry, err error) error {
 			s.gitRepository = true
 			return filepath.SkipDir
 		}
+		if heavyDir(name) {
+			s.heavyPaths = appendUnique(s.heavyPaths, rel)
+		}
 		if skipDir(name) {
 			return filepath.SkipDir
 		}
@@ -170,6 +206,9 @@ func (s *scanState) visit(path string, entry os.DirEntry, err error) error {
 	}
 	if isConfig(rel, lower) {
 		s.configs = appendUnique(s.configs, rel)
+	}
+	if isIgnoreFile(lower) {
+		s.ignoreFiles = appendUnique(s.ignoreFiles, rel)
 	}
 	if isTestFile(rel, lower) {
 		s.tests = appendUnique(s.tests, rel)
@@ -205,6 +244,7 @@ func (s scanState) report() Report {
 		InstructionFiles: sortedCopy(s.instructions),
 		ConfigFiles:      sortedCopy(s.configs),
 		GitRepository:    s.gitRepository,
+		ScopeGuidance:    buildScopeGuidance(sortedCopy(s.ignoreFiles), sortedCopy(s.heavyPaths)),
 	}
 	report.Checks = []Check{
 		check("README", report.HasReadme, "README file found", "add a README that explains setup and verification", first(report.ReadmeFiles)),
@@ -227,6 +267,37 @@ func (s scanState) report() Report {
 	return report
 }
 
+func buildScopeGuidance(ignoreFiles []string, heavyPaths []string) ScopeGuidance {
+	return ScopeGuidance{
+		Recommendation:         "Start Codog from the smallest useful package or service directory; add only needed sibling paths with `codog add-dir`.",
+		HeavyDirectoryPatterns: heavyDirectoryPatterns(),
+		IgnoreBehaviors: []IgnoreBehavior{
+			{
+				File:      ".gitignore",
+				HonoredBy: []string{"grep", "glob", "ls"},
+				Notes:     "honored by grep and glob when respectGitignore is enabled, and by ls directory listings",
+			},
+			{
+				File:      ".codogignore",
+				HonoredBy: []string{"ls"},
+				Notes:     "honored by ls directory listings for Codog-specific local pruning",
+			},
+			{
+				File:      ".claudeignore",
+				HonoredBy: []string{"ls"},
+				Notes:     "honored by ls directory listings for Claude-compatible local pruning",
+			},
+			{
+				File:      ".clawignore",
+				HonoredBy: []string{"ls"},
+				Notes:     "honored by ls directory listings for claw-compatible local pruning",
+			},
+		},
+		IgnoreFiles: sortedCopy(ignoreFiles),
+		HeavyPaths:  sortedCopy(heavyPaths),
+	}
+}
+
 func check(name string, ok bool, okMessage string, missingMessage string, path string) Check {
 	if ok {
 		return Check{Name: name, Status: "ok", Message: okMessage, Path: path}
@@ -236,11 +307,24 @@ func check(name string, ok bool, okMessage string, missingMessage string, path s
 
 func skipDir(name string) bool {
 	switch name {
-	case ".hg", ".svn", "node_modules", "vendor", "dist", "build", "target", ".venv", "venv", "__pycache__":
+	case ".hg", ".svn", "node_modules", "vendor", "dist", "build", "target", ".venv", "venv", "__pycache__", ".next", "coverage", "logs", "dumps", "generated", "reports":
 		return true
 	default:
 		return false
 	}
+}
+
+func heavyDir(name string) bool {
+	for _, pattern := range heavyDirectoryPatterns() {
+		if name == pattern {
+			return true
+		}
+	}
+	return false
+}
+
+func heavyDirectoryPatterns() []string {
+	return []string{"node_modules", "dist", "build", ".next", "coverage", "logs", "dumps", "generated", "reports"}
 }
 
 func isReadme(name string) bool {
@@ -264,6 +348,15 @@ func isConfig(rel string, name string) bool {
 		return true
 	default:
 		return name == "codog.json"
+	}
+}
+
+func isIgnoreFile(name string) bool {
+	switch name {
+	case ".gitignore", ".codogignore", ".claudeignore", ".clawignore":
+		return true
+	default:
+		return false
 	}
 }
 

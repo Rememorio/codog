@@ -33,16 +33,23 @@ func TestAnalyzeReadyWorkspace(t *testing.T) {
 	require.Contains(t, report.TestFiles, "main_test.go")
 	require.Contains(t, report.InstructionFiles, "AGENTS.md")
 	require.Contains(t, report.ConfigFiles, ".codog.json")
+	require.Equal(t, "Start Codog from the smallest useful package or service directory; add only needed sibling paths with `codog add-dir`.", report.ScopeGuidance.Recommendation)
+	require.Contains(t, report.ScopeGuidance.HeavyDirectoryPatterns, "node_modules")
+	require.Contains(t, report.ScopeGuidance.HeavyDirectoryPatterns, ".next")
+	require.NotEmpty(t, report.ScopeGuidance.IgnoreBehaviors)
 	require.Empty(t, report.Recommendations)
 
 	var out bytes.Buffer
 	RenderText(&out, report)
 	require.Contains(t, out.String(), "Onboarding")
 	require.Contains(t, out.String(), "Primary language Go")
+	require.Contains(t, out.String(), "Scope guidance")
+	require.Contains(t, out.String(), ".gitignore")
 
 	out.Reset()
 	require.NoError(t, RenderJSON(&out, report))
 	require.Contains(t, out.String(), `"kind": "onboarding"`)
+	require.Contains(t, out.String(), `"scope_guidance"`)
 }
 
 func TestAnalyzeNeedsSetup(t *testing.T) {
@@ -59,4 +66,37 @@ func TestAnalyzeNeedsSetup(t *testing.T) {
 	require.Contains(t, report.Recommendations, "add a README that explains setup and verification")
 	require.Contains(t, report.Recommendations, "add or document a repeatable test command")
 	require.Contains(t, report.Recommendations, "run `codog init` or add AGENTS.md, CLAUDE.md, .claude/CLAUDE.md, or .codog/instructions.md")
+}
+
+func TestAnalyzeReportsScopeGuidanceSignals(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "app"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "node_modules"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".next"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "app", "main.go"), []byte("package app\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".gitignore"), []byte("node_modules/\n.next/\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codogignore"), []byte("coverage/\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claudeignore"), []byte("dist/\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".clawignore"), []byte("build/\n"), 0o644))
+
+	report, err := Analyze(Options{Workspace: workspace})
+	require.NoError(t, err)
+	require.Contains(t, report.ScopeGuidance.IgnoreFiles, ".gitignore")
+	require.Contains(t, report.ScopeGuidance.IgnoreFiles, ".codogignore")
+	require.Contains(t, report.ScopeGuidance.IgnoreFiles, ".claudeignore")
+	require.Contains(t, report.ScopeGuidance.IgnoreFiles, ".clawignore")
+	require.Contains(t, report.ScopeGuidance.HeavyPaths, ".next")
+	require.Contains(t, report.ScopeGuidance.HeavyPaths, "node_modules")
+	require.Contains(t, report.ScopeGuidance.Recommendation, "smallest useful")
+
+	behaviors := map[string]IgnoreBehavior{}
+	for _, behavior := range report.ScopeGuidance.IgnoreBehaviors {
+		behaviors[behavior.File] = behavior
+	}
+	require.Contains(t, behaviors[".gitignore"].HonoredBy, "grep")
+	require.Contains(t, behaviors[".gitignore"].HonoredBy, "glob")
+	require.Contains(t, behaviors[".gitignore"].HonoredBy, "ls")
+	require.Equal(t, []string{"ls"}, behaviors[".codogignore"].HonoredBy)
+	require.Equal(t, []string{"ls"}, behaviors[".claudeignore"].HonoredBy)
+	require.Equal(t, []string{"ls"}, behaviors[".clawignore"].HonoredBy)
 }

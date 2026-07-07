@@ -56838,8 +56838,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"onboarding",
 			"onboarding",
 			"codog onboarding [--path PATH] [--output-format text|json]",
-			"Onboarding\n\nUsage:\n  codog onboarding [--path PATH] [--output-format text|json]\n\nInspects a repository for README, tests, language markers, Codog guidance, project config, and git metadata, then reports whether the workspace is ready for a productive Codog session.\n",
-			[]string{"workspace", "has_readme", "has_tests", "primary_language", "checks", "recommendations"},
+			"Onboarding\n\nUsage:\n  codog onboarding [--path PATH] [--output-format text|json]\n\nInspects a repository for README, tests, language markers, Codog guidance, project config, git metadata, and repo-scope token guidance, then reports whether the workspace is ready for a productive Codog session.\n\nScope guidance: start Codog from the smallest useful package or service directory instead of the whole monorepo when possible, then add needed sibling paths with `codog add-dir`. Codog reports heavy/generated paths such as node_modules, dist, build, .next, coverage, logs, dumps, generated, and reports. `.gitignore` is honored by grep and glob when respectGitignore is enabled and by ls listings; `.codogignore`, `.claudeignore`, and `.clawignore` are honored by ls listings for local pruning.\n",
+			[]string{"workspace", "has_readme", "has_tests", "primary_language", "checks", "recommendations", "scope_guidance"},
 			[]string{"ready", "needs_setup", "error"},
 			false,
 		), true

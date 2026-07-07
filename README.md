@@ -152,6 +152,29 @@ secrets.
 | `.codog/skills` | Project skills |
 | `.codog/hooks` | Project hook scripts |
 
+## Repository Scope
+
+Start Codog from the smallest useful package or service directory when possible.
+For monorepos, this usually means `cd services/api` instead of starting at the
+repository root, then using `codog add-dir ../shared` only for sibling code that
+the task actually needs. This keeps avoidable files out of context before they
+burn prompt tokens.
+
+Codog reports first-run scope guidance through `codog onboarding`. The report
+calls out heavy/generated paths such as `node_modules`, `dist`, `build`,
+`.next`, `coverage`, `logs`, `dumps`, `generated`, and `reports`, and explains
+the active ignore files it found.
+
+Ignore-file behavior:
+
+- `.gitignore` is honored by `grep` and `glob` when `respectGitignore` is
+  enabled, which is the default, and by `ls` directory listings.
+- `.codogignore`, `.claudeignore`, and `.clawignore` are honored by `ls`
+  directory listings for local pruning.
+
+Use project ignore files to exclude generated artifacts, dependency caches,
+coverage output, logs, dumps, and generated reports from routine discovery.
+
 Common provider variables:
 
 - `CODOG_CONFIG_HOME`, `CLAUDE_CONFIG_HOME`, or `CLAUDE_CONFIG_DIR`
