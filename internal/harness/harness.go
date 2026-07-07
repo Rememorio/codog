@@ -9824,11 +9824,15 @@ func roadmapPinpointLifecycleScenario() scenario {
 			if itemID == "" || filed["action"] != "new_roadmap_filing" {
 				return localScenarioResult{}, fmt.Errorf("unexpected roadmap filing: %#v", filed)
 			}
-			updated, err := call(`{"action":"update","id":"` + itemID + `","title":"stable pinpoint ids after edit","state":"in_progress","report_id":"report-1","priority":"p0","severity":"critical","impact":"operator_friction","priority_reason":{"blast_radius":"implementation queue","reproducibility":"always","automation_breakage":"blocks queue ranking","merge_risk":"medium"},"evidence":[{"role":"verification","type":"commit","reference":"commit-1","preview":"roadmap pinpoint lifecycle test covers the update"}],"now":"2026-07-07T14:00:00Z"}`)
+			updated, err := call(`{"action":"update","id":"` + itemID + `","title":"stable pinpoint ids after edit","state":"in_progress","report_id":"report-1","priority":"p0","severity":"critical","impact":"operator_friction","priority_reason":{"blast_radius":"implementation queue","reproducibility":"always","automation_breakage":"blocks queue ranking","merge_risk":"medium"},"handoff":{"objective":"Implement stable pinpoint ids","suspected_scope":["internal/roadmap","internal/tools"],"suggested_verification":["go test ./internal/roadmap ./internal/tools"],"readiness":"implementation_ready"},"implementation":[{"lane_id":"lane-roadmap-1","task_id":"task-roadmap-1","worktree_id":"wt-roadmap-1","worktree_path":"worktrees/wt-roadmap-1","pr_url":"https://github.com/Rememorio/codog/pull/1","pr_number":1,"status":"running"}],"execution_results":[{"lane_id":"lane-roadmap-1","status":"running","summary":"implementation started"}],"evidence":[{"role":"verification","type":"commit","reference":"commit-1","preview":"roadmap pinpoint lifecycle test covers the update"}],"now":"2026-07-07T14:00:00Z"}`)
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			closed, err := call(`{"action":"update","id":"` + itemID + `","state":"done","now":"2026-07-07T15:00:00Z"}`)
+			handoff, err := call(`{"action":"handoff","id":"` + itemID + `"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			closed, err := call(`{"action":"update","id":"` + itemID + `","execution_results":[{"lane_id":"lane-roadmap-1","status":"passed","summary":"verification passed"}],"now":"2026-07-07T15:00:00Z"}`)
 			if err != nil {
 				return localScenarioResult{}, err
 			}
@@ -9838,8 +9842,10 @@ func roadmapPinpointLifecycleScenario() scenario {
 			}
 			updatedItem, _ := updated["item"].(map[string]any)
 			evidence, _ := updatedItem["evidence"].([]any)
-			if updated["item_id"] != itemID || updated["state"] != "in_progress" || closed["item_id"] != itemID || closed["state"] != "done" || len(evidence) != 2 {
-				return localScenarioResult{}, fmt.Errorf("unexpected roadmap lifecycle: filed=%#v updated=%#v closed=%#v", filed, updated, closed)
+			handoffPacket, _ := handoff["handoff"].(map[string]any)
+			implementation, _ := handoff["implementation"].([]any)
+			if updated["item_id"] != itemID || updated["state"] != "in_progress" || closed["item_id"] != itemID || closed["state"] != "done" || len(evidence) != 2 || handoffPacket["readiness"] != "implementation_ready" || len(implementation) != 1 {
+				return localScenarioResult{}, fmt.Errorf("unexpected roadmap lifecycle: filed=%#v updated=%#v handoff=%#v closed=%#v", filed, updated, handoff, closed)
 			}
 			report := map[string]any{
 				"kind":           "roadmap_pinpoint_lifecycle",
@@ -9853,6 +9859,8 @@ func roadmapPinpointLifecycleScenario() scenario {
 				"priority":       updatedItem["priority"],
 				"severity":       updatedItem["severity"],
 				"impact":         updatedItem["impact"],
+				"readiness":      handoffPacket["readiness"],
+				"implementation": len(implementation),
 			}
 			data, err := json.Marshal(report)
 			if err != nil {
@@ -9861,10 +9869,10 @@ func roadmapPinpointLifecycleScenario() scenario {
 			return localScenarioResult{
 				Output:       string(data),
 				FinalMessage: "roadmap pinpoint lifecycle harness ok",
-				RequestCount: 4,
+				RequestCount: 5,
 				MessageCount: 1,
-				ToolCalls:    4,
-				ToolUses:     []string{"roadmap_pinpoint", "roadmap_pinpoint", "roadmap_pinpoint", "roadmap_pinpoint"},
+				ToolCalls:    5,
+				ToolUses:     []string{"roadmap_pinpoint", "roadmap_pinpoint", "roadmap_pinpoint", "roadmap_pinpoint", "roadmap_pinpoint"},
 			}, nil
 		},
 	}

@@ -8832,7 +8832,7 @@ func (RoadmapPinpointTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":        map[string]any{"type": "string", "enum": []string{"file", "update", "get", "list"}},
+				"action":        map[string]any{"type": "string", "enum": []string{"file", "update", "get", "list", "handoff"}},
 				"id":            map[string]any{"type": "string"},
 				"title":         map[string]any{"type": "string"},
 				"description":   map[string]any{"type": "string"},
@@ -8853,6 +8853,53 @@ func (RoadmapPinpointTool) Definition() anthropic.ToolDefinition {
 						"automation_breakage": map[string]any{"type": "string"},
 						"merge_risk":          map[string]any{"type": "string"},
 						"rationale":           map[string]any{"type": "string"},
+					},
+				},
+				"handoff": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"objective":              map[string]any{"type": "string"},
+						"suspected_scope":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"evidence_refs":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"suggested_verification": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"readiness":              map[string]any{"type": "string", "enum": []string{"implementation_ready", "needs_repro", "needs_triage"}},
+						"metadata":               map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+					},
+				},
+				"implementation": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"properties": map[string]any{
+							"id":            map[string]any{"type": "string"},
+							"lane_id":       map[string]any{"type": "string"},
+							"task_id":       map[string]any{"type": "string"},
+							"worktree_id":   map[string]any{"type": "string"},
+							"worktree_path": map[string]any{"type": "string"},
+							"pr_url":        map[string]any{"type": "string"},
+							"pr_number":     map[string]any{"type": "integer", "minimum": 0},
+							"status":        map[string]any{"type": "string"},
+							"added_at":      map[string]any{"type": "string", "format": "date-time"},
+						},
+					},
+				},
+				"execution_results": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"properties": map[string]any{
+							"id":            map[string]any{"type": "string"},
+							"link_id":       map[string]any{"type": "string"},
+							"lane_id":       map[string]any{"type": "string"},
+							"status":        map[string]any{"type": "string"},
+							"summary":       map[string]any{"type": "string"},
+							"evidence_refs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+							"recorded_at":   map[string]any{"type": "string", "format": "date-time"},
+						},
+						"required": []string{"status"},
 					},
 				},
 				"evidence": map[string]any{
@@ -8902,7 +8949,10 @@ func (t RoadmapPinpointTool) Execute(_ context.Context, input json.RawMessage) (
 			MergeRisk          string `json:"merge_risk"`
 			Rationale          string `json:"rationale"`
 		} `json:"priority_reason"`
-		Now string `json:"now"`
+		Handoff          *roadmap.HandoffPacket       `json:"handoff"`
+		Implementation   []roadmap.ImplementationLink `json:"implementation"`
+		ExecutionResults []roadmap.ExecutionResult    `json:"execution_results"`
+		Now              string                       `json:"now"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -8913,10 +8963,13 @@ func (t RoadmapPinpointTool) Execute(_ context.Context, input json.RawMessage) (
 	}
 	store := roadmap.NewStore(t.ConfigHome)
 	switch action {
-	case "get":
+	case "get", "handoff":
 		item, err := store.Get(payload.ID)
 		if err != nil {
 			return "", err
+		}
+		if action == "handoff" {
+			return pretty(map[string]any{"kind": "roadmap_pinpoint_handoff", "item_id": item.ID, "handoff": item.Handoff, "implementation": item.Implementation, "execution_results": item.ExecutionResults}), nil
 		}
 		return pretty(map[string]any{"kind": "roadmap_pinpoint_status", "item": item}), nil
 	case "list":
@@ -8954,7 +9007,10 @@ func (t RoadmapPinpointTool) Execute(_ context.Context, input json.RawMessage) (
 				MergeRisk:          payload.PriorityReason.MergeRisk,
 				Rationale:          payload.PriorityReason.Rationale,
 			},
-			Now: now,
+			Handoff:          payload.Handoff,
+			Implementation:   payload.Implementation,
+			ExecutionResults: payload.ExecutionResults,
+			Now:              now,
 		})
 		if err != nil {
 			return "", err

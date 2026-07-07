@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,6 +25,9 @@ type Severity string
 
 // ImpactClass identifies the kind of gap a pinpoint represents.
 type ImpactClass string
+
+// HandoffReadiness describes whether a pinpoint can become implementation work.
+type HandoffReadiness string
 
 const (
 	StateFiled        State = "filed"
@@ -47,6 +51,10 @@ const (
 	ImpactOperatorFriction   ImpactClass = "operator_friction"
 	ImpactObservabilityDebt  ImpactClass = "observability_debt"
 	ImpactLongTailHardening  ImpactClass = "long_tail_hardening"
+
+	ReadinessImplementationReady HandoffReadiness = "implementation_ready"
+	ReadinessNeedsRepro          HandoffReadiness = "needs_repro"
+	ReadinessNeedsTriage         HandoffReadiness = "needs_triage"
 
 	EvidenceRepro         EvidenceRole = "repro"
 	EvidenceSymptom       EvidenceRole = "symptom"
@@ -78,6 +86,45 @@ type EvidenceAttachment struct {
 	AddedAt   time.Time    `json:"added_at"`
 }
 
+// HandoffPacket is the executable context for starting implementation work.
+type HandoffPacket struct {
+	PinpointID            string            `json:"pinpoint_id"`
+	Objective             string            `json:"objective"`
+	SuspectedScope        []string          `json:"suspected_scope,omitempty"`
+	EvidenceRefs          []string          `json:"evidence_refs,omitempty"`
+	Priority              Priority          `json:"priority"`
+	Severity              Severity          `json:"severity"`
+	Impact                ImpactClass       `json:"impact"`
+	SuggestedVerification []string          `json:"suggested_verification,omitempty"`
+	Readiness             HandoffReadiness  `json:"readiness"`
+	GeneratedAt           time.Time         `json:"generated_at"`
+	Metadata              map[string]string `json:"metadata,omitempty"`
+}
+
+// ImplementationLink ties a pinpoint to spawned execution infrastructure.
+type ImplementationLink struct {
+	ID           string    `json:"id"`
+	LaneID       string    `json:"lane_id,omitempty"`
+	TaskID       string    `json:"task_id,omitempty"`
+	WorktreeID   string    `json:"worktree_id,omitempty"`
+	WorktreePath string    `json:"worktree_path,omitempty"`
+	PRURL        string    `json:"pr_url,omitempty"`
+	PRNumber     int       `json:"pr_number,omitempty"`
+	Status       string    `json:"status,omitempty"`
+	AddedAt      time.Time `json:"added_at"`
+}
+
+// ExecutionResult records later implementation progress back on the pinpoint.
+type ExecutionResult struct {
+	ID           string    `json:"id"`
+	LinkID       string    `json:"link_id,omitempty"`
+	LaneID       string    `json:"lane_id,omitempty"`
+	Status       string    `json:"status"`
+	Summary      string    `json:"summary,omitempty"`
+	EvidenceRefs []string  `json:"evidence_refs,omitempty"`
+	RecordedAt   time.Time `json:"recorded_at"`
+}
+
 // Item is one tracked roadmap pinpoint.
 type Item struct {
 	ID                string               `json:"id"`
@@ -98,24 +145,30 @@ type Item struct {
 	Impact            ImpactClass          `json:"impact"`
 	PriorityReason    PriorityReason       `json:"priority_reason,omitempty"`
 	PriorityUpdatedAt *time.Time           `json:"priority_updated_at,omitempty"`
+	Handoff           *HandoffPacket       `json:"handoff,omitempty"`
+	Implementation    []ImplementationLink `json:"implementation,omitempty"`
+	ExecutionResults  []ExecutionResult    `json:"execution_results,omitempty"`
 }
 
 // Filing is a create or update request for a roadmap pinpoint.
 type Filing struct {
-	ID             string
-	Title          string
-	Description    string
-	State          State
-	Supersedes     []string
-	SupersededBy   string
-	Related        []string
-	ReportID       string
-	Evidence       []EvidenceAttachment
-	Priority       Priority
-	Severity       Severity
-	Impact         ImpactClass
-	PriorityReason PriorityReason
-	Now            time.Time
+	ID               string
+	Title            string
+	Description      string
+	State            State
+	Supersedes       []string
+	SupersededBy     string
+	Related          []string
+	ReportID         string
+	Evidence         []EvidenceAttachment
+	Priority         Priority
+	Severity         Severity
+	Impact           ImpactClass
+	PriorityReason   PriorityReason
+	Handoff          *HandoffPacket
+	Implementation   []ImplementationLink
+	ExecutionResults []ExecutionResult
+	Now              time.Time
 }
 
 // Result describes whether a filing created or updated an item.
@@ -197,6 +250,24 @@ func (s Store) File(filing Filing) (Result, error) {
 		return Result{}, err
 	}
 	item.Evidence = mergeEvidence(item.Evidence, evidence)
+	handoff, err := normalizeHandoff(filing.Handoff, filing.Now)
+	if err != nil {
+		return Result{}, err
+	}
+	if handoff != nil {
+		item.Handoff = handoff
+	}
+	implementation, err := normalizeImplementationLinks(filing.Implementation, filing.Now)
+	if err != nil {
+		return Result{}, err
+	}
+	item.Implementation = mergeImplementationLinks(item.Implementation, implementation)
+	results, err := normalizeExecutionResults(filing.ExecutionResults, filing.Now)
+	if err != nil {
+		return Result{}, err
+	}
+	item.ExecutionResults = mergeExecutionResults(item.ExecutionResults, results)
+	applyExecutionResultState(&item, results, filing.Now)
 	if filing.SupersededBy != "" {
 		item.SupersededBy = filing.SupersededBy
 		if item.State != StateSuperseded {
@@ -210,6 +281,7 @@ func (s Store) File(filing Filing) (Result, error) {
 	if item.Lineage == nil {
 		item.Lineage = []string{item.ID}
 	}
+	ensureHandoff(&item, filing.Now)
 	if err := s.save(item); err != nil {
 		return Result{}, err
 	}
@@ -235,6 +307,7 @@ func (s Store) Get(id string) (Item, error) {
 		return Item{}, err
 	}
 	ensurePriorityDefaults(&item, fallbackTime(item.UpdatedAt))
+	ensureHandoff(&item, fallbackTime(item.UpdatedAt))
 	return item, nil
 }
 
@@ -261,6 +334,7 @@ func (s Store) List() ([]Item, error) {
 			return nil, err
 		}
 		ensurePriorityDefaults(&item, fallbackTime(item.UpdatedAt))
+		ensureHandoff(&item, fallbackTime(item.UpdatedAt))
 		items = append(items, item)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -459,6 +533,212 @@ func fallbackTime(value time.Time) time.Time {
 	return value
 }
 
+func normalizeHandoff(packet *HandoffPacket, now time.Time) (*HandoffPacket, error) {
+	if packet == nil {
+		return nil, nil
+	}
+	normalized := *packet
+	normalized.PinpointID = strings.TrimSpace(normalized.PinpointID)
+	normalized.Objective = strings.TrimSpace(normalized.Objective)
+	normalized.SuspectedScope = cleanStrings(normalized.SuspectedScope)
+	normalized.EvidenceRefs = cleanStrings(normalized.EvidenceRefs)
+	normalized.SuggestedVerification = cleanStrings(normalized.SuggestedVerification)
+	normalized.Readiness = HandoffReadiness(strings.TrimSpace(string(normalized.Readiness)))
+	if normalized.Readiness != "" {
+		if err := validateReadiness(normalized.Readiness); err != nil {
+			return nil, err
+		}
+	}
+	if normalized.GeneratedAt.IsZero() {
+		normalized.GeneratedAt = now
+	} else {
+		normalized.GeneratedAt = normalized.GeneratedAt.UTC()
+	}
+	normalized.Metadata = cleanStringMap(normalized.Metadata)
+	return &normalized, nil
+}
+
+func validateReadiness(readiness HandoffReadiness) error {
+	switch readiness {
+	case ReadinessImplementationReady, ReadinessNeedsRepro, ReadinessNeedsTriage:
+		return nil
+	default:
+		return errors.New("invalid roadmap handoff readiness")
+	}
+}
+
+func ensureHandoff(item *Item, now time.Time) {
+	if item.Handoff == nil {
+		item.Handoff = &HandoffPacket{}
+	}
+	packet := item.Handoff
+	packet.PinpointID = item.ID
+	if packet.Objective == "" {
+		packet.Objective = handoffObjective(*item)
+	}
+	if len(packet.SuspectedScope) == 0 {
+		packet.SuspectedScope = []string{"workspace"}
+	}
+	packet.EvidenceRefs = evidenceRefs(item.Evidence)
+	packet.Priority = item.Priority
+	packet.Severity = item.Severity
+	packet.Impact = item.Impact
+	if len(packet.SuggestedVerification) == 0 {
+		packet.SuggestedVerification = defaultVerificationPlan(*item)
+	}
+	if packet.Readiness == "" {
+		packet.Readiness = inferReadiness(*item)
+	}
+	if packet.GeneratedAt.IsZero() {
+		packet.GeneratedAt = now
+	}
+}
+
+func handoffObjective(item Item) string {
+	description := strings.TrimSpace(item.Description)
+	if description == "" {
+		return item.Title
+	}
+	return item.Title + ": " + description
+}
+
+func evidenceRefs(evidence []EvidenceAttachment) []string {
+	refs := make([]string, 0, len(evidence))
+	for _, value := range evidence {
+		if value.ID != "" {
+			refs = append(refs, value.ID)
+			continue
+		}
+		if value.Reference != "" {
+			refs = append(refs, value.Reference)
+		}
+	}
+	return cleanStrings(refs)
+}
+
+func defaultVerificationPlan(item Item) []string {
+	for _, evidence := range item.Evidence {
+		if evidence.Role == EvidenceVerification && evidence.Preview != "" {
+			return []string{evidence.Preview}
+		}
+	}
+	return []string{"Run the focused tests or checks that exercise the referenced evidence."}
+}
+
+func inferReadiness(item Item) HandoffReadiness {
+	if len(item.Evidence) == 0 {
+		return ReadinessNeedsTriage
+	}
+	for _, evidence := range item.Evidence {
+		if evidence.Role == EvidenceRepro || evidence.Role == EvidenceVerification {
+			return ReadinessImplementationReady
+		}
+	}
+	return ReadinessNeedsRepro
+}
+
+func normalizeImplementationLinks(values []ImplementationLink, now time.Time) ([]ImplementationLink, error) {
+	out := make([]ImplementationLink, 0, len(values))
+	for _, value := range values {
+		value.ID = strings.TrimSpace(value.ID)
+		value.LaneID = strings.TrimSpace(value.LaneID)
+		value.TaskID = strings.TrimSpace(value.TaskID)
+		value.WorktreeID = strings.TrimSpace(value.WorktreeID)
+		value.WorktreePath = strings.TrimSpace(value.WorktreePath)
+		value.PRURL = strings.TrimSpace(value.PRURL)
+		value.Status = strings.TrimSpace(value.Status)
+		if value.ID == "" && value.LaneID == "" && value.TaskID == "" && value.WorktreeID == "" && value.WorktreePath == "" && value.PRURL == "" && value.PRNumber == 0 {
+			continue
+		}
+		if value.PRNumber < 0 {
+			return nil, errors.New("roadmap implementation pr_number must be non-negative")
+		}
+		if value.AddedAt.IsZero() {
+			value.AddedAt = now
+		} else {
+			value.AddedAt = value.AddedAt.UTC()
+		}
+		if value.ID == "" {
+			value.ID = implementationLinkID(value)
+		}
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].AddedAt.Equal(out[j].AddedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].AddedAt.Before(out[j].AddedAt)
+	})
+	return out, nil
+}
+
+func implementationLinkID(value ImplementationLink) string {
+	key := strings.Join([]string{value.LaneID, value.TaskID, value.WorktreeID, value.WorktreePath, value.PRURL, strconv.Itoa(value.PRNumber)}, "\x00")
+	sum := sha256.Sum256([]byte(key))
+	return "impl-" + hex.EncodeToString(sum[:6])
+}
+
+func normalizeExecutionResults(values []ExecutionResult, now time.Time) ([]ExecutionResult, error) {
+	out := make([]ExecutionResult, 0, len(values))
+	for _, value := range values {
+		value.ID = strings.TrimSpace(value.ID)
+		value.LinkID = strings.TrimSpace(value.LinkID)
+		value.LaneID = strings.TrimSpace(value.LaneID)
+		value.Status = strings.TrimSpace(value.Status)
+		value.Summary = strings.TrimSpace(value.Summary)
+		value.EvidenceRefs = cleanStrings(value.EvidenceRefs)
+		if value.ID == "" && value.LinkID == "" && value.LaneID == "" && value.Status == "" && value.Summary == "" && len(value.EvidenceRefs) == 0 {
+			continue
+		}
+		if value.Status == "" {
+			return nil, errors.New("roadmap execution result status is required")
+		}
+		if value.RecordedAt.IsZero() {
+			value.RecordedAt = now
+		} else {
+			value.RecordedAt = value.RecordedAt.UTC()
+		}
+		if value.ID == "" {
+			value.ID = executionResultID(value)
+		}
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].RecordedAt.Equal(out[j].RecordedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].RecordedAt.Before(out[j].RecordedAt)
+	})
+	return out, nil
+}
+
+func executionResultID(value ExecutionResult) string {
+	key := strings.Join([]string{value.LinkID, value.LaneID, value.Status, value.Summary, strings.Join(value.EvidenceRefs, "\x00")}, "\x00")
+	sum := sha256.Sum256([]byte(key))
+	return "exec-" + hex.EncodeToString(sum[:6])
+}
+
+func applyExecutionResultState(item *Item, results []ExecutionResult, now time.Time) {
+	if item.State == StateSuperseded || len(results) == 0 {
+		return
+	}
+	for _, result := range results {
+		switch strings.ToLower(result.Status) {
+		case "done", "passed", "completed", "merged":
+			item.State = StateDone
+			item.LastStateChangeAt = now
+		case "blocked", "failed":
+			item.State = StateBlocked
+			item.LastStateChangeAt = now
+		case "started", "running", "in_progress":
+			if item.State != StateDone {
+				item.State = StateInProgress
+				item.LastStateChangeAt = now
+			}
+		}
+	}
+}
+
 func normalizeEvidence(values []EvidenceAttachment, now time.Time) ([]EvidenceAttachment, error) {
 	out := make([]EvidenceAttachment, 0, len(values))
 	for _, value := range values {
@@ -542,6 +822,25 @@ func cleanStrings(values []string) []string {
 	return out
 }
 
+func cleanStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func mergeStrings(existing []string, next []string) []string {
 	return cleanStrings(append(append([]string(nil), existing...), next...))
 }
@@ -573,6 +872,66 @@ func mergeEvidence(existing []EvidenceAttachment, next []EvidenceAttachment) []E
 			return merged[i].ID < merged[j].ID
 		}
 		return merged[i].AddedAt.Before(merged[j].AddedAt)
+	})
+	return merged
+}
+
+func mergeImplementationLinks(existing []ImplementationLink, next []ImplementationLink) []ImplementationLink {
+	if len(next) == 0 {
+		return existing
+	}
+	merged := append([]ImplementationLink(nil), existing...)
+	byID := make(map[string]int, len(merged)+len(next))
+	for i, value := range merged {
+		byID[value.ID] = i
+	}
+	for _, value := range next {
+		if index, ok := byID[value.ID]; ok {
+			if value.Status != "" {
+				merged[index].Status = value.Status
+			}
+			if value.PRURL != "" {
+				merged[index].PRURL = value.PRURL
+			}
+			if value.PRNumber != 0 {
+				merged[index].PRNumber = value.PRNumber
+			}
+			continue
+		}
+		byID[value.ID] = len(merged)
+		merged = append(merged, value)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].AddedAt.Equal(merged[j].AddedAt) {
+			return merged[i].ID < merged[j].ID
+		}
+		return merged[i].AddedAt.Before(merged[j].AddedAt)
+	})
+	return merged
+}
+
+func mergeExecutionResults(existing []ExecutionResult, next []ExecutionResult) []ExecutionResult {
+	if len(next) == 0 {
+		return existing
+	}
+	merged := append([]ExecutionResult(nil), existing...)
+	byID := make(map[string]int, len(merged)+len(next))
+	for i, value := range merged {
+		byID[value.ID] = i
+	}
+	for _, value := range next {
+		if index, ok := byID[value.ID]; ok {
+			merged[index] = value
+			continue
+		}
+		byID[value.ID] = len(merged)
+		merged = append(merged, value)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].RecordedAt.Equal(merged[j].RecordedAt) {
+			return merged[i].ID < merged[j].ID
+		}
+		return merged[i].RecordedAt.Before(merged[j].RecordedAt)
 	})
 	return merged
 }

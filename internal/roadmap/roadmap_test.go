@@ -167,6 +167,88 @@ func TestFileTracksPrioritySeverityAndListOrder(t *testing.T) {
 	require.Equal(t, defaulted.ItemID, items[1].ID)
 }
 
+func TestFileBuildsHandoffAndTracksImplementationLinks(t *testing.T) {
+	store := NewStore(t.TempDir())
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	filed, err := store.File(Filing{
+		Title:       "handoff needs executable context",
+		Description: "pinpoint should become an implementation lane",
+		Priority:    PriorityP1,
+		Severity:    SeverityHigh,
+		Impact:      ImpactOperatorFriction,
+		Evidence: []EvidenceAttachment{
+			{Role: EvidenceSymptom, Type: "session", Reference: "session-1", Preview: "missing packet"},
+			{Role: EvidenceVerification, Type: "test", Reference: "go-test", Preview: "go test ./internal/roadmap"},
+		},
+		Now: now,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, filed.Item.Handoff)
+	require.Equal(t, filed.ItemID, filed.Item.Handoff.PinpointID)
+	require.Equal(t, PriorityP1, filed.Item.Handoff.Priority)
+	require.Equal(t, SeverityHigh, filed.Item.Handoff.Severity)
+	require.Equal(t, ImpactOperatorFriction, filed.Item.Handoff.Impact)
+	require.Equal(t, ReadinessImplementationReady, filed.Item.Handoff.Readiness)
+	require.Equal(t, []string{"workspace"}, filed.Item.Handoff.SuspectedScope)
+	require.Len(t, filed.Item.Handoff.EvidenceRefs, 2)
+	require.Equal(t, []string{"go test ./internal/roadmap"}, filed.Item.Handoff.SuggestedVerification)
+
+	updated, err := store.File(Filing{
+		ID: filed.ItemID,
+		Handoff: &HandoffPacket{
+			Objective:             "Implement the handoff packet",
+			SuspectedScope:        []string{"internal/roadmap", "internal/tools"},
+			SuggestedVerification: []string{"go test ./internal/roadmap ./internal/tools"},
+			Readiness:             ReadinessImplementationReady,
+			Metadata:              map[string]string{"owner": "queue"},
+		},
+		Implementation: []ImplementationLink{{
+			LaneID:       "lane-1",
+			TaskID:       "task-1",
+			WorktreeID:   "wt-1",
+			WorktreePath: "worktrees/wt-1",
+			PRURL:        "https://github.com/Rememorio/codog/pull/1",
+			PRNumber:     1,
+			Status:       "running",
+		}},
+		ExecutionResults: []ExecutionResult{{
+			LaneID:       "lane-1",
+			Status:       "running",
+			Summary:      "implementation started",
+			EvidenceRefs: []string{filed.Item.Evidence[0].ID},
+		}},
+		Now: now.Add(time.Hour),
+	})
+	require.NoError(t, err)
+	require.Equal(t, filed.ItemID, updated.ItemID)
+	require.Equal(t, StateInProgress, updated.State)
+	require.Equal(t, "Implement the handoff packet", updated.Item.Handoff.Objective)
+	require.Equal(t, []string{"internal/roadmap", "internal/tools"}, updated.Item.Handoff.SuspectedScope)
+	require.Equal(t, []string{"go test ./internal/roadmap ./internal/tools"}, updated.Item.Handoff.SuggestedVerification)
+	require.Equal(t, map[string]string{"owner": "queue"}, updated.Item.Handoff.Metadata)
+	require.Len(t, updated.Item.Implementation, 1)
+	require.Equal(t, "lane-1", updated.Item.Implementation[0].LaneID)
+	require.Contains(t, updated.Item.Implementation[0].ID, "impl-")
+	require.Len(t, updated.Item.ExecutionResults, 1)
+	require.Contains(t, updated.Item.ExecutionResults[0].ID, "exec-")
+
+	completed, err := store.File(Filing{
+		ID: filed.ItemID,
+		ExecutionResults: []ExecutionResult{{
+			LinkID:  updated.Item.Implementation[0].ID,
+			LaneID:  "lane-1",
+			Status:  "passed",
+			Summary: "verification passed",
+		}},
+		Now: now.Add(2 * time.Hour),
+	})
+	require.NoError(t, err)
+	require.Equal(t, StateDone, completed.State)
+	require.Len(t, completed.Item.ExecutionResults, 2)
+	require.Equal(t, []string{filed.ItemID}, completed.Item.Lineage)
+}
+
 func TestFileMarksSupersededLineage(t *testing.T) {
 	store := NewStore(t.TempDir())
 	now := time.Date(2026, 7, 7, 14, 0, 0, 0, time.UTC)
@@ -201,6 +283,30 @@ func TestRejectsInvalidRoadmapInput(t *testing.T) {
 
 	_, err = store.File(Filing{Title: "bad impact", Impact: "unknown"})
 	require.ErrorContains(t, err, "invalid roadmap impact")
+
+	_, err = store.File(Filing{
+		Title: "bad readiness",
+		Handoff: &HandoffPacket{
+			Readiness: "maybe",
+		},
+	})
+	require.ErrorContains(t, err, "invalid roadmap handoff readiness")
+
+	_, err = store.File(Filing{
+		Title: "bad pr",
+		Implementation: []ImplementationLink{{
+			PRNumber: -1,
+		}},
+	})
+	require.ErrorContains(t, err, "pr_number")
+
+	_, err = store.File(Filing{
+		Title: "bad result",
+		ExecutionResults: []ExecutionResult{{
+			Summary: "missing status",
+		}},
+	})
+	require.ErrorContains(t, err, "execution result status")
 
 	_, err = store.File(Filing{
 		Title: "bad evidence",

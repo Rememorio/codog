@@ -4169,7 +4169,7 @@ func TestRoadmapPinpointToolFilesAndUpdatesLifecycle(t *testing.T) {
 	require.Len(t, filed.Item.Evidence, 1)
 	require.Equal(t, "symptom", filed.Item.Evidence[0].Role)
 
-	updateInput := `{"action":"update","id":"` + filed.ItemID + `","title":"stable roadmap ids after edits","state":"in_progress","related":["rp-related"],"report_id":"report-1","priority":"p0","severity":"critical","impact":"operator_friction","priority_reason":{"blast_radius":"implementation queue","reproducibility":"reproducible","automation_breakage":"blocks queue ranking","merge_risk":"medium"},"evidence":[{"role":"verification","type":"commit","reference":"abc1234","preview":"go test ./..."}],"now":"2026-07-07T14:00:00Z"}`
+	updateInput := `{"action":"update","id":"` + filed.ItemID + `","title":"stable roadmap ids after edits","state":"in_progress","related":["rp-related"],"report_id":"report-1","priority":"p0","severity":"critical","impact":"operator_friction","priority_reason":{"blast_radius":"implementation queue","reproducibility":"reproducible","automation_breakage":"blocks queue ranking","merge_risk":"medium"},"handoff":{"objective":"Implement stable roadmap ids","suspected_scope":["internal/roadmap","internal/tools"],"suggested_verification":["go test ./internal/roadmap ./internal/tools"],"readiness":"implementation_ready","metadata":{"owner":"queue"}},"implementation":[{"lane_id":"lane-1","task_id":"task-1","worktree_id":"wt-1","worktree_path":"worktrees/wt-1","pr_url":"https://github.com/Rememorio/codog/pull/1","pr_number":1,"status":"running"}],"execution_results":[{"lane_id":"lane-1","status":"running","summary":"started from pinpoint"}],"evidence":[{"role":"verification","type":"commit","reference":"abc1234","preview":"go test ./..."}],"now":"2026-07-07T14:00:00Z"}`
 	updateOut, err := tool.Execute(context.Background(), []byte(updateInput))
 	require.NoError(t, err)
 	require.Contains(t, updateOut, `"action": "roadmap_update"`)
@@ -4178,7 +4178,16 @@ func TestRoadmapPinpointToolFilesAndUpdatesLifecycle(t *testing.T) {
 	require.Contains(t, updateOut, `"priority": "p0"`)
 	require.Contains(t, updateOut, `"severity": "critical"`)
 	require.Contains(t, updateOut, `"impact": "operator_friction"`)
+	require.Contains(t, updateOut, `"readiness": "implementation_ready"`)
+	require.Contains(t, updateOut, `"lane_id": "lane-1"`)
 	require.Contains(t, updateOut, `"reference": "abc1234"`)
+
+	handoffOut, err := tool.Execute(context.Background(), []byte(`{"action":"handoff","id":"`+filed.ItemID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, handoffOut, `"kind": "roadmap_pinpoint_handoff"`)
+	require.Contains(t, handoffOut, `"objective": "Implement stable roadmap ids"`)
+	require.Contains(t, handoffOut, `"suspected_scope": [`)
+	require.Contains(t, handoffOut, `"implementation": [`)
 
 	statusOut, err := tool.Execute(context.Background(), []byte(`{"action":"get","id":"`+filed.ItemID+`"}`))
 	require.NoError(t, err)
