@@ -9811,13 +9811,23 @@ func backgroundAgentRunScenario() scenario {
 			if _, err := taskStore.UpdateHeartbeat(task.ID, background.LaneHeartbeat{
 				ObservedAt:     now,
 				TransportAlive: false,
-				Status:         "disconnected",
+				Status:         "stopped",
+				Provenance: background.EventProvenance{
+					SourceKind:  "transport",
+					Environment: "mock-parity",
+					Channel:     "harness",
+					Emitter:     "codog-harness",
+					Confidence:  "high",
+				},
 			}); err != nil {
 				return localScenarioResult{}, err
 			}
 			stoppedStatus := agentruns.StatusForTaskAt(taskStore, run, now, 30*time.Second)
 			if !stoppedStatus.Lifecycle.Terminal || stoppedStatus.Lifecycle.TerminalStateUnknown || stoppedStatus.Health.State != "finished" {
 				return localScenarioResult{}, fmt.Errorf("unexpected stopped lifecycle: %#v", stoppedStatus)
+			}
+			if stoppedStatus.TerminalOutcome == nil || stoppedStatus.TerminalOutcome.DuplicateCount < 1 {
+				return localScenarioResult{}, fmt.Errorf("missing terminal dedupe outcome: %#v", stoppedStatus.TerminalOutcome)
 			}
 			restarted, err := taskStore.Restart(task.ID, workspace)
 			if err != nil {
@@ -9870,16 +9880,18 @@ func backgroundAgentRunScenario() scenario {
 			report := map[string]any{
 				"kind": "background_agent_run",
 				"task": map[string]any{
-					"kind":             task.Kind,
-					"agent_type":       task.AgentType,
-					"session_id":       task.SessionID,
-					"watch_events":     []string{events[0].Type, events[1].Type},
-					"stopped":          stopped.Status,
-					"stopped_terminal": stoppedStatus.Lifecycle.Terminal,
-					"restarted":        restarted.RestartedFrom == task.ID,
-					"lane":             "active",
-					"lane_freshness":   string(taskBoard.Active[0].Freshness),
-					"source_kind":      taskBoard.Active[0].Provenance.SourceKind,
+					"kind":                 task.Kind,
+					"agent_type":           task.AgentType,
+					"session_id":           task.SessionID,
+					"watch_events":         []string{events[0].Type, events[1].Type},
+					"stopped":              stopped.Status,
+					"stopped_terminal":     stoppedStatus.Lifecycle.Terminal,
+					"terminal_fingerprint": stoppedStatus.TerminalOutcome.Fingerprint,
+					"terminal_duplicates":  stoppedStatus.TerminalOutcome.DuplicateCount,
+					"restarted":            restarted.RestartedFrom == task.ID,
+					"lane":                 "active",
+					"lane_freshness":       string(taskBoard.Active[0].Freshness),
+					"source_kind":          taskBoard.Active[0].Provenance.SourceKind,
 				},
 				"agent_run": map[string]any{
 					"agent":            run.Agent,

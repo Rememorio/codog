@@ -8225,6 +8225,9 @@ func renderAgentRunBoardReport(out io.Writer, report agentRunBoardReport) {
 			fmt.Fprintf(out, "    Freshness      %s\n", entry.Freshness)
 			fmt.Fprintf(out, "    Lifecycle      %s\n", renderLifecycleResolution(entry.Lifecycle))
 			fmt.Fprintf(out, "    Provenance     %s\n", renderEventProvenance(entry.Provenance))
+			if entry.TerminalOutcome != nil {
+				fmt.Fprintf(out, "    Terminal       %s\n", renderTerminalOutcome(entry.TerminalOutcome))
+			}
 			if entry.Error != "" {
 				fmt.Fprintf(out, "    Error          %s\n", entry.Error)
 			}
@@ -8297,6 +8300,9 @@ func renderAgentRunStatus(out io.Writer, status agentRunStatus) {
 	fmt.Fprintf(out, "    Freshness      %s\n", status.Freshness)
 	fmt.Fprintf(out, "    Lifecycle      %s\n", renderLifecycleResolution(status.Lifecycle))
 	fmt.Fprintf(out, "    Provenance     %s\n", renderEventProvenance(status.Provenance))
+	if status.TerminalOutcome != nil {
+		fmt.Fprintf(out, "    Terminal       %s\n", renderTerminalOutcome(status.TerminalOutcome))
+	}
 	fmt.Fprintf(out, "    Health         %s\n", status.Health.State)
 	fmt.Fprintf(out, "    Task           %s\n", run.TaskID)
 	if status.Health.RecommendedAction != "" {
@@ -8325,6 +8331,23 @@ func renderEventProvenance(provenance background.EventProvenance) string {
 		provenance.Emitter,
 		provenance.Confidence,
 	}, " ")
+}
+
+func renderTerminalOutcome(outcome *background.TerminalOutcome) string {
+	if outcome == nil {
+		return ""
+	}
+	parts := []string{outcome.Status, outcome.Fingerprint}
+	if outcome.DuplicateCount > 0 {
+		parts = append(parts, fmt.Sprintf("duplicates=%d", outcome.DuplicateCount))
+	}
+	if outcome.ConflictCount > 0 {
+		parts = append(parts, fmt.Sprintf("conflicts=%d", outcome.ConflictCount))
+	}
+	if outcome.MateriallyDifferent {
+		parts = append(parts, "materially_different")
+	}
+	return strings.Join(parts, " ")
 }
 
 func renderLifecycleResolution(lifecycle background.LifecycleResolution) string {

@@ -127,6 +127,8 @@ func TestStatusForTaskReportsHealth(t *testing.T) {
 	require.Equal(t, background.LaneFreshnessTransportDead, status.Freshness)
 	require.True(t, status.Lifecycle.Terminal)
 	require.False(t, status.Lifecycle.TerminalStateUnknown)
+	require.NotNil(t, status.TerminalOutcome)
+	require.Equal(t, "stopped", status.TerminalOutcome.Status)
 	require.Equal(t, "finished", status.Health.State)
 
 	board := BuildBoard(taskStore, []Run{run}, now, 30*time.Second)
@@ -135,6 +137,8 @@ func TestStatusForTaskReportsHealth(t *testing.T) {
 	require.Equal(t, "live_lane", board.Finished[0].Provenance.SourceKind)
 	require.True(t, board.Finished[0].Lifecycle.Terminal)
 	require.Equal(t, "canonical_terminal_status", board.Finished[0].Lifecycle.Reason)
+	require.NotNil(t, board.Finished[0].TerminalOutcome)
+	require.NotEmpty(t, board.Finished[0].TerminalOutcome.Fingerprint)
 
 	orphan := StatusForTaskAt(taskStore, Run{ID: "run-orphan", Agent: "reviewer", TaskID: "missing-task"}, now, 30*time.Second)
 	require.Equal(t, background.LaneFreshnessUnknown, orphan.Freshness)

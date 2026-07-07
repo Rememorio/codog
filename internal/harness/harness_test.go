@@ -954,6 +954,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, backgroundAgent.Output, `"watch_events":["status","log"]`)
 	require.Contains(t, backgroundAgent.Output, `"stopped":"stopped"`)
 	require.Contains(t, backgroundAgent.Output, `"stopped_terminal":true`)
+	require.Contains(t, backgroundAgent.Output, `"terminal_duplicates":1`)
+	require.Contains(t, backgroundAgent.Output, `"terminal_fingerprint":"terminal:`)
 	require.Contains(t, backgroundAgent.Output, `"lifecycle_reason":"active_status"`)
 	require.Contains(t, backgroundAgent.Output, `"source_kind":"healthcheck"`)
 	require.Contains(t, backgroundAgent.Output, `"emitter":"codog-harness"`)

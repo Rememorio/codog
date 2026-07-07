@@ -2,6 +2,8 @@ package background
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,38 +11,70 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type Task struct {
-	ID            string          `json:"id"`
-	Kind          string          `json:"kind,omitempty"`
-	AgentType     string          `json:"agent_type,omitempty"`
-	Command       string          `json:"command"`
-	Prompt        string          `json:"prompt,omitempty"`
-	Description   string          `json:"description,omitempty"`
-	TaskPacket    json.RawMessage `json:"task_packet,omitempty"`
-	Workspace     string          `json:"workspace,omitempty"`
-	SessionID     string          `json:"session_id,omitempty"`
-	RestartPolicy *RestartPolicy  `json:"restart_policy,omitempty"`
-	RestartCount  int             `json:"restart_count,omitempty"`
-	PID           int             `json:"pid"`
-	Status        string          `json:"status"`
-	StartedAt     time.Time       `json:"started_at"`
-	CompletedAt   *time.Time      `json:"completed_at,omitempty"`
-	ExitCode      *int            `json:"exit_code,omitempty"`
-	LogPath       string          `json:"log_path"`
-	Error         string          `json:"error,omitempty"`
-	RestartedFrom string          `json:"restarted_from,omitempty"`
-	RestartedBy   string          `json:"restarted_by,omitempty"`
-	Messages      []TaskMessage   `json:"messages,omitempty"`
-	Heartbeat     *LaneHeartbeat  `json:"heartbeat,omitempty"`
+	ID              string           `json:"id"`
+	Kind            string           `json:"kind,omitempty"`
+	AgentType       string           `json:"agent_type,omitempty"`
+	Command         string           `json:"command"`
+	Prompt          string           `json:"prompt,omitempty"`
+	Description     string           `json:"description,omitempty"`
+	TaskPacket      json.RawMessage  `json:"task_packet,omitempty"`
+	Workspace       string           `json:"workspace,omitempty"`
+	SessionID       string           `json:"session_id,omitempty"`
+	RestartPolicy   *RestartPolicy   `json:"restart_policy,omitempty"`
+	RestartCount    int              `json:"restart_count,omitempty"`
+	PID             int              `json:"pid"`
+	Status          string           `json:"status"`
+	StartedAt       time.Time        `json:"started_at"`
+	CompletedAt     *time.Time       `json:"completed_at,omitempty"`
+	ExitCode        *int             `json:"exit_code,omitempty"`
+	LogPath         string           `json:"log_path"`
+	Error           string           `json:"error,omitempty"`
+	RestartedFrom   string           `json:"restarted_from,omitempty"`
+	RestartedBy     string           `json:"restarted_by,omitempty"`
+	Messages        []TaskMessage    `json:"messages,omitempty"`
+	Heartbeat       *LaneHeartbeat   `json:"heartbeat,omitempty"`
+	TerminalEvents  []TerminalEvent  `json:"terminal_events,omitempty"`
+	TerminalOutcome *TerminalOutcome `json:"terminal_outcome,omitempty"`
 }
 
 type TaskMessage struct {
 	Message   string    `json:"message"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// TerminalEvent records one raw terminal notification for audit and dedupe.
+type TerminalEvent struct {
+	Sequence            int             `json:"sequence"`
+	ObservedAt          time.Time       `json:"observed_at"`
+	Status              string          `json:"status"`
+	ExitCode            *int            `json:"exit_code,omitempty"`
+	Error               string          `json:"error,omitempty"`
+	Fingerprint         string          `json:"fingerprint"`
+	Duplicate           bool            `json:"duplicate,omitempty"`
+	DuplicateOf         string          `json:"duplicate_of,omitempty"`
+	MateriallyDifferent bool            `json:"materially_different,omitempty"`
+	Actionable          bool            `json:"actionable"`
+	Provenance          EventProvenance `json:"provenance"`
+}
+
+// TerminalOutcome is the single actionable terminal outcome for a lane.
+type TerminalOutcome struct {
+	Fingerprint         string    `json:"fingerprint"`
+	Status              string    `json:"status"`
+	ExitCode            *int      `json:"exit_code,omitempty"`
+	Error               string    `json:"error,omitempty"`
+	ObservedAt          time.Time `json:"observed_at"`
+	EventCount          int       `json:"event_count"`
+	DuplicateCount      int       `json:"duplicate_count,omitempty"`
+	ConflictCount       int       `json:"conflict_count,omitempty"`
+	MateriallyDifferent bool      `json:"materially_different,omitempty"`
+	Actionable          bool      `json:"actionable"`
 }
 
 type LaneFreshness string
@@ -78,16 +112,17 @@ type LifecycleResolution struct {
 }
 
 type LaneBoardEntry struct {
-	TaskID     string              `json:"task_id"`
-	Prompt     string              `json:"prompt,omitempty"`
-	Command    string              `json:"command,omitempty"`
-	Kind       string              `json:"kind,omitempty"`
-	SessionID  string              `json:"session_id,omitempty"`
-	Status     string              `json:"status"`
-	Heartbeat  *LaneHeartbeat      `json:"heartbeat,omitempty"`
-	Freshness  LaneFreshness       `json:"freshness"`
-	Provenance EventProvenance     `json:"provenance"`
-	Lifecycle  LifecycleResolution `json:"lifecycle"`
+	TaskID          string              `json:"task_id"`
+	Prompt          string              `json:"prompt,omitempty"`
+	Command         string              `json:"command,omitempty"`
+	Kind            string              `json:"kind,omitempty"`
+	SessionID       string              `json:"session_id,omitempty"`
+	Status          string              `json:"status"`
+	Heartbeat       *LaneHeartbeat      `json:"heartbeat,omitempty"`
+	Freshness       LaneFreshness       `json:"freshness"`
+	Provenance      EventProvenance     `json:"provenance"`
+	Lifecycle       LifecycleResolution `json:"lifecycle"`
+	TerminalOutcome *TerminalOutcome    `json:"terminal_outcome,omitempty"`
 }
 
 type LaneBoard struct {
@@ -448,6 +483,18 @@ func (s Store) UpdateHeartbeat(id string, heartbeat LaneHeartbeat) (Task, error)
 	heartbeat.Status = strings.TrimSpace(heartbeat.Status)
 	heartbeat.Provenance = NormalizeEventProvenance(heartbeat.Provenance)
 	task.Heartbeat = &heartbeat
+	if IsTerminalStatus(heartbeat.Status) {
+		task.Status = strings.ToLower(strings.TrimSpace(heartbeat.Status))
+		observedAt := heartbeat.ObservedAt
+		task.CompletedAt = &observedAt
+		task.TerminalEvents, task.TerminalOutcome = appendTerminalEvent(task.ID, task.TerminalEvents, TerminalEvent{
+			ObservedAt: observedAt,
+			Status:     heartbeat.Status,
+			ExitCode:   cloneIntPtr(task.ExitCode),
+			Error:      task.Error,
+			Provenance: heartbeat.Provenance,
+		})
+	}
 	if err := s.save(task); err != nil {
 		return Task{}, err
 	}
@@ -518,16 +565,17 @@ func (s Store) List() ([]Task, error) {
 func laneBoardEntry(task Task, now time.Time, stalledAfter time.Duration) LaneBoardEntry {
 	freshness := taskFreshness(task.Heartbeat, now, stalledAfter)
 	return LaneBoardEntry{
-		TaskID:     task.ID,
-		Prompt:     task.Prompt,
-		Command:    task.Command,
-		Kind:       task.Kind,
-		SessionID:  task.SessionID,
-		Status:     task.Status,
-		Heartbeat:  task.Heartbeat,
-		Freshness:  freshness,
-		Provenance: taskProvenance(task),
-		Lifecycle:  ResolveLifecycle(task.Status, freshness),
+		TaskID:          task.ID,
+		Prompt:          task.Prompt,
+		Command:         task.Command,
+		Kind:            task.Kind,
+		SessionID:       task.SessionID,
+		Status:          task.Status,
+		Heartbeat:       task.Heartbeat,
+		Freshness:       freshness,
+		Provenance:      taskProvenance(task),
+		Lifecycle:       ResolveLifecycle(task.Status, freshness),
+		TerminalOutcome: cloneTerminalOutcome(task.TerminalOutcome),
 	}
 }
 
@@ -600,6 +648,51 @@ func ResolveLifecycle(status string, freshness LaneFreshness) LifecycleResolutio
 	}
 }
 
+// IsTerminalStatus reports whether a task status is terminal.
+func IsTerminalStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "finished", "stopped", "failed", "error", "exited":
+		return true
+	default:
+		return false
+	}
+}
+
+// RecordTerminalEvent appends a terminal notification while preserving only
+// one actionable outcome for downstream automation.
+func (s Store) RecordTerminalEvent(id string, event TerminalEvent) (Task, error) {
+	task, err := s.Status(id)
+	if err != nil {
+		return Task{}, err
+	}
+	event.Status = firstNonEmpty(event.Status, task.Status)
+	if !IsTerminalStatus(event.Status) {
+		return Task{}, errors.New("terminal event status must be terminal")
+	}
+	if event.ExitCode == nil && task.ExitCode != nil {
+		event.ExitCode = cloneIntPtr(task.ExitCode)
+	}
+	if strings.TrimSpace(event.Error) == "" {
+		event.Error = task.Error
+	}
+	if event.ObservedAt.IsZero() {
+		if task.CompletedAt != nil && !task.CompletedAt.IsZero() {
+			event.ObservedAt = task.CompletedAt.UTC()
+		} else {
+			event.ObservedAt = time.Now().UTC()
+		}
+	}
+	task.Status = strings.ToLower(strings.TrimSpace(event.Status))
+	task.CompletedAt = &event.ObservedAt
+	task.ExitCode = cloneIntPtr(event.ExitCode)
+	task.Error = strings.TrimSpace(event.Error)
+	task.TerminalEvents, task.TerminalOutcome = appendTerminalEvent(task.ID, task.TerminalEvents, event)
+	if err := s.save(task); err != nil {
+		return Task{}, err
+	}
+	return task, nil
+}
+
 // NormalizeEventProvenance fills missing event provenance fields with stable
 // defaults and canonicalizes known values.
 func NormalizeEventProvenance(provenance EventProvenance) EventProvenance {
@@ -643,6 +736,163 @@ func normalizeProvenanceText(value string, fallback string) string {
 		return fallback
 	}
 	return normalized
+}
+
+func appendTerminalEvent(taskID string, events []TerminalEvent, event TerminalEvent) ([]TerminalEvent, *TerminalOutcome) {
+	event.Status = strings.ToLower(strings.TrimSpace(event.Status))
+	event.Error = strings.TrimSpace(event.Error)
+	event.ObservedAt = normalizeTerminalObservedAt(event.ObservedAt)
+	event.Provenance = NormalizeEventProvenance(event.Provenance)
+	event.ExitCode = cloneIntPtr(event.ExitCode)
+	event.Fingerprint = terminalFingerprint(taskID, event)
+	event.Sequence = len(events) + 1
+	if event.Sequence == 1 {
+		event.Actionable = true
+	} else {
+		event.Actionable = false
+	}
+	for _, existing := range events {
+		if existing.Fingerprint == event.Fingerprint {
+			event.Duplicate = true
+			event.DuplicateOf = existing.Fingerprint
+			event.MateriallyDifferent = terminalEventMateriallyDifferent(existing, event)
+			event.Actionable = false
+			break
+		}
+	}
+	next := append(append([]TerminalEvent(nil), events...), event)
+	return next, buildTerminalOutcome(next)
+}
+
+func ensureTerminalOutcome(task Task) Task {
+	normalizedEvents := make([]TerminalEvent, 0, len(task.TerminalEvents))
+	for _, event := range task.TerminalEvents {
+		if !IsTerminalStatus(event.Status) {
+			continue
+		}
+		normalizedEvents, _ = appendTerminalEvent(task.ID, normalizedEvents, event)
+	}
+	task.TerminalEvents = normalizedEvents
+	if IsTerminalStatus(task.Status) {
+		event := TerminalEvent{
+			Status:     task.Status,
+			ExitCode:   cloneIntPtr(task.ExitCode),
+			Error:      task.Error,
+			Provenance: taskProvenance(task),
+		}
+		if task.CompletedAt != nil {
+			event.ObservedAt = *task.CompletedAt
+		}
+		fingerprint := terminalFingerprint(task.ID, event)
+		if !hasTerminalFingerprint(task.TerminalEvents, fingerprint) {
+			task.TerminalEvents, task.TerminalOutcome = appendTerminalEvent(task.ID, task.TerminalEvents, event)
+			return task
+		}
+	}
+	task.TerminalOutcome = buildTerminalOutcome(task.TerminalEvents)
+	return task
+}
+
+func buildTerminalOutcome(events []TerminalEvent) *TerminalOutcome {
+	if len(events) == 0 {
+		return nil
+	}
+	var canonical *TerminalEvent
+	duplicateCount := 0
+	conflictCount := 0
+	materiallyDifferent := false
+	for i := range events {
+		event := events[i]
+		if event.Duplicate {
+			duplicateCount++
+		}
+		if event.MateriallyDifferent {
+			materiallyDifferent = true
+		}
+		if canonical == nil && event.Actionable {
+			canonical = &event
+			continue
+		}
+		if canonical != nil && event.Fingerprint != canonical.Fingerprint {
+			conflictCount++
+			if event.Sequence > canonical.Sequence {
+				materiallyDifferent = true
+			}
+		}
+	}
+	if canonical == nil {
+		canonical = &events[0]
+	}
+	return &TerminalOutcome{
+		Fingerprint:         canonical.Fingerprint,
+		Status:              canonical.Status,
+		ExitCode:            cloneIntPtr(canonical.ExitCode),
+		Error:               canonical.Error,
+		ObservedAt:          canonical.ObservedAt,
+		EventCount:          len(events),
+		DuplicateCount:      duplicateCount,
+		ConflictCount:       conflictCount,
+		MateriallyDifferent: materiallyDifferent,
+		Actionable:          true,
+	}
+}
+
+func hasTerminalFingerprint(events []TerminalEvent, fingerprint string) bool {
+	for _, event := range events {
+		if event.Fingerprint == fingerprint {
+			return true
+		}
+	}
+	return false
+}
+
+func terminalFingerprint(taskID string, event TerminalEvent) string {
+	exitCode := ""
+	if event.ExitCode != nil {
+		exitCode = strconv.Itoa(*event.ExitCode)
+	}
+	status := strings.ToLower(strings.TrimSpace(event.Status))
+	sum := sha256.Sum256([]byte(strings.Join([]string{taskID, status, exitCode}, "\x00")))
+	return "terminal:" + hex.EncodeToString(sum[:12])
+}
+
+func terminalEventMateriallyDifferent(a TerminalEvent, b TerminalEvent) bool {
+	return strings.TrimSpace(a.Error) != strings.TrimSpace(b.Error) ||
+		a.Provenance.SourceKind != b.Provenance.SourceKind ||
+		a.Provenance.Emitter != b.Provenance.Emitter
+}
+
+func cloneTerminalOutcome(outcome *TerminalOutcome) *TerminalOutcome {
+	if outcome == nil {
+		return nil
+	}
+	cloned := *outcome
+	cloned.ExitCode = cloneIntPtr(outcome.ExitCode)
+	return &cloned
+}
+
+func cloneIntPtr(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func normalizeTerminalObservedAt(observedAt time.Time) time.Time {
+	if observedAt.IsZero() {
+		return time.Now().UTC()
+	}
+	return observedAt.UTC()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func taskLaneBucket(status string) string {
@@ -868,6 +1118,7 @@ func (s Store) save(task Task) error {
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return err
 	}
+	task = ensureTerminalOutcome(task)
 	data, err := json.MarshalIndent(task, "", "  ")
 	if err != nil {
 		return err

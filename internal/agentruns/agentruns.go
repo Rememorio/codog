@@ -36,15 +36,16 @@ type Store struct {
 // Status combines an agent run record with the current state of its background
 // task, when that task can still be found.
 type Status struct {
-	Run           Run                            `json:"run"`
-	Task          *background.Task               `json:"task,omitempty"`
-	CurrentStatus string                         `json:"current_status"`
-	Heartbeat     *background.LaneHeartbeat      `json:"heartbeat,omitempty"`
-	Freshness     background.LaneFreshness       `json:"freshness"`
-	Provenance    background.EventProvenance     `json:"provenance"`
-	Lifecycle     background.LifecycleResolution `json:"lifecycle"`
-	Health        HealthReport                   `json:"health"`
-	Error         string                         `json:"error,omitempty"`
+	Run             Run                            `json:"run"`
+	Task            *background.Task               `json:"task,omitempty"`
+	CurrentStatus   string                         `json:"current_status"`
+	Heartbeat       *background.LaneHeartbeat      `json:"heartbeat,omitempty"`
+	Freshness       background.LaneFreshness       `json:"freshness"`
+	Provenance      background.EventProvenance     `json:"provenance"`
+	Lifecycle       background.LifecycleResolution `json:"lifecycle"`
+	TerminalOutcome *background.TerminalOutcome    `json:"terminal_outcome,omitempty"`
+	Health          HealthReport                   `json:"health"`
+	Error           string                         `json:"error,omitempty"`
 }
 
 // HealthReport gives operators a compact diagnosis and next action for a run.
@@ -56,14 +57,15 @@ type HealthReport struct {
 
 // BoardEntry is the lane-board view for a single agent run.
 type BoardEntry struct {
-	Run        Run                            `json:"run"`
-	Task       *background.Task               `json:"task,omitempty"`
-	Status     string                         `json:"status"`
-	Freshness  background.LaneFreshness       `json:"freshness"`
-	Provenance background.EventProvenance     `json:"provenance"`
-	Lifecycle  background.LifecycleResolution `json:"lifecycle"`
-	Heartbeat  *background.LaneHeartbeat      `json:"heartbeat,omitempty"`
-	Error      string                         `json:"error,omitempty"`
+	Run             Run                            `json:"run"`
+	Task            *background.Task               `json:"task,omitempty"`
+	Status          string                         `json:"status"`
+	Freshness       background.LaneFreshness       `json:"freshness"`
+	Provenance      background.EventProvenance     `json:"provenance"`
+	Lifecycle       background.LifecycleResolution `json:"lifecycle"`
+	TerminalOutcome *background.TerminalOutcome    `json:"terminal_outcome,omitempty"`
+	Heartbeat       *background.LaneHeartbeat      `json:"heartbeat,omitempty"`
+	Error           string                         `json:"error,omitempty"`
 }
 
 // Board groups agent runs by current execution state for operator views.
@@ -202,6 +204,7 @@ func StatusForTaskAt(store background.Store, run Run, now time.Time, stalledAfte
 	status.Freshness = freshness(task.Heartbeat, now, stalledAfter)
 	status.Provenance = heartbeatProvenance(task.Heartbeat)
 	status.Lifecycle = background.ResolveLifecycle(status.CurrentStatus, status.Freshness)
+	status.TerminalOutcome = cloneTerminalOutcome(task.TerminalOutcome)
 	status.Health = healthReport(status.CurrentStatus, status.Freshness, &task, "")
 	return status
 }
@@ -242,6 +245,7 @@ func BuildBoard(store background.Store, runs []Run, now time.Time, stalledAfter 
 		entry.Freshness = freshness(task.Heartbeat, board.GeneratedAt, stalledAfter)
 		entry.Provenance = heartbeatProvenance(task.Heartbeat)
 		entry.Lifecycle = background.ResolveLifecycle(entry.Status, entry.Freshness)
+		entry.TerminalOutcome = cloneTerminalOutcome(task.TerminalOutcome)
 		switch laneBucket(task.Status) {
 		case "active":
 			board.Active = append(board.Active, entry)
@@ -354,6 +358,18 @@ func heartbeatProvenance(heartbeat *background.LaneHeartbeat) background.EventPr
 		return background.NormalizeEventProvenance(heartbeat.Provenance)
 	}
 	return background.NormalizeEventProvenance(background.EventProvenance{})
+}
+
+func cloneTerminalOutcome(outcome *background.TerminalOutcome) *background.TerminalOutcome {
+	if outcome == nil {
+		return nil
+	}
+	cloned := *outcome
+	if outcome.ExitCode != nil {
+		exitCode := *outcome.ExitCode
+		cloned.ExitCode = &exitCode
+	}
+	return &cloned
 }
 
 func healthReport(status string, freshness background.LaneFreshness, task *background.Task, runError string) HealthReport {

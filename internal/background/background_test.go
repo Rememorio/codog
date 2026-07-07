@@ -242,10 +242,13 @@ func TestLaneBoardGroupsTasksAndReportsFreshness(t *testing.T) {
 	require.True(t, board.Finished[0].Lifecycle.Terminal)
 	require.False(t, board.Finished[0].Lifecycle.TerminalStateUnknown)
 	require.Equal(t, "canonical_terminal_status", board.Finished[0].Lifecycle.Reason)
+	require.NotNil(t, board.Finished[0].TerminalOutcome)
+	require.Equal(t, "failed", board.Finished[0].TerminalOutcome.Status)
 	require.Equal(t, "completed", board.Finished[1].TaskID)
 	require.Equal(t, LaneFreshnessUnknown, board.Finished[1].Freshness)
 	require.True(t, board.Finished[1].Lifecycle.Terminal)
 	require.Equal(t, "completed", board.Finished[1].Lifecycle.Status)
+	require.NotEmpty(t, board.Finished[1].TerminalOutcome.Fingerprint)
 }
 
 func TestResolveLifecycleDistinguishesTransportDeathFromTerminalStatus(t *testing.T) {
@@ -304,6 +307,72 @@ func TestUpdateHeartbeatNormalizesEventProvenance(t *testing.T) {
 	require.Len(t, board.Active, 1)
 	require.Equal(t, "healthcheck", board.Active[0].Provenance.SourceKind)
 	require.Equal(t, "clawhip", board.Active[0].Provenance.Emitter)
+}
+
+func TestTerminalEventsSuppressDuplicatesAndSurfaceConflicts(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	now := time.Date(2026, 7, 7, 10, 0, 0, 0, time.UTC)
+	require.NoError(t, store.save(Task{
+		ID:        "task",
+		Command:   "echo hi",
+		Status:    "running",
+		PID:       os.Getpid(),
+		StartedAt: now,
+		LogPath:   filepath.Join(store.Dir, "task.log"),
+	}))
+
+	first, err := store.UpdateHeartbeat("task", LaneHeartbeat{
+		ObservedAt:     now,
+		TransportAlive: true,
+		Status:         "completed",
+		Provenance:     EventProvenance{SourceKind: "live", Emitter: "worker-a"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "completed", first.Status)
+	require.Len(t, first.TerminalEvents, 1)
+	require.True(t, first.TerminalEvents[0].Actionable)
+	require.NotNil(t, first.TerminalOutcome)
+	require.Equal(t, 1, first.TerminalOutcome.EventCount)
+	require.True(t, first.TerminalOutcome.Actionable)
+
+	duplicate, err := store.UpdateHeartbeat("task", LaneHeartbeat{
+		ObservedAt:     now.Add(time.Second),
+		TransportAlive: true,
+		Status:         "completed",
+		Provenance:     EventProvenance{SourceKind: "live", Emitter: "worker-a"},
+	})
+	require.NoError(t, err)
+	require.Len(t, duplicate.TerminalEvents, 2)
+	require.True(t, duplicate.TerminalEvents[1].Duplicate)
+	require.False(t, duplicate.TerminalEvents[1].Actionable)
+	require.Equal(t, first.TerminalOutcome.Fingerprint, duplicate.TerminalEvents[1].DuplicateOf)
+	require.Equal(t, 2, duplicate.TerminalOutcome.EventCount)
+	require.Equal(t, 1, duplicate.TerminalOutcome.DuplicateCount)
+	require.False(t, duplicate.TerminalOutcome.MateriallyDifferent)
+
+	changedDuplicate, err := store.UpdateHeartbeat("task", LaneHeartbeat{
+		ObservedAt:     now.Add(2 * time.Second),
+		TransportAlive: true,
+		Status:         "completed",
+		Provenance:     EventProvenance{SourceKind: "live", Emitter: "worker-b"},
+	})
+	require.NoError(t, err)
+	require.True(t, changedDuplicate.TerminalEvents[2].Duplicate)
+	require.True(t, changedDuplicate.TerminalEvents[2].MateriallyDifferent)
+	require.Equal(t, 2, changedDuplicate.TerminalOutcome.DuplicateCount)
+	require.True(t, changedDuplicate.TerminalOutcome.MateriallyDifferent)
+
+	conflict, err := store.UpdateHeartbeat("task", LaneHeartbeat{
+		ObservedAt:     now.Add(3 * time.Second),
+		TransportAlive: true,
+		Status:         "failed",
+		Provenance:     EventProvenance{SourceKind: "live", Emitter: "worker-a"},
+	})
+	require.NoError(t, err)
+	require.Len(t, conflict.TerminalEvents, 4)
+	require.False(t, conflict.TerminalEvents[3].Actionable)
+	require.Equal(t, "completed", conflict.TerminalOutcome.Status)
+	require.Equal(t, 1, conflict.TerminalOutcome.ConflictCount)
 }
 
 func TestUpdateHeartbeatPersistsTaskHeartbeat(t *testing.T) {
