@@ -34,6 +34,9 @@ func TestAnalyzeReadyWorkspace(t *testing.T) {
 	require.Contains(t, report.InstructionFiles, "AGENTS.md")
 	require.Contains(t, report.ConfigFiles, ".codog.json")
 	require.Equal(t, "Start Codog from the smallest useful package or service directory; add only needed sibling paths with `codog add-dir`.", report.ScopeGuidance.Recommendation)
+	require.Equal(t, "clean", report.ScopeGuidance.RiskStatus)
+	require.Equal(t, "low", report.ScopeGuidance.RiskLevel)
+	require.Contains(t, report.ScopeGuidance.RiskSummary, "looks clean")
 	require.Contains(t, report.ScopeGuidance.HeavyDirectoryPatterns, "node_modules")
 	require.Contains(t, report.ScopeGuidance.HeavyDirectoryPatterns, ".next")
 	require.NotEmpty(t, report.ScopeGuidance.IgnoreBehaviors)
@@ -44,6 +47,7 @@ func TestAnalyzeReadyWorkspace(t *testing.T) {
 	require.Contains(t, out.String(), "Onboarding")
 	require.Contains(t, out.String(), "Primary language Go")
 	require.Contains(t, out.String(), "Scope guidance")
+	require.Contains(t, out.String(), "Scope risk     clean")
 	require.Contains(t, out.String(), ".gitignore")
 
 	out.Reset()
@@ -88,6 +92,9 @@ func TestAnalyzeReportsScopeGuidanceSignals(t *testing.T) {
 	require.Contains(t, report.ScopeGuidance.HeavyPaths, ".next")
 	require.Contains(t, report.ScopeGuidance.HeavyPaths, "node_modules")
 	require.Contains(t, report.ScopeGuidance.Recommendation, "smallest useful")
+	require.Equal(t, "warn", report.ScopeGuidance.RiskStatus)
+	require.Equal(t, "high", report.ScopeGuidance.RiskLevel)
+	require.Contains(t, report.ScopeGuidance.RiskSummary, "burn tokens quickly")
 
 	behaviors := map[string]IgnoreBehavior{}
 	for _, behavior := range report.ScopeGuidance.IgnoreBehaviors {

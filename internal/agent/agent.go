@@ -56951,8 +56951,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"files",
 			"files",
 			"codog files [PATH] [--glob GLOB] [--limit N] [--hidden] [--output-format text|json]",
-			"Files\n\nUsage:\n  codog files [PATH] [--glob GLOB] [--limit N] [--hidden] [--output-format text|json]\n\nLists workspace-scoped files with optional glob filtering.\n",
-			[]string{"root", "files", "count", "truncated"},
+			"Files\n\nUsage:\n  codog files [PATH] [--glob GLOB] [--limit N] [--hidden] [--output-format text|json]\n\nLists workspace-scoped files with optional glob filtering and includes a lightweight `scope_risk` preflight. The preflight warns when the current tree contains likely token sinks such as vendored dependencies, generated output, logs, dumps, archives, or large files, and recommends safer scope choices before a broad prompt flow.\n",
+			[]string{"root", "files", "count", "truncated", "scope_risk"},
 			[]string{"ok", "error"},
 			false,
 		), true

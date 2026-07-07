@@ -409,6 +409,14 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.OutputFields, "scope_guidance")
 
 	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"files", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "files", report.Topic)
+	require.Contains(t, report.Help, "scope_risk")
+	require.Contains(t, report.Help, "token sinks")
+	require.Contains(t, report.OutputFields, "scope_risk")
+
+	out.Reset()
 	require.NoError(t, renderHelpCommand(&out, []string{"api", "--output-format", "json"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "api", report.Topic)
@@ -16519,6 +16527,8 @@ func TestFilesCommandAndSlash(t *testing.T) {
 
 	require.NoError(t, app.Files([]string{"--glob", "*.go", "--json"}))
 	require.Contains(t, out.String(), `"kind": "files"`)
+	require.Contains(t, out.String(), `"scope_risk"`)
+	require.Contains(t, out.String(), `"status": "clean"`)
 	require.Contains(t, out.String(), `"path": "pkg/main.go"`)
 	require.NotContains(t, out.String(), "ignored.go")
 	require.NotContains(t, out.String(), "secret.go")

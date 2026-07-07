@@ -165,6 +165,11 @@ calls out heavy/generated paths such as `node_modules`, `dist`, `build`,
 `.next`, `coverage`, `logs`, `dumps`, `generated`, and `reports`, and explains
 the active ignore files it found.
 
+Use `codog files --output-format json` for a lightweight workspace weight
+preview before a broad prompt. The `scope_risk` section distinguishes a clean
+workspace from trees likely to burn tokens quickly, lists concrete token sinks,
+and recommends narrower scope choices or ignore/cleanup targets.
+
 Ignore-file behavior:
 
 - `.gitignore` is honored by `grep` and `glob` when `respectGitignore` is

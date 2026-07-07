@@ -42,6 +42,9 @@ type IgnoreBehavior struct {
 // provider-backed run.
 type ScopeGuidance struct {
 	Recommendation         string           `json:"recommendation"`
+	RiskStatus             string           `json:"risk_status"`
+	RiskLevel              string           `json:"risk_level"`
+	RiskSummary            string           `json:"risk_summary"`
 	HeavyDirectoryPatterns []string         `json:"heavy_directory_patterns"`
 	IgnoreBehaviors        []IgnoreBehavior `json:"ignore_behaviors"`
 	IgnoreFiles            []string         `json:"ignore_files,omitempty"`
@@ -132,6 +135,16 @@ func RenderText(out io.Writer, report Report) {
 	if report.ScopeGuidance.Recommendation != "" {
 		fmt.Fprintln(out, "  Scope guidance")
 		fmt.Fprintf(out, "    Recommendation %s\n", report.ScopeGuidance.Recommendation)
+		if report.ScopeGuidance.RiskStatus != "" {
+			fmt.Fprintf(out, "    Scope risk     %s", report.ScopeGuidance.RiskStatus)
+			if report.ScopeGuidance.RiskLevel != "" {
+				fmt.Fprintf(out, " (%s)", report.ScopeGuidance.RiskLevel)
+			}
+			fmt.Fprintln(out)
+		}
+		if report.ScopeGuidance.RiskSummary != "" {
+			fmt.Fprintf(out, "    Risk summary   %s\n", report.ScopeGuidance.RiskSummary)
+		}
 		if len(report.ScopeGuidance.IgnoreFiles) > 0 {
 			fmt.Fprintf(out, "    Ignore files   %s\n", strings.Join(report.ScopeGuidance.IgnoreFiles, ", "))
 		}
@@ -268,8 +281,25 @@ func (s scanState) report() Report {
 }
 
 func buildScopeGuidance(ignoreFiles []string, heavyPaths []string) ScopeGuidance {
+	riskStatus := "clean"
+	riskLevel := "low"
+	riskSummary := "Workspace looks clean for a first pass."
+	if len(heavyPaths) > 0 {
+		riskStatus = "warn"
+		riskLevel = "medium"
+		riskSummary = fmt.Sprintf("Workspace contains %d heavy/generated path(s) that can burn tokens quickly.", len(heavyPaths))
+		for _, path := range heavyPaths {
+			if path == "node_modules" || path == "vendor" || path == "dist" || path == "build" || path == ".next" || path == "generated" || path == "reports" {
+				riskLevel = "high"
+				break
+			}
+		}
+	}
 	return ScopeGuidance{
 		Recommendation:         "Start Codog from the smallest useful package or service directory; add only needed sibling paths with `codog add-dir`.",
+		RiskStatus:             riskStatus,
+		RiskLevel:              riskLevel,
+		RiskSummary:            riskSummary,
 		HeavyDirectoryPatterns: heavyDirectoryPatterns(),
 		IgnoreBehaviors: []IgnoreBehavior{
 			{
