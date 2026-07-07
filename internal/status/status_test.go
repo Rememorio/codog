@@ -217,6 +217,9 @@ func TestBuildIncludesGitIdentity(t *testing.T) {
 	require.False(t, snapshot.Git.IsBare)
 	require.False(t, snapshot.Git.IsWorktree)
 	require.Equal(t, "/repo/.git", snapshot.Git.GitDir)
+	require.NotNil(t, snapshot.BootPreflight.Repo.Identity)
+	require.Equal(t, "1234567890abcdef1234567890abcdef12345678", snapshot.BootPreflight.Repo.Identity.HeadSHA)
+	require.Equal(t, "main", snapshot.BootPreflight.Repo.Identity.HeadRef)
 
 	var out bytes.Buffer
 	RenderText(&out, snapshot)
@@ -249,6 +252,9 @@ func TestBuildWarnsOnDivergedBaseCommit(t *testing.T) {
 	require.False(t, snapshot.Git.BaseCommit.Matches)
 	require.Equal(t, "abc123", snapshot.Git.BaseCommit.Expected)
 	require.Equal(t, "def456", snapshot.Git.BaseCommit.Actual)
+	require.NotNil(t, snapshot.BootPreflight.Repo.BaseCommit)
+	require.Equal(t, "diverged", snapshot.BootPreflight.Repo.BaseCommit.Status)
+	require.Equal(t, "abc123", snapshot.BootPreflight.Repo.BaseCommit.Expected)
 
 	var out bytes.Buffer
 	RenderText(&out, snapshot)

@@ -344,7 +344,9 @@ type BootRepoPreflightStatus struct {
 	WorkspaceExists bool                    `json:"workspace_exists"`
 	GitDirExists    bool                    `json:"git_dir_exists"`
 	GitAvailable    bool                    `json:"git_available"`
+	Identity        *gitops.Identity        `json:"identity,omitempty"`
 	BranchFreshness *gitops.BranchFreshness `json:"branch_freshness,omitempty"`
+	BaseCommit      *gitops.BaseCommitCheck `json:"base_commit,omitempty"`
 }
 
 // BootTrustPreflightStatus reports whether the workspace passes the trust gate.
@@ -583,6 +585,27 @@ func buildBootPreflightStatus(opts Options, git GitStatus) BootPreflightStatus {
 		next := *git.Freshness
 		freshness = &next
 	}
+	var identity *gitops.Identity
+	if git.HeadSHA != "" || git.HeadShortSHA != "" || git.HeadRef != "" || git.IsDetached || git.IsBare || git.IsWorktree || git.GitDir != "" {
+		identity = &gitops.Identity{
+			HeadSHA:      git.HeadSHA,
+			HeadShortSHA: git.HeadShortSHA,
+			HeadRef:      git.HeadRef,
+			IsDetached:   git.IsDetached,
+			IsBare:       git.IsBare,
+			IsWorktree:   git.IsWorktree,
+			GitDir:       git.GitDir,
+		}
+	}
+	var baseCommit *gitops.BaseCommitCheck
+	if git.BaseCommit != nil {
+		next := *git.BaseCommit
+		if next.Source != nil {
+			source := *next.Source
+			next.Source = &source
+		}
+		baseCommit = &next
+	}
 	trustAllowed := false
 	if workspace != "" {
 		entries := make([]trustresolver.AllowlistEntry, 0, len(opts.TrustedRoots))
@@ -600,7 +623,9 @@ func buildBootPreflightStatus(opts Options, git GitStatus) BootPreflightStatus {
 			WorkspaceExists: workspaceExists,
 			GitDirExists:    gitDirExists,
 			GitAvailable:    git.Available,
+			Identity:        identity,
 			BranchFreshness: freshness,
+			BaseCommit:      baseCommit,
 		},
 		Trust: BootTrustPreflightStatus{
 			Allowed:           trustAllowed,

@@ -16332,6 +16332,27 @@ func TestStatusIncludesBaseCommitCheck(t *testing.T) {
 	require.Contains(t, out.String(), `"kind": "codog_file"`)
 	require.Contains(t, out.String(), `"expected": "`+baseSHA+`"`)
 	require.Contains(t, out.String(), "stale codebase")
+	var snapshot struct {
+		BootPreflight struct {
+			Repo struct {
+				Identity struct {
+					HeadRef string `json:"head_ref"`
+					HeadSHA string `json:"head_sha"`
+				} `json:"identity"`
+				BaseCommit struct {
+					Status   string `json:"status"`
+					Matches  bool   `json:"matches"`
+					Expected string `json:"expected"`
+				} `json:"base_commit"`
+			} `json:"repo"`
+		} `json:"boot_preflight"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &snapshot))
+	require.Equal(t, "main", snapshot.BootPreflight.Repo.Identity.HeadRef)
+	require.NotEmpty(t, snapshot.BootPreflight.Repo.Identity.HeadSHA)
+	require.Equal(t, "diverged", snapshot.BootPreflight.Repo.BaseCommit.Status)
+	require.False(t, snapshot.BootPreflight.Repo.BaseCommit.Matches)
+	require.Equal(t, baseSHA, snapshot.BootPreflight.Repo.BaseCommit.Expected)
 }
 
 func TestHistoryCommandAndSlash(t *testing.T) {

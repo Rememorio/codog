@@ -5140,6 +5140,8 @@ func diagnosticsStatusScenario() scenario {
 					"git_detached":        statusReport.Git.IsDetached,
 					"base_commit_status":  statusReport.Git.BaseCommit.Status,
 					"base_commit_matches": statusReport.Git.BaseCommit.Matches,
+					"boot_head_ref":       statusReport.BootPreflight.Repo.Identity.HeadRef,
+					"boot_base_commit":    statusReport.BootPreflight.Repo.BaseCommit.Status,
 				},
 				"doctor": map[string]any{
 					"kind":            doctorReport.Kind,

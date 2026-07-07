@@ -683,6 +683,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, diagnostics.Output, `"git_detached":false`)
 	require.Contains(t, diagnostics.Output, `"base_commit_status":"matches"`)
 	require.Contains(t, diagnostics.Output, `"base_commit_matches":true`)
+	require.Contains(t, diagnostics.Output, `"boot_head_ref":"main"`)
+	require.Contains(t, diagnostics.Output, `"boot_base_commit":"matches"`)
 	require.Contains(t, diagnostics.Output, `"has_auth":true`)
 	require.Contains(t, diagnostics.Output, `"has_hooks":true`)
 	require.Contains(t, diagnostics.Output, `"has_sandbox":true`)
