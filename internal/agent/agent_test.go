@@ -26605,6 +26605,27 @@ func TestExportCommandWritesFormats(t *testing.T) {
 	require.Contains(t, string(data), "export me")
 }
 
+func TestExportRejectsRelativePathTraversal(t *testing.T) {
+	configHome := t.TempDir()
+	parent := t.TempDir()
+	workspace := filepath.Join(parent, "workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "do not escape")))
+	outside := filepath.Join(parent, "escaped.md")
+	var out bytes.Buffer
+	app := &App{Sessions: store, Workspace: workspace, Out: &out, Err: io.Discard}
+
+	err := app.Export([]string{"--session", "source", "--output", "../escaped.md"})
+	require.ErrorContains(t, err, "escapes workspace")
+	require.NoFileExists(t, outside)
+	require.Empty(t, out.String())
+
+	absolute := filepath.Join(workspace, "explicit.md")
+	require.NoError(t, app.Export([]string{"--session", "source", "--output", absolute}))
+	require.FileExists(t, absolute)
+}
+
 func TestExportMissingSessionReportsTypedJSON(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
@@ -26653,6 +26674,11 @@ func TestExportSlashWritesCurrentSession(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(workspace, "notes.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "slash export")
+	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/export ../escape.md", sess))
+	require.Contains(t, errOut.String(), "escapes workspace")
+	require.NoFileExists(t, filepath.Join(filepath.Dir(workspace), "escape.md"))
 	errOut.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/export --format html", sess))

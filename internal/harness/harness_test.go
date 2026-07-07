@@ -777,6 +777,13 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 4, sessionResume.MessageCount)
 	require.Contains(t, sessionResume.Output, "resume harness ok")
 
+	sessionExport := findScenario(t, report, "session_export_path_safety_roundtrip")
+	require.True(t, sessionExport.OK)
+	require.Equal(t, "session-resume", sessionExport.Category)
+	require.Equal(t, "session export path safety harness ok", sessionExport.FinalMessage)
+	require.Contains(t, sessionExport.Output, `"file": "`)
+	require.Contains(t, sessionExport.Output, `"format": "markdown"`)
+
 	pluginLifecycle := findScenario(t, report, "plugin_lifecycle_roundtrip")
 	require.True(t, pluginLifecycle.OK)
 	require.Equal(t, 0, pluginLifecycle.ToolCalls)
@@ -1128,6 +1135,11 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Equal(t, "config", configValidationStatus.Category)
 	require.Contains(t, configValidationStatus.ParityRefs, "Config validation")
 	require.Contains(t, configValidationStatus.ParityRefs, "Status diagnostics")
+
+	sessionExport := findManifestScenario(t, manifest, "session_export_path_safety_roundtrip")
+	require.Equal(t, "session-resume", sessionExport.Category)
+	require.Contains(t, sessionExport.ParityRefs, "Session export")
+	require.Contains(t, sessionExport.ParityRefs, "Path safety")
 
 	remoteAPI := findManifestScenario(t, manifest, "remote_api_listener_roundtrip")
 	require.Equal(t, "remote-control", remoteAPI.Category)

@@ -44167,7 +44167,10 @@ func (a *App) writeExport(req exportRequest) error {
 		_, err = a.Out.Write(data)
 		return err
 	}
-	path := a.resolveOutputPath(req.Output)
+	path, err := a.resolveWorkspaceOutputPath(req.Output)
+	if err != nil {
+		return err
+	}
 	if err := session.ValidateExportOutputPath(path); err != nil {
 		return err
 	}
@@ -44200,7 +44203,10 @@ func (a *App) Share(args []string, overrides config.FlagOverrides) error {
 	if outputDir == "" {
 		outputDir = filepath.Join(a.Workspace, ".codog", "share")
 	} else {
-		outputDir = a.resolveOutputPath(outputDir)
+		outputDir, err = a.resolveWorkspaceOutputPath(outputDir)
+		if err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return err
@@ -44945,7 +44951,11 @@ func (a *App) handleExportSlash(args []string, sess *session.Session) {
 		fmt.Fprintln(a.Err, "error:", err)
 		return
 	}
-	path := a.resolveOutputPath(req.Output)
+	path, err := a.resolveWorkspaceOutputPath(req.Output)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
 	if err := session.ValidateExportOutputPath(path); err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
 		return
@@ -45016,6 +45026,37 @@ func (a *App) resolveOutputPath(path string) string {
 		base = "."
 	}
 	return filepath.Join(base, path)
+}
+
+func (a *App) resolveWorkspaceOutputPath(path string) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", errors.New("output path is required")
+	}
+	resolved := a.resolveOutputPath(trimmed)
+	if filepath.IsAbs(trimmed) {
+		return resolved, nil
+	}
+	base := a.Workspace
+	if strings.TrimSpace(base) == "" {
+		base = "."
+	}
+	absBase, err := filepath.Abs(base)
+	if err != nil {
+		return "", err
+	}
+	absResolved, err := filepath.Abs(resolved)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(absBase, absResolved)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("output path %q escapes workspace %q", trimmed, absBase)
+	}
+	return resolved, nil
 }
 
 func (a *App) handleSessionSlash(args []string, sess *session.Session) {

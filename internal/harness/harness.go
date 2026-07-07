@@ -246,6 +246,7 @@ var scenarioOrder = []string{
 	"provider_routing_roundtrip",
 	"session_resume_jsonl_roundtrip",
 	"resume_slash_command_roundtrip",
+	"session_export_path_safety_roundtrip",
 	"plugin_lifecycle_roundtrip",
 	"task_lifecycle_roundtrip",
 	"task_packet_roundtrip",
@@ -807,6 +808,7 @@ func Run(ctx context.Context) (Report, error) {
 		providerRoutingScenario(),
 		sessionResumeJSONLRoundtripScenario(),
 		resumeSlashCommandScenario(),
+		sessionExportPathSafetyScenario(),
 		pluginLifecycleScenario(),
 		taskLifecycleScenario(),
 		taskPacketRoundtripScenario(),
@@ -1610,6 +1612,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "session-resume",
 		Description: "Runs direct and resumed /resume slash commands through the real CLI dispatcher.",
 		ParityRefs:  []string{"Session JSONL", "Slash commands", "Resume"},
+	},
+	"session_export_path_safety_roundtrip": {
+		Category:    "session-resume",
+		Description: "Runs real session export paths and verifies filenames plus workspace-relative path traversal protection.",
+		ParityRefs:  []string{"Session export", "Path safety", "Resume", "Workspace state"},
 	},
 	"bash_output_truncation_roundtrip": {
 		Category:    "bash",
@@ -5848,6 +5855,68 @@ func resumeSlashCommandScenario() scenario {
 				FinalMessage: "resume slash command harness ok",
 				RequestCount: 2,
 				MessageCount: 2,
+			}, nil
+		},
+	}
+}
+
+func sessionExportPathSafetyScenario() scenario {
+	return scenario{
+		name: "session_export_path_safety_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			parent := filepath.Dir(workspace)
+			configHome := filepath.Join(workspace, "config-home")
+			configPath := filepath.Join(workspace, "config.json")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			configData, err := json.Marshal(map[string]string{"config_home": configHome})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			store := session.NewWorkspaceStore(configHome, workspace)
+			if err := store.Append("export-safe", anthropic.TextMessage("user", "export safety prompt")); err != nil {
+				return localScenarioResult{}, err
+			}
+			exportOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "export", "--session", "export-safe", "--output", "notes.md")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			exportPath := filepath.Join(workspace, "notes.md")
+			data, err := os.ReadFile(exportPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(data), "export safety prompt") {
+				return localScenarioResult{}, fmt.Errorf("exported markdown missing session content")
+			}
+			if _, statErr := os.Stat(filepath.Join(workspace, "notes.md.txt")); !os.IsNotExist(statErr) {
+				return localScenarioResult{}, fmt.Errorf("export unexpectedly wrote notes.md.txt")
+			}
+			var exportReport struct {
+				File   string `json:"file"`
+				Format string `json:"format"`
+			}
+			if err := json.Unmarshal([]byte(exportOut), &exportReport); err != nil {
+				return localScenarioResult{}, err
+			}
+			if filepath.Base(exportReport.File) != "notes.md" || exportReport.Format != "markdown" {
+				return localScenarioResult{}, fmt.Errorf("unexpected export report: %s", exportOut)
+			}
+			escapedPath := filepath.Join(parent, "escaped.md")
+			_, traversalErr := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "export", "--session", "export-safe", "--output", "../escaped.md")
+			if traversalErr == nil {
+				return localScenarioResult{}, fmt.Errorf("expected export traversal to fail")
+			}
+			if _, statErr := os.Stat(escapedPath); !os.IsNotExist(statErr) {
+				return localScenarioResult{}, fmt.Errorf("export traversal wrote %s", escapedPath)
+			}
+			return localScenarioResult{
+				Output:       exportOut,
+				FinalMessage: "session export path safety harness ok",
 			}, nil
 		},
 	}
