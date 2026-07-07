@@ -181,6 +181,14 @@ func Restore(workspace string) (Report, error) {
 	if state.IgnoreFile != "" {
 		_ = removeIgnoreBlock(state.OriginalWorkspace, state.IgnoreFile)
 	}
+	for _, stateWorkspace := range []string{workspace, state.OriginalWorkspace, state.ActiveWorkspace} {
+		if strings.TrimSpace(stateWorkspace) == "" {
+			continue
+		}
+		if err := removeState(stateWorkspace); err != nil {
+			return Report{}, err
+		}
+	}
 	return Report{
 		Kind:              "safer_scope",
 		Action:            "restore",
@@ -250,6 +258,18 @@ func SaveState(workspace string, state State) error {
 		return err
 	}
 	return os.Rename(tmpPath, path)
+}
+
+func removeState(workspace string) error {
+	workspace, err := cleanWorkspace(workspace)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(StatePath(workspace))
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 // RenderText writes a human-readable safer-scope report.

@@ -53,12 +53,18 @@ func TestApplySwitchesWorkspaceAndRecordsRestoreState(t *testing.T) {
 	require.Equal(t, workspace, state.OriginalWorkspace)
 	require.Equal(t, filepath.Join(workspace, "app"), state.ActiveWorkspace)
 	require.Equal(t, now, state.AppliedAt)
+	require.FileExists(t, StatePath(workspace))
+	require.FileExists(t, StatePath(filepath.Join(workspace, "app")))
 
 	restore, err := Restore(filepath.Join(workspace, "app"))
 	require.NoError(t, err)
 	require.Equal(t, "restore", restore.Action)
 	require.True(t, restore.Restored)
 	require.Equal(t, workspace, restore.ActiveWorkspace)
+	require.NoFileExists(t, StatePath(workspace))
+	require.NoFileExists(t, StatePath(filepath.Join(workspace, "app")))
+	_, err = LoadState(filepath.Join(workspace, "app"))
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestApplyIgnoreWritesAndRestoresIgnoreBlock(t *testing.T) {
@@ -85,6 +91,7 @@ func TestApplyIgnoreWritesAndRestoresIgnoreBlock(t *testing.T) {
 	require.Contains(t, string(data), "existing.tmp")
 	require.NotContains(t, string(data), IgnoreMarker)
 	require.NotContains(t, string(data), "node_modules/")
+	require.NoFileExists(t, StatePath(workspace))
 }
 
 func testWorkspace(t *testing.T) string {
