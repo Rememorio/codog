@@ -4208,6 +4208,47 @@ func TestProvisionalStatusToolSuppressesInFlightDuplicates(t *testing.T) {
 	require.Contains(t, listOut, `"count": 1`)
 }
 
+func TestProvisionalStatusToolEscalatesStaleInFlightStatus(t *testing.T) {
+	configHome := t.TempDir()
+	tool := ProvisionalStatusTool{ConfigHome: configHome}
+
+	firstOut, err := tool.Execute(context.Background(), []byte(`{"action":"observe","channel":"dogfood","owner":"worker-1","progress_state":"implementing","message":"working on it","observed_at":"2026-07-07T17:00:00Z","window_seconds":300,"timeout_seconds":120,"timeout_policy":"dogfood-fast-ttl"}`))
+	require.NoError(t, err)
+	require.Contains(t, firstOut, `"decision": "new_provisional"`)
+	require.Contains(t, firstOut, `"stale": false`)
+
+	freshOut, err := tool.Execute(context.Background(), []byte(`{"action":"observe","channel":"dogfood","owner":"worker-1","progress_state":"implementing","message":"please wait","observed_at":"2026-07-07T17:01:00Z","window_seconds":300,"timeout_seconds":120,"timeout_policy":"dogfood-fast-ttl"}`))
+	require.NoError(t, err)
+	require.Contains(t, freshOut, `"decision": "suppressed_duplicate"`)
+	require.Contains(t, freshOut, `"exposed": false`)
+	require.Contains(t, freshOut, `"stale": false`)
+
+	staleOut, err := tool.Execute(context.Background(), []byte(`{"action":"observe","channel":"dogfood","owner":"worker-1","progress_state":"implementing","message":"working on it","observed_at":"2026-07-07T17:03:00Z","window_seconds":300,"timeout_seconds":120,"timeout_policy":"dogfood-fast-ttl"}`))
+	require.NoError(t, err)
+	require.Contains(t, staleOut, `"decision": "stale_provisional"`)
+	require.Contains(t, staleOut, `"exposed": true`)
+	require.Contains(t, staleOut, `"stale": true`)
+	require.Contains(t, staleOut, `"kind": "provisional_status_stale"`)
+	require.Contains(t, staleOut, `"signal": "blocker"`)
+	require.Contains(t, staleOut, `"id": "dogfood-fast-ttl"`)
+	require.Contains(t, staleOut, `"stale_for_seconds": 60`)
+	var stale struct {
+		Escalation struct {
+			Policy struct {
+				DeadlineAt time.Time `json:"deadline_at"`
+			} `json:"policy"`
+		} `json:"escalation"`
+		State struct {
+			Stale           bool `json:"stale"`
+			EscalationCount int  `json:"escalation_count"`
+		} `json:"state"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(staleOut), &stale))
+	require.Equal(t, time.Date(2026, 7, 7, 17, 2, 0, 0, time.UTC), stale.Escalation.Policy.DeadlineAt)
+	require.True(t, stale.State.Stale)
+	require.Equal(t, 1, stale.State.EscalationCount)
+}
+
 func TestRoadmapPinpointToolFilesAndUpdatesLifecycle(t *testing.T) {
 	configHome := t.TempDir()
 	tool := RoadmapPinpointTool{ConfigHome: configHome}

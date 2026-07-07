@@ -257,6 +257,7 @@ var scenarioOrder = []string{
 	"worker_lifecycle_roundtrip",
 	"recovery_lifecycle_roundtrip",
 	"nudge_ack_dedupe_roundtrip",
+	"provisional_status_escalation_roundtrip",
 	"roadmap_pinpoint_lifecycle_roundtrip",
 	"report_atomic_update_roundtrip",
 	"report_backpressure_roundtrip",
@@ -824,6 +825,7 @@ func Run(ctx context.Context) (Report, error) {
 		workerLifecycleScenario(),
 		recoveryLifecycleScenario(),
 		nudgeAckDedupeScenario(),
+		provisionalStatusEscalationScenario(),
 		roadmapPinpointLifecycleScenario(),
 		reportAtomicUpdateScenario(),
 		reportBackpressureScenario(),
@@ -1734,6 +1736,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "nudge",
 		Description: "Records recurring nudge deliveries, classifies retries, acknowledges a cycle, and suppresses stale duplicates.",
 		ParityRefs:  []string{"Nudge acknowledgement", "Nudge dedupe", "Recurring prompt idempotency", "Tool result roundtrip"},
+	},
+	"provisional_status_escalation_roundtrip": {
+		Category:    "status-events",
+		Description: "Deduplicates unchanged in-flight status and escalates it into a typed stale signal after its TTL policy.",
+		ParityRefs:  []string{"Provisional status dedupe", "Status TTL policy", "Stale blocker signal", "Tool result roundtrip"},
 	},
 	"roadmap_pinpoint_lifecycle_roundtrip": {
 		Category:    "roadmap",
@@ -9800,6 +9807,69 @@ func nudgeAckDedupeScenario() scenario {
 				MessageCount: 1,
 				ToolCalls:    5,
 				ToolUses:     []string{"nudge", "nudge", "nudge", "nudge", "nudge"},
+			}, nil
+		},
+	}
+}
+
+func provisionalStatusEscalationScenario() scenario {
+	return scenario{
+		name: "provisional_status_escalation_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
+			call := func(input string) (map[string]any, error) {
+				out, err := registry.Execute(ctx, "ProvisionalStatusTool", json.RawMessage(input), nil)
+				if err != nil {
+					return nil, err
+				}
+				var report map[string]any
+				if err := json.Unmarshal([]byte(out), &report); err != nil {
+					return nil, err
+				}
+				return report, nil
+			}
+
+			first, err := call(`{"action":"observe","channel":"dogfood","owner":"worker-1","progress_state":"implementing","message":"working on it","observed_at":"2026-07-07T17:00:00Z","window_seconds":300,"timeout_seconds":120,"timeout_policy":"dogfood-fast-ttl"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			fresh, err := call(`{"action":"observe","channel":"dogfood","owner":"worker-1","progress_state":"implementing","message":"please wait","observed_at":"2026-07-07T17:01:00Z","window_seconds":300,"timeout_seconds":120,"timeout_policy":"dogfood-fast-ttl"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			stale, err := call(`{"action":"observe","channel":"dogfood","owner":"worker-1","progress_state":"implementing","message":"working on it","observed_at":"2026-07-07T17:03:00Z","window_seconds":300,"timeout_seconds":120,"timeout_policy":"dogfood-fast-ttl"}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			escalation, _ := stale["escalation"].(map[string]any)
+			policy, _ := escalation["policy"].(map[string]any)
+			if first["decision"] != "new_provisional" || fresh["decision"] != "suppressed_duplicate" || fresh["exposed"] != false || stale["decision"] != "stale_provisional" || stale["stale"] != true || escalation["kind"] != "provisional_status_stale" || escalation["signal"] != "blocker" || policy["id"] != "dogfood-fast-ttl" {
+				return localScenarioResult{}, fmt.Errorf("unexpected provisional status escalation: first=%#v fresh=%#v stale=%#v", first, fresh, stale)
+			}
+			report := map[string]any{
+				"kind":              "provisional_status_escalation",
+				"first_decision":    first["decision"],
+				"fresh_decision":    fresh["decision"],
+				"fresh_exposed":     fresh["exposed"],
+				"stale_decision":    stale["decision"],
+				"stale_signal":      escalation["signal"],
+				"stale_kind":        escalation["kind"],
+				"stale_for_seconds": escalation["stale_for_seconds"],
+				"policy_id":         policy["id"],
+				"deadline_at":       policy["deadline_at"],
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "provisional status escalation harness ok",
+				RequestCount: 3,
+				MessageCount: 1,
+				ToolCalls:    3,
+				ToolUses:     []string{"provisional_status", "provisional_status", "provisional_status"},
 			}, nil
 		},
 	}

@@ -8851,16 +8851,18 @@ func (ProvisionalStatusTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":         map[string]any{"type": "string", "enum": []string{"observe", "get", "status", "list"}},
-				"channel":        map[string]any{"type": "string"},
-				"owner":          map[string]any{"type": "string"},
-				"status":         map[string]any{"type": "string"},
-				"progress_state": map[string]any{"type": "string"},
-				"blocker":        map[string]any{"type": "string"},
-				"eta":            map[string]any{"type": "string"},
-				"message":        map[string]any{"type": "string"},
-				"observed_at":    map[string]any{"type": "string", "format": "date-time"},
-				"window_seconds": map[string]any{"type": "integer", "minimum": 1},
+				"action":          map[string]any{"type": "string", "enum": []string{"observe", "get", "status", "list"}},
+				"channel":         map[string]any{"type": "string"},
+				"owner":           map[string]any{"type": "string"},
+				"status":          map[string]any{"type": "string"},
+				"progress_state":  map[string]any{"type": "string"},
+				"blocker":         map[string]any{"type": "string"},
+				"eta":             map[string]any{"type": "string"},
+				"message":         map[string]any{"type": "string"},
+				"observed_at":     map[string]any{"type": "string", "format": "date-time"},
+				"window_seconds":  map[string]any{"type": "integer", "minimum": 1},
+				"timeout_seconds": map[string]any{"type": "integer", "minimum": 1},
+				"timeout_policy":  map[string]any{"type": "string"},
 			},
 			"additionalProperties": false,
 		},
@@ -8871,16 +8873,18 @@ func (ProvisionalStatusTool) Permission() Permission { return PermissionReadOnly
 
 func (t ProvisionalStatusTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Action        string `json:"action"`
-		Channel       string `json:"channel"`
-		Owner         string `json:"owner"`
-		Status        string `json:"status"`
-		ProgressState string `json:"progress_state"`
-		Blocker       string `json:"blocker"`
-		ETA           string `json:"eta"`
-		Message       string `json:"message"`
-		ObservedAt    string `json:"observed_at"`
-		WindowSeconds int    `json:"window_seconds"`
+		Action         string `json:"action"`
+		Channel        string `json:"channel"`
+		Owner          string `json:"owner"`
+		Status         string `json:"status"`
+		ProgressState  string `json:"progress_state"`
+		Blocker        string `json:"blocker"`
+		ETA            string `json:"eta"`
+		Message        string `json:"message"`
+		ObservedAt     string `json:"observed_at"`
+		WindowSeconds  int    `json:"window_seconds"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
+		TimeoutPolicy  string `json:"timeout_policy"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -8904,7 +8908,7 @@ func (t ProvisionalStatusTool) Execute(_ context.Context, input json.RawMessage)
 		}
 		return pretty(map[string]any{"kind": "provisional_status_state", "state": state}), nil
 	case "observe":
-		update, err := provisionalUpdateFromPayload(payload.Channel, payload.Owner, payload.Status, payload.ProgressState, payload.Blocker, payload.ETA, payload.Message, payload.ObservedAt, payload.WindowSeconds)
+		update, err := provisionalUpdateFromPayload(payload.Channel, payload.Owner, payload.Status, payload.ProgressState, payload.Blocker, payload.ETA, payload.Message, payload.ObservedAt, payload.WindowSeconds, payload.TimeoutSeconds, payload.TimeoutPolicy)
 		if err != nil {
 			return "", err
 		}
@@ -8918,7 +8922,7 @@ func (t ProvisionalStatusTool) Execute(_ context.Context, input json.RawMessage)
 	}
 }
 
-func provisionalUpdateFromPayload(channel string, owner string, status string, progressState string, blocker string, eta string, message string, observedAt string, windowSeconds int) (provisional.Update, error) {
+func provisionalUpdateFromPayload(channel string, owner string, status string, progressState string, blocker string, eta string, message string, observedAt string, windowSeconds int, timeoutSeconds int, timeoutPolicy string) (provisional.Update, error) {
 	update := provisional.Update{
 		Channel:       channel,
 		Owner:         owner,
@@ -8927,6 +8931,7 @@ func provisionalUpdateFromPayload(channel string, owner string, status string, p
 		Blocker:       blocker,
 		ETA:           eta,
 		Message:       message,
+		TimeoutPolicy: timeoutPolicy,
 	}
 	if strings.TrimSpace(observedAt) != "" {
 		parsed, err := time.Parse(time.RFC3339, observedAt)
@@ -8937,6 +8942,9 @@ func provisionalUpdateFromPayload(channel string, owner string, status string, p
 	}
 	if windowSeconds > 0 {
 		update.Window = time.Duration(windowSeconds) * time.Second
+	}
+	if timeoutSeconds > 0 {
+		update.Timeout = time.Duration(timeoutSeconds) * time.Second
 	}
 	return update, nil
 }
