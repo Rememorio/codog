@@ -538,31 +538,44 @@ func checkPermissions(mode, raw, source, envVar string, toolPermissions []ToolPe
 	envVar = strings.TrimSpace(envVar)
 	allowedTools, gatedTools := permissionToolLists(mode, toolPermissions)
 	sourceExplicit := source != "default" && source != "unknown"
+	defaultDangerFullAccess := mode == "danger-full-access" && !sourceExplicit
 	message := permissionModeMessage(mode, source, raw, len(allowedTools), len(gatedTools))
 	details := []string{
 		"mode: " + emptyDoctorValue(mode),
 		"raw: " + emptyDoctorValue(raw),
 		"source: " + emptyDoctorValue(source),
 		fmt.Sprintf("source explicit: %t", sourceExplicit),
+		fmt.Sprintf("default danger full access: %t", defaultDangerFullAccess),
 		message,
 	}
 	if envVar != "" {
 		details = append(details, "env var: "+envVar)
 	}
 	data := map[string]any{
-		"mode":            mode,
-		"raw":             raw,
-		"source":          source,
-		"source_explicit": sourceExplicit,
-		"env_var":         envVar,
-		"message":         message,
-		"allowed_tools":   allowedTools,
-		"gated_tools":     gatedTools,
-		"allowed_count":   len(allowedTools),
-		"gated_count":     len(gatedTools),
+		"mode":                       mode,
+		"raw":                        raw,
+		"source":                     source,
+		"source_explicit":            sourceExplicit,
+		"default_danger_full_access": defaultDangerFullAccess,
+		"env_var":                    envVar,
+		"message":                    message,
+		"allowed_tools":              allowedTools,
+		"gated_tools":                gatedTools,
+		"allowed_count":              len(allowedTools),
+		"gated_count":                len(gatedTools),
 	}
 	switch mode {
 	case "read-only", "workspace-write", "danger-full-access", "prompt", "allow":
+		if defaultDangerFullAccess {
+			return Check{
+				Name:    "Permissions",
+				Status:  StatusWarn,
+				Summary: "Permission mode defaults to danger-full-access.",
+				Details: details,
+				Hint:    "Set `permission_mode` in config or pass `--permission-mode` to make this high-trust mode explicit.",
+				Data:    data,
+			}
+		}
 		return Check{Name: "Permissions", Status: StatusOK, Summary: "Permission mode is valid.", Details: details, Data: data}
 	case "":
 		return Check{Name: "Permissions", Status: StatusFail, Summary: "Permission mode is empty.", Details: details, Hint: "Use read-only, workspace-write, danger-full-access, prompt, or allow.", Data: data}

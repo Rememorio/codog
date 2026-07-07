@@ -440,6 +440,63 @@ func TestRunReportsPromptPermissionModeGatesTools(t *testing.T) {
 	require.Equal(t, []string{"read_file", "write_file"}, permissions.Data["gated_tools"])
 }
 
+func TestRunWarnsForDefaultDangerFullAccess(t *testing.T) {
+	report := Run(Options{
+		Workspace:            t.TempDir(),
+		ConfigHome:           t.TempDir(),
+		Model:                "claude-test",
+		BaseURL:              "https://api.example.test",
+		APIKey:               "secret",
+		PermissionMode:       "danger-full-access",
+		PermissionModeRaw:    "danger-full-access",
+		PermissionModeSource: "default",
+		ToolPermissions: []ToolPermission{
+			{Name: "read_file", RequiredPermission: "read-only"},
+			{Name: "bash", RequiredPermission: "danger-full-access"},
+		},
+		ToolCount:      2,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	require.Equal(t, StatusWarn, report.Status)
+	permissions := findCheck(t, report, "Permissions")
+	require.Equal(t, StatusWarn, permissions.Status)
+	require.Contains(t, permissions.Summary, "defaults to danger-full-access")
+	require.Equal(t, false, permissions.Data["source_explicit"])
+	require.Equal(t, true, permissions.Data["default_danger_full_access"])
+	require.Equal(t, []string{"bash", "read_file"}, permissions.Data["allowed_tools"])
+	require.Contains(t, permissions.Hint, "permission_mode")
+}
+
+func TestRunAcceptsExplicitDangerFullAccess(t *testing.T) {
+	report := Run(Options{
+		Workspace:            t.TempDir(),
+		ConfigHome:           t.TempDir(),
+		Model:                "claude-test",
+		BaseURL:              "https://api.example.test",
+		APIKey:               "secret",
+		PermissionMode:       "danger-full-access",
+		PermissionModeRaw:    "danger-full-access",
+		PermissionModeSource: "config",
+		ToolPermissions: []ToolPermission{
+			{Name: "read_file", RequiredPermission: "read-only"},
+			{Name: "bash", RequiredPermission: "danger-full-access"},
+		},
+		ToolCount:      2,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	permissions := findCheck(t, report, "Permissions")
+	require.Equal(t, StatusOK, permissions.Status)
+	require.Equal(t, true, permissions.Data["source_explicit"])
+	require.Equal(t, false, permissions.Data["default_danger_full_access"])
+	require.Equal(t, []string{"bash", "read_file"}, permissions.Data["allowed_tools"])
+}
+
 func TestRunWarnsUnknownPermissionRules(t *testing.T) {
 	report := Run(Options{
 		Workspace:      t.TempDir(),
