@@ -10022,12 +10022,16 @@ func reportBackpressureScenario() scenario {
 			secondNegative, _ := second["negative_evidence"].([]any)
 			negativeStatus := negativeEvidenceField(secondNegative, "no_new_delta", "status")
 			negativeWindow := negativeEvidenceField(secondNegative, "no_new_delta", "window")
+			secondFieldDeltas, _ := second["field_deltas"].([]any)
+			secondDeltaState := fieldDeltaState(secondFieldDeltas, "report.delta")
 			firstRootKind := claimKind(firstClaims, "root-cause")
 			thirdRootKind := claimKind(thirdClaims, "root-cause")
 			thirdPromotedFrom := claimPromotedFrom(thirdClaims, "root-cause")
 			invalidates, _ := third["invalidates_negative_evidence"].([]any)
+			thirdFieldDeltas, _ := third["field_deltas"].([]any)
+			thirdPriorityState := fieldDeltaStateSuffix(thirdFieldDeltas, ".priority")
 			snapshotBody, _ := snapshot["snapshot"].(map[string]any)
-			if itemID == "" || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || len(secondNegative) != 2 || negativeStatus != "not_observed_in_checked_scope" || negativeWindow != "2026-07-07T16:01:00Z/2026-07-07T16:02:00Z" || len(invalidates) != 2 || firstRootKind != "hypothesis" || thirdRootKind != "observed_fact" || thirdPromotedFrom != "hypothesis" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
+			if itemID == "" || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || len(secondNegative) != 2 || negativeStatus != "not_observed_in_checked_scope" || negativeWindow != "2026-07-07T16:01:00Z/2026-07-07T16:02:00Z" || len(secondFieldDeltas) == 0 || secondDeltaState != "cleared" || len(invalidates) != 2 || thirdPriorityState != "changed" || firstRootKind != "hypothesis" || thirdRootKind != "observed_fact" || thirdPromotedFrom != "hypothesis" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
 				return localScenarioResult{}, fmt.Errorf("unexpected backpressure report: filed=%#v first=%#v second=%#v third=%#v snapshot=%#v", filed, first, second, third, snapshot)
 			}
 			output := map[string]any{
@@ -10044,7 +10048,9 @@ func reportBackpressureScenario() scenario {
 				"negative_count":   len(secondNegative),
 				"negative_status":  negativeStatus,
 				"negative_window":  negativeWindow,
+				"field_delta":      secondDeltaState,
 				"invalidates":      len(invalidates),
+				"priority_delta":   thirdPriorityState,
 				"first_root_claim": firstRootKind,
 				"third_root_claim": thirdRootKind,
 				"promoted_from":    thirdPromotedFrom,
@@ -10107,6 +10113,36 @@ func negativeEvidenceField(values []any, query string, field string) string {
 		if evidenceQuery == query {
 			result, _ := evidence[field].(string)
 			return result
+		}
+	}
+	return ""
+}
+
+func fieldDeltaState(values []any, field string) string {
+	for _, value := range values {
+		delta, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		deltaField, _ := delta["field"].(string)
+		if deltaField == field {
+			state, _ := delta["state"].(string)
+			return state
+		}
+	}
+	return ""
+}
+
+func fieldDeltaStateSuffix(values []any, suffix string) string {
+	for _, value := range values {
+		delta, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		deltaField, _ := delta["field"].(string)
+		if strings.HasSuffix(deltaField, suffix) {
+			state, _ := delta["state"].(string)
+			return state
 		}
 	}
 	return ""

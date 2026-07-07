@@ -53,6 +53,10 @@ func TestGenerateCollapsesUnchangedItemsAndStoresSnapshot(t *testing.T) {
 	require.Equal(t, []string{firstItem.ItemID}, first.LastMeaningfulItemIDs)
 	require.NotEmpty(t, first.Claims)
 	require.Contains(t, claimKinds(first.Claims), reportschema.ClaimObservedFact)
+	firstPriorityDelta := fieldDeltaByField(t, first.FieldDeltas, "pinpoint."+firstItem.ItemID+".priority")
+	require.Equal(t, reportschema.FieldChanged, firstPriorityDelta.State)
+	require.Nil(t, firstPriorityDelta.PreviousHash)
+	require.NotNil(t, firstPriorityDelta.CurrentHash)
 
 	snapshot, err := reportStore.GetSnapshot(first.SnapshotID)
 	require.NoError(t, err)
@@ -88,6 +92,19 @@ func TestGenerateCollapsesUnchangedItemsAndStoresSnapshot(t *testing.T) {
 	noBlocker := negativeEvidenceByQuery(t, second.NegativeEvidence, "no_new_blocker")
 	require.Equal(t, reportschema.NegativeNotObservedInCheckedScope, noBlocker.Status)
 	require.NotEqual(t, noDelta.ID, noBlocker.ID)
+	clearedDelta := fieldDeltaByField(t, second.FieldDeltas, "report.delta")
+	require.Equal(t, reportschema.FieldCleared, clearedDelta.State)
+	require.NotNil(t, clearedDelta.PreviousHash)
+	require.Nil(t, clearedDelta.CurrentHash)
+	carriedPriority := fieldDeltaByField(t, second.FieldDeltas, "pinpoint."+firstItem.ItemID+".priority")
+	require.Equal(t, reportschema.FieldCarriedForward, carriedPriority.State)
+	require.NotNil(t, carriedPriority.PreviousHash)
+	require.NotNil(t, carriedPriority.CurrentHash)
+	require.Equal(t, *carriedPriority.PreviousHash, *carriedPriority.CurrentHash)
+	activeSessions := fieldDeltaByField(t, second.FieldDeltas, "report.active_sessions")
+	require.Equal(t, reportschema.FieldChanged, activeSessions.State)
+	blocker := fieldDeltaByField(t, second.FieldDeltas, "report.blocker")
+	require.Equal(t, reportschema.FieldChanged, blocker.State)
 
 	updated, err := roadmapStore.File(roadmap.Filing{
 		ID:       firstItem.ItemID,
@@ -111,6 +128,13 @@ func TestGenerateCollapsesUnchangedItemsAndStoresSnapshot(t *testing.T) {
 	require.Equal(t, third.ReportID, third.LastMeaningfulReportID)
 	require.Empty(t, third.NegativeEvidence)
 	require.ElementsMatch(t, []string{noBlocker.ID, noDelta.ID}, third.InvalidatesNegativeEvidence)
+	changedPriority := fieldDeltaByField(t, third.FieldDeltas, "pinpoint."+firstItem.ItemID+".priority")
+	require.Equal(t, reportschema.FieldChanged, changedPriority.State)
+	require.NotNil(t, changedPriority.PreviousHash)
+	require.NotNil(t, changedPriority.CurrentHash)
+	require.NotEqual(t, *changedPriority.PreviousHash, *changedPriority.CurrentHash)
+	require.Equal(t, reportschema.FieldCarriedForward, fieldDeltaByField(t, third.FieldDeltas, "pinpoint."+firstItem.ItemID+".lifecycle_state").State)
+	require.Equal(t, reportschema.FieldChanged, fieldDeltaByField(t, third.FieldDeltas, "report.delta").State)
 }
 
 func TestGenerateLabelsAndPromotesClaims(t *testing.T) {
@@ -216,6 +240,17 @@ func negativeEvidenceByQuery(t *testing.T, values []reportschema.NegativeEvidenc
 	}
 	t.Fatalf("missing negative evidence query %q in %#v", query, values)
 	return reportschema.NegativeEvidence{}
+}
+
+func fieldDeltaByField(t *testing.T, values []reportschema.FieldDelta, field string) reportschema.FieldDelta {
+	t.Helper()
+	for _, value := range values {
+		if value.Field == field {
+			return value
+		}
+	}
+	t.Fatalf("missing field delta %q in %#v", field, values)
+	return reportschema.FieldDelta{}
 }
 
 func TestGenerateMarksStaleAndMixedFreshness(t *testing.T) {

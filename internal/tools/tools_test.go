@@ -4256,6 +4256,9 @@ func TestReportBackpressureToolCollapsesRepeatedRoadmapReports(t *testing.T) {
 	require.Contains(t, secondOut, `"query": "no_new_delta"`)
 	require.Contains(t, secondOut, `"status": "not_observed_in_checked_scope"`)
 	require.Contains(t, secondOut, `"window": "2026-07-07T13:01:00Z/2026-07-07T13:02:00Z"`)
+	require.Contains(t, secondOut, `"field_deltas": [`)
+	require.Contains(t, secondOut, `"field": "report.delta"`)
+	require.Contains(t, secondOut, `"state": "cleared"`)
 
 	_, err = roadmapTool.Execute(context.Background(), []byte(`{"action":"update","id":"`+filed.ItemID+`","priority":"p0","severity":"critical","evidence":[{"role":"verification","type":"test","reference":"go-test","preview":"cursor collapse test passes"}],"now":"2026-07-07T13:03:00Z"}`))
 	require.NoError(t, err)
@@ -4265,6 +4268,7 @@ func TestReportBackpressureToolCollapsesRepeatedRoadmapReports(t *testing.T) {
 	require.Contains(t, thirdOut, `"priority": "p0"`)
 	require.Contains(t, thirdOut, `"promoted_from": "hypothesis"`)
 	require.Contains(t, thirdOut, `"invalidates_negative_evidence": [`)
+	require.Contains(t, thirdOut, `"state": "carried_forward"`)
 
 	snapshotOut, err := reportTool.Execute(context.Background(), []byte(`{"action":"snapshot","snapshot_id":"`+first.SnapshotID+`"}`))
 	require.NoError(t, err)

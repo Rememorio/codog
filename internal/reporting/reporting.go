@@ -30,6 +30,7 @@ type Cursor struct {
 	LastMeaningfulSnapshotID string            `json:"last_meaningful_snapshot_id,omitempty"`
 	LastMeaningfulItemIDs    []string          `json:"last_meaningful_item_ids,omitempty"`
 	LastNegativeEvidenceIDs  []string          `json:"last_negative_evidence_ids,omitempty"`
+	FieldHashes              map[string]string `json:"field_hashes,omitempty"`
 	ItemHashes               map[string]string `json:"item_hashes,omitempty"`
 }
 
@@ -80,6 +81,7 @@ type Report struct {
 	Claims                      []ClaimSummary                  `json:"claims,omitempty"`
 	NegativeEvidence            []reportschema.NegativeEvidence `json:"negative_evidence,omitempty"`
 	InvalidatesNegativeEvidence []string                        `json:"invalidates_negative_evidence,omitempty"`
+	FieldDeltas                 []reportschema.FieldDelta       `json:"field_deltas,omitempty"`
 	NewItems                    []ItemSummary                   `json:"new_items,omitempty"`
 	ChangedItems                []ItemSummary                   `json:"changed_items,omitempty"`
 	UnchangedCount              int                             `json:"unchanged_count"`
@@ -172,6 +174,9 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 	if cursor.ItemHashes == nil {
 		cursor.ItemHashes = map[string]string{}
 	}
+	if cursor.FieldHashes == nil {
+		cursor.FieldHashes = map[string]string{}
+	}
 	newItems := []ItemSummary{}
 	changedItems := []ItemSummary{}
 	unchangedCount := 0
@@ -236,6 +241,10 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 		invalidatesNegativeEvidence = append(invalidatesNegativeEvidence, cursor.LastNegativeEvidenceIDs...)
 		sort.Strings(invalidatesNegativeEvidence)
 	}
+	fieldDeltas, fieldHashes, err := buildFieldDeltas(summaries, meaningfulItemIDs, cursor, options, negativeEvidence)
+	if err != nil {
+		return Report{}, err
+	}
 	report := Report{
 		Kind:                        "report_backpressure",
 		Channel:                     channel,
@@ -252,6 +261,7 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 		Claims:                      claims,
 		NegativeEvidence:            negativeEvidence,
 		InvalidatesNegativeEvidence: invalidatesNegativeEvidence,
+		FieldDeltas:                 fieldDeltas,
 		NewItems:                    newItems,
 		ChangedItems:                changedItems,
 		UnchangedCount:              unchangedCount,
@@ -279,6 +289,7 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 		LastMeaningfulSnapshotID: lastMeaningfulSnapshotID,
 		LastMeaningfulItemIDs:    lastMeaningfulItemIDs,
 		LastNegativeEvidenceIDs:  lastNegativeEvidenceIDs,
+		FieldHashes:              fieldHashes,
 		ItemHashes:               hashes,
 	}
 	if err := s.saveCursor(cursor); err != nil {
@@ -338,6 +349,132 @@ func buildNegativeEvidence(channel string, now time.Time, cursor Cursor, options
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+func buildFieldDeltas(summaries []ItemSummary, meaningfulItemIDs []string, cursor Cursor, options GenerateOptions, negativeEvidence []reportschema.NegativeEvidence) ([]reportschema.FieldDelta, map[string]string, error) {
+	current := map[string]string{}
+	attribution := map[string]string{}
+	carriedForward := map[string]bool{}
+	set := func(field string, value any, source string, carried bool) error {
+		hash, err := stableHash(value)
+		if err != nil {
+			return err
+		}
+		current[field] = hash
+		attribution[field] = source
+		carriedForward[field] = carried
+		return nil
+	}
+	if len(meaningfulItemIDs) > 0 {
+		if err := set("report.delta", meaningfulItemIDs, "report_backpressure", false); err != nil {
+			return nil, nil, err
+		}
+		if err := set("report.pinpoint", meaningfulItemIDs, "report_backpressure", false); err != nil {
+			return nil, nil, err
+		}
+	}
+	if hasString(options.CheckedSurfaces, "sessions") {
+		if err := set("report.active_sessions", []string{}, "checked_surfaces:sessions", false); err != nil {
+			return nil, nil, err
+		}
+	}
+	if hasNegativeQuery(negativeEvidence, "no_new_blocker") {
+		if err := set("report.blocker", "", "negative_evidence:no_new_blocker", false); err != nil {
+			return nil, nil, err
+		}
+	}
+	for _, summary := range summaries {
+		source := "roadmap_pinpoint:" + summary.ID
+		carry := summary.ObservationSource == "carried_forward"
+		if err := set("pinpoint."+summary.ID+".lifecycle_state", summary.State, source, carry); err != nil {
+			return nil, nil, err
+		}
+		if err := set("pinpoint."+summary.ID+".priority", summary.Priority, source, carry); err != nil {
+			return nil, nil, err
+		}
+		if err := set("pinpoint."+summary.ID+".freshness", summary.Freshness, source, carry); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	fields := map[string]bool{}
+	for field := range cursor.FieldHashes {
+		fields[field] = true
+	}
+	for field := range current {
+		fields[field] = true
+	}
+	fieldNames := make([]string, 0, len(fields))
+	for field := range fields {
+		fieldNames = append(fieldNames, field)
+	}
+	sort.Strings(fieldNames)
+
+	deltas := make([]reportschema.FieldDelta, 0, len(fieldNames))
+	for _, field := range fieldNames {
+		previousHash, hadPrevious := cursor.FieldHashes[field]
+		currentHash, hasCurrent := current[field]
+		previous := stringPtrIf(hadPrevious, previousHash)
+		currentPtr := stringPtrIf(hasCurrent, currentHash)
+		deltas = append(deltas, reportschema.FieldDelta{
+			Field:        field,
+			State:        fieldDeltaState(hadPrevious, previousHash, hasCurrent, currentHash, carriedForward[field]),
+			PreviousHash: previous,
+			CurrentHash:  currentPtr,
+			Attribution:  fieldAttribution(field, attribution),
+		})
+	}
+	return deltas, current, nil
+}
+
+func fieldDeltaState(hadPrevious bool, previousHash string, hasCurrent bool, currentHash string, carriedForward bool) string {
+	switch {
+	case !hadPrevious && !hasCurrent:
+		return reportschema.FieldUnchanged
+	case hadPrevious && !hasCurrent:
+		return reportschema.FieldCleared
+	case !hadPrevious:
+		return reportschema.FieldChanged
+	case previousHash != currentHash:
+		return reportschema.FieldChanged
+	case carriedForward:
+		return reportschema.FieldCarriedForward
+	default:
+		return reportschema.FieldUnchanged
+	}
+}
+
+func fieldAttribution(field string, attribution map[string]string) string {
+	if value := attribution[field]; value != "" {
+		return value
+	}
+	return "previous_report"
+}
+
+func stringPtrIf(ok bool, value string) *string {
+	if !ok {
+		return nil
+	}
+	result := value
+	return &result
+}
+
+func hasString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNegativeQuery(values []reportschema.NegativeEvidence, query string) bool {
+	for _, value := range values {
+		if value.Query == query {
+			return true
+		}
+	}
+	return false
 }
 
 func checkedWindow(previous time.Time, now time.Time) string {
