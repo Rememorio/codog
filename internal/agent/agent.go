@@ -51921,6 +51921,9 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	var payload any
 	switch args[0] {
 	case "tools":
+		if len(args) > 2 {
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteUnexpectedArgumentsReport(args[0], strings.Join(requestedArgs, " "), args[2:]))
+		}
 		payload = mcp.ListTools(ctx, serverName, server)
 	case "call":
 		if len(args) < 3 {
@@ -51929,25 +51932,43 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		if len(args) < 4 {
 			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(requestedArgs, " "), "json"))
 		}
+		if len(args) > 4 {
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteUnexpectedArgumentsReport(args[0], strings.Join(requestedArgs, " "), args[4:]))
+		}
 		arguments, err := parseMCPObjectArgument(args[3])
 		if err != nil {
 			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteInvalidJSONReport(args[0], strings.Join(requestedArgs, " "), err))
 		}
 		payload = mcp.CallTool(ctx, serverName, server, args[2], arguments)
 	case "resources":
+		if len(args) > 2 {
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteUnexpectedArgumentsReport(args[0], strings.Join(requestedArgs, " "), args[2:]))
+		}
 		payload = mcp.ListResources(ctx, serverName, server)
 	case "resource-templates":
+		if len(args) > 2 {
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteUnexpectedArgumentsReport(args[0], strings.Join(requestedArgs, " "), args[2:]))
+		}
 		payload = mcp.ListResourceTemplates(ctx, serverName, server)
 	case "read":
 		if len(args) < 3 {
 			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(requestedArgs, " "), "uri"))
 		}
+		if len(args) > 3 {
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteUnexpectedArgumentsReport(args[0], strings.Join(requestedArgs, " "), args[3:]))
+		}
 		payload = mcp.ReadResource(ctx, serverName, server, args[2])
 	case "prompts":
+		if len(args) > 2 {
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteUnexpectedArgumentsReport(args[0], strings.Join(requestedArgs, " "), args[2:]))
+		}
 		payload = mcp.ListPrompts(ctx, serverName, server)
 	case "prompt":
 		if len(args) < 3 {
 			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(requestedArgs, " "), "prompt"))
+		}
+		if len(args) > 4 {
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteUnexpectedArgumentsReport(args[0], strings.Join(requestedArgs, " "), args[4:]))
 		}
 		var arguments json.RawMessage
 		if len(args) > 3 {
@@ -52283,18 +52304,19 @@ type mcpUnsupportedActionReport struct {
 }
 
 type mcpRemoteActionErrorReport struct {
-	Kind             string        `json:"kind"`
-	Action           string        `json:"action"`
-	OK               bool          `json:"ok"`
-	Status           string        `json:"status"`
-	ErrorKind        string        `json:"error_kind"`
-	RequestedAction  string        `json:"requested_action"`
-	ServerName       string        `json:"server_name,omitempty"`
-	Argument         string        `json:"argument,omitempty"`
-	AvailableServers []string      `json:"available_servers,omitempty"`
-	Message          string        `json:"message"`
-	Hint             string        `json:"hint"`
-	Usage            mcpUsageBlock `json:"usage"`
+	Kind                string        `json:"kind"`
+	Action              string        `json:"action"`
+	OK                  bool          `json:"ok"`
+	Status              string        `json:"status"`
+	ErrorKind           string        `json:"error_kind"`
+	RequestedAction     string        `json:"requested_action"`
+	ServerName          string        `json:"server_name,omitempty"`
+	Argument            string        `json:"argument,omitempty"`
+	UnexpectedArguments []string      `json:"unexpected_arguments,omitempty"`
+	AvailableServers    []string      `json:"available_servers,omitempty"`
+	Message             string        `json:"message"`
+	Hint                string        `json:"hint"`
+	Usage               mcpUsageBlock `json:"usage"`
 }
 
 func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPValidationStatus, configLoadError string, configLoadErrorKind string) mcpListReport {
@@ -52401,6 +52423,24 @@ func buildMCPRemoteInvalidJSONReport(action string, requestedAction string, err 
 		Message:         "mcp " + action + " requires a JSON object argument: " + strings.TrimSpace(err.Error()),
 		Hint:            "Pass a JSON object such as `{}` or `{\"key\":\"value\"}`. Usage: " + mcpRemoteUsage(action).DirectCLI + ".",
 		Usage:           mcpRemoteUsage(action),
+	}
+}
+
+func buildMCPRemoteUnexpectedArgumentsReport(action string, requestedAction string, extra []string) mcpRemoteActionErrorReport {
+	action = strings.TrimSpace(action)
+	unexpected := append([]string(nil), extra...)
+	return mcpRemoteActionErrorReport{
+		Kind:                "mcp",
+		Action:              action,
+		OK:                  false,
+		Status:              "error",
+		ErrorKind:           "unexpected_argument",
+		RequestedAction:     strings.TrimSpace(requestedAction),
+		Argument:            strings.Join(unexpected, " "),
+		UnexpectedArguments: unexpected,
+		Message:             fmt.Sprintf("mcp %s received unexpected argument(s): %s", action, strings.Join(unexpected, " ")),
+		Hint:                "Usage: " + mcpRemoteUsage(action).DirectCLI + ".",
+		Usage:               mcpRemoteUsage(action),
 	}
 }
 

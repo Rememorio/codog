@@ -25122,6 +25122,54 @@ func TestMCPRemoteActionErrorsAreStructured(t *testing.T) {
 	require.Equal(t, "codog mcp resources [SERVER]", report.Usage.DirectCLI)
 	out.Reset()
 
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		action     string
+		unexpected []string
+		usage      string
+	}{
+		{
+			name:       "tools",
+			args:       []string{"tools", "configured", "extra", "--json"},
+			action:     "tools",
+			unexpected: []string{"extra"},
+			usage:      "codog mcp tools [SERVER]",
+		},
+		{
+			name:       "call",
+			args:       []string{"call", "configured", "echo", "{}", "extra", "--json"},
+			action:     "call",
+			unexpected: []string{"extra"},
+			usage:      "codog mcp call SERVER TOOL JSON",
+		},
+		{
+			name:       "read",
+			args:       []string{"read", "configured", "file:///tmp/demo", "extra", "--json"},
+			action:     "read",
+			unexpected: []string{"extra"},
+			usage:      "codog mcp read SERVER URI",
+		},
+		{
+			name:       "prompt",
+			args:       []string{"prompt", "configured", "review", "{}", "extra", "--json"},
+			action:     "prompt",
+			unexpected: []string{"extra"},
+			usage:      "codog mcp prompt SERVER NAME [JSON]",
+		},
+	} {
+		t.Run("unexpected extra args "+tc.name, func(t *testing.T) {
+			require.ErrorContains(t, app.MCP(context.Background(), tc.args), "unexpected_argument")
+			require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+			require.Equal(t, tc.action, report.Action)
+			require.Equal(t, "unexpected_argument", report.ErrorKind)
+			require.Equal(t, tc.unexpected, report.UnexpectedArguments)
+			require.Equal(t, strings.Join(tc.unexpected, " "), report.Argument)
+			require.Equal(t, tc.usage, report.Usage.DirectCLI)
+			out.Reset()
+		})
+	}
+
 	require.ErrorContains(t, app.MCP(context.Background(), []string{"call", "configured", "--json"}), "missing_argument")
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "call", report.Action)
