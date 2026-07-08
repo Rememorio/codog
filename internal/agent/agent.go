@@ -1158,7 +1158,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "tool-details":
-		return wrapStructured(app.ToolDetails(rest))
+		return wrapStructured(app.ToolDetailsWithFormat(rest, format))
 	default:
 		if command != "" {
 			if len(rest) == 0 {
@@ -5779,7 +5779,11 @@ type toolDetailsReport struct {
 }
 
 func (a *App) ToolDetails(args []string) error {
-	req, err := parseToolDetailsArgs(args)
+	return a.ToolDetailsWithFormat(args, "text")
+}
+
+func (a *App) ToolDetailsWithFormat(args []string, defaultFormat string) error {
+	req, err := parseToolDetailsArgs(args, defaultFormat)
 	if err != nil {
 		return renderCLIError(a.Out, err, req.Format)
 	}
@@ -5811,8 +5815,13 @@ func (a *App) ToolDetails(args []string) error {
 	return nil
 }
 
-func parseToolDetailsArgs(args []string) (toolDetailsRequest, error) {
-	req := toolDetailsRequest{Format: "text"}
+const toolDetailsUsage = "codog tool-details TOOL [--output-format text|json]"
+
+func parseToolDetailsArgs(args []string, defaultFormat string) (toolDetailsRequest, error) {
+	if strings.TrimSpace(defaultFormat) == "" {
+		defaultFormat = "text"
+	}
+	req := toolDetailsRequest{Format: defaultFormat}
 	positionals := []string{}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -5822,7 +5831,7 @@ func parseToolDetailsArgs(args []string) (toolDetailsRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("tool-details output format is required")
+				return req, missingFlagValueError{Command: "tool-details", Flag: arg, Usage: toolDetailsUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -5831,20 +5840,22 @@ func parseToolDetailsArgs(args []string) (toolDetailsRequest, error) {
 			return req, unknownOptionError{
 				Command: "tool-details",
 				Option:  arg,
-				Usage:   "codog tool-details TOOL [--output-format text|json]",
+				Usage:   toolDetailsUsage,
 			}
 		default:
 			positionals = append(positionals, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "tool-details"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("tool-details", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	switch len(positionals) {
 	case 0:
 		return req, missingToolNameError{
 			Command: "tool-details",
-			Usage:   "codog tool-details TOOL [--output-format text|json]",
+			Usage:   toolDetailsUsage,
 		}
 	case 1:
 		req.Tool = positionals[0]
@@ -5852,7 +5863,7 @@ func parseToolDetailsArgs(args []string) (toolDetailsRequest, error) {
 		return req, unexpectedExtraArgsError{
 			Command: "tool-details",
 			Args:    positionals[1:],
-			Usage:   "codog tool-details TOOL [--output-format text|json]",
+			Usage:   toolDetailsUsage,
 		}
 	}
 	return req, nil

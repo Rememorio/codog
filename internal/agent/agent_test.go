@@ -12445,6 +12445,28 @@ func TestToolDetailsCommandReportsToolAndErrors(t *testing.T) {
 	require.Equal(t, "tool_details", cliReport.Kind)
 	require.Equal(t, "bash", cliReport.Tool.Name)
 
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "tool-details", "bash"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &cliReport))
+	require.Equal(t, "tool_details", cliReport.Kind)
+	require.Equal(t, "bash", cliReport.Tool.Name)
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "tool-details", "--output-format"}, config.FlagOverrides{})
+	})
+	requireStructuredCLIError(t, err, []byte(cliOut), "missing_flag_value", "missing_flag_value")
+	require.Contains(t, cliOut, `"command": "tool-details"`)
+	require.Contains(t, cliOut, `"option": "--output-format"`)
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "tool-details", "bash", "--output-format", "yaml"}, config.FlagOverrides{})
+	})
+	requireStructuredCLIError(t, err, []byte(cliOut), "invalid_output_format", "invalid_output_format")
+	require.Contains(t, cliOut, `"option": "--output-format"`)
+	require.Contains(t, cliOut, `"value": "yaml"`)
+
 	err = app.ToolDetails([]string{"missing_tool", "--json"})
 	require.Error(t, err)
 	var exitErr *ExitError
