@@ -29194,6 +29194,16 @@ func TestBackgroundGlobalOutputFormatListUsesReport(t *testing.T) {
 		require.Equal(t, []string{"extra"}, errorReport.Args)
 		require.Contains(t, errorReport.Hint, "codog background list [session-id]")
 	}
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "background", "supervise", "extra", "--json"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &errorReport))
+	require.Equal(t, "unexpected_extra_args", errorReport.ErrorKind)
+	require.Equal(t, "background supervise", errorReport.Command)
+	require.Equal(t, []string{"extra"}, errorReport.Args)
+	require.Contains(t, errorReport.Hint, "codog background list [session-id]")
 }
 
 func TestBackgroundJSONReportsAndWatchMaxEvents(t *testing.T) {

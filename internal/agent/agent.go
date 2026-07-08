@@ -7089,6 +7089,9 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	case "supervise":
+		if len(args) > 1 {
+			return unexpectedExtraArgsError{Command: "background supervise", Args: append([]string(nil), args[1:]...), Usage: backgroundUsage}
+		}
 		result, err := store.SuperviseOnce(time.Now().UTC())
 		if err != nil {
 			return err
