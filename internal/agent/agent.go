@@ -49907,6 +49907,16 @@ func (a *App) Commands(args []string) error {
 			return err
 		}
 		return a.renderCommandsList(format)
+	case "search":
+		format, remaining, err := parseTemplateOutputArgs("commands search", rest)
+		if err != nil {
+			return err
+		}
+		query := strings.TrimSpace(strings.Join(remaining, " "))
+		if query == "" {
+			return renderMissingActionArgument(a.Out, "commands", "search", "query", "commands search requires a query", "Usage: codog commands search QUERY [--json|--output-format text|json].", format)
+		}
+		return a.renderCommandsListWithAction(format, "search", query)
 	case "sources":
 		return a.commandSources(rest)
 	case "show":
@@ -49963,7 +49973,7 @@ func (a *App) Commands(args []string) error {
 		return unexpectedExtraArgsError{
 			Command: "commands",
 			Args:    []string{action},
-			Usage:   "codog commands [list|sources|show|run] [ARGS...] [--json|--output-format text|json]",
+			Usage:   "codog commands [list|search|sources|show|run] [ARGS...] [--json|--output-format text|json]",
 		}
 	}
 	return nil
@@ -49973,6 +49983,8 @@ func normalizeCommandsAction(action string) string {
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "", "list", "ls":
 		return "list"
+	case "search", "find", "query", "lookup":
+		return "search"
 	case "source", "sources", "root", "roots":
 		return "sources"
 	case "show", "info", "describe", "get", "view", "cat":
@@ -49985,9 +49997,17 @@ func normalizeCommandsAction(action string) string {
 }
 
 func (a *App) renderCommandsList(format string) error {
+	return a.renderCommandsListWithAction(format, "list", "")
+}
+
+func (a *App) renderCommandsListWithAction(format string, action string, query string) error {
 	all, err := customcommands.Load(a.Config.ConfigHome, a.Workspace)
 	if err != nil {
 		return err
+	}
+	filter := strings.TrimSpace(query)
+	if filter != "" {
+		all = filterCommands(all, filter)
 	}
 	if format == "json" {
 		summaries := make([]customcommands.Command, len(all))
@@ -50003,8 +50023,9 @@ func (a *App) renderCommandsList(format string) error {
 		}
 		data, _ := json.MarshalIndent(map[string]any{
 			"kind":   "commands",
-			"action": "list",
+			"action": action,
 			"status": "ok",
+			"query":  filter,
 			"count":  len(all),
 			"summary": map[string]any{
 				"total":    len(all),
@@ -50031,6 +50052,23 @@ func (a *App) renderCommandsList(format string) error {
 		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\t%s\n", command.Name, command.Source, status, command.Preview, command.Path)
 	}
 	return nil
+}
+
+func filterCommands(all []customcommands.Command, filter string) []customcommands.Command {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return all
+	}
+	out := make([]customcommands.Command, 0, len(all))
+	for _, command := range all {
+		if strings.Contains(strings.ToLower(command.Name), filter) ||
+			strings.Contains(strings.ToLower(command.Source), filter) ||
+			strings.Contains(strings.ToLower(command.Preview), filter) ||
+			strings.Contains(strings.ToLower(command.Body), filter) {
+			out = append(out, command)
+		}
+	}
+	return out
 }
 
 func (a *App) commandSources(args []string) error {
@@ -50075,6 +50113,16 @@ func (a *App) Templates(args []string) error {
 			return err
 		}
 		return a.renderTemplatesList(format)
+	case "search":
+		format, remaining, err := parseTemplateOutputArgs("templates search", rest)
+		if err != nil {
+			return err
+		}
+		query := strings.TrimSpace(strings.Join(remaining, " "))
+		if query == "" {
+			return renderMissingActionArgument(a.Out, "templates", "search", "query", "templates search requires a query", "Usage: codog templates search QUERY [--json|--output-format text|json].", format)
+		}
+		return a.renderTemplatesListWithAction(format, "search", query)
 	case "show":
 		format, remaining, err := parseTemplateOutputArgs("templates show", rest)
 		if err != nil {
@@ -50132,7 +50180,7 @@ func (a *App) Templates(args []string) error {
 		return unexpectedExtraArgsError{
 			Command: "templates",
 			Args:    []string{action},
-			Usage:   "codog templates [list|show|apply] [ARGS...] [--json|--output-format text|json]",
+			Usage:   "codog templates [list|search|show|apply] [ARGS...] [--json|--output-format text|json]",
 		}
 	}
 	return nil
@@ -50142,6 +50190,8 @@ func normalizeTemplatesAction(action string) string {
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "", "list", "ls":
 		return "list"
+	case "search", "find", "query", "lookup":
+		return "search"
 	case "show", "info", "describe", "get", "view", "cat":
 		return "show"
 	case "apply", "render", "run", "exec", "execute", "call", "invoke":
@@ -50152,9 +50202,17 @@ func normalizeTemplatesAction(action string) string {
 }
 
 func (a *App) renderTemplatesList(format string) error {
+	return a.renderTemplatesListWithAction(format, "list", "")
+}
+
+func (a *App) renderTemplatesListWithAction(format string, action string, query string) error {
 	all, err := prompttemplates.Load(a.Config.ConfigHome, a.Workspace)
 	if err != nil {
 		return err
+	}
+	filter := strings.TrimSpace(query)
+	if filter != "" {
+		all = filterTemplates(all, filter)
 	}
 	if format == "json" {
 		summaries := make([]prompttemplates.Template, len(all))
@@ -50164,8 +50222,9 @@ func (a *App) renderTemplatesList(format string) error {
 		}
 		data, _ := json.MarshalIndent(map[string]any{
 			"kind":      "templates",
-			"action":    "list",
+			"action":    action,
 			"status":    "ok",
+			"query":     filter,
 			"count":     len(all),
 			"templates": summaries,
 		}, "", "  ")
@@ -50180,6 +50239,23 @@ func (a *App) renderTemplatesList(format string) error {
 		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\n", tmpl.Name, tmpl.Source, tmpl.Preview, tmpl.Path)
 	}
 	return nil
+}
+
+func filterTemplates(all []prompttemplates.Template, filter string) []prompttemplates.Template {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return all
+	}
+	out := make([]prompttemplates.Template, 0, len(all))
+	for _, tmpl := range all {
+		if strings.Contains(strings.ToLower(tmpl.Name), filter) ||
+			strings.Contains(strings.ToLower(tmpl.Source), filter) ||
+			strings.Contains(strings.ToLower(tmpl.Preview), filter) ||
+			strings.Contains(strings.ToLower(tmpl.Body), filter) {
+			out = append(out, tmpl)
+		}
+	}
+	return out
 }
 
 type templateApplyRequest struct {
@@ -58888,9 +58964,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"commands",
 			"commands",
-			"codog commands [list|ls|sources|roots|show|view|run|render|exec]",
-			"Commands\n\nUsage:\n  codog commands [list|ls|sources|roots|show|view|run|render|exec]\n\nLists, audits sources, shows, or renders custom Markdown slash commands from Codog and compatible Claude command directories. `ls` is an alias for `list`; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `exec`, `execute`, `call`, and `invoke` are aliases for `run`.\n",
-			[]string{"commands", "roots", "name", "path", "body", "active", "shadowed_by"},
+			"codog commands [list|ls|search|find|sources|roots|show|view|run|render|exec]",
+			"Commands\n\nUsage:\n  codog commands [list|ls|search|find|sources|roots|show|view|run|render|exec]\n  codog commands search QUERY [--output-format text|json]\n\nLists, searches, audits sources, shows, or renders custom Markdown slash commands from Codog and compatible Claude command directories. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter commands by name, source, preview, or body; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `exec`, `execute`, `call`, and `invoke` are aliases for `run`.\n",
+			[]string{"commands", "roots", "query", "name", "path", "body", "active", "shadowed_by"},
 			[]string{"ok", "error"},
 			false,
 		), true
@@ -58898,9 +58974,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"templates",
 			"templates",
-			"codog templates [list|ls|show|view|apply|render|run]",
-			"Templates\n\nUsage:\n  codog templates [list|ls|show|view|apply|render|run]\n\nLists, shows, or renders parameterized prompt templates. `ls` is an alias for `list`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `run`, `exec`, `execute`, `call`, and `invoke` are aliases for `apply`.\n",
-			[]string{"templates", "name", "path", "body"},
+			"codog templates [list|ls|search|find|show|view|apply|render|run]",
+			"Templates\n\nUsage:\n  codog templates [list|ls|search|find|show|view|apply|render|run]\n  codog templates search QUERY [--output-format text|json]\n\nLists, searches, shows, or renders parameterized prompt templates. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter templates by name, source, preview, or body; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `run`, `exec`, `execute`, `call`, and `invoke` are aliases for `apply`.\n",
+			[]string{"templates", "query", "name", "path", "body"},
 			[]string{"ok", "error"},
 			false,
 		), true
@@ -59106,8 +59182,8 @@ Usage:
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID] | paste [--print|--json] [--session ID]
   %s [flags] pin|unpin [message-index|last] [--session ID] [--json|--output-format text|json]
   %s [flags] skill|skills [list|ls|search|find|audit|doctor|sources|roots|status|enable|disable|show|info|describe|invoke|add|install|uninstall]
-  %s [flags] commands [list|ls|sources|roots|show|view|run|render|exec]
-  %s [flags] templates [list|ls|show|view|apply|render|run]
+  %s [flags] commands [list|ls|search|find|sources|roots|show|view|run|render|exec]
+  %s [flags] templates [list|ls|search|find|show|view|apply|render|run]
   %s [flags] hooks [list|health EVENT|run EVENT|watch-paths list|check] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|ls|status|show|view|set|use|clear|off] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME] | models [list|ls|aliases|routes|search|find QUERY|show|view [MODEL]|current|help] [--json|--output-format text|json]

@@ -26924,6 +26924,7 @@ func TestTemplatesCommandAndSlash(t *testing.T) {
 		Kind      string                     `json:"kind"`
 		Action    string                     `json:"action"`
 		Status    string                     `json:"status"`
+		Query     string                     `json:"query"`
 		Count     int                        `json:"count"`
 		Templates []prompttemplates.Template `json:"templates"`
 	}
@@ -26939,6 +26940,15 @@ func TestTemplatesCommandAndSlash(t *testing.T) {
 	require.Equal(t, "templates", templateList.Kind)
 	require.Equal(t, "list", templateList.Action)
 	require.Equal(t, 2, templateList.Count)
+	out.Reset()
+
+	require.NoError(t, app.Templates([]string{"search", "plan", "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &templateList))
+	require.Equal(t, "templates", templateList.Kind)
+	require.Equal(t, "search", templateList.Action)
+	require.Equal(t, "plan", templateList.Query)
+	require.Equal(t, 1, templateList.Count)
+	require.Equal(t, "plan", templateList.Templates[0].Name)
 	out.Reset()
 
 	require.NoError(t, app.Templates([]string{"show", "review"}))
@@ -26978,6 +26988,13 @@ func TestTemplatesCommandAndSlash(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/templates render plan topic=release", &session.Session{ID: "session"}))
 	require.Equal(t, "Plan release.\n", out.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/templates find review --json", &session.Session{ID: "session"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &templateList))
+	require.Equal(t, "search", templateList.Action)
+	require.Equal(t, "review", templateList.Query)
+	require.Equal(t, 1, templateList.Count)
 	require.Empty(t, errOut.String())
 }
 
@@ -27005,6 +27022,7 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 		Kind    string `json:"kind"`
 		Action  string `json:"action"`
 		Status  string `json:"status"`
+		Query   string `json:"query"`
 		Count   int    `json:"count"`
 		Summary struct {
 			Total    int `json:"total"`
@@ -27030,6 +27048,16 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 	require.Equal(t, "commands", listReport.Kind)
 	require.Equal(t, "list", listReport.Action)
 	require.Equal(t, 3, listReport.Summary.Total)
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"search", "codog", "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &listReport))
+	require.Equal(t, "commands", listReport.Kind)
+	require.Equal(t, "search", listReport.Action)
+	require.Equal(t, "codog", listReport.Query)
+	require.Equal(t, 1, listReport.Count)
+	require.Equal(t, "fix", listReport.Commands[0].Name)
+	require.Equal(t, "workspace", listReport.Commands[0].Source)
 	out.Reset()
 
 	require.NoError(t, app.Commands([]string{"show", "fix", "--json"}))
@@ -27104,6 +27132,14 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/commands render review file.go", &session.Session{ID: "session"}))
 	require.Equal(t, "Review file.go\n", out.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/commands find review --json", &session.Session{ID: "session"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &listReport))
+	require.Equal(t, "search", listReport.Action)
+	require.Equal(t, "review", listReport.Query)
+	require.Equal(t, 1, listReport.Count)
+	require.Equal(t, "review", listReport.Commands[0].Name)
 	require.Empty(t, errOut.String())
 }
 
@@ -27134,6 +27170,20 @@ func TestResourceCatalogErrorsHonorGlobalJSONFormat(t *testing.T) {
 			kind:      "unexpected_extra_args",
 			errorKind: "unexpected_extra_args",
 			contains:  []string{`"command": "templates"`, `"bogus"`},
+		},
+		{
+			name:      "commands search missing query",
+			args:      []string{"commands", "search"},
+			kind:      "commands",
+			errorKind: "missing_argument",
+			contains:  []string{`"action": "search"`, `"argument": "query"`},
+		},
+		{
+			name:      "templates search missing query",
+			args:      []string{"templates", "find"},
+			kind:      "templates",
+			errorKind: "missing_argument",
+			contains:  []string{`"action": "search"`, `"argument": "query"`},
 		},
 		{
 			name:      "commands sources extra",
