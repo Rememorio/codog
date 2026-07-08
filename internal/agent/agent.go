@@ -49917,6 +49917,8 @@ func (a *App) Commands(args []string) error {
 			return renderMissingActionArgument(a.Out, "commands", "search", "query", "commands search requires a query", "Usage: codog commands search QUERY [--json|--output-format text|json].", format)
 		}
 		return a.renderCommandsListWithAction(format, "search", query)
+	case "audit":
+		return a.commandAudit(rest)
 	case "sources":
 		return a.commandSources(rest)
 	case "show":
@@ -49973,7 +49975,7 @@ func (a *App) Commands(args []string) error {
 		return unexpectedExtraArgsError{
 			Command: "commands",
 			Args:    []string{action},
-			Usage:   "codog commands [list|search|sources|show|run] [ARGS...] [--json|--output-format text|json]",
+			Usage:   "codog commands [list|search|audit|sources|show|run] [ARGS...] [--json|--output-format text|json]",
 		}
 	}
 	return nil
@@ -49985,6 +49987,8 @@ func normalizeCommandsAction(action string) string {
 		return "list"
 	case "search", "find", "query", "lookup":
 		return "search"
+	case "audit", "doctor", "check", "validate":
+		return "audit"
 	case "source", "sources", "root", "roots":
 		return "sources"
 	case "show", "info", "describe", "get", "view", "cat":
@@ -50069,6 +50073,86 @@ func filterCommands(all []customcommands.Command, filter string) []customcommand
 		}
 	}
 	return out
+}
+
+type commandAuditReport struct {
+	Kind                  string                         `json:"kind"`
+	Action                string                         `json:"action"`
+	Status                string                         `json:"status"`
+	CommandCount          int                            `json:"command_count"`
+	ActiveCommandCount    int                            `json:"active_command_count"`
+	ShadowedCommandCount  int                            `json:"shadowed_command_count"`
+	SourceCount           int                            `json:"source_count"`
+	Sources               []customcommands.DiscoveryRoot `json:"sources"`
+	FrontmatterErrors     []customcommands.Command       `json:"frontmatter_errors,omitempty"`
+	FrontmatterErrorCount int                            `json:"frontmatter_error_count"`
+	Message               string                         `json:"message"`
+}
+
+func (a *App) commandAudit(args []string) error {
+	format, err := parseSimpleOutputFormat("commands audit", args)
+	if err != nil {
+		return err
+	}
+	all, err := customcommands.Load(a.Config.ConfigHome, a.Workspace)
+	if err != nil {
+		return err
+	}
+	roots := customcommands.Sources(a.Config.ConfigHome, a.Workspace)
+	activeCount := 0
+	var frontmatterErrors []customcommands.Command
+	for _, command := range all {
+		if command.Active {
+			activeCount++
+		}
+		if strings.TrimSpace(command.FrontmatterError) != "" {
+			command.Body = ""
+			frontmatterErrors = append(frontmatterErrors, command)
+		}
+	}
+	report := commandAuditReport{
+		Kind:                  "commands",
+		Action:                "audit",
+		Status:                "ok",
+		CommandCount:          len(all),
+		ActiveCommandCount:    activeCount,
+		ShadowedCommandCount:  len(all) - activeCount,
+		SourceCount:           len(roots),
+		Sources:               roots,
+		FrontmatterErrors:     frontmatterErrors,
+		FrontmatterErrorCount: len(frontmatterErrors),
+	}
+	if len(frontmatterErrors) != 0 {
+		report.Status = "degraded"
+	}
+	report.Message = commandAuditMessage(report)
+	return renderCommandAuditReport(a.Out, format, report)
+}
+
+func commandAuditMessage(report commandAuditReport) string {
+	if report.FrontmatterErrorCount != 0 {
+		return fmt.Sprintf("Command audit found %d frontmatter error(s).", report.FrontmatterErrorCount)
+	}
+	return "Command audit passed."
+}
+
+func renderCommandAuditReport(out io.Writer, format string, report commandAuditReport) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Command Audit")
+	fmt.Fprintf(out, "  Status              %s\n", report.Status)
+	fmt.Fprintf(out, "  Commands            %d\n", report.CommandCount)
+	fmt.Fprintf(out, "  Active              %d\n", report.ActiveCommandCount)
+	fmt.Fprintf(out, "  Shadowed            %d\n", report.ShadowedCommandCount)
+	fmt.Fprintf(out, "  Sources             %d\n", report.SourceCount)
+	fmt.Fprintf(out, "  Frontmatter errors  %d\n", report.FrontmatterErrorCount)
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message             %s\n", report.Message)
+	}
+	return nil
 }
 
 func (a *App) commandSources(args []string) error {
@@ -58964,10 +59048,10 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"commands",
 			"commands",
-			"codog commands [list|ls|search|find|sources|roots|show|view|run|render|exec]",
-			"Commands\n\nUsage:\n  codog commands [list|ls|search|find|sources|roots|show|view|run|render|exec]\n  codog commands search QUERY [--output-format text|json]\n\nLists, searches, audits sources, shows, or renders custom Markdown slash commands from Codog and compatible Claude command directories. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter commands by name, source, preview, or body; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `exec`, `execute`, `call`, and `invoke` are aliases for `run`.\n",
-			[]string{"commands", "roots", "query", "name", "path", "body", "active", "shadowed_by"},
-			[]string{"ok", "error"},
+			"codog commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec]",
+			"Commands\n\nUsage:\n  codog commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec]\n  codog commands search QUERY [--output-format text|json]\n  codog commands audit [--output-format text|json]\n\nLists, searches, audits sources, shows, or renders custom Markdown slash commands from Codog and compatible Claude command directories. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter commands by name, source, preview, or body; `audit`, `doctor`, `check`, and `validate` report source health, active and shadowed commands, and frontmatter parse errors; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `exec`, `execute`, `call`, and `invoke` are aliases for `run`.\n",
+			[]string{"commands", "roots", "sources", "query", "name", "path", "body", "active", "shadowed_by", "frontmatter_errors", "frontmatter_error_count"},
+			[]string{"ok", "degraded", "error"},
 			false,
 		), true
 	case "templates":
@@ -59182,7 +59266,7 @@ Usage:
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID] | paste [--print|--json] [--session ID]
   %s [flags] pin|unpin [message-index|last] [--session ID] [--json|--output-format text|json]
   %s [flags] skill|skills [list|ls|search|find|audit|doctor|sources|roots|status|enable|disable|show|info|describe|invoke|add|install|uninstall]
-  %s [flags] commands [list|ls|search|find|sources|roots|show|view|run|render|exec]
+  %s [flags] commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec]
   %s [flags] templates [list|ls|search|find|show|view|apply|render|run]
   %s [flags] hooks [list|health EVENT|run EVENT|watch-paths list|check] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|ls|status|show|view|set|use|clear|off] [NAME] [--json|--output-format text|json]

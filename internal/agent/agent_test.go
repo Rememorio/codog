@@ -27101,6 +27101,25 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 	requireCommandSourceRoot(t, sourceReport.Roots, "user", filepath.Join(configHome, "commands"), true)
 	out.Reset()
 
+	require.NoError(t, app.Commands([]string{"audit", "--json"}))
+	var audit commandAuditReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &audit))
+	require.Equal(t, "commands", audit.Kind)
+	require.Equal(t, "audit", audit.Action)
+	require.Equal(t, "ok", audit.Status)
+	require.Equal(t, 3, audit.CommandCount)
+	require.Equal(t, 2, audit.ActiveCommandCount)
+	require.Equal(t, 1, audit.ShadowedCommandCount)
+	require.Equal(t, len(audit.Sources), audit.SourceCount)
+	require.Zero(t, audit.FrontmatterErrorCount)
+	require.Contains(t, audit.Message, "passed")
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"doctor"}))
+	require.Contains(t, out.String(), "Command Audit")
+	require.Contains(t, out.String(), "Shadowed            1")
+	out.Reset()
+
 	require.NoError(t, app.Commands([]string{"root", "--json"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &sourceReport))
 	require.Equal(t, "commands", sourceReport.Kind)
@@ -27141,6 +27160,30 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 	require.Equal(t, 1, listReport.Count)
 	require.Equal(t, "review", listReport.Commands[0].Name)
 	require.Empty(t, errOut.String())
+}
+
+func TestCommandsAuditReportsFrontmatterErrors(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "commands"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "commands", "broken.md"), []byte("---\ndescription: [broken\n---\nBody"), 0o644))
+
+	var out bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: configHome}, Workspace: workspace, Out: &out, Err: io.Discard}
+
+	require.NoError(t, app.Commands([]string{"check", "--json"}))
+	var audit commandAuditReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &audit))
+	require.Equal(t, "commands", audit.Kind)
+	require.Equal(t, "audit", audit.Action)
+	require.Equal(t, "degraded", audit.Status)
+	require.Equal(t, 1, audit.CommandCount)
+	require.Equal(t, 1, audit.FrontmatterErrorCount)
+	require.Len(t, audit.FrontmatterErrors, 1)
+	require.Equal(t, "broken", audit.FrontmatterErrors[0].Name)
+	require.NotEmpty(t, audit.FrontmatterErrors[0].FrontmatterError)
+	require.Empty(t, audit.FrontmatterErrors[0].Body)
+	require.Contains(t, audit.Message, "frontmatter")
 }
 
 func TestResourceCatalogErrorsHonorGlobalJSONFormat(t *testing.T) {
