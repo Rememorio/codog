@@ -6952,6 +6952,9 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	case "status":
+		if len(args) > 2 {
+			return unexpectedExtraArgsError{Command: "background status", Args: append([]string(nil), args[2:]...), Usage: backgroundUsage}
+		}
 		task, err := store.Status(args[1])
 		if err != nil {
 			return err
@@ -6970,6 +6973,9 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	case "stop":
+		if len(args) > 2 {
+			return unexpectedExtraArgsError{Command: "background stop", Args: append([]string(nil), args[2:]...), Usage: backgroundUsage}
+		}
 		task, err := store.Stop(args[1])
 		if err != nil {
 			return err
@@ -7002,6 +7008,9 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		}
 		return nil
 	case "restart":
+		if len(args) > 2 {
+			return unexpectedExtraArgsError{Command: "background restart", Args: append([]string(nil), args[2:]...), Usage: backgroundUsage}
+		}
 		task, err := store.Restart(args[1], a.Workspace)
 		if err != nil {
 			return err
