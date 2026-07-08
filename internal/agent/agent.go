@@ -19735,6 +19735,9 @@ const (
 	legacyGuestPassReferralURLKey        = "future.guest_pass_referral_url"
 	legacyGuestPassEligibilityCacheKey   = "future.guest_pass_eligibility_cache"
 	legacyGuestPassVisitCountKey         = "future.guest_pass_visit_count"
+	legacyHasVisitedPassesKey            = "future.has_visited_passes"
+	legacyPassesLastSeenRemainingKey     = "future.passes_last_seen_remaining"
+	legacyPassesUpsellSeenCountKey       = "future.passes_upsell_seen_count"
 	legacyNotificationsEnabledKey        = "future.notifications_enabled"
 	legacyPluginMarketplacePublicKeysKey = "future.plugin_marketplace_public_keys"
 	legacyPluginMarketplacesKey          = "future.plugin_marketplaces"
@@ -19751,7 +19754,7 @@ const (
 
 var (
 	backgroundResetKeys    = []string{"background", legacyBackgroundStatePathKey}
-	compatibilityResetKeys = []string{"compatibility", legacySlackAppInstallCountKey, legacyStickerOrderCountKey, legacyExtraUsageVisitCountKey, legacyGuestPassReferralURLKey, legacyGuestPassEligibilityCacheKey, legacyGuestPassVisitCountKey}
+	compatibilityResetKeys = []string{"compatibility", legacySlackAppInstallCountKey, legacyStickerOrderCountKey, legacyExtraUsageVisitCountKey, legacyGuestPassReferralURLKey, legacyGuestPassEligibilityCacheKey, legacyGuestPassVisitCountKey, legacyHasVisitedPassesKey, legacyPassesUpsellSeenCountKey, legacyPassesLastSeenRemainingKey}
 	editorBridgeResetKeys  = []string{"editor_bridge", legacyEditorBridgeSocketKey, legacyEditorBridgeTokenKey}
 	enterpriseResetKeys    = []string{"enterprise", legacyEnterprisePolicyKey, legacyEnterprisePolicyPublicKeyKey}
 	marketplaceResetKeys   = []string{"marketplace", legacyPluginMarketplacesKey, legacyPluginMarketplacePublicKeysKey}
@@ -22381,6 +22384,13 @@ type passesReport struct {
 	CacheHit              bool   `json:"cache_hit,omitempty"`
 	CachedAt              string `json:"cached_at,omitempty"`
 	SavedEligibilityCache bool   `json:"saved_eligibility_cache,omitempty"`
+	HasVisitedPasses      bool   `json:"has_visited_passes"`
+	UpsellSeenCount       int    `json:"upsell_seen_count"`
+	LastSeenRemaining     *int   `json:"last_seen_remaining,omitempty"`
+	UpsellVisible         bool   `json:"upsell_visible"`
+	UpsellReset           bool   `json:"upsell_reset,omitempty"`
+	MarkedVisited         bool   `json:"marked_visited,omitempty"`
+	MarkedUpsellSeen      bool   `json:"marked_upsell_seen,omitempty"`
 }
 
 const slackAppURL = "https://slack.com/marketplace/A08SF47R6P4-claude"
@@ -22390,7 +22400,7 @@ const extraUsageAdminURL = "https://claude.ai/admin-settings/usage"
 const guestPassDocsURL = "https://support.claude.com/en/articles/12875061-claude-code-guest-passes"
 const installSlackAppUsage = "codog install-slack-app [status|list] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
 const stickersUsage = "codog stickers [status|list] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
-const passesUsage = "codog passes [status|list|show|open|fetch|set-url URL|clear-url] [--docs] [--referral-url URL] [--org UUID] [--token TOKEN] [--base-url URL] [--campaign NAME] [--redemptions] [--no-save-cache] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
+const passesUsage = "codog passes [status|list|show|open|fetch|visit|upsell-seen|set-url URL|clear-url] [--docs] [--referral-url URL] [--org UUID] [--token TOKEN] [--base-url URL] [--campaign NAME] [--redemptions] [--no-save-cache] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
 
 var openExternalURL = openSystemURL
 
@@ -23739,6 +23749,9 @@ func (a *App) Passes(args []string) error {
 		ReferralConfigured: strings.TrimSpace(firstNonEmpty(req.ReferralURL, a.Config.Future.GuestPassReferralURL)) != "",
 		VisitCount:         a.Config.Future.GuestPassVisitCount,
 		Path:               path,
+		HasVisitedPasses:   configBoolValue(a.Config.Future.HasVisitedPasses),
+		UpsellSeenCount:    a.Config.Future.PassesUpsellSeenCount,
+		LastSeenRemaining:  cloneIntPtr(a.Config.Future.PassesLastSeenRemaining),
 	}
 	report.URL, report.URLSource = passesURLWithSource(report.ReferralURL, req.Docs)
 	if cached, ok := a.cachedGuestPassEligibility(req); ok {
@@ -23748,6 +23761,13 @@ func (a *App) Passes(args []string) error {
 		}
 		report.URL, report.URLSource = passesURLWithSource(report.ReferralURL, req.Docs)
 	}
+	if report.RemainingPasses != nil && a.resetPassesUpsellIfRefreshed(path, *report.RemainingPasses) {
+		report.UpsellReset = true
+		report.HasVisitedPasses = false
+		report.UpsellSeenCount = 0
+		report.LastSeenRemaining = cloneIntPtr(report.RemainingPasses)
+	}
+	report.UpsellVisible = guestPassUpsellVisible(report)
 	switch req.Action {
 	case "status":
 		report.Message = "Guest pass status loaded."
@@ -23795,6 +23815,26 @@ func (a *App) Passes(args []string) error {
 		} else {
 			report.Message = "Guest passes are not currently available for this organization."
 		}
+		report.UpsellVisible = guestPassUpsellVisible(report)
+	case "visit":
+		remaining := intPtrValue(report.RemainingPasses, intPtrValue(a.Config.Future.PassesLastSeenRemaining, 0))
+		if err := a.markPassesVisited(path, remaining); err != nil {
+			return err
+		}
+		report.HasVisitedPasses = true
+		report.MarkedVisited = true
+		report.LastSeenRemaining = &remaining
+		report.UpsellVisible = false
+		report.Message = "Guest passes visit state saved."
+	case "upsell-seen":
+		count, err := a.markPassesUpsellSeen(path)
+		if err != nil {
+			return err
+		}
+		report.UpsellSeenCount = count
+		report.MarkedUpsellSeen = true
+		report.UpsellVisible = guestPassUpsellVisible(report)
+		report.Message = "Guest passes upsell impression recorded."
 	case "set-url":
 		if err := validateHTTPURL(req.ReferralURL, "guest pass referral URL"); err != nil {
 			return err
@@ -23990,6 +24030,12 @@ func parsePassesArgs(args []string) (passesRequest, error) {
 	case "fetch", "refresh", "sync":
 		req.Action = "fetch"
 		req.Open = false
+	case "visit", "visited", "mark-visited":
+		req.Action = "visit"
+		req.Open = false
+	case "upsell-seen", "seen-upsell", "mark-upsell-seen":
+		req.Action = "upsell-seen"
+		req.Open = false
 	case "set-url", "set", "url":
 		req.Action = "set-url"
 		if req.ReferralURL == "" && len(rest) > 1 {
@@ -24006,7 +24052,7 @@ func parsePassesArgs(args []string) (passesRequest, error) {
 		}
 		return req, unexpectedExtraArgsError{Command: "passes", Args: []string{rest[0]}, Usage: passesUsage}
 	}
-	if (req.Action == "show" || req.Action == "open" || req.Action == "fetch" || req.Action == "clear-url") && len(rest) > 1 {
+	if (req.Action == "show" || req.Action == "open" || req.Action == "fetch" || req.Action == "visit" || req.Action == "upsell-seen" || req.Action == "clear-url") && len(rest) > 1 {
 		return req, unexpectedExtraArgsError{Command: "passes " + req.Action, Args: rest[1:], Usage: passesUsage}
 	}
 	if req.Action == "set-url" && len(rest) > 2 {
@@ -24069,6 +24115,76 @@ func cloneIntPtr(value *int) *int {
 	}
 	cloned := *value
 	return &cloned
+}
+
+func configBoolValue(value *bool) bool {
+	return value != nil && *value
+}
+
+func intPtrValue(value *int, fallback int) int {
+	if value == nil {
+		return fallback
+	}
+	return *value
+}
+
+func guestPassUpsellVisible(report passesReport) bool {
+	if !report.CacheHit || report.Eligible == nil || !*report.Eligible {
+		return false
+	}
+	if report.RemainingPasses != nil && *report.RemainingPasses <= 0 {
+		return false
+	}
+	if report.UpsellSeenCount >= 3 || report.HasVisitedPasses {
+		return false
+	}
+	return true
+}
+
+func (a *App) resetPassesUpsellIfRefreshed(path string, remaining int) bool {
+	if remaining <= 0 {
+		return false
+	}
+	lastSeen := intPtrValue(a.Config.Future.PassesLastSeenRemaining, 0)
+	if remaining <= lastSeen {
+		return false
+	}
+	visited := false
+	if err := setCompatibilityValue(path, "compatibility.has_visited_passes", legacyHasVisitedPassesKey, visited); err != nil {
+		return false
+	}
+	if err := setCompatibilityValue(path, "compatibility.passes_upsell_seen_count", legacyPassesUpsellSeenCountKey, 0); err != nil {
+		return false
+	}
+	if err := setCompatibilityValue(path, "compatibility.passes_last_seen_remaining", legacyPassesLastSeenRemainingKey, remaining); err != nil {
+		return false
+	}
+	a.Config.Future.HasVisitedPasses = &visited
+	a.Config.Future.PassesUpsellSeenCount = 0
+	a.Config.Future.PassesLastSeenRemaining = cloneIntPtr(&remaining)
+	return true
+}
+
+func (a *App) markPassesVisited(path string, remaining int) error {
+	visited := true
+	if err := setCompatibilityValue(path, "compatibility.has_visited_passes", legacyHasVisitedPassesKey, visited); err != nil {
+		return err
+	}
+	if err := setCompatibilityValue(path, "compatibility.passes_last_seen_remaining", legacyPassesLastSeenRemainingKey, remaining); err != nil {
+		return err
+	}
+	a.Config.Future.HasVisitedPasses = &visited
+	a.Config.Future.PassesLastSeenRemaining = cloneIntPtr(&remaining)
+	return nil
+}
+
+func (a *App) markPassesUpsellSeen(path string) (int, error) {
+	count := a.Config.Future.PassesUpsellSeenCount + 1
+	if err := setCompatibilityValue(path, "compatibility.passes_upsell_seen_count", legacyPassesUpsellSeenCountKey, count); err != nil {
+		return 0, err
+	}
+	a.Config.Future.PassesUpsellSeenCount = count
+	return count, nil
 }
 
 func (a *App) saveGuestPassEligibilityCache(path string, fetched guestPassesFetchResult, now time.Time) error {
@@ -24299,6 +24415,21 @@ func renderPassesReport(out io.Writer, report passesReport) {
 	}
 	if report.SavedEligibilityCache {
 		fmt.Fprintln(out, "  Saved cache      true")
+	}
+	fmt.Fprintf(out, "  Visited          %t\n", report.HasVisitedPasses)
+	fmt.Fprintf(out, "  Upsell seen      %d\n", report.UpsellSeenCount)
+	if report.LastSeenRemaining != nil {
+		fmt.Fprintf(out, "  Last seen left   %d\n", *report.LastSeenRemaining)
+	}
+	fmt.Fprintf(out, "  Upsell visible   %t\n", report.UpsellVisible)
+	if report.UpsellReset {
+		fmt.Fprintln(out, "  Upsell reset     true")
+	}
+	if report.MarkedVisited {
+		fmt.Fprintln(out, "  Marked visited   true")
+	}
+	if report.MarkedUpsellSeen {
+		fmt.Fprintln(out, "  Marked upsell    true")
 	}
 	fmt.Fprintf(out, "  Opened           %t\n", report.Opened)
 	if report.Opener != "" {

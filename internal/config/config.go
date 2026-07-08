@@ -584,6 +584,9 @@ type FutureConfig struct {
 	GuestPassReferralURL      string                                    `json:"guest_pass_referral_url,omitempty"`
 	GuestPassVisitCount       int                                       `json:"guest_pass_visit_count,omitempty"`
 	GuestPassEligibilityCache map[string]GuestPassEligibilityCacheEntry `json:"guest_pass_eligibility_cache,omitempty"`
+	HasVisitedPasses          *bool                                     `json:"has_visited_passes,omitempty"`
+	PassesUpsellSeenCount     int                                       `json:"passes_upsell_seen_count,omitempty"`
+	PassesLastSeenRemaining   *int                                      `json:"passes_last_seen_remaining,omitempty"`
 }
 
 // GuestPassEligibilityCacheEntry stores cached guest pass eligibility by
@@ -652,12 +655,18 @@ type CompatibilityConfig struct {
 	GuestPassReferralURL      string                                    `json:"guest_pass_referral_url,omitempty"`
 	GuestPassVisitCount       int                                       `json:"guest_pass_visit_count,omitempty"`
 	GuestPassEligibilityCache map[string]GuestPassEligibilityCacheEntry `json:"guest_pass_eligibility_cache,omitempty"`
+	HasVisitedPasses          *bool                                     `json:"has_visited_passes,omitempty"`
+	PassesUpsellSeenCount     int                                       `json:"passes_upsell_seen_count,omitempty"`
+	PassesLastSeenRemaining   *int                                      `json:"passes_last_seen_remaining,omitempty"`
 	slackAppInstallSet        bool
 	stickerOrderSet           bool
 	extraUsageVisitSet        bool
 	guestPassReferralURLSet   bool
 	guestPassVisitSet         bool
 	guestPassEligibilitySet   bool
+	hasVisitedPassesSet       bool
+	passesUpsellSeenSet       bool
+	passesLastSeenSet         bool
 }
 
 // UnmarshalJSON accepts snake_case and camelCase compatibility aliases.
@@ -701,6 +710,36 @@ func (c *CompatibilityConfig) UnmarshalJSON(data []byte) error {
 		}
 		return nil
 	}
+	readBoolAlias := func(target **bool, present *bool, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed bool
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid compatibility.%s: %w", key, err)
+			}
+			*target = &parsed
+			*present = true
+		}
+		return nil
+	}
+	readIntPtrAlias := func(target **int, present *bool, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed int
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid compatibility.%s: %w", key, err)
+			}
+			*target = &parsed
+			*present = true
+		}
+		return nil
+	}
 	readEligibilityCacheAlias := func(target *map[string]GuestPassEligibilityCacheEntry, present *bool, keys ...string) error {
 		for _, key := range keys {
 			value, ok := raw[key]
@@ -732,6 +771,15 @@ func (c *CompatibilityConfig) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if err := readEligibilityCacheAlias(&parsed.GuestPassEligibilityCache, &parsed.guestPassEligibilitySet, "guestPassEligibilityCache", "guest_pass_eligibility_cache", "passesEligibilityCache", "passes_eligibility_cache"); err != nil {
+		return err
+	}
+	if err := readBoolAlias(&parsed.HasVisitedPasses, &parsed.hasVisitedPassesSet, "hasVisitedPasses", "has_visited_passes"); err != nil {
+		return err
+	}
+	if err := readIntAlias(&parsed.PassesUpsellSeenCount, &parsed.passesUpsellSeenSet, "passesUpsellSeenCount", "passes_upsell_seen_count"); err != nil {
+		return err
+	}
+	if err := readIntPtrAlias(&parsed.PassesLastSeenRemaining, &parsed.passesLastSeenSet, "passesLastSeenRemaining", "passes_last_seen_remaining"); err != nil {
 		return err
 	}
 	*c = CompatibilityConfig(parsed)
@@ -2336,7 +2384,10 @@ func futureConfigSet(cfg FutureConfig) bool {
 		cfg.ExtraUsageVisitCount != 0 ||
 		cfg.GuestPassReferralURL != "" ||
 		cfg.GuestPassVisitCount != 0 ||
-		len(cfg.GuestPassEligibilityCache) != 0
+		len(cfg.GuestPassEligibilityCache) != 0 ||
+		cfg.HasVisitedPasses != nil ||
+		cfg.PassesUpsellSeenCount != 0 ||
+		cfg.PassesLastSeenRemaining != nil
 }
 
 func remoteConfigSet(cfg RemoteConfig) bool {
@@ -2384,7 +2435,13 @@ func compatibilityConfigSet(cfg CompatibilityConfig) bool {
 		cfg.GuestPassReferralURL != "" ||
 		cfg.GuestPassVisitCount != 0 ||
 		cfg.guestPassEligibilitySet ||
-		len(cfg.GuestPassEligibilityCache) != 0
+		len(cfg.GuestPassEligibilityCache) != 0 ||
+		cfg.hasVisitedPassesSet ||
+		cfg.passesUpsellSeenSet ||
+		cfg.passesLastSeenSet ||
+		cfg.HasVisitedPasses != nil ||
+		cfg.PassesUpsellSeenCount != 0 ||
+		cfg.PassesLastSeenRemaining != nil
 }
 
 func backgroundConfigSet(cfg BackgroundConfig) bool {
@@ -2476,6 +2533,15 @@ func mergeCompatibilityConfigIntoFuture(dst *FutureConfig, src CompatibilityConf
 	if src.guestPassEligibilitySet || len(src.GuestPassEligibilityCache) != 0 {
 		dst.GuestPassEligibilityCache = cloneGuestPassEligibilityCache(src.GuestPassEligibilityCache)
 	}
+	if src.hasVisitedPassesSet || src.HasVisitedPasses != nil {
+		dst.HasVisitedPasses = cloneBoolPtr(src.HasVisitedPasses)
+	}
+	if src.passesUpsellSeenSet || src.PassesUpsellSeenCount != 0 {
+		dst.PassesUpsellSeenCount = src.PassesUpsellSeenCount
+	}
+	if src.passesLastSeenSet || src.PassesLastSeenRemaining != nil {
+		dst.PassesLastSeenRemaining = cloneIntPtr(src.PassesLastSeenRemaining)
+	}
 }
 
 func mergeBackgroundConfigIntoFuture(dst *FutureConfig, src BackgroundConfig) {
@@ -2551,6 +2617,15 @@ func mergeFutureConfig(dst *FutureConfig, src FutureConfig) {
 	if len(src.GuestPassEligibilityCache) != 0 {
 		dst.GuestPassEligibilityCache = cloneGuestPassEligibilityCache(src.GuestPassEligibilityCache)
 	}
+	if src.HasVisitedPasses != nil {
+		dst.HasVisitedPasses = cloneBoolPtr(src.HasVisitedPasses)
+	}
+	if src.PassesUpsellSeenCount != 0 {
+		dst.PassesUpsellSeenCount = src.PassesUpsellSeenCount
+	}
+	if src.PassesLastSeenRemaining != nil {
+		dst.PassesLastSeenRemaining = cloneIntPtr(src.PassesLastSeenRemaining)
+	}
 }
 
 func cloneGuestPassEligibilityCache(src map[string]GuestPassEligibilityCacheEntry) map[string]GuestPassEligibilityCacheEntry {
@@ -2567,26 +2642,38 @@ func cloneGuestPassEligibilityCache(src map[string]GuestPassEligibilityCacheEntr
 func cloneGuestPassEligibilityCacheEntry(src GuestPassEligibilityCacheEntry) GuestPassEligibilityCacheEntry {
 	dst := src
 	if src.RemainingPasses != nil {
-		value := *src.RemainingPasses
-		dst.RemainingPasses = &value
+		dst.RemainingPasses = cloneIntPtr(src.RemainingPasses)
 	}
 	if src.Limit != nil {
-		value := *src.Limit
-		dst.Limit = &value
+		dst.Limit = cloneIntPtr(src.Limit)
 	}
 	if src.Redeemed != nil {
-		value := *src.Redeemed
-		dst.Redeemed = &value
+		dst.Redeemed = cloneIntPtr(src.Redeemed)
 	}
 	if src.AvailablePasses != nil {
-		value := *src.AvailablePasses
-		dst.AvailablePasses = &value
+		dst.AvailablePasses = cloneIntPtr(src.AvailablePasses)
 	}
 	if src.ReferrerReward != nil {
 		value := *src.ReferrerReward
 		dst.ReferrerReward = &value
 	}
 	return dst
+}
+
+func cloneBoolPtr(src *bool) *bool {
+	if src == nil {
+		return nil
+	}
+	value := *src
+	return &value
+}
+
+func cloneIntPtr(src *int) *int {
+	if src == nil {
+		return nil
+	}
+	value := *src
+	return &value
 }
 
 func mergeSandboxConfig(dst *SandboxConfig, src SandboxConfig) {

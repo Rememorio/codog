@@ -186,10 +186,13 @@ func TestLoadCompatibilityConfigCompatibility(t *testing.T) {
 		passCount    int
 		cacheCount   int
 		remaining    int
+		visited      bool
+		upsellCount  int
+		lastSeen     int
 	}{
 		{
 			name:         "legacy future compatibility counters",
-			body:         `{"future":{"slack_app_install_count":3,"sticker_order_count":2,"extra_usage_visit_count":4,"guest_pass_referral_url":"https://example.test/pass","guest_pass_visit_count":5,"guest_pass_eligibility_cache":{"org-123":{"eligible":true,"timestamp":"2026-07-08T00:00:00Z","campaign":"claude_code_guest_pass","referral_url":"https://example.test/pass","remaining_passes":2}}}}`,
+			body:         `{"future":{"slack_app_install_count":3,"sticker_order_count":2,"extra_usage_visit_count":4,"guest_pass_referral_url":"https://example.test/pass","guest_pass_visit_count":5,"guest_pass_eligibility_cache":{"org-123":{"eligible":true,"timestamp":"2026-07-08T00:00:00Z","campaign":"claude_code_guest_pass","referral_url":"https://example.test/pass","remaining_passes":2}},"has_visited_passes":true,"passes_upsell_seen_count":2,"passes_last_seen_remaining":1}}`,
 			slackCount:   3,
 			stickerCount: 2,
 			extraCount:   4,
@@ -197,10 +200,13 @@ func TestLoadCompatibilityConfigCompatibility(t *testing.T) {
 			passCount:    5,
 			cacheCount:   1,
 			remaining:    2,
+			visited:      true,
+			upsellCount:  2,
+			lastSeen:     1,
 		},
 		{
 			name:         "formal compatibility aliases",
-			body:         `{"compatibility":{"slackAppInstallCount":3,"stickerOrderCount":2,"extraUsageVisitCount":4,"guestPassReferralURL":"https://example.test/pass","guestPassVisitCount":5,"passesEligibilityCache":{"org-123":{"eligible":true,"timestamp":"2026-07-08T00:00:00Z","campaign":"claude_code_guest_pass","referral_url":"https://example.test/pass","remaining_passes":2}}}}`,
+			body:         `{"compatibility":{"slackAppInstallCount":3,"stickerOrderCount":2,"extraUsageVisitCount":4,"guestPassReferralURL":"https://example.test/pass","guestPassVisitCount":5,"passesEligibilityCache":{"org-123":{"eligible":true,"timestamp":"2026-07-08T00:00:00Z","campaign":"claude_code_guest_pass","referral_url":"https://example.test/pass","remaining_passes":2}},"hasVisitedPasses":true,"passesUpsellSeenCount":2,"passesLastSeenRemaining":1}}`,
 			slackCount:   3,
 			stickerCount: 2,
 			extraCount:   4,
@@ -208,6 +214,9 @@ func TestLoadCompatibilityConfigCompatibility(t *testing.T) {
 			passCount:    5,
 			cacheCount:   1,
 			remaining:    2,
+			visited:      true,
+			upsellCount:  2,
+			lastSeen:     1,
 		},
 		{
 			name:         "formal compatibility wins with zero",
@@ -240,6 +249,13 @@ func TestLoadCompatibilityConfigCompatibility(t *testing.T) {
 				require.NotNil(t, entry.RemainingPasses)
 				require.Equal(t, tc.remaining, *entry.RemainingPasses)
 				require.True(t, entry.Timestamp.Equal(time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)))
+			}
+			if tc.visited {
+				require.NotNil(t, cfg.Future.HasVisitedPasses)
+				require.True(t, *cfg.Future.HasVisitedPasses)
+				require.Equal(t, tc.upsellCount, cfg.Future.PassesUpsellSeenCount)
+				require.NotNil(t, cfg.Future.PassesLastSeenRemaining)
+				require.Equal(t, tc.lastSeen, *cfg.Future.PassesLastSeenRemaining)
 			}
 		})
 	}

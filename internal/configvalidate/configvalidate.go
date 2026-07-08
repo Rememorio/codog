@@ -295,6 +295,9 @@ var futureFields = []fieldSpec{
 	{"guest_pass_referral_url", FieldString},
 	{"guest_pass_visit_count", FieldNumber},
 	{"guest_pass_eligibility_cache", FieldObject},
+	{"has_visited_passes", FieldBool},
+	{"passes_upsell_seen_count", FieldNumber},
+	{"passes_last_seen_remaining", FieldNumber},
 }
 
 var enterpriseFields = []fieldSpec{
@@ -349,6 +352,12 @@ var compatibilityFields = []fieldSpec{
 	{"guestPassEligibilityCache", FieldObject},
 	{"passes_eligibility_cache", FieldObject},
 	{"passesEligibilityCache", FieldObject},
+	{"has_visited_passes", FieldBool},
+	{"hasVisitedPasses", FieldBool},
+	{"passes_upsell_seen_count", FieldNumber},
+	{"passesUpsellSeenCount", FieldNumber},
+	{"passes_last_seen_remaining", FieldNumber},
+	{"passesLastSeenRemaining", FieldNumber},
 }
 
 var preferencesFields = []fieldSpec{

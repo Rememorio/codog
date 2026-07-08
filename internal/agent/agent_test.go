@@ -16430,15 +16430,15 @@ func TestResetCompatibilityConfigSection(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	require.NoError(t, os.WriteFile(configPath, []byte(`{
 		"model": "keep",
-		"compatibility": {"slack_app_install_count": 3, "sticker_order_count": 2, "extra_usage_visit_count": 4, "guest_pass_referral_url": "https://example.test/pass", "guest_pass_visit_count": 5, "guest_pass_eligibility_cache": {"org-123": {"eligible": true}}},
-		"future": {"slack_app_install_count": 1, "sticker_order_count": 1, "extra_usage_visit_count": 1, "guest_pass_referral_url": "https://old.example/pass", "guest_pass_visit_count": 1, "guest_pass_eligibility_cache": {"org-old": {"eligible": false}}}
+		"compatibility": {"slack_app_install_count": 3, "sticker_order_count": 2, "extra_usage_visit_count": 4, "guest_pass_referral_url": "https://example.test/pass", "guest_pass_visit_count": 5, "guest_pass_eligibility_cache": {"org-123": {"eligible": true}}, "has_visited_passes": true, "passes_upsell_seen_count": 2, "passes_last_seen_remaining": 1},
+		"future": {"slack_app_install_count": 1, "sticker_order_count": 1, "extra_usage_visit_count": 1, "guest_pass_referral_url": "https://old.example/pass", "guest_pass_visit_count": 1, "guest_pass_eligibility_cache": {"org-old": {"eligible": false}}, "has_visited_passes": true, "passes_upsell_seen_count": 1, "passes_last_seen_remaining": 1}
 	}`), 0o644))
 
 	report, changed, err := resetConfigAtPath(configPath, "compatibility", "reset", false)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "compatibility", report.Section)
-	require.ElementsMatch(t, []string{"compatibility", "future.slack_app_install_count", "future.sticker_order_count", "future.extra_usage_visit_count", "future.guest_pass_referral_url", "future.guest_pass_eligibility_cache", "future.guest_pass_visit_count"}, report.ResetKeys)
+	require.ElementsMatch(t, []string{"compatibility", "future.slack_app_install_count", "future.sticker_order_count", "future.extra_usage_visit_count", "future.guest_pass_referral_url", "future.guest_pass_eligibility_cache", "future.guest_pass_visit_count", "future.has_visited_passes", "future.passes_upsell_seen_count", "future.passes_last_seen_remaining"}, report.ResetKeys)
 
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
@@ -16449,6 +16449,9 @@ func TestResetCompatibilityConfigSection(t *testing.T) {
 	require.NotContains(t, string(data), "guest_pass_referral_url")
 	require.NotContains(t, string(data), "guest_pass_eligibility_cache")
 	require.NotContains(t, string(data), "guest_pass_visit_count")
+	require.NotContains(t, string(data), "has_visited_passes")
+	require.NotContains(t, string(data), "passes_upsell_seen_count")
+	require.NotContains(t, string(data), "passes_last_seen_remaining")
 	require.Contains(t, string(data), `"model": "keep"`)
 }
 
@@ -23641,6 +23644,34 @@ func TestPassesFetchesEligibilityAndRedemptions(t *testing.T) {
 	require.NotNil(t, cached.RemainingPasses)
 	require.Equal(t, 2, *cached.RemainingPasses)
 	require.Equal(t, "https://example.test/pass", cached.ReferralURL)
+	require.True(t, cached.UpsellReset)
+	require.True(t, cached.UpsellVisible)
+	require.NotNil(t, cached.LastSeenRemaining)
+	require.Equal(t, 2, *cached.LastSeenRemaining)
+	out.Reset()
+
+	require.NoError(t, app.Passes([]string{"upsell-seen", "--json"}))
+	var upsellSeen passesReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &upsellSeen))
+	require.True(t, upsellSeen.MarkedUpsellSeen)
+	require.Equal(t, 1, upsellSeen.UpsellSeenCount)
+	require.True(t, upsellSeen.UpsellVisible)
+	out.Reset()
+
+	require.NoError(t, app.Passes([]string{"visit", "--json"}))
+	var visited passesReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &visited))
+	require.True(t, visited.MarkedVisited)
+	require.True(t, visited.HasVisitedPasses)
+	require.False(t, visited.UpsellVisible)
+	require.NotNil(t, visited.LastSeenRemaining)
+	require.Equal(t, 2, *visited.LastSeenRemaining)
+
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"has_visited_passes": true`)
+	require.Contains(t, string(data), `"passes_upsell_seen_count": 1`)
+	require.Contains(t, string(data), `"passes_last_seen_remaining": 2`)
 }
 
 func TestExtraUsageCommandAndSlash(t *testing.T) {
