@@ -24,11 +24,11 @@ type Report struct {
 	Status          string `json:"status"`
 	HumanReadable   string `json:"human_readable"`
 	Version         string `json:"version"`
-	GitSHA          string `json:"git_sha,omitempty"`
-	GitSHAShort     string `json:"git_sha_short,omitempty"`
-	GitBranch       string `json:"git_branch,omitempty"`
-	GitDirty        string `json:"git_dirty,omitempty"`
-	BuildDate       string `json:"build_date,omitempty"`
+	GitSHA          string `json:"git_sha"`
+	GitSHAShort     string `json:"git_sha_short"`
+	GitBranch       string `json:"git_branch"`
+	GitDirty        string `json:"git_dirty"`
+	BuildDate       string `json:"build_date"`
 	BuildTarget     string `json:"build_target"`
 	GoVersion       string `json:"go_version"`
 	ModulePath      string `json:"module_path,omitempty"`

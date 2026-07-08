@@ -2,6 +2,7 @@ package versioninfo
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +42,22 @@ func TestBuildWithMetadataWarnsWhenGitSHAUnknown(t *testing.T) {
 	require.Empty(t, report.GitSHA)
 	require.Contains(t, report.Hint, "Build metadata")
 	require.Contains(t, report.HumanReadable, "Git SHA          unknown")
+}
+
+func TestVersionReportJSONIncludesUnknownBuildMetadataFields(t *testing.T) {
+	report := BuildWithMetadata("1.2.3", "", Metadata{})
+	data, err := json.Marshal(report)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(data, &payload))
+	require.Contains(t, payload, "git_sha")
+	require.Contains(t, payload, "git_sha_short")
+	require.Contains(t, payload, "git_branch")
+	require.Contains(t, payload, "git_dirty")
+	require.Contains(t, payload, "build_date")
+	require.Equal(t, "", payload["git_sha"])
+	require.Equal(t, "", payload["build_date"])
 }
 
 func TestBuildDetectsWorkspaceMatch(t *testing.T) {
