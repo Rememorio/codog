@@ -352,6 +352,8 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, helpOutput, "--thinking enabled|adaptive|disabled")
 	require.Contains(t, helpOutput, "--include-partial-messages")
 	require.Contains(t, helpOutput, "<cc-url|cc+unix-url>")
+	require.Contains(t, helpOutput, "models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|set MODEL|clear|reset|help]")
+	require.Contains(t, helpOutput, "--target user|project|local")
 	resumeLine := requireResumeSafeHelpLine(t, helpOutput)
 	require.Contains(t, resumeLine, "/status")
 	require.Contains(t, resumeLine, "/mcp")
@@ -378,6 +380,8 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, globalReport.Help, "--thinking enabled|adaptive|disabled")
 	require.Contains(t, globalReport.Help, "--include-partial-messages")
 	require.Contains(t, globalReport.Help, "<cc-url|cc+unix-url>")
+	require.Contains(t, globalReport.Help, "models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|set MODEL|clear|reset|help]")
+	require.Contains(t, globalReport.Help, "--target user|project|local")
 	require.Equal(t, resumeLine, requireResumeSafeHelpLine(t, globalReport.Help))
 	out.Reset()
 
