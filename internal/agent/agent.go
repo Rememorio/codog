@@ -2270,6 +2270,7 @@ type sshRequest struct {
 	PermissionMode             string
 	DangerouslySkipPermissions bool
 	Local                      bool
+	Execute                    bool
 	Format                     string
 }
 
@@ -2290,6 +2291,11 @@ type sshReport struct {
 	RemoteExecutable           string   `json:"remote_executable,omitempty"`
 	DeployCommand              []string `json:"deploy_command,omitempty"`
 	Executed                   bool     `json:"executed"`
+	ExitCode                   *int     `json:"exit_code,omitempty"`
+	DurationMS                 int64    `json:"duration_ms,omitempty"`
+	Stdout                     string   `json:"stdout,omitempty"`
+	Stderr                     string   `json:"stderr,omitempty"`
+	Error                      string   `json:"error,omitempty"`
 	Message                    string   `json:"message,omitempty"`
 }
 
@@ -2366,7 +2372,7 @@ func hasCommandBeforeDirectConnectURL(args []string, directURLIndex int) bool {
 }
 
 const openUsage = "codog open <cc-url|http-url> [-p|--print [PROMPT]] [--output-format text|json|stream-json]"
-const sshUsage = "codog ssh <host> [dir] [--continue|-c] [--resume ID|latest] [--model MODEL] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--json|--output-format text|json]"
+const sshUsage = "codog ssh <host> [dir] [--continue|-c] [--resume ID|latest] [--model MODEL] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--execute] [--json|--output-format text|json]"
 
 func (a *App) Open(ctx context.Context, args []string) error {
 	req, err := parseOpenArgs(args)
@@ -2412,7 +2418,14 @@ func (a *App) SSH(ctx context.Context, args []string) error {
 	}
 	report := a.buildSSHReport(req)
 	if req.Format == "json" {
-		report.Message = "SSH execution plan generated. Run without --json to start the remote session."
+		if req.Execute {
+			var runErr error
+			report, runErr = a.runSSHCommandReport(ctx, req, report)
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return runErr
+		}
+		report.Message = "SSH execution plan generated. Pass --execute with --json to start the remote session."
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
@@ -2484,6 +2497,8 @@ func parseSSHArgs(args []string) (sshRequest, error) {
 			req.DangerouslySkipPermissions = true
 		case arg == "--local":
 			req.Local = true
+		case arg == "--execute" || arg == "--run":
+			req.Execute = true
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return req, unknownOptionError{Command: "ssh", Option: arg, Usage: sshUsage}
@@ -2536,6 +2551,59 @@ func (a *App) buildSSHReport(req sshRequest) sshReport {
 	}
 }
 
+func (a *App) runSSHCommandReport(ctx context.Context, req sshRequest, report sshReport) (sshReport, error) {
+	report.Executed = true
+	start := time.Now()
+	command, _ := a.sshCommand(req, false)
+	if len(command) == 0 {
+		err := errors.New("ssh command is empty")
+		report.Status = "failed"
+		report.Error = err.Error()
+		report.Message = "SSH command failed."
+		report.DurationMS = time.Since(start).Milliseconds()
+		return report, err
+	}
+	if !req.Local {
+		if err := a.deploySSHBinary(ctx, req); err != nil {
+			report.Status = "failed"
+			report.Error = err.Error()
+			report.Message = "SSH deploy failed."
+			report.DurationMS = time.Since(start).Milliseconds()
+			return report, err
+		}
+	}
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	if req.Local && strings.TrimSpace(req.Directory) != "" {
+		cmd.Dir = req.Directory
+	}
+	cmd.Stdin = a.In
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	report.DurationMS = time.Since(start).Milliseconds()
+	report.Stdout = stdout.String()
+	report.Stderr = stderr.String()
+	exitCode := sshCommandExitCode(err)
+	report.ExitCode = &exitCode
+	switch {
+	case err == nil:
+		report.Status = "completed"
+		report.Message = "SSH command completed."
+		return report, nil
+	case ctx.Err() != nil:
+		report.Status = "canceled"
+		report.Error = ctx.Err().Error()
+		report.Message = "SSH command canceled."
+		return report, err
+	default:
+		report.Status = "failed"
+		report.Error = err.Error()
+		report.Message = "SSH command failed."
+		return report, err
+	}
+}
+
 func (a *App) runSSHCommand(ctx context.Context, req sshRequest, command []string) error {
 	command, _ = a.sshCommand(req, false)
 	if len(command) == 0 {
@@ -2554,6 +2622,17 @@ func (a *App) runSSHCommand(ctx context.Context, req sshRequest, command []strin
 	cmd.Stdout = a.Out
 	cmd.Stderr = a.Err
 	return cmd.Run()
+}
+
+func sshCommandExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
 }
 
 func (a *App) sshCommand(req sshRequest, redact bool) ([]string, string) {
@@ -59207,9 +59286,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"ssh",
 			"ssh",
 			sshUsage,
-			"SSH\n\nUsage:\n  codog ssh <host> [dir] [--continue|-c] [--resume ID|latest] [--model MODEL] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--output-format text|json]\n\nStarts a Codog REPL on a remote host through SSH using a Claude Code-compatible command shape. Text mode deploys the local binary, then executes `ssh HOST 'cd DIR && env ... codog ... repl'` and forwards local provider credentials, model, base URL, Claude remote bootstrap variables, and session/model startup flags. JSON plans redact secret values. `--local` runs the child Codog process locally for end-to-end plumbing tests. Headless `-p/--print` is not supported with `ssh`.\n",
-			[]string{"kind", "status", "host", "directory", "local", "extra_args", "command", "deploy_command", "remote_shell", "remote_executable", "remote_env_keys", "remote_auth_forwarded", "executed"},
-			[]string{"planned", "error"},
+			"SSH\n\nUsage:\n  codog ssh <host> [dir] [--continue|-c] [--resume ID|latest] [--model MODEL] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--execute] [--output-format text|json]\n\nStarts a Codog REPL on a remote host through SSH using a Claude Code-compatible command shape. Text mode deploys the local binary, then executes `ssh HOST 'cd DIR && env ... codog ... repl'` and forwards local provider credentials, model, base URL, Claude remote bootstrap variables, and session/model startup flags. JSON mode renders a redacted plan by default; pass `--execute` with JSON output to run the command and capture stdout, stderr, exit code, and duration. `--local` runs the child Codog process locally for end-to-end plumbing tests. Headless `-p/--print` is not supported with `ssh`.\n",
+			[]string{"kind", "status", "host", "directory", "local", "extra_args", "command", "deploy_command", "remote_shell", "remote_executable", "remote_env_keys", "remote_auth_forwarded", "executed", "exit_code", "duration_ms", "stdout", "stderr"},
+			[]string{"planned", "completed", "failed", "canceled", "error"},
 			false,
 		), true
 	case "model":
@@ -60034,7 +60113,7 @@ Usage:
   %s upgrade [status|show|check|verify|download|install|rollback] ARGS...
   %s install [ARTIFACT [TARGET]] [--json|--output-format json]
   %s rollback [TARGET] [--json|--output-format text|json]
-  %s ssh <host> [dir] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--json|--output-format text|json]
+  %s ssh <host> [dir] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--execute] [--json|--output-format text|json]
   %s remote-env [show|set|clear] [--enabled on|off] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s remote-setup|web-setup [status|enable|disable|clear] [--addr HOST:PORT] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s desktop|app [status] [--session ID|--resume latest] [--json|--output-format text|json]

@@ -20847,6 +20847,8 @@ func TestSSHCommandReportsPlan(t *testing.T) {
 	require.Equal(t, "/workspace/repo dir", report.Directory)
 	require.False(t, report.Local)
 	require.False(t, report.Executed)
+	require.Nil(t, report.ExitCode)
+	require.Contains(t, report.Message, "Pass --execute")
 	require.Equal(t, []string{"--continue", "--resume", "remote-session", "--model", "claude-opus"}, report.ExtraArgs)
 	require.Equal(t, "read-only", report.PermissionMode)
 	require.True(t, report.DangerouslySkipPermissions)
@@ -20866,6 +20868,51 @@ func TestSSHCommandReportsPlan(t *testing.T) {
 	require.NotContains(t, out.String(), "secret-api-key")
 	require.NotContains(t, out.String(), "secret-auth-token")
 	require.Equal(t, []string{"ssh", "devbox", report.RemoteShell}, report.Command)
+}
+
+func TestSSHCommandJSONExecuteRunsLocalChild(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script child process test is POSIX-specific")
+	}
+	workspace := t.TempDir()
+	script := filepath.Join(t.TempDir(), "codog-child")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'cwd=%s\\n' \"$PWD\"\nprintf 'args=%s\\n' \"$*\"\n"), 0o755))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Out:        &out,
+		Err:        &errOut,
+		In:         strings.NewReader(""),
+		Executable: script,
+	}
+	require.NoError(t, app.SSH(context.Background(), []string{
+		"--local",
+		"localhost",
+		workspace,
+		"--resume",
+		"latest",
+		"--permission-mode",
+		"read-only",
+		"--json",
+		"--execute",
+	}))
+
+	var report sshReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "ssh", report.Kind)
+	require.Equal(t, "connect", report.Action)
+	require.Equal(t, "completed", report.Status)
+	require.True(t, report.Local)
+	require.True(t, report.Executed)
+	require.NotNil(t, report.ExitCode)
+	require.Equal(t, 0, *report.ExitCode)
+	require.GreaterOrEqual(t, report.DurationMS, int64(0))
+	require.Contains(t, report.Stdout, "cwd="+workspace)
+	require.Contains(t, report.Stdout, "args=--resume latest --permission-mode read-only repl")
+	require.Empty(t, report.Stderr)
+	require.Empty(t, report.Error)
+	require.Empty(t, errOut.String())
 }
 
 func TestSSHCommandDeploysBinaryBeforeRemoteRun(t *testing.T) {
