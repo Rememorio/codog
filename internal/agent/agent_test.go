@@ -3294,6 +3294,32 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "claude-json", setModel.Model)
 	require.NotEmpty(t, setModel.Previous)
 
+	modelConfigPath := filepath.Join(t.TempDir(), "single-model.json")
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "model", "opus", "--path", modelConfigPath, "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &setModel))
+	require.Equal(t, "set", setModel.Action)
+	require.Equal(t, "opus", setModel.Model)
+	modelConfigData, err := os.ReadFile(modelConfigPath)
+	require.NoError(t, err)
+	require.Contains(t, string(modelConfigData), `"model": "opus"`)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "model", "reset", "--path", modelConfigPath, "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var clearModel modelReport
+	require.NoError(t, json.Unmarshal([]byte(out), &clearModel))
+	require.Equal(t, "model", clearModel.Kind)
+	require.Equal(t, "clear", clearModel.Action)
+	require.Equal(t, config.DefaultModel, clearModel.Model)
+	require.True(t, clearModel.Cleared)
+	modelConfigData, err = os.ReadFile(modelConfigPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(modelConfigData), `"model"`)
+
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "models"}, config.FlagOverrides{})
 	})

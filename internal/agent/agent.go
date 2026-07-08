@@ -38631,6 +38631,7 @@ type advisorReport struct {
 
 type modelRequest struct {
 	Format string
+	Action string
 	Model  string
 	Target string
 	Path   string
@@ -38758,6 +38759,13 @@ func (a *App) Model(args []string) error {
 	req, err := parseModelArgs(args)
 	if err != nil {
 		return err
+	}
+	if req.Action == "clear" {
+		report, err := a.clearModelRequest(req)
+		if err != nil {
+			return err
+		}
+		return renderModelReport(a.Out, report, req.Format)
 	}
 	report, err := a.applyModelRequest(req)
 	if err != nil {
@@ -39010,7 +39018,7 @@ func (a *App) ResumedModel(args []string) error {
 }
 
 const (
-	modelUsage  = "codog model [MODEL] [--target user|project|local] [--path PATH] [--output-format text|json]"
+	modelUsage  = "codog model [MODEL|clear|reset|unset] [--target user|project|local] [--path PATH] [--output-format text|json]"
 	modelsUsage = "codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|set MODEL|clear|reset|help] [--target user|project|local] [--path PATH] [--output-format text|json]"
 )
 
@@ -39057,8 +39065,21 @@ func parseModelArgs(args []string) (modelRequest, error) {
 		return req, err
 	}
 	req.Format = normalizedFormat
+	if len(positionals) == 1 && isModelClearAction(positionals[0]) {
+		req.Action = "clear"
+		return req, nil
+	}
 	req.Model = strings.TrimSpace(strings.Join(positionals, " "))
 	return req, nil
+}
+
+func isModelClearAction(action string) bool {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "clear", "reset", "unset", "default":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseModelsArgs(args []string) (modelsRequest, error) {
@@ -58278,8 +58299,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"model",
 			"model",
 			modelUsage,
-			"Model\n\nUsage:\n  codog model [MODEL] [--target user|project|local] [--path PATH] [--output-format text|json]\n\nShows or changes the configured default model for future provider requests.\n",
-			[]string{"model", "previous", "requested_model"},
+			"Model\n\nUsage:\n  codog model [MODEL|clear|reset|unset] [--target user|project|local] [--path PATH] [--output-format text|json]\n\nShows, changes, or clears the configured default model for future provider requests.\n",
+			[]string{"model", "previous", "requested_model", "cleared"},
 			[]string{"ok", "error"},
 			true,
 		), true
