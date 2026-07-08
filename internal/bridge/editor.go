@@ -80,7 +80,10 @@ func (s Server) editorIdentify(params json.RawMessage) (*EditorIdentity, error) 
 	if err := json.Unmarshal(params, &payload); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(payload.Editor) == "" {
+	payload.Editor = strings.TrimSpace(payload.Editor)
+	payload.Version = strings.TrimSpace(payload.Version)
+	payload.Workspace = strings.TrimSpace(payload.Workspace)
+	if payload.Editor == "" {
 		return nil, errors.New("editor is required")
 	}
 	if s.TrustToken != "" && payload.Token != s.TrustToken {
@@ -179,6 +182,9 @@ func (s Server) editorSelection(params json.RawMessage) (*EditorSelection, error
 	}
 	if payload.EndLine < payload.StartLine {
 		return nil, errors.New("end_line must be after start_line")
+	}
+	if err := validateSelectionColumns(payload); err != nil {
+		return nil, err
 	}
 	payload.Path = rel
 	if payload.Text == "" {
@@ -305,6 +311,16 @@ func selectionText(path string, selection EditorSelection) (string, error) {
 		selected[last] = sliceColumns(selected[last], 1, selection.EndColumn)
 	}
 	return strings.Join(selected, "\n"), nil
+}
+
+func validateSelectionColumns(selection EditorSelection) error {
+	if selection.StartColumn < 0 || selection.EndColumn < 0 {
+		return errors.New("selection columns must be non-negative")
+	}
+	if selection.StartLine == selection.EndLine && selection.StartColumn > 0 && selection.EndColumn > 0 && selection.EndColumn < selection.StartColumn {
+		return errors.New("end_column must be after start_column")
+	}
+	return nil
 }
 
 func sliceColumns(line string, startColumn int, endColumn int) string {
