@@ -26191,6 +26191,22 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	require.Contains(t, out.String(), `"source": "bundled"`)
 	out.Reset()
 
+	require.NoError(t, app.Skills([]string{"search", "audit", "--json"}))
+	var searchReport struct {
+		Kind   string         `json:"kind"`
+		Action string         `json:"action"`
+		Query  string         `json:"query"`
+		Count  int            `json:"count"`
+		Skills []skills.Skill `json:"skills"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &searchReport))
+	require.Equal(t, "skills", searchReport.Kind)
+	require.Equal(t, "search", searchReport.Action)
+	require.Equal(t, "audit", searchReport.Query)
+	require.Equal(t, len(searchReport.Skills), searchReport.Count)
+	require.NotEmpty(t, skillReportEntry(searchReport.Skills, "team:audit", "claude").Name)
+	out.Reset()
+
 	require.NoError(t, app.Skills([]string{"sources", "--json"}))
 	var sourceReport struct {
 		Kind      string                 `json:"kind"`
@@ -26260,6 +26276,13 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/skills show team:audit", &session.Session{ID: "session"}))
 	require.Equal(t, "Audit skill body\n", out.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/skills find deploy --json", &session.Session{ID: "session"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &searchReport))
+	require.Equal(t, "search", searchReport.Action)
+	require.Equal(t, "deploy", searchReport.Query)
+	require.Equal(t, "deploy", searchReport.Skills[0].Name)
 	out.Reset()
 
 	require.NoError(t, app.Prompt(context.Background(), "review auth flow", config.FlagOverrides{SessionID: "skill-session"}))
@@ -26712,6 +26735,20 @@ func TestSkillsActivationCommandsAndUnsupportedAction(t *testing.T) {
 	require.Contains(t, report.Hint, "show|info|describe")
 	require.Contains(t, report.Hint, "codog skills add")
 	require.Contains(t, report.Hint, "codog skills help")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "skills", "search"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var searchMissing actionErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &searchMissing))
+	require.Equal(t, "skills", searchMissing.Kind)
+	require.Equal(t, "search", searchMissing.Action)
+	require.Equal(t, "missing_argument", searchMissing.ErrorKind)
+	require.Equal(t, "query", searchMissing.Argument)
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "bogus"}, config.FlagOverrides{})

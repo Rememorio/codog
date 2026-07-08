@@ -48923,6 +48923,16 @@ func (a *App) Skills(args []string) error {
 	switch action {
 	case "list":
 		return a.listSkills(rest)
+	case "search":
+		format, remaining, err := parseTemplateOutputArgs("skills search", rest)
+		if err != nil {
+			return err
+		}
+		query := strings.TrimSpace(strings.Join(remaining, " "))
+		if query == "" {
+			return renderMissingActionArgument(a.Out, "skills", "search", "query", "skills search requires a query", "Usage: codog skills search QUERY [--json|--output-format text|json].", format)
+		}
+		return a.listSkillsWithAction([]string{query, "--output-format", format}, "search", query)
 	case "sources":
 		return a.skillSources(rest)
 	case "help":
@@ -49047,6 +49057,8 @@ func normalizeSkillsAction(action string) string {
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "", "list", "ls":
 		return "list"
+	case "search", "find", "query", "lookup":
+		return "search"
 	case "source", "sources", "root", "roots":
 		return "sources"
 	case "show", "info", "describe", "get", "view", "cat":
@@ -49132,7 +49144,7 @@ func renderUnsupportedSkillsAction(out io.Writer, action string, format string) 
 		Status:    "error",
 		ErrorKind: "unsupported_skills_action",
 		Message:   fmt.Sprintf("unsupported skills action %q", action),
-		Hint:      "Supported: `codog skills list|ls`, `codog skills sources|roots`, `codog skills status`, `codog skills enable|on NAME`, `codog skills disable|off NAME`, `codog skills show|info|describe|view NAME`, `codog skills invoke|run|exec NAME [ARGS...]`, `codog skills add|install SOURCE`, `codog skills uninstall|remove|rm NAME`, or `codog skills help`.",
+		Hint:      "Supported: `codog skills list|ls [FILTER]`, `codog skills search|find QUERY`, `codog skills sources|roots`, `codog skills status`, `codog skills enable|on NAME`, `codog skills disable|off NAME`, `codog skills show|info|describe|view NAME`, `codog skills invoke|run|exec NAME [ARGS...]`, `codog skills add|install SOURCE`, `codog skills uninstall|remove|rm NAME`, or `codog skills help`.",
 	}, format)
 }
 
@@ -49627,6 +49639,10 @@ func (a *App) skillUninstallRoots(target string) []string {
 }
 
 func (a *App) listSkills(args []string) error {
+	return a.listSkillsWithAction(args, "list", "")
+}
+
+func (a *App) listSkillsWithAction(args []string, action string, query string) error {
 	remaining, format, err := stripJSONOnlyOutputFormat("skills", args)
 	if err != nil {
 		return err
@@ -49634,6 +49650,9 @@ func (a *App) listSkills(args []string) error {
 	filter, err := parseListFilterArgs("skills list", remaining, "codog skills list [FILTER] [--json|--output-format text|json]", "unknown_option")
 	if err != nil {
 		return renderCLIError(a.Out, err, format)
+	}
+	if strings.TrimSpace(query) != "" {
+		filter = strings.TrimSpace(query)
 	}
 	all, err := skills.Load(a.Config.ConfigHome, a.Workspace)
 	if err != nil {
@@ -49656,8 +49675,9 @@ func (a *App) listSkills(args []string) error {
 		}
 		data, _ := json.MarshalIndent(map[string]any{
 			"kind":                 "skills",
-			"action":               "list",
+			"action":               action,
 			"status":               status,
+			"query":                strings.TrimSpace(filter),
 			"count":                len(all),
 			"metadata_drift_count": len(drifts),
 			"summary": map[string]any{
@@ -58744,8 +58764,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec := localCommandHelpSpec(
 			"skills",
 			"skills",
-			"codog skill|skills [list|ls|sources|roots|status|enable|disable|show|info|describe|view|invoke|run|exec|add|install|uninstall|remove|rm|help]",
-			"Skills\n\nUsage:\n  codog skills [list|ls|sources|roots|status|enable|disable|show|info|describe|view|invoke|run|exec|add|install|uninstall|remove|rm|help]\n  codog skill [same actions]\n\nLists, audits sources, enables, disables, renders, invokes, installs, or removes bundled, user, workspace, plugin, compatible Claude Markdown skills, and legacy `/commands` Markdown exposed as skill-like compatibility entries. `ls` is an alias for `list`; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `run`, `exec`, `execute`, and `call` are aliases for `invoke`; `add` is an alias for `install`; `remove`, `rm`, and `del` are aliases for `uninstall`; `on` and `off` are aliases for `enable` and `disable`. Run `codog skills help` for this local command reference.\n",
+			"codog skill|skills [list|ls|search|find|sources|roots|status|enable|disable|show|info|describe|view|invoke|run|exec|add|install|uninstall|remove|rm|help]",
+			"Skills\n\nUsage:\n  codog skills [list|ls|search|find|sources|roots|status|enable|disable|show|info|describe|view|invoke|run|exec|add|install|uninstall|remove|rm|help]\n  codog skills search QUERY [--output-format text|json]\n  codog skill [same actions]\n\nLists, searches, audits sources, enables, disables, renders, invokes, installs, or removes bundled, user, workspace, plugin, compatible Claude Markdown skills, and legacy `/commands` Markdown exposed as skill-like compatibility entries. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter skills by name, display name, or description; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `run`, `exec`, `execute`, and `call` are aliases for `invoke`; `add` is an alias for `install`; `remove`, `rm`, and `del` are aliases for `uninstall`; `on` and `off` are aliases for `enable` and `disable`. Run `codog skills help` for this local command reference.\n",
 			[]string{"skills", "roots", "name", "path", "body", "origin", "active", "shadowed_by", "metadata_drift", "metadata_drift_count"},
 			[]string{"ok", "error"},
 			true,
@@ -58754,7 +58774,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		if strings.EqualFold(strings.TrimSpace(topic), "skill") {
 			spec.Topic = "skill"
 			spec.Command = "skill"
-			spec.Usage = "codog skill [list|ls|sources|roots|status|enable|disable|show|view|invoke|run|exec|add|install|uninstall|remove|rm|help]"
+			spec.Usage = "codog skill [list|ls|search|find|sources|roots|status|enable|disable|show|view|invoke|run|exec|add|install|uninstall|remove|rm|help]"
 			spec.Aliases = []string{"skills"}
 		}
 		return spec, true
