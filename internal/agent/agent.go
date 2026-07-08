@@ -53458,7 +53458,7 @@ func (a *App) withOAuthProfile(profileName string) *App {
 
 func (a *App) xaaOAuthStatus(profileName string) (oauth.Status, []oauthProviderSummary) {
 	if strings.TrimSpace(a.Config.ConfigHome) == "" {
-		return oauth.Status{ProfileName: profileName, Issue: "config home is unavailable"}, nil
+		return oauth.Status{Kind: "oauth", Action: "status", Status: "error", ProfileName: profileName, Issue: "config home is unavailable"}, nil
 	}
 	status := oauth.InspectStatus(a.Config.ConfigHome, profileName, time.Now().UTC())
 	profiles, err := oauth.ListProviderProfiles(a.Config.ConfigHome)

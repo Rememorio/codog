@@ -7,6 +7,9 @@ import (
 
 // Status describes whether a saved OAuth provider profile and token are usable.
 type Status struct {
+	Kind              string           `json:"kind,omitempty"`
+	Action            string           `json:"action,omitempty"`
+	Status            string           `json:"status,omitempty"`
 	ProfileName       string           `json:"profile_name,omitempty"`
 	ProfileConfigured bool             `json:"profile_configured"`
 	Profile           *ProviderProfile `json:"profile,omitempty"`
@@ -21,7 +24,7 @@ type Status struct {
 // InspectStatus loads the configured OAuth profile and token without mutating
 // local state.
 func InspectStatus(configHome string, profileName string, now time.Time) Status {
-	status := Status{}
+	status := Status{Kind: "oauth", Action: "status", Status: "ok"}
 	profile, err := ResolveProviderProfile(configHome, profileName)
 	if err == nil {
 		status.ProfileName = profile.Name

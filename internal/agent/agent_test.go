@@ -4760,6 +4760,9 @@ func risky(value any) {
 	require.NoError(t, err)
 	var resumedOAuthStatus oauth.Status
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthStatus))
+	require.Equal(t, "oauth", resumedOAuthStatus.Kind)
+	require.Equal(t, "status", resumedOAuthStatus.Action)
+	require.Equal(t, "ok", resumedOAuthStatus.Status)
 	require.Equal(t, "default", resumedOAuthStatus.ProfileName)
 	require.True(t, resumedOAuthStatus.ProfileConfigured)
 	require.True(t, resumedOAuthStatus.TokenPresent)
@@ -4821,6 +4824,9 @@ func risky(value any) {
 	require.NoError(t, err)
 	var resumedOAuthTokenStatus oauth.Status
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthTokenStatus))
+	require.Equal(t, "oauth", resumedOAuthTokenStatus.Kind)
+	require.Equal(t, "status", resumedOAuthTokenStatus.Action)
+	require.Equal(t, "ok", resumedOAuthTokenStatus.Status)
 	require.Equal(t, "default", resumedOAuthTokenStatus.ProfileName)
 	require.True(t, resumedOAuthTokenStatus.TokenPresent)
 	require.True(t, resumedOAuthTokenStatus.Ready)
@@ -30981,6 +30987,12 @@ func TestOAuthTokenCommands(t *testing.T) {
 
 	out.Reset()
 	require.NoError(t, app.OAuth([]string{"token", "status"}))
+	var tokenStatus oauth.Status
+	require.NoError(t, json.Unmarshal(out.Bytes(), &tokenStatus))
+	require.Equal(t, "oauth", tokenStatus.Kind)
+	require.Equal(t, "status", tokenStatus.Action)
+	require.Equal(t, "ok", tokenStatus.Status)
+	require.True(t, tokenStatus.TokenPresent)
 	require.Contains(t, out.String(), `"token_present": true`)
 	require.Contains(t, out.String(), `"access_token": "acce...1234"`)
 	require.NotContains(t, out.String(), "access-token-1234")
@@ -31797,6 +31809,11 @@ func TestOAuthStatusCommand(t *testing.T) {
 		Out:    &out,
 	}
 	require.NoError(t, app.OAuth([]string{"status"}))
+	var statusReport oauth.Status
+	require.NoError(t, json.Unmarshal(out.Bytes(), &statusReport))
+	require.Equal(t, "oauth", statusReport.Kind)
+	require.Equal(t, "status", statusReport.Action)
+	require.Equal(t, "ok", statusReport.Status)
 	require.Contains(t, out.String(), `"profile_name": "default"`)
 	require.Contains(t, out.String(), `"access_token": "stat...1234"`)
 	require.Contains(t, out.String(), `"can_refresh": true`)
@@ -31805,11 +31822,19 @@ func TestOAuthStatusCommand(t *testing.T) {
 
 	out.Reset()
 	require.NoError(t, app.OAuth([]string{"status", "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &statusReport))
+	require.Equal(t, "oauth", statusReport.Kind)
+	require.Equal(t, "status", statusReport.Action)
+	require.Equal(t, "ok", statusReport.Status)
 	require.Contains(t, out.String(), `"profile_name": "default"`)
 	require.NotContains(t, out.String(), "status-access-1234")
 
 	out.Reset()
 	require.True(t, app.handleSlash(context.Background(), "/oauth status --json", &session.Session{ID: "session"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &statusReport))
+	require.Equal(t, "oauth", statusReport.Kind)
+	require.Equal(t, "status", statusReport.Action)
+	require.Equal(t, "ok", statusReport.Status)
 	require.Contains(t, out.String(), `"profile_name": "default"`)
 	require.NotContains(t, out.String(), "status-access-1234")
 }

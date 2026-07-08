@@ -28,6 +28,9 @@ func TestInspectStatusReportsRefreshableExpiredToken(t *testing.T) {
 	require.NoError(t, err)
 
 	status := InspectStatus(configHome, "", now)
+	require.Equal(t, "oauth", status.Kind)
+	require.Equal(t, "status", status.Action)
+	require.Equal(t, "ok", status.Status)
 	require.True(t, status.ProfileConfigured)
 	require.Equal(t, "default", status.ProfileName)
 	require.True(t, status.TokenPresent)
@@ -40,6 +43,9 @@ func TestInspectStatusReportsRefreshableExpiredToken(t *testing.T) {
 
 func TestInspectStatusReportsMissingToken(t *testing.T) {
 	status := InspectStatus(t.TempDir(), "", time.Now().UTC())
+	require.Equal(t, "oauth", status.Kind)
+	require.Equal(t, "status", status.Action)
+	require.Equal(t, "ok", status.Status)
 	require.False(t, status.TokenPresent)
 	require.False(t, status.Ready)
 	require.Equal(t, "no oauth token saved", status.Issue)
