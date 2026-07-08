@@ -127,8 +127,9 @@ func nextActions(report Report, requestedProfile string) []NextAction {
 	}
 	if report.Error != "" || report.ResourceError != "" {
 		if server != "" {
-			add("inspect", "Inspect MCP server configuration", "codog mcp show "+server)
-			add("retry", "Retry MCP authentication check", "codog mcp auth "+server)
+			quotedServer := shellArg(server)
+			add("inspect", "Inspect MCP server configuration", "codog mcp show "+quotedServer)
+			add("retry", "Retry MCP authentication check", "codog mcp auth "+quotedServer)
 		} else {
 			add("inspect", "List configured MCP servers", "codog mcp list")
 		}
@@ -138,24 +139,50 @@ func nextActions(report Report, requestedProfile string) []NextAction {
 		return actions
 	}
 	status := report.OAuthStatus
+	quotedProfile := shellArg(profile)
 	switch {
 	case !status.ProfileConfigured:
-		add("oauth_provider", "Configure an OAuth provider profile", "codog oauth provider save "+profile+" ISSUER_URL CLIENT_ID [SCOPE...]")
-		add("oauth_login", "Complete browser OAuth login", "codog oauth browser login "+profile)
+		add("oauth_provider", "Configure an OAuth provider profile", "codog oauth provider save "+quotedProfile+" ISSUER_URL CLIENT_ID [SCOPE...]")
+		add("oauth_login", "Complete browser OAuth login", "codog oauth browser login "+quotedProfile)
 	case !status.TokenPresent:
-		add("oauth_login", "Complete browser OAuth login", "codog oauth browser login "+profile)
-		add("oauth_device_login", "Complete device OAuth login", "codog oauth device login "+profile)
+		add("oauth_login", "Complete browser OAuth login", "codog oauth browser login "+quotedProfile)
+		add("oauth_device_login", "Complete device OAuth login", "codog oauth device login "+quotedProfile)
 	case status.Expired && status.CanRefresh:
 		if server != "" {
-			add("mcp_auth_refresh", "Refresh OAuth token and retry MCP auth", "codog mcp auth --refresh "+server)
+			add("mcp_auth_refresh", "Refresh OAuth token and retry MCP auth", "codog mcp auth --refresh "+shellArg(server))
 		}
-		add("oauth_refresh", "Refresh the saved OAuth token", "codog oauth token refresh "+profile)
+		add("oauth_refresh", "Refresh the saved OAuth token", "codog oauth token refresh "+quotedProfile)
 	case status.Expired:
-		add("oauth_login", "Renew OAuth login", "codog oauth browser login "+profile)
-		add("oauth_device_login", "Renew OAuth login with device flow", "codog oauth device login "+profile)
+		add("oauth_login", "Renew OAuth login", "codog oauth browser login "+quotedProfile)
+		add("oauth_device_login", "Renew OAuth login with device flow", "codog oauth device login "+quotedProfile)
 	}
 	if server != "" && report.Error == "" && report.ResourceError == "" {
-		add("verify", "Verify MCP tools are discoverable", "codog mcp tools "+server)
+		add("verify", "Verify MCP tools are discoverable", "codog mcp tools "+shellArg(server))
 	}
 	return actions
+}
+
+func shellArg(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "''"
+	}
+	if shellArgIsSafe(value) {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func shellArgIsSafe(value string) bool {
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case strings.ContainsRune("-_./:@", r):
+		default:
+			return false
+		}
+	}
+	return true
 }

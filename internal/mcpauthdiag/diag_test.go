@@ -28,6 +28,20 @@ func TestBuildReportsOAuthRecoveryActions(t *testing.T) {
 	require.Contains(t, actionCommands(report.NextActions), "codog oauth browser login work")
 }
 
+func TestBuildShellQuotesRecoveryActionArguments(t *testing.T) {
+	report := Build(mcp.AuthStatusResult{
+		Server: "repo server; rm",
+		Status: "error",
+		Error:  "unauthorized",
+	}, t.TempDir(), "work profile's", time.Now().UTC())
+
+	commands := actionCommands(report.NextActions)
+	require.Contains(t, commands, "codog mcp show 'repo server; rm'")
+	require.Contains(t, commands, "codog mcp auth 'repo server; rm'")
+	require.Contains(t, commands, "codog oauth provider save 'work profile'\\''s' ISSUER_URL CLIENT_ID [SCOPE...]")
+	require.Contains(t, commands, "codog oauth browser login 'work profile'\\''s'")
+}
+
 func TestBuildSuggestsMCPAuthRefreshForExpiredRefreshableToken(t *testing.T) {
 	configHome := t.TempDir()
 	now := time.Now().UTC()
@@ -51,6 +65,33 @@ func TestBuildSuggestsMCPAuthRefreshForExpiredRefreshableToken(t *testing.T) {
 
 	report := Build(mcp.AuthStatusResult{Server: "repo", Status: "ok"}, configHome, "work", now)
 	require.Contains(t, actionCommands(report.NextActions), "codog mcp auth --refresh repo")
+	require.Contains(t, actionCommands(report.NextActions), "codog oauth token refresh work")
+}
+
+func TestBuildShellQuotesRefreshActions(t *testing.T) {
+	configHome := t.TempDir()
+	now := time.Now().UTC()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_, _ = w.Write([]byte(`{"token_endpoint":"` + serverURL(r) + `/token"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	profile := "work"
+	_, err := oauth.SaveProviderProfile(context.Background(), configHome, profile, server.URL, "client-1", []string{"profile"})
+	require.NoError(t, err)
+	_, err = oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "old-access-token",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    now.Add(-1 * time.Hour),
+	})
+	require.NoError(t, err)
+
+	report := Build(mcp.AuthStatusResult{Server: "repo server; rm", Status: "ok"}, configHome, profile, now)
+	require.Contains(t, actionCommands(report.NextActions), "codog mcp auth --refresh 'repo server; rm'")
 	require.Contains(t, actionCommands(report.NextActions), "codog oauth token refresh work")
 }
 
