@@ -4593,6 +4593,8 @@ func risky(value any) {
 	require.Equal(t, "profile", resumedProfile.Kind)
 	require.Equal(t, "list", resumedProfile.Action)
 	require.Len(t, resumedProfile.Profiles, 2)
+	require.Equal(t, 2, resumedProfile.ProfileCount)
+	require.False(t, resumedProfile.ActiveConfigured)
 
 	out, err = runResumedJSON("/profile", "set", "work")
 	require.NoError(t, err)
@@ -4601,6 +4603,10 @@ func risky(value any) {
 	require.Equal(t, "profile", resumedProfileSet.Kind)
 	require.Equal(t, "set", resumedProfileSet.Action)
 	require.Equal(t, "work", resumedProfileSet.ActiveProfile)
+	require.True(t, resumedProfileSet.ActiveConfigured)
+	require.Equal(t, "work", resumedProfileSet.ResolvedProfile)
+	require.Equal(t, "active", resumedProfileSet.ResolvedSource)
+	require.Equal(t, 2, resumedProfileSet.ProfileCount)
 	require.NotNil(t, resumedProfileSet.Profile)
 	require.Equal(t, "work", resumedProfileSet.Profile.Name)
 	require.NotEmpty(t, resumedProfileSet.Path)
@@ -30483,6 +30489,12 @@ func TestProfileCommandSetsShowsAndClearsActiveOAuthProfile(t *testing.T) {
 	require.Contains(t, out, `"action": "set"`)
 	require.Contains(t, out, `"active_profile": "work"`)
 	require.Contains(t, out, `"client_id": "client-work"`)
+	var setProfile profileReport
+	require.NoError(t, json.Unmarshal([]byte(out), &setProfile))
+	require.True(t, setProfile.ActiveConfigured)
+	require.Equal(t, "work", setProfile.ResolvedProfile)
+	require.Equal(t, "active", setProfile.ResolvedSource)
+	require.Equal(t, 2, setProfile.ProfileCount)
 
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
@@ -30494,6 +30506,13 @@ func TestProfileCommandSetsShowsAndClearsActiveOAuthProfile(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, `"active_profile": "work"`)
 	require.Contains(t, out, `"name": "work"`)
+	var showProfile profileReport
+	require.NoError(t, json.Unmarshal([]byte(out), &showProfile))
+	require.True(t, showProfile.ActiveConfigured)
+	require.Equal(t, "work", showProfile.ResolvedProfile)
+	require.Equal(t, "active", showProfile.ResolvedSource)
+	require.Equal(t, 2, showProfile.ProfileCount)
+	require.NotNil(t, showProfile.OAuthStatus)
 	require.True(t, commandAcceptsGlobalOutputFormat("profile"))
 
 	var buffer bytes.Buffer

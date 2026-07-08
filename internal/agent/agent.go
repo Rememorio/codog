@@ -12525,15 +12525,19 @@ type profileRequest struct {
 }
 
 type profileReport struct {
-	Kind          string                 `json:"kind"`
-	Action        string                 `json:"action"`
-	Status        string                 `json:"status"`
-	ActiveProfile string                 `json:"active_profile,omitempty"`
-	Profile       *oauthProviderSummary  `json:"profile,omitempty"`
-	Profiles      []oauthProviderSummary `json:"profiles,omitempty"`
-	OAuthStatus   *oauth.Status          `json:"oauth_status,omitempty"`
-	Path          string                 `json:"path,omitempty"`
-	Message       string                 `json:"message,omitempty"`
+	Kind             string                 `json:"kind"`
+	Action           string                 `json:"action"`
+	Status           string                 `json:"status"`
+	ActiveProfile    string                 `json:"active_profile,omitempty"`
+	ActiveConfigured bool                   `json:"active_configured"`
+	ResolvedProfile  string                 `json:"resolved_profile,omitempty"`
+	ResolvedSource   string                 `json:"resolved_source,omitempty"`
+	ProfileCount     int                    `json:"profile_count"`
+	Profile          *oauthProviderSummary  `json:"profile,omitempty"`
+	Profiles         []oauthProviderSummary `json:"profiles,omitempty"`
+	OAuthStatus      *oauth.Status          `json:"oauth_status,omitempty"`
+	Path             string                 `json:"path,omitempty"`
+	Message          string                 `json:"message,omitempty"`
 }
 
 func (a *App) Profile(args []string) error {
@@ -12542,6 +12546,7 @@ func (a *App) Profile(args []string) error {
 		return err
 	}
 	var selected *oauth.ProviderProfile
+	selectedSource := ""
 	path := ""
 	switch req.Action {
 	case "list":
@@ -12552,14 +12557,17 @@ func (a *App) Profile(args []string) error {
 				return err
 			}
 			selected = &profile
+			selectedSource = "requested"
 		} else if strings.TrimSpace(a.Config.OAuthProfile) != "" {
 			profile, err := oauth.LoadProviderProfile(a.Config.ConfigHome, a.Config.OAuthProfile)
 			if err != nil {
 				return err
 			}
 			selected = &profile
+			selectedSource = "active"
 		} else if profile, err := oauth.ResolveProviderProfile(a.Config.ConfigHome, ""); err == nil {
 			selected = &profile
+			selectedSource = "default_resolution"
 		}
 	case "set":
 		if strings.TrimSpace(req.Name) == "" {
@@ -12570,6 +12578,7 @@ func (a *App) Profile(args []string) error {
 			return err
 		}
 		selected = &profile
+		selectedSource = "active"
 		path, err = a.preferenceConfigPath(req.Target, req.Path)
 		if err != nil {
 			return err
@@ -12590,7 +12599,7 @@ func (a *App) Profile(args []string) error {
 	default:
 		return fmt.Errorf("unknown profile action %q", req.Action)
 	}
-	report, err := a.buildProfileReport(req.Action, path, selected)
+	report, err := a.buildProfileReport(req.Action, path, selected, selectedSource)
 	if err != nil {
 		return err
 	}
@@ -12689,7 +12698,7 @@ func parseProfileArgs(args []string) (profileRequest, error) {
 	return req, nil
 }
 
-func (a *App) buildProfileReport(action string, path string, selected *oauth.ProviderProfile) (profileReport, error) {
+func (a *App) buildProfileReport(action string, path string, selected *oauth.ProviderProfile, selectedSource string) (profileReport, error) {
 	profiles, err := oauth.ListProviderProfiles(a.Config.ConfigHome)
 	if err != nil {
 		return profileReport{}, err
@@ -12707,14 +12716,20 @@ func (a *App) buildProfileReport(action string, path string, selected *oauth.Pro
 		status = &inspected
 	}
 	report := profileReport{
-		Kind:          "profile",
-		Action:        action,
-		Status:        "ok",
-		ActiveProfile: a.Config.OAuthProfile,
-		Profile:       summary,
-		Profiles:      summaries,
-		OAuthStatus:   status,
-		Path:          path,
+		Kind:             "profile",
+		Action:           action,
+		Status:           "ok",
+		ActiveProfile:    a.Config.OAuthProfile,
+		ActiveConfigured: strings.TrimSpace(a.Config.OAuthProfile) != "",
+		ProfileCount:     len(summaries),
+		Profile:          summary,
+		Profiles:         summaries,
+		OAuthStatus:      status,
+		Path:             path,
+	}
+	if summary != nil {
+		report.ResolvedProfile = summary.Name
+		report.ResolvedSource = selectedSource
 	}
 	switch action {
 	case "set":
@@ -12749,8 +12764,12 @@ func renderProfileReport(out io.Writer, report profileReport) {
 	} else {
 		fmt.Fprintln(out, "  Active profile   unset")
 	}
+	fmt.Fprintf(out, "  Active set       %t\n", report.ActiveConfigured)
 	if report.Profile != nil {
 		fmt.Fprintf(out, "  Resolved profile %s\n", report.Profile.Name)
+		if report.ResolvedSource != "" {
+			fmt.Fprintf(out, "  Resolved source  %s\n", report.ResolvedSource)
+		}
 		if report.Profile.Issuer != "" {
 			fmt.Fprintf(out, "  Issuer           %s\n", report.Profile.Issuer)
 		}
@@ -12759,6 +12778,7 @@ func renderProfileReport(out io.Writer, report profileReport) {
 		}
 	}
 	if len(report.Profiles) != 0 {
+		fmt.Fprintf(out, "  Profile count    %d\n", report.ProfileCount)
 		fmt.Fprintln(out, "  Profiles")
 		for _, profile := range report.Profiles {
 			fmt.Fprintf(out, "    %s", profile.Name)
@@ -59337,7 +59357,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"profile",
 			"codog profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--output-format text|json]",
 			"Profile\n\nUsage:\n  codog profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--output-format text|json]\n\nShows or switches the active OAuth provider profile used for stored-token refresh.\n",
-			[]string{"active_profile", "profile", "profiles", "oauth_status", "path"},
+			[]string{"active_profile", "active_configured", "resolved_profile", "resolved_source", "profile_count", "profile", "profiles", "oauth_status", "path"},
 			[]string{"ok", "error"},
 			true,
 		), true
