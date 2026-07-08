@@ -3835,6 +3835,13 @@ func (a *App) Bridge(args []string) error {
 	action := strings.ToLower(strings.TrimSpace(args[0]))
 	switch action {
 	case "serve":
+		cleanArgs, format, err := stripJSONOnlyOutputFormat("bridge", args)
+		if err != nil {
+			return renderCLIError(a.Out, err, requestedOutputFormat(args))
+		}
+		if len(cleanArgs) > 1 {
+			return renderUnexpectedBridgeArguments(a.Out, "serve", cleanArgs[1:], format)
+		}
 	case "status", "show", "state":
 		return a.IDE(append([]string{"status"}, args[1:]...))
 	case "clear", "reset", "disconnect":
@@ -3852,6 +3859,26 @@ func (a *App) Bridge(args []string) error {
 		Executable: executable,
 		MCPServers: a.Config.MCPServers,
 	}.Serve(a.In, a.Out)
+}
+
+func renderUnexpectedBridgeArguments(out io.Writer, action string, extra []string, format string) error {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		action = "unknown"
+	}
+	if strings.TrimSpace(format) == "" {
+		format = "text"
+	}
+	unexpected := append([]string(nil), extra...)
+	return renderActionError(out, actionErrorReport{
+		Kind:      "bridge",
+		Action:    action,
+		Status:    "error",
+		ErrorKind: "unexpected_argument",
+		Argument:  strings.Join(unexpected, " "),
+		Message:   fmt.Sprintf("bridge %s received unexpected argument(s): %s", action, strings.Join(unexpected, " ")),
+		Hint:      "Usage: codog bridge serve.",
+	}, format)
 }
 
 func renderUnsupportedBridgeAction(out io.Writer, action string, format string) error {
