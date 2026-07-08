@@ -6285,6 +6285,10 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		if err != nil {
 			return "", err
 		}
+		fixAll, err := codeintel.FixAllGoFile(t.Workspace, rel, false)
+		if err != nil {
+			return "", err
+		}
 		actions := []map[string]any{}
 		if format.Changed {
 			actions = append(actions, map[string]any{
@@ -6300,6 +6304,14 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 				"kind":  "source.organizeImports",
 				"path":  rel,
 				"edit":  organized,
+			})
+		}
+		if fixAll.Changed {
+			actions = append(actions, map[string]any{
+				"title": "Fix all Go source",
+				"kind":  "source.fixAll",
+				"path":  rel,
+				"edit":  fixAll,
 			})
 		}
 		if len(diagnostics) > 0 {
@@ -6342,6 +6354,13 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 				return "", err
 			}
 			resolved := map[string]any{"title": "Organize Go imports", "kind": "source.organizeImports", "path": rel, "edit": organized}
+			return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "selected": title, "resolved": resolved})), nil
+		case "fix all go source", "fix all", "source.fixall", "gopls.fixall":
+			fixAll, err := codeintel.FixAllGoFile(t.Workspace, rel, false)
+			if err != nil {
+				return "", err
+			}
+			resolved := map[string]any{"title": "Fix all Go source", "kind": "source.fixAll", "path": rel, "edit": fixAll}
 			return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "selected": title, "resolved": resolved})), nil
 		case "review go diagnostics", "diagnostics", "quickfix":
 			diagnostics, err := codeintel.GoDiagnostics(ctx, t.Workspace, []string{rel})
@@ -6524,6 +6543,19 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 				return "", err
 			}
 			return pretty(staticLSPToolReport(action, fallback, map[string]any{"command": command, "path": rel, "organize_imports": result})), nil
+		case "fix_all", "fix-all", "fix all", "source.fixall", "gopls.fixall":
+			if strings.TrimSpace(commandPath) == "" {
+				return "", errors.New("path or first string argument is required for lsp execute_command fix_all")
+			}
+			rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, commandPath)
+			if err != nil {
+				return "", err
+			}
+			result, err := codeintel.FixAllGoFile(t.Workspace, rel, false)
+			if err != nil {
+				return "", err
+			}
+			return pretty(staticLSPToolReport(action, fallback, map[string]any{"command": command, "path": rel, "fix_all": result})), nil
 		case "diagnostics", "go.diagnostics":
 			patterns := []string{}
 			if strings.TrimSpace(commandPath) != "" {

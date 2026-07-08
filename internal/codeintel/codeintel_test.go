@@ -446,6 +446,28 @@ func TestCompletionsAndFormatGoFile(t *testing.T) {
 	data, err = os.ReadFile(filepath.Join(workspace, "imports.go"))
 	require.NoError(t, err)
 	require.Equal(t, organized.Content, string(data))
+
+	fixAllSource := "package main\n\nimport (\n\t\"strings\"\n\t\"fmt\"\n\t\"bytes\"\n)\n\nfunc main(){ fmt.Println(strings.TrimSpace(\" hi \")) }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "fixall.go"), []byte(fixAllSource), 0o644))
+	fixAll, err := FixAllGoFile(workspace, "fixall.go", false)
+	require.NoError(t, err)
+	require.Equal(t, "fix_all", fixAll.Kind)
+	require.Equal(t, "fixall.go", fixAll.Path)
+	require.True(t, fixAll.Changed)
+	require.Contains(t, fixAll.Actions, "source.format")
+	require.Contains(t, fixAll.Actions, "source.organizeImports")
+	require.NotNil(t, fixAll.OrganizeImports)
+	require.Contains(t, fixAll.OrganizeImports.RemovedImports, "bytes")
+	data, err = os.ReadFile(filepath.Join(workspace, "fixall.go"))
+	require.NoError(t, err)
+	require.Equal(t, fixAllSource, string(data))
+
+	fixAll, err = FixAllGoFile(workspace, "fixall.go", true)
+	require.NoError(t, err)
+	require.True(t, fixAll.Changed)
+	data, err = os.ReadFile(filepath.Join(workspace, "fixall.go"))
+	require.NoError(t, err)
+	require.Equal(t, fixAll.Content, string(data))
 }
 
 func TestEditNotebookCell(t *testing.T) {

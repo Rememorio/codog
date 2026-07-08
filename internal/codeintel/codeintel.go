@@ -306,6 +306,17 @@ type OrganizeImportsResult struct {
 	MissingImportInferenceNote string   `json:"missing_import_inference_note,omitempty"`
 }
 
+// FixAllResult reports the preview for static source.fixAll behavior.
+type FixAllResult struct {
+	Kind            string                 `json:"kind"`
+	Path            string                 `json:"path"`
+	Changed         bool                   `json:"changed"`
+	Bytes           int                    `json:"bytes"`
+	Content         string                 `json:"content,omitempty"`
+	Actions         []string               `json:"actions"`
+	OrganizeImports *OrganizeImportsResult `json:"organize_imports,omitempty"`
+}
+
 // MapEntry describes one file or directory in a workspace code map.
 type MapEntry struct {
 	Path  string `json:"path"`
@@ -2606,6 +2617,30 @@ func OrganizeGoImports(workspace string, requested string, write bool) (Organize
 		DuplicateImports:           duplicates,
 		MissingImportInference:     false,
 		MissingImportInferenceNote: "static organizer removes unused imports and sorts existing imports; it does not infer missing imports",
+	}, nil
+}
+
+// FixAllGoFile previews or applies static source.fixAll behavior for a Go file.
+func FixAllGoFile(workspace string, requested string, write bool) (FixAllResult, error) {
+	organized, err := OrganizeGoImports(workspace, requested, write)
+	if err != nil {
+		return FixAllResult{}, err
+	}
+	actions := []string{}
+	if organized.Changed {
+		actions = append(actions, "source.format")
+	}
+	if organized.ImportCount > 0 && (organized.Changed || len(organized.RemovedImports) > 0 || len(organized.DuplicateImports) > 0) {
+		actions = append(actions, "source.organizeImports")
+	}
+	return FixAllResult{
+		Kind:            "fix_all",
+		Path:            organized.Path,
+		Changed:         organized.Changed,
+		Bytes:           organized.Bytes,
+		Content:         organized.Content,
+		Actions:         actions,
+		OrganizeImports: &organized,
 	}, nil
 }
 

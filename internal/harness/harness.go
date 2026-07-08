@@ -1694,8 +1694,8 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 	},
 	"lsp_static_roundtrip": {
 		Category:    "code-intelligence",
-		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, implementation lookup, highlights, folding ranges, selection ranges, monikers, linked editing ranges, document links, document colors, inlay hints, inline values, signature help, code lenses, semantic tokens, rename previews, code actions, organize imports, call hierarchy, type hierarchy, references, hover, completions, completion item resolve, execute command, diagnostics, and formatting.",
-		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Implementation lookup", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Document links", "Document colors", "Inlay hints", "Inline values", "Signature help", "Code lenses", "Semantic tokens", "Rename previews", "Code actions", "Organize imports", "Call hierarchy", "Type hierarchy", "Completion item resolve", "Execute command", "Diagnostics"},
+		Description: "Queries static Go code intelligence through the LSP tool for document symbols, workspace symbols, workspace symbol resolve, definitions, declarations, type definitions, implementation lookup, highlights, folding ranges, selection ranges, monikers, linked editing ranges, document links, document colors, inlay hints, inline values, signature help, code lenses, semantic tokens, rename previews, code actions, organize imports, source fix-all, call hierarchy, type hierarchy, references, hover, completions, completion item resolve, execute command, diagnostics, and formatting.",
+		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge", "Workspace symbols", "Workspace symbol resolve", "Declarations", "Type definitions", "Implementation lookup", "Document highlights", "Folding ranges", "Selection ranges", "Monikers", "Linked editing ranges", "Document links", "Document colors", "Inlay hints", "Inline values", "Signature help", "Code lenses", "Semantic tokens", "Rename previews", "Code actions", "Organize imports", "Source fix all", "Call hierarchy", "Type hierarchy", "Completion item resolve", "Execute command", "Diagnostics"},
 	},
 	"lsp_cli_metadata_roundtrip": {
 		Category:    "code-intelligence",
@@ -8409,7 +8409,7 @@ func lspStaticScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			for _, expected := range []string{`"action": "code-action"`, `"source": "static"`, `"title": "Format Go file"`, `"kind": "source.format"`, `"total": 1`} {
+			for _, expected := range []string{`"action": "code-action"`, `"source": "static"`, `"title": "Format Go file"`, `"kind": "source.format"`, `"title": "Fix all Go source"`, `"kind": "source.fixAll"`, `"total": 2`} {
 				if !strings.Contains(codeActionOut, expected) {
 					return localScenarioResult{}, fmt.Errorf("lsp code action output missing %s", expected)
 				}
@@ -8445,6 +8445,16 @@ func lspStaticScenario() scenario {
 				}
 			}
 
+			fixAllResolveOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"code_action_resolve","path":"pkg/imports.go","query":"source.fixAll"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "code-action-resolve"`, `"source": "static"`, `"selected": "source.fixAll"`, `"title": "Fix all Go source"`, `"kind": "fix_all"`, `"source.organizeImports"`} {
+				if !strings.Contains(fixAllResolveOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp fix all resolve output missing %s", expected)
+				}
+			}
+
 			inlineValueOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"inline_value","path":"pkg/inline.go","limit":5}`))
 			if err != nil {
 				return localScenarioResult{}, err
@@ -8472,6 +8482,16 @@ func lspStaticScenario() scenario {
 			for _, expected := range []string{`"action": "execute-command"`, `"source": "static"`, `"command": "source.organizeimports"`, `"path": "pkg/imports.go"`, `"organize_imports": {`, `"removed_imports": [`} {
 				if !strings.Contains(organizeCommandOut, expected) {
 					return localScenarioResult{}, fmt.Errorf("lsp organize imports execute command output missing %s", expected)
+				}
+			}
+
+			fixAllCommandOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"execute_command","query":"source.fixAll","path":"pkg/imports.go"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "execute-command"`, `"source": "static"`, `"command": "source.fixall"`, `"path": "pkg/imports.go"`, `"fix_all": {`, `"kind": "fix_all"`, `"source.organizeImports"`} {
+				if !strings.Contains(fixAllCommandOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp fix all execute command output missing %s", expected)
 				}
 			}
 
@@ -8522,16 +8542,16 @@ func lspStaticScenario() scenario {
 				return localScenarioResult{}, fmt.Errorf("lsp format unexpectedly modified file")
 			}
 
-			toolUses := make([]string, 50)
+			toolUses := make([]string, 52)
 			for i := range toolUses {
 				toolUses[i] = "lsp"
 			}
 			return localScenarioResult{
-				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, documentColorOut, colorPresentationOut, inlayHintOut, inlayHintResolveOut, signatureHelpOut, codeLensOut, codeLensResolveOut, semanticTokensOut, semanticTokensRangeOut, semanticTokensDeltaOut, prepareRenameOut, renameOut, callHierarchyOut, incomingCallsOut, outgoingCallsOut, typeHierarchyOut, typeHierarchySupertypesOut, typeHierarchySubtypesOut, implementationOut, referencesOut, hoverOut, completionOut, completionResolveOut, rangeFormatOut, onTypeFormatOut, willSaveOut, codeActionOut, organizeActionOut, codeActionResolveOut, organizeResolveOut, inlineValueOut, executeCommandOut, organizeCommandOut, documentDiagnosticOut, workspaceDiagnosticOut, diagnosticsOut, formatOut}, "\n"),
+				Output:       strings.Join([]string{symbolsOut, workspaceSymbolsOut, workspaceSymbolResolveOut, definitionOut, declarationOut, typeDefinitionOut, documentHighlightOut, foldingRangeOut, selectionRangeOut, monikerOut, linkedEditingOut, documentLinkOut, documentLinkResolveOut, documentColorOut, colorPresentationOut, inlayHintOut, inlayHintResolveOut, signatureHelpOut, codeLensOut, codeLensResolveOut, semanticTokensOut, semanticTokensRangeOut, semanticTokensDeltaOut, prepareRenameOut, renameOut, callHierarchyOut, incomingCallsOut, outgoingCallsOut, typeHierarchyOut, typeHierarchySupertypesOut, typeHierarchySubtypesOut, implementationOut, referencesOut, hoverOut, completionOut, completionResolveOut, rangeFormatOut, onTypeFormatOut, willSaveOut, codeActionOut, organizeActionOut, codeActionResolveOut, organizeResolveOut, fixAllResolveOut, inlineValueOut, executeCommandOut, organizeCommandOut, fixAllCommandOut, documentDiagnosticOut, workspaceDiagnosticOut, diagnosticsOut, formatOut}, "\n"),
 				FinalMessage: "lsp static harness ok",
-				ToolCalls:    50,
+				ToolCalls:    52,
 				ToolUses:     toolUses,
-				RequestCount: 50,
+				RequestCount: 52,
 			}, nil
 		},
 	}

@@ -365,8 +365,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	lspStatic := findScenario(t, report, "lsp_static_roundtrip")
 	require.True(t, lspStatic.OK)
 	require.Equal(t, "code-intelligence", lspStatic.Category)
-	require.Equal(t, 50, lspStatic.ToolCalls)
-	expectedLSPToolUses := make([]string, 50)
+	require.Equal(t, 52, lspStatic.ToolCalls)
+	expectedLSPToolUses := make([]string, 52)
 	for i := range expectedLSPToolUses {
 		expectedLSPToolUses[i] = "lsp"
 	}
@@ -412,6 +412,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, lspStatic.Output, `"action": "code-action-resolve"`)
 	require.Contains(t, lspStatic.Output, `"kind": "source.organizeImports"`)
 	require.Contains(t, lspStatic.Output, `"organize_imports": {`)
+	require.Contains(t, lspStatic.Output, `"kind": "source.fixAll"`)
+	require.Contains(t, lspStatic.Output, `"fix_all": {`)
 	require.Contains(t, lspStatic.Output, `"action": "inline-value"`)
 	require.Contains(t, lspStatic.Output, `"action": "execute-command"`)
 	require.Contains(t, lspStatic.Output, `"action": "document-diagnostic"`)
