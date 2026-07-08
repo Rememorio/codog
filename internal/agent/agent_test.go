@@ -6645,6 +6645,18 @@ func risky(value any) {
 	require.Equal(t, 0, resumedExtraUsage.VisitCount)
 	require.Empty(t, openedURL)
 
+	out, err = runResumedJSON("/extra-usage", "status", "--admin")
+	require.NoError(t, err)
+	var resumedExtraUsageStatus extraUsageReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedExtraUsageStatus))
+	require.Equal(t, "extra_usage", resumedExtraUsageStatus.Kind)
+	require.Equal(t, "status", resumedExtraUsageStatus.Action)
+	require.Equal(t, "admin", resumedExtraUsageStatus.Mode)
+	require.Equal(t, extraUsageAdminURL, resumedExtraUsageStatus.URL)
+	require.False(t, resumedExtraUsageStatus.Opened)
+	require.Equal(t, 0, resumedExtraUsageStatus.VisitCount)
+	require.Empty(t, openedURL)
+
 	out, err = runResumedJSON("/extra-usage")
 	require.NoError(t, err)
 	var resumedExtraUsageDefault extraUsageReport
@@ -6676,6 +6688,17 @@ func risky(value any) {
 	require.Equal(t, 0, resumedSlack.InstallCount)
 	require.Empty(t, openedURL)
 
+	out, err = runResumedJSON("/install-slack-app", "status")
+	require.NoError(t, err)
+	var resumedSlackStatus installSlackAppReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSlackStatus))
+	require.Equal(t, "install_slack_app", resumedSlackStatus.Kind)
+	require.Equal(t, "status", resumedSlackStatus.Action)
+	require.Equal(t, slackAppURL, resumedSlackStatus.URL)
+	require.False(t, resumedSlackStatus.Opened)
+	require.Equal(t, 0, resumedSlackStatus.InstallCount)
+	require.Empty(t, openedURL)
+
 	out, err = runResumedJSON("/install-slack-app")
 	require.NoError(t, err)
 	var resumedSlackDefault installSlackAppReport
@@ -6704,6 +6727,17 @@ func risky(value any) {
 	require.Equal(t, stickerOrderURL, resumedStickers.URL)
 	require.False(t, resumedStickers.Opened)
 	require.Equal(t, 0, resumedStickers.OrderCount)
+	require.Empty(t, openedURL)
+
+	out, err = runResumedJSON("/stickers", "status")
+	require.NoError(t, err)
+	var resumedStickersStatus stickersReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedStickersStatus))
+	require.Equal(t, "stickers", resumedStickersStatus.Kind)
+	require.Equal(t, "status", resumedStickersStatus.Action)
+	require.Equal(t, stickerOrderURL, resumedStickersStatus.URL)
+	require.False(t, resumedStickersStatus.Opened)
+	require.Equal(t, 0, resumedStickersStatus.OrderCount)
 	require.Empty(t, openedURL)
 
 	out, err = runResumedJSON("/stickers")
@@ -22795,6 +22829,21 @@ func TestInstallSlackAppCommandAndSlash(t *testing.T) {
 	out.Reset()
 	openedURL = ""
 
+	require.NoError(t, app.InstallSlackApp([]string{"status", "--json"}))
+	var slackStatus installSlackAppReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &slackStatus))
+	require.Equal(t, "install_slack_app", slackStatus.Kind)
+	require.Equal(t, "status", slackStatus.Action)
+	require.Equal(t, slackAppURL, slackStatus.URL)
+	require.False(t, slackStatus.Opened)
+	require.Equal(t, 1, slackStatus.InstallCount)
+	require.Equal(t, 1, app.Config.Future.SlackAppInstallCount)
+	require.Empty(t, openedURL)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"slack_app_install_count": 1`)
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/install-slack-app --no-open", &session.Session{ID: "session"}))
 	require.Empty(t, openedURL)
 	require.Contains(t, out.String(), "Slack App Setup")
@@ -22833,6 +22882,21 @@ func TestStickersCommandAndSlash(t *testing.T) {
 	require.NotContains(t, string(data), `"future"`)
 	out.Reset()
 	openedURL = ""
+
+	require.NoError(t, app.Stickers([]string{"status", "--json"}))
+	var stickersStatus stickersReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &stickersStatus))
+	require.Equal(t, "stickers", stickersStatus.Kind)
+	require.Equal(t, "status", stickersStatus.Action)
+	require.Equal(t, stickerOrderURL, stickersStatus.URL)
+	require.False(t, stickersStatus.Opened)
+	require.Equal(t, 1, stickersStatus.OrderCount)
+	require.Equal(t, 1, app.Config.Future.StickerOrderCount)
+	require.Empty(t, openedURL)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"sticker_order_count": 1`)
+	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/stickers --no-open", &session.Session{ID: "session"}))
 	require.Empty(t, openedURL)
@@ -22947,6 +23011,22 @@ func TestExtraUsageCommandAndSlash(t *testing.T) {
 	require.NotContains(t, string(data), `"future"`)
 	out.Reset()
 	openedURL = ""
+
+	require.NoError(t, app.ExtraUsage([]string{"status", "--admin", "--json"}))
+	var extraUsageStatus extraUsageReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &extraUsageStatus))
+	require.Equal(t, "extra_usage", extraUsageStatus.Kind)
+	require.Equal(t, "status", extraUsageStatus.Action)
+	require.Equal(t, "admin", extraUsageStatus.Mode)
+	require.Equal(t, extraUsageAdminURL, extraUsageStatus.URL)
+	require.False(t, extraUsageStatus.Opened)
+	require.Equal(t, 1, extraUsageStatus.VisitCount)
+	require.Equal(t, 1, app.Config.Future.ExtraUsageVisitCount)
+	require.Empty(t, openedURL)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"extra_usage_visit_count": 1`)
+	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/extra-usage --personal --no-open", &session.Session{ID: "session"}))
 	require.Empty(t, openedURL)

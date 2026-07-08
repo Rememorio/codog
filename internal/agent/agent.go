@@ -22054,6 +22054,7 @@ type installGitHubActionsCheck struct {
 }
 
 type installSlackAppRequest struct {
+	Action string
 	Format string
 	Target string
 	Path   string
@@ -22073,6 +22074,7 @@ type installSlackAppReport struct {
 }
 
 type stickersRequest struct {
+	Action string
 	Format string
 	Target string
 	Path   string
@@ -22092,6 +22094,7 @@ type stickersReport struct {
 }
 
 type extraUsageRequest struct {
+	Action string
 	Format string
 	Target string
 	Path   string
@@ -23047,6 +23050,25 @@ func (a *App) InstallSlackApp(args []string) error {
 	if err != nil {
 		return err
 	}
+	if req.Action == "status" {
+		report := installSlackAppReport{
+			Kind:         "install_slack_app",
+			Action:       "status",
+			Status:       "ok",
+			URL:          slackAppURL,
+			Opened:       false,
+			InstallCount: a.Config.Future.SlackAppInstallCount,
+			Path:         path,
+			Message:      "Slack app installation status loaded.",
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderInstallSlackAppReport(a.Out, report)
+		return nil
+	}
 	count := a.Config.Future.SlackAppInstallCount + 1
 	if err := setCompatibilityValue(path, "compatibility.slack_app_install_count", legacySlackAppInstallCountKey, count); err != nil {
 		return err
@@ -23084,7 +23106,7 @@ func (a *App) InstallSlackApp(args []string) error {
 }
 
 func parseInstallSlackAppArgs(args []string) (installSlackAppRequest, error) {
-	req := installSlackAppRequest{Format: "text", Target: "user", Open: true}
+	req := installSlackAppRequest{Action: "open", Format: "text", Target: "user", Open: true}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -23117,6 +23139,9 @@ func parseInstallSlackAppArgs(args []string) (installSlackAppRequest, error) {
 		case arg == "--open":
 			req.Open = true
 		case arg == "--no-open":
+			req.Open = false
+		case arg == "status" || arg == "list" || arg == "ls":
+			req.Action = "status"
 			req.Open = false
 		default:
 			return req, fmt.Errorf("unknown install-slack-app option %q", arg)
@@ -23153,6 +23178,25 @@ func (a *App) Stickers(args []string) error {
 	path, err := a.preferenceConfigPath(req.Target, req.Path)
 	if err != nil {
 		return err
+	}
+	if req.Action == "status" {
+		report := stickersReport{
+			Kind:       "stickers",
+			Action:     "status",
+			Status:     "ok",
+			URL:        stickerOrderURL,
+			Opened:     false,
+			OrderCount: a.Config.Future.StickerOrderCount,
+			Path:       path,
+			Message:    "Sticker order status loaded.",
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderStickersReport(a.Out, report)
+		return nil
 	}
 	count := a.Config.Future.StickerOrderCount + 1
 	if err := setCompatibilityValue(path, "compatibility.sticker_order_count", legacyStickerOrderCountKey, count); err != nil {
@@ -23191,7 +23235,7 @@ func (a *App) Stickers(args []string) error {
 }
 
 func parseStickersArgs(args []string) (stickersRequest, error) {
-	req := stickersRequest{Format: "text", Target: "user", Open: true}
+	req := stickersRequest{Action: "open", Format: "text", Target: "user", Open: true}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -23224,6 +23268,9 @@ func parseStickersArgs(args []string) (stickersRequest, error) {
 		case arg == "--open":
 			req.Open = true
 		case arg == "--no-open":
+			req.Open = false
+		case arg == "status" || arg == "list" || arg == "ls":
+			req.Action = "status"
 			req.Open = false
 		default:
 			return req, fmt.Errorf("unknown stickers option %q", arg)
@@ -23260,6 +23307,26 @@ func (a *App) ExtraUsage(args []string) error {
 	path, err := a.preferenceConfigPath(req.Target, req.Path)
 	if err != nil {
 		return err
+	}
+	if req.Action == "status" {
+		report := extraUsageReport{
+			Kind:       "extra_usage",
+			Action:     "status",
+			Status:     "ok",
+			Mode:       req.Mode,
+			URL:        extraUsageURL(req.Mode),
+			Opened:     false,
+			VisitCount: a.Config.Future.ExtraUsageVisitCount,
+			Path:       path,
+			Message:    "Extra usage status loaded.",
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderExtraUsageReport(a.Out, report)
+		return nil
 	}
 	count := a.Config.Future.ExtraUsageVisitCount + 1
 	if err := setCompatibilityValue(path, "compatibility.extra_usage_visit_count", legacyExtraUsageVisitCountKey, count); err != nil {
@@ -23301,8 +23368,8 @@ func (a *App) ExtraUsage(args []string) error {
 }
 
 func parseExtraUsageArgs(args []string) (extraUsageRequest, error) {
-	req := extraUsageRequest{Format: "text", Target: "user", Open: true, Mode: "personal"}
-	const usage = "codog extra-usage [personal|admin] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
+	req := extraUsageRequest{Action: "open", Format: "text", Target: "user", Open: true, Mode: "personal"}
+	const usage = "codog extra-usage [status|list|personal|admin] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -23340,6 +23407,9 @@ func parseExtraUsageArgs(args []string) (extraUsageRequest, error) {
 			req.Mode = "admin"
 		case arg == "--personal":
 			req.Mode = "personal"
+		case arg == "status" || arg == "list" || arg == "ls":
+			req.Action = "status"
+			req.Open = false
 		case arg == "admin" || arg == "team" || arg == "enterprise" || arg == "org" || arg == "organization":
 			req.Mode = "admin"
 		case arg == "personal" || arg == "user" || arg == "individual":
@@ -32757,7 +32827,7 @@ func (a *App) runResumedExtraUsageSlash(args []string, format string) error {
 	}
 	report := extraUsageReport{
 		Kind:       "extra_usage",
-		Action:     "show",
+		Action:     resumedStatusAction(req.Action),
 		Status:     "ok",
 		Mode:       req.Mode,
 		URL:        extraUsageURL(req.Mode),
@@ -32786,7 +32856,7 @@ func (a *App) runResumedInstallSlackAppSlash(args []string, format string) error
 	}
 	report := installSlackAppReport{
 		Kind:         "install_slack_app",
-		Action:       "show",
+		Action:       resumedStatusAction(req.Action),
 		Status:       "ok",
 		URL:          slackAppURL,
 		Opened:       false,
@@ -32814,7 +32884,7 @@ func (a *App) runResumedStickersSlash(args []string, format string) error {
 	}
 	report := stickersReport{
 		Kind:       "stickers",
-		Action:     "show",
+		Action:     resumedStatusAction(req.Action),
 		Status:     "ok",
 		URL:        stickerOrderURL,
 		Opened:     false,
@@ -32829,6 +32899,13 @@ func (a *App) runResumedStickersSlash(args []string, format string) error {
 	}
 	renderStickersReport(a.Out, report)
 	return nil
+}
+
+func resumedStatusAction(action string) string {
+	if strings.EqualFold(strings.TrimSpace(action), "status") {
+		return "status"
+	}
+	return "show"
 }
 
 func (a *App) runResumedPassesSlash(args []string, format string) error {
@@ -59418,8 +59495,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"extra-usage",
 			"extra-usage",
-			"codog extra-usage [--admin|--personal] [--no-open] [--output-format text|json]",
-			"Extra Usage\n\nUsage:\n  codog extra-usage [--admin|--personal] [--no-open] [--output-format text|json]\n\nOpens or reports the Claude extra usage settings URL and records a local visit count in Codog config.\n",
+			"codog extra-usage [status|list|personal|admin] [--admin|--personal] [--no-open] [--output-format text|json]",
+			"Extra Usage\n\nUsage:\n  codog extra-usage [status|list|personal|admin] [--admin|--personal] [--no-open] [--output-format text|json]\n\nOpens or reports the Claude extra usage settings URL and records a local visit count in Codog config. `status` and `list` read the current URL and visit count without mutating config.\n",
 			[]string{"mode", "url", "opened", "visit_count", "path"},
 			[]string{"ok", "open_failed", "error"},
 			true,
@@ -59428,16 +59505,36 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec, _ := commandHelpSpecFor("extra-usage")
 		spec.Topic = "extra-usage-core"
 		spec.Command = "extra-usage-core"
-		spec.Usage = "codog extra-usage-core [--admin|--personal] [--no-open] [--output-format text|json]"
-		spec.Text = "Extra Usage Core\n\nUsage:\n  codog extra-usage-core [--admin|--personal] [--no-open] [--output-format text|json]\n\nCompatibility entrypoint for `codog extra-usage`; opens or reports the Claude extra usage settings URL and records a local visit count.\n"
+		spec.Usage = "codog extra-usage-core [status|list|--admin|--personal] [--no-open] [--output-format text|json]"
+		spec.Text = "Extra Usage Core\n\nUsage:\n  codog extra-usage-core [status|list|--admin|--personal] [--no-open] [--output-format text|json]\n\nCompatibility entrypoint for `codog extra-usage`; opens or reports the Claude extra usage settings URL. Use `status` for a non-mutating read.\n"
 		return spec, true
 	case "extra-usage-noninteractive":
 		spec, _ := commandHelpSpecFor("extra-usage")
 		spec.Topic = "extra-usage-noninteractive"
 		spec.Command = "extra-usage-noninteractive"
-		spec.Usage = "codog extra-usage-noninteractive [--admin|--personal] [--output-format text|json]"
-		spec.Text = "Extra Usage Noninteractive\n\nUsage:\n  codog extra-usage-noninteractive [--admin|--personal] [--output-format text|json]\n\nCompatibility entrypoint for `codog extra-usage --no-open`; reports the Claude extra usage settings URL without launching a browser and records a local visit count.\n"
+		spec.Usage = "codog extra-usage-noninteractive [status|list|--admin|--personal] [--output-format text|json]"
+		spec.Text = "Extra Usage Noninteractive\n\nUsage:\n  codog extra-usage-noninteractive [status|list|--admin|--personal] [--output-format text|json]\n\nCompatibility entrypoint for `codog extra-usage --no-open`; reports the Claude extra usage settings URL without launching a browser. Use `status` for a non-mutating read.\n"
 		return spec, true
+	case "install-slack-app":
+		return localCommandHelpSpec(
+			"install-slack-app",
+			"install-slack-app",
+			"codog install-slack-app [status|list] [--no-open] [--output-format text|json]",
+			"Install Slack App\n\nUsage:\n  codog install-slack-app [status|list] [--no-open] [--output-format text|json]\n\nOpens or reports the Slack Marketplace URL for the Claude app and records a local install-page visit count. `status` and `list` read the URL and count without mutating config.\n",
+			[]string{"url", "opened", "install_count", "path"},
+			[]string{"ok", "open_failed", "error"},
+			true,
+		), true
+	case "stickers":
+		return localCommandHelpSpec(
+			"stickers",
+			"stickers",
+			"codog stickers [status|list] [--no-open] [--output-format text|json]",
+			"Stickers\n\nUsage:\n  codog stickers [status|list] [--no-open] [--output-format text|json]\n\nOpens or reports the Claude Code sticker order URL and records a local order-page visit count. `status` and `list` read the URL and count without mutating config.\n",
+			[]string{"url", "opened", "order_count", "path"},
+			[]string{"ok", "open_failed", "error"},
+			true,
+		), true
 	case "passes":
 		return localCommandHelpSpec(
 			"passes",
@@ -60068,8 +60165,8 @@ Usage:
   %s [flags] pr-comments [PR|URL|NUMBER] [--repo OWNER/REPO] [--json|--output-format text|json]
   %s [flags] install-github-app [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]
   %s [flags] setupGitHubActions [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]
-  %s [flags] install-slack-app [--no-open] [--json|--output-format text|json]
-  %s [flags] stickers [--no-open] [--json|--output-format text|json]
+  %s [flags] install-slack-app [status|list] [--no-open] [--json|--output-format text|json]
+  %s [flags] stickers [status|list] [--no-open] [--json|--output-format text|json]
   %s [flags] passes [status|list|show|open|set-url URL|clear-url] [--no-open] [--json|--output-format text|json]
   %s [flags] issue [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] focus [PATH...] [--json|--output-format text|json]
@@ -60100,9 +60197,9 @@ Usage:
   %s [flags] perf-issue [--limit N] [--token-threshold N] [--tool-threshold N] [--write|--output PATH] [--json|--output-format text|json]
   %s [flags] insights [--limit N] [--json|--output-format text|json]
   %s [flags] think-back|thinkback-play [--year YYYY] [--limit N] [--output PATH] [--json|--output-format text|json]
-  %s [flags] extra-usage [--admin|--personal] [--no-open] [--json|--output-format text|json]
-  %s [flags] extra-usage-core [--admin|--personal] [--no-open] [--json|--output-format text|json]
-  %s [flags] extra-usage-noninteractive [--admin|--personal] [--json|--output-format text|json]
+  %s [flags] extra-usage [status|list|--admin|--personal] [--no-open] [--json|--output-format text|json]
+  %s [flags] extra-usage-core [status|list|--admin|--personal] [--no-open] [--json|--output-format text|json]
+  %s [flags] extra-usage-noninteractive [status|list|--admin|--personal] [--json|--output-format text|json]
   %s [flags] compact [--session ID|--resume ID|latest] [--keep N] [--json|--output-format text|json]
   %s [flags] undo [--json|--output-format text|json]
   %s [flags] rate-limit [status|set|reset] [--max-retries N] [--initial-backoff-ms N] [--max-backoff-ms N] [--target user|project|local] [--json|--output-format text|json]
