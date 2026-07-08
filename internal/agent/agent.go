@@ -6905,7 +6905,7 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		a.runNotificationHook(context.Background(), "background_task_started", "Background task started", fmt.Sprintf("Background task %s started: %s", task.ID, task.Command))
 		return nil
 	}
-	if len(args) < 2 && args[0] != "board" && args[0] != "lane-board" && args[0] != "lanes" && args[0] != "prune" && args[0] != "supervise" {
+	if len(args) < 2 && backgroundActionRequiresID(args[0]) {
 		return errors.New("usage: " + backgroundUsage)
 	}
 	switch args[0] {
@@ -7120,7 +7120,16 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown background command %q", args[0])
+		return unexpectedExtraArgsError{Command: "background", Args: []string{args[0]}, Usage: backgroundUsage}
+	}
+}
+
+func backgroundActionRequiresID(action string) bool {
+	switch normalizeBackgroundAction(action) {
+	case "heartbeat", "status", "stop", "restart", "logs", "watch":
+		return true
+	default:
+		return false
 	}
 }
 
