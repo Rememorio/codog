@@ -25744,6 +25744,15 @@ func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
 	require.Equal(t, "codog bridge serve", bridgeStatus.Bridge.Command)
 	out.Reset()
 
+	require.ErrorContains(t, app.Bridge([]string{"bogus", "--json"}), "unsupported_bridge_action")
+	var bridgeError actionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &bridgeError))
+	require.Equal(t, "bridge", bridgeError.Kind)
+	require.Equal(t, "bogus", bridgeError.Action)
+	require.Equal(t, "unsupported_bridge_action", bridgeError.ErrorKind)
+	require.Contains(t, bridgeError.Hint, "codog bridge status --json")
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/bridge status --json", &session.Session{ID: "session"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &bridgeStatus))
 	require.Equal(t, "ide", bridgeStatus.Kind)

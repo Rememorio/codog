@@ -3840,7 +3840,7 @@ func (a *App) Bridge(args []string) error {
 	case "clear", "reset", "disconnect":
 		return a.IDE(append([]string{"clear"}, args[1:]...))
 	default:
-		return fmt.Errorf("unknown bridge action %q", args[0])
+		return renderUnsupportedBridgeAction(a.Out, args[0], requestedOutputFormat(args))
 	}
 	executable, _ := os.Executable()
 	return bridge.Server{
@@ -3852,6 +3852,24 @@ func (a *App) Bridge(args []string) error {
 		Executable: executable,
 		MCPServers: a.Config.MCPServers,
 	}.Serve(a.In, a.Out)
+}
+
+func renderUnsupportedBridgeAction(out io.Writer, action string, format string) error {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		action = "unknown"
+	}
+	if strings.TrimSpace(format) == "" {
+		format = "text"
+	}
+	return renderActionError(out, actionErrorReport{
+		Kind:      "bridge",
+		Action:    action,
+		Status:    "error",
+		ErrorKind: "unsupported_bridge_action",
+		Message:   fmt.Sprintf("unsupported bridge action %q", action),
+		Hint:      "Supported bridge actions are serve, status, and clear. Use `codog bridge status --json` for bridge state or `codog bridge serve` for the stdio bridge.",
+	}, format)
 }
 
 func bridgeStatusArgs(args []string) []string {
