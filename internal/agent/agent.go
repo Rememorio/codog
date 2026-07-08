@@ -5928,6 +5928,8 @@ func (a *App) Background(args []string) error {
 	return a.BackgroundWithOverrides(args, config.FlagOverrides{})
 }
 
+const backgroundUsage = "codog background list [session-id] | run [--restart[=on-failure|always]] [--restart-limit N] [--restart-delay SECONDS] COMMAND | board [stalled-after-seconds] | heartbeat ID [--status STATUS] [--transport-alive true|false] [--observed-at RFC3339] | status ID | stop ID | restart ID | logs ID [bytes|--bytes N] | watch ID [offset|--offset N] [--max-events N] | prune [days] [keep] | supervise [--json|--output-format text|json]"
+
 type backgroundCommandReport struct {
 	Kind      string                      `json:"kind"`
 	Action    string                      `json:"action"`
@@ -6837,6 +6839,9 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 	}
 	store := background.NewStore(a.Config.ConfigHome)
 	if len(args) == 0 || args[0] == "list" {
+		if len(args) > 2 {
+			return unexpectedExtraArgsError{Command: "background list", Args: append([]string(nil), args[2:]...), Usage: backgroundUsage}
+		}
 		tasks, err := store.List()
 		if err != nil {
 			return err
@@ -6901,7 +6906,7 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		return nil
 	}
 	if len(args) < 2 && args[0] != "board" && args[0] != "lane-board" && args[0] != "lanes" && args[0] != "prune" && args[0] != "supervise" {
-		return errors.New("usage: codog background list [session-id] | run [--restart[=on-failure|always]] [--restart-limit N] [--restart-delay SECONDS] COMMAND | board [stalled-after-seconds] | heartbeat ID [--status STATUS] [--transport-alive true|false] [--observed-at RFC3339] | status ID | stop ID | restart ID | logs ID [bytes|--bytes N] | watch ID [offset|--offset N] [--max-events N] | prune [days] [keep] | supervise [--json|--output-format text|json]")
+		return errors.New("usage: " + backgroundUsage)
 	}
 	switch args[0] {
 	case "board", "lane-board", "lanes":
