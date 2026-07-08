@@ -6736,6 +6736,19 @@ func risky(value any) {
 	require.Equal(t, 0, resumedPasses.VisitCount)
 	require.Empty(t, openedURL)
 
+	out, err = runResumedJSON("/passes", "status")
+	require.NoError(t, err)
+	var resumedPassesStatus passesReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPassesStatus))
+	require.Equal(t, "passes", resumedPassesStatus.Kind)
+	require.Equal(t, "status", resumedPassesStatus.Action)
+	require.Equal(t, guestPassDocsURL, resumedPassesStatus.URL)
+	require.Equal(t, "docs", resumedPassesStatus.URLSource)
+	require.False(t, resumedPassesStatus.ReferralConfigured)
+	require.False(t, resumedPassesStatus.Opened)
+	require.Equal(t, 0, resumedPassesStatus.VisitCount)
+	require.Empty(t, openedURL)
+
 	out, err = runResumedJSON("/passes")
 	require.NoError(t, err)
 	var resumedPassesDefault passesReport
@@ -22858,9 +22871,28 @@ func TestPassesCommandAndSlash(t *testing.T) {
 	require.NotContains(t, string(data), `"future"`)
 	out.Reset()
 
+	require.NoError(t, app.Passes([]string{"status", "--json"}))
+	var status passesReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &status))
+	require.Equal(t, "passes", status.Kind)
+	require.Equal(t, "status", status.Action)
+	require.Equal(t, referralURL, status.URL)
+	require.Equal(t, "referral", status.URLSource)
+	require.True(t, status.ReferralConfigured)
+	require.Equal(t, referralURL, status.ReferralURL)
+	require.Equal(t, 0, status.VisitCount)
+	require.False(t, status.Opened)
+	require.Equal(t, 0, app.Config.Future.GuestPassVisitCount)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"guest_pass_visit_count"`)
+	out.Reset()
+
 	require.NoError(t, app.Passes([]string{"--json"}))
 	require.Equal(t, referralURL, openedURL)
 	require.Contains(t, out.String(), `"opened": true`)
+	require.Contains(t, out.String(), `"url_source": "referral"`)
+	require.Contains(t, out.String(), `"referral_configured": true`)
 	require.Contains(t, out.String(), `"visit_count": 1`)
 	require.Equal(t, 1, app.Config.Future.GuestPassVisitCount)
 	data, err = os.ReadFile(configPath)

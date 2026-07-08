@@ -22123,17 +22123,19 @@ type passesRequest struct {
 }
 
 type passesReport struct {
-	Kind        string `json:"kind"`
-	Action      string `json:"action"`
-	Status      string `json:"status"`
-	URL         string `json:"url"`
-	DocsURL     string `json:"docs_url"`
-	ReferralURL string `json:"referral_url,omitempty"`
-	Opened      bool   `json:"opened"`
-	Opener      string `json:"opener,omitempty"`
-	VisitCount  int    `json:"visit_count"`
-	Path        string `json:"path,omitempty"`
-	Message     string `json:"message,omitempty"`
+	Kind               string `json:"kind"`
+	Action             string `json:"action"`
+	Status             string `json:"status"`
+	URL                string `json:"url"`
+	URLSource          string `json:"url_source"`
+	DocsURL            string `json:"docs_url"`
+	ReferralURL        string `json:"referral_url,omitempty"`
+	ReferralConfigured bool   `json:"referral_configured"`
+	Opened             bool   `json:"opened"`
+	Opener             string `json:"opener,omitempty"`
+	VisitCount         int    `json:"visit_count"`
+	Path               string `json:"path,omitempty"`
+	Message            string `json:"message,omitempty"`
 }
 
 const slackAppURL = "https://slack.com/marketplace/A08SF47R6P4-claude"
@@ -23404,14 +23406,19 @@ func (a *App) Passes(args []string) error {
 		return err
 	}
 	report := passesReport{
-		Kind:        "passes",
-		Action:      req.Action,
-		Status:      "ok",
-		DocsURL:     guestPassDocsURL,
-		ReferralURL: firstNonEmpty(req.ReferralURL, a.Config.Future.GuestPassReferralURL),
-		Path:        path,
+		Kind:               "passes",
+		Action:             req.Action,
+		Status:             "ok",
+		DocsURL:            guestPassDocsURL,
+		ReferralURL:        firstNonEmpty(req.ReferralURL, a.Config.Future.GuestPassReferralURL),
+		ReferralConfigured: strings.TrimSpace(firstNonEmpty(req.ReferralURL, a.Config.Future.GuestPassReferralURL)) != "",
+		VisitCount:         a.Config.Future.GuestPassVisitCount,
+		Path:               path,
 	}
+	report.URL, report.URLSource = passesURLWithSource(report.ReferralURL, req.Docs)
 	switch req.Action {
+	case "status":
+		report.Message = "Guest pass status loaded."
 	case "set-url":
 		if err := validateHTTPURL(req.ReferralURL, "guest pass referral URL"); err != nil {
 			return err
@@ -23422,6 +23429,8 @@ func (a *App) Passes(args []string) error {
 		a.Config.Future.GuestPassReferralURL = req.ReferralURL
 		report.ReferralURL = req.ReferralURL
 		report.URL = req.ReferralURL
+		report.URLSource = "referral"
+		report.ReferralConfigured = true
 		report.Message = "Guest pass referral URL saved."
 	case "clear-url":
 		if err := unsetCompatibilityValue(path, "compatibility.guest_pass_referral_url", legacyGuestPassReferralURLKey); err != nil {
@@ -23430,6 +23439,8 @@ func (a *App) Passes(args []string) error {
 		a.Config.Future.GuestPassReferralURL = ""
 		report.ReferralURL = ""
 		report.URL = guestPassDocsURL
+		report.URLSource = "docs"
+		report.ReferralConfigured = false
 		report.Message = "Guest pass referral URL cleared."
 	case "show", "open":
 		count := a.Config.Future.GuestPassVisitCount + 1
@@ -23438,7 +23449,7 @@ func (a *App) Passes(args []string) error {
 		}
 		a.Config.Future.GuestPassVisitCount = count
 		report.VisitCount = count
-		report.URL = passesURL(report.ReferralURL, req.Docs)
+		report.URL, report.URLSource = passesURLWithSource(report.ReferralURL, req.Docs)
 		if report.ReferralURL == "" || req.Docs {
 			report.Message = "No guest pass referral URL is configured. Showing Claude Code guest pass documentation."
 		} else {
@@ -23526,7 +23537,10 @@ func parsePassesArgs(args []string) (passesRequest, error) {
 		return req, nil
 	}
 	switch strings.ToLower(rest[0]) {
-	case "show", "status":
+	case "status", "list", "ls":
+		req.Action = "status"
+		req.Open = false
+	case "show":
 		req.Action = "show"
 		req.Open = false
 	case "open":
@@ -23554,10 +23568,15 @@ func parsePassesArgs(args []string) (passesRequest, error) {
 }
 
 func passesURL(referralURL string, docs bool) string {
+	url, _ := passesURLWithSource(referralURL, docs)
+	return url
+}
+
+func passesURLWithSource(referralURL string, docs bool) (string, string) {
 	if docs || strings.TrimSpace(referralURL) == "" {
-		return guestPassDocsURL
+		return guestPassDocsURL, "docs"
 	}
-	return referralURL
+	return referralURL, "referral"
 }
 
 func validateHTTPURL(raw string, label string) error {
@@ -23576,8 +23595,13 @@ func validateHTTPURL(raw string, label string) error {
 func renderPassesReport(out io.Writer, report passesReport) {
 	fmt.Fprintln(out, "Guest Passes")
 	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
 	fmt.Fprintf(out, "  URL              %s\n", report.URL)
+	if report.URLSource != "" {
+		fmt.Fprintf(out, "  URL source       %s\n", report.URLSource)
+	}
 	fmt.Fprintf(out, "  Docs             %s\n", report.DocsURL)
+	fmt.Fprintf(out, "  Referral set     %t\n", report.ReferralConfigured)
 	if report.ReferralURL != "" {
 		fmt.Fprintf(out, "  Referral URL     %s\n", report.ReferralURL)
 	}
@@ -32813,7 +32837,7 @@ func (a *App) runResumedPassesSlash(args []string, format string) error {
 		return err
 	}
 	switch req.Action {
-	case "show":
+	case "show", "status":
 	case "set-url", "clear-url":
 		return a.Passes(args)
 	case "open":
@@ -32825,18 +32849,27 @@ func (a *App) runResumedPassesSlash(args []string, format string) error {
 		return err
 	}
 	referralURL := firstNonEmpty(req.ReferralURL, a.Config.Future.GuestPassReferralURL)
-	report := passesReport{
-		Kind:        "passes",
-		Action:      "show",
-		Status:      "ok",
-		URL:         passesURL(referralURL, req.Docs),
-		DocsURL:     guestPassDocsURL,
-		ReferralURL: referralURL,
-		Opened:      false,
-		VisitCount:  a.Config.Future.GuestPassVisitCount,
-		Path:        path,
+	resolvedURL, urlSource := passesURLWithSource(referralURL, req.Docs)
+	action := req.Action
+	if action == "open" {
+		action = "show"
 	}
-	if report.ReferralURL == "" || req.Docs {
+	report := passesReport{
+		Kind:               "passes",
+		Action:             action,
+		Status:             "ok",
+		URL:                resolvedURL,
+		URLSource:          urlSource,
+		DocsURL:            guestPassDocsURL,
+		ReferralURL:        referralURL,
+		ReferralConfigured: strings.TrimSpace(referralURL) != "",
+		Opened:             false,
+		VisitCount:         a.Config.Future.GuestPassVisitCount,
+		Path:               path,
+	}
+	if req.Action == "status" {
+		report.Message = "Guest pass status loaded."
+	} else if report.ReferralURL == "" || req.Docs {
 		report.Message = "No guest pass referral URL is configured. Showing Claude Code guest pass documentation."
 	} else {
 		report.Message = "Showing configured guest pass referral URL."
@@ -59405,6 +59438,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec.Usage = "codog extra-usage-noninteractive [--admin|--personal] [--output-format text|json]"
 		spec.Text = "Extra Usage Noninteractive\n\nUsage:\n  codog extra-usage-noninteractive [--admin|--personal] [--output-format text|json]\n\nCompatibility entrypoint for `codog extra-usage --no-open`; reports the Claude extra usage settings URL without launching a browser and records a local visit count.\n"
 		return spec, true
+	case "passes":
+		return localCommandHelpSpec(
+			"passes",
+			"passes",
+			"codog passes [status|list|show|open|set-url URL|clear-url] [--docs] [--no-open] [--output-format text|json]",
+			"Guest Passes\n\nUsage:\n  codog passes [status|list|show|open|set-url URL|clear-url] [--docs] [--no-open] [--output-format text|json]\n\nReports or opens Claude Code guest pass links. `status` and `list` read the configured referral URL and visit count without mutating config. `set-url` and `clear-url` manage the local referral URL stored under compatibility settings.\n",
+			[]string{"url", "url_source", "docs_url", "referral_url", "referral_configured", "opened", "visit_count", "path"},
+			[]string{"ok", "open_failed", "error"},
+			true,
+		), true
 	case "metrics":
 		return localCommandHelpSpec(
 			"metrics",
@@ -60027,7 +60070,7 @@ Usage:
   %s [flags] setupGitHubActions [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]
   %s [flags] install-slack-app [--no-open] [--json|--output-format text|json]
   %s [flags] stickers [--no-open] [--json|--output-format text|json]
-  %s [flags] passes [show|set-url URL|clear-url] [--no-open] [--json|--output-format text|json]
+  %s [flags] passes [status|list|show|open|set-url URL|clear-url] [--no-open] [--json|--output-format text|json]
   %s [flags] issue [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
