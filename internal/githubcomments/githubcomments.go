@@ -186,15 +186,15 @@ func RenderText(w io.Writer, report Report) {
 		fmt.Fprintln(w, "Review comments")
 		for _, comment := range report.ReviewComments {
 			location := comment.Path
+			if location == "" {
+				location = "review"
+			}
 			line := comment.Line
 			if line == 0 {
 				line = comment.OriginalLine
 			}
 			if line != 0 {
 				location += ":" + strconv.Itoa(line)
-			}
-			if location == "" {
-				location = "review"
 			}
 			fmt.Fprintf(w, "- @%s %s\n", emptyAs(comment.Author, "unknown"), location)
 			if strings.TrimSpace(comment.DiffHunk) != "" {
