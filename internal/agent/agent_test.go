@@ -1418,6 +1418,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("deferred-init"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ide"))
 	require.True(t, commandAcceptsGlobalOutputFormat("install"))
+	require.True(t, commandAcceptsGlobalOutputFormat("remote"))
 	require.True(t, commandAcceptsGlobalOutputFormat("notebook-read"))
 	require.True(t, commandAcceptsGlobalOutputFormat("notebook-edit"))
 	require.True(t, commandAcceptsGlobalOutputFormat("teleport"))
@@ -20878,6 +20879,26 @@ func TestRemoteCommandReportsAndPersistsSetup(t *testing.T) {
 	require.Equal(t, "disabled", status.Status)
 	require.Equal(t, "http://127.0.0.1:8798", status.RemoteURL)
 	out.Reset()
+
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--cwd", workspace,
+			"--output-format", "json",
+			"remote", "status", "--addr", ":8797",
+		}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var cliStatus remoteSetupReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &cliStatus))
+	require.Equal(t, "remote_setup", cliStatus.Kind)
+	require.Equal(t, "status", cliStatus.Action)
+	require.Equal(t, "disabled", cliStatus.Status)
+	require.Equal(t, "http://127.0.0.1:8797", cliStatus.RemoteURL)
 
 	require.NoError(t, app.Remote([]string{"enable", "--auth-token", "secret-token", "--lease-seconds", "33", "--json"}))
 	var enabled remoteSetupReport
