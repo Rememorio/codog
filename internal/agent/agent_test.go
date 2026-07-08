@@ -20595,6 +20595,13 @@ func TestRemoteCommandReportsAndPersistsSetup(t *testing.T) {
 	require.Contains(t, serveError.Hint, "codog remote serve [ADDR]")
 	out.Reset()
 
+	require.ErrorContains(t, app.Remote([]string{"--json", "serve", "--addr", "127.0.0.1:8798", "extra"}), "unexpected argument")
+	require.NoError(t, json.Unmarshal(out.Bytes(), &serveError))
+	require.Equal(t, "unexpected_extra_args", serveError.ErrorKind)
+	require.Equal(t, "remote serve", serveError.Command)
+	require.Equal(t, []string{"extra"}, serveError.Args)
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/remote status --addr 127.0.0.1:8801 --json", &session.Session{ID: "active-session"}))
 	var slashStatus remoteSetupReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &slashStatus))

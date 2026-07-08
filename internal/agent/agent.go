@@ -1775,7 +1775,8 @@ func toolRegistryOptionsFromConfig(cfg config.Config, additionalDirs []string, q
 }
 
 func (a *App) Remote(args []string) error {
-	if len(args) == 0 || args[0] != "serve" {
+	meaningful := routeMeaningfulArgs(args)
+	if len(meaningful) == 0 || !strings.EqualFold(strings.TrimSpace(meaningful[0]), "serve") {
 		return a.RemoteSetup(args, config.FlagOverrides{})
 	}
 	addr := "127.0.0.1:8791"
