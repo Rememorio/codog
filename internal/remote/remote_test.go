@@ -20,6 +20,25 @@ func TestSessionContextFromEnvReadsRemoteState(t *testing.T) {
 	require.Equal(t, "https://remote.test", context.BaseURL)
 }
 
+func TestEnvReadsProcessEnvironment(t *testing.T) {
+	t.Setenv("CODOG_REMOTE_ENV_TEST", "present")
+
+	env := Env()
+
+	require.Equal(t, "present", env["CODOG_REMOTE_ENV_TEST"])
+}
+
+func TestSessionContextDefaultsBaseURLAndFalseyRemoteFlag(t *testing.T) {
+	context := SessionContextFromEnv(map[string]string{
+		"CLAUDE_CODE_REMOTE":            "off",
+		"CLAUDE_CODE_REMOTE_SESSION_ID": " session-123 ",
+	})
+
+	require.False(t, context.Enabled)
+	require.Equal(t, "session-123", context.SessionID)
+	require.Equal(t, DefaultBaseURL, context.BaseURL)
+}
+
 func TestBootstrapRequiresRemoteSessionTokenAndProxyFlag(t *testing.T) {
 	bootstrap := BootstrapFromEnv(map[string]string{
 		"CLAUDE_CODE_REMOTE":         "1",
@@ -72,6 +91,14 @@ func TestReadTokenTrimsAndHandlesMissingFiles(t *testing.T) {
 	require.Empty(t, token)
 }
 
+func TestReadTokenReturnsUnexpectedReadErrors(t *testing.T) {
+	root := t.TempDir()
+	token, err := ReadToken(root)
+
+	require.Error(t, err)
+	require.Empty(t, token)
+}
+
 func TestInheritedProxyEnvRequiresProxyAndCA(t *testing.T) {
 	inherited := InheritedProxyEnv(map[string]string{
 		"HTTPS_PROXY":   "http://127.0.0.1:8888",
@@ -103,6 +130,8 @@ func TestMergeEnvOverlaysProxyValuesWithoutDroppingBase(t *testing.T) {
 
 func TestHelperOutputsMatchRemoteContract(t *testing.T) {
 	require.Equal(t, "ws://localhost:3000/v1/code/upstreamproxy/ws", UpstreamProxyWebSocketURL("http://localhost:3000/"))
+	require.Equal(t, "wss://api.anthropic.com/v1/code/upstreamproxy/ws", UpstreamProxyWebSocketURL(""))
+	require.Equal(t, "wss://remote.test/v1/code/upstreamproxy/ws", UpstreamProxyWebSocketURL("remote.test"))
 	require.Contains(t, NoProxyList(), "anthropic.com")
 	require.Contains(t, NoProxyList(), "github.com")
 	require.Equal(t, map[string]string{}, UpstreamProxyState{}.SubprocessEnv())
