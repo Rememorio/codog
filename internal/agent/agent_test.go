@@ -13144,7 +13144,7 @@ func TestSessionsAuditReportsHygieneIssuesAndNextActions(t *testing.T) {
 	require.GreaterOrEqual(t, report.PlaceholderIdentityCount, 1)
 	require.Equal(t, 0, report.PinnedOutOfRangeCount)
 	require.Contains(t, report.NextActions, "codog sessions prune --empty --confirm")
-	require.Contains(t, report.NextActions, "codog generateSessionName --session 'empty' --rename")
+	require.Contains(t, report.NextActions, "codog sessions repair")
 
 	issues := map[string]sessionAuditIssue{}
 	for _, issue := range report.Issues {
@@ -13165,6 +13165,7 @@ func TestSessionsAuditReportsHygieneIssuesAndNextActions(t *testing.T) {
 	require.Contains(t, text, "Sessions         3")
 	require.Contains(t, text, "Next actions")
 	require.Contains(t, text, "codog sessions prune --empty --confirm")
+	require.Contains(t, text, "codog sessions repair")
 }
 
 func TestDoctorSurfacesSessionAuditWarnings(t *testing.T) {
@@ -13606,6 +13607,43 @@ func TestBackfillSessionsCommandAndSlash(t *testing.T) {
 	require.Equal(t, 2, report.SessionsScanned)
 	require.Equal(t, 1, report.SessionsUpdated)
 	require.Equal(t, 1, report.InputsAdded)
+}
+
+func TestSessionsRepairCommandAndSlash(t *testing.T) {
+	store := session.NewWorkspaceStore(t.TempDir(), t.TempDir())
+	created, err := store.Open("needs-repair")
+	require.NoError(t, err)
+	require.NotEmpty(t, created.Identity.Placeholders)
+	require.NoError(t, store.Append(created.ID, anthropic.TextMessage("user", "repair identity from saved prompt")))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.SessionsCommand([]string{"repair", "--json"}))
+	var report session.BackfillReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "backfill_sessions", report.Kind)
+	require.Equal(t, "identity_repair", report.Action)
+	require.Equal(t, 1, report.SessionsScanned)
+	require.Equal(t, 1, report.SessionsUpdated)
+	require.Equal(t, 1, report.IdentityUpdates)
+	repaired, err := store.Open(created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "repair identity from saved prompt", repaired.Identity.Title)
+	require.Equal(t, "repair identity from saved prompt", repaired.Identity.Purpose)
+	require.Empty(t, repaired.Identity.Placeholders)
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"fix", "--output-format", "text"}))
+	require.Contains(t, out.String(), "Repair Sessions")
+	require.Contains(t, out.String(), "Sessions updated 0")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/session repair --json", &session.Session{ID: created.ID}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "identity_repair", report.Action)
+	require.Equal(t, 0, report.SessionsUpdated)
+	require.Empty(t, errOut.String())
 }
 
 func TestBackfillSessionsHonorsGlobalJSONOutputFormat(t *testing.T) {

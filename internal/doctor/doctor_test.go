@@ -373,9 +373,9 @@ func TestRunWarnsOnSessionHygieneIssues(t *testing.T) {
 				SessionID:  "draft",
 				Field:      "purpose",
 				Message:    "session identity still uses a typed placeholder",
-				NextAction: "codog generateSessionName --session 'draft' --rename",
+				NextAction: "codog sessions repair",
 			}},
-			NextActions: []string{"codog generateSessionName --session 'draft' --rename"},
+			NextActions: []string{"codog sessions repair"},
 		},
 		SandboxDefault: "test-sandbox",
 		SandboxOK:      true,
@@ -387,7 +387,7 @@ func TestRunWarnsOnSessionHygieneIssues(t *testing.T) {
 	require.Contains(t, sessions.Summary, "session hygiene")
 	require.Contains(t, sessions.Hint, "codog sessions audit")
 	require.Contains(t, strings.Join(sessions.Details, "\n"), "Identity placeholders: 1")
-	require.Contains(t, strings.Join(sessions.Details, "\n"), "codog generateSessionName")
+	require.Contains(t, strings.Join(sessions.Details, "\n"), "codog sessions repair")
 	hygiene, ok := sessions.Data["hygiene"].(*SessionHygiene)
 	require.True(t, ok)
 	require.Equal(t, 1, hygiene.PlaceholderIdentityCount)

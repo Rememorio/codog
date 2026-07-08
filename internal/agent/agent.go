@@ -47671,6 +47671,10 @@ func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 			return
 		}
 		renderSessionPruneText(a.Err, report)
+	case "repair":
+		if err := a.RepairSessions(args[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "pin", "unpin":
 		req, err := parseSessionPinArgs("/session "+action, args[1:], sess.ID, "text")
 		if err != nil {
@@ -47814,6 +47818,8 @@ func (a *App) SessionsCommand(args []string) error {
 			return nil
 		}
 		renderSessionAuditText(a.Out, report)
+	case "repair":
+		return a.RepairSessions(args[1:])
 	case "export":
 		return a.SessionExport(args[1:])
 	case "import":
@@ -47937,6 +47943,8 @@ func normalizeSessionAction(action string) string {
 		return "search"
 	case "audit", "doctor", "check", "hygiene":
 		return "audit"
+	case "repair", "fix", "heal":
+		return "repair"
 	case "export", "dump":
 		return "export"
 	case "import", "load":
@@ -47985,7 +47993,7 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_sessions_action",
 			Message:   fmt.Sprintf("unsupported sessions action %q", action),
-			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions search QUERY`, `codog sessions audit`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions switch ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions pin ID [message]`, `codog sessions unpin ID [message]`, `codog sessions prune`, or `codog sessions delete ID`. Common aliases include ls, get, has, find, doctor, clone, checkout, mv, gc, and rm.",
+			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions search QUERY`, `codog sessions audit`, `codog sessions repair`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions switch ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions pin ID [message]`, `codog sessions unpin ID [message]`, `codog sessions prune`, or `codog sessions delete ID`. Common aliases include ls, get, has, find, doctor, fix, clone, checkout, mv, gc, and rm.",
 		}, format)
 	}
 	return renderCLIError(out, err, format)
@@ -49826,11 +49834,34 @@ func (a *App) BackfillSessions(args []string) error {
 	return nil
 }
 
+func (a *App) RepairSessions(args []string) error {
+	format, err := parseSimpleOutputFormat("sessions repair", args)
+	if err != nil {
+		return err
+	}
+	report, err := a.Sessions.RepairSessionIdentities()
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderBackfillSessions(a.Out, report)
+	return nil
+}
+
 func renderBackfillSessions(out io.Writer, report session.BackfillReport) {
-	fmt.Fprintln(out, "Backfill Sessions")
+	title := "Backfill Sessions"
+	if report.Action == "identity_repair" {
+		title = "Repair Sessions"
+	}
+	fmt.Fprintln(out, title)
 	fmt.Fprintf(out, "  Sessions scanned %d\n", report.SessionsScanned)
 	fmt.Fprintf(out, "  Sessions updated %d\n", report.SessionsUpdated)
 	fmt.Fprintf(out, "  Inputs added      %d\n", report.InputsAdded)
+	fmt.Fprintf(out, "  Identity updates  %d\n", report.IdentityUpdates)
 	fmt.Fprintf(out, "  Skipped existing  %d\n", report.SkippedWithInputs)
 	fmt.Fprintf(out, "  Skipped disabled  %d\n", report.SkippedDisabled)
 }
@@ -50085,7 +50116,7 @@ func (report *sessionAuditReport) auditSession(sess session.Session) {
 			Path:       sess.Path,
 			Field:      field,
 			Message:    message,
-			NextAction: "codog generateSessionName --session " + shellQuote(sess.ID) + " --rename",
+			NextAction: "codog sessions repair",
 		})
 	}
 	for _, field := range missingSessionIdentityFields(sess.Identity) {
@@ -61423,8 +61454,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return commandHelpSpec{
 			Topic:                   "session",
 			Command:                 "session",
-			Usage:                   "codog sessions [list|show|exists|search|audit|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]",
-			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|search|audit|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]\n  codog sessions search QUERY [--limit N] [--output-format text|json]\n  codog sessions audit [--output-format text|json]\n  codog sessions switch ID [--output-format text|json]\n  codog sessions pin ID [message-index|last] [--output-format text|json]\n  codog sessions unpin ID [message-index|last] [--output-format text|json]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n  codog sessions prune [--empty|--keep N] [--confirm] [--session ID|--resume ID] [--output-format text|json]\n\nInspects, audits, imports, exports, searches, and mutates saved session metadata. `audit` reports session hygiene, identity placeholders, lineage, pin drift, and JSONL bloat. `switch` is local and returns continue commands for the selected session instead of opening an interactive REPL. Message indexes for `pin` and `unpin` are entered as 1-based numbers.\n",
+			Usage:                   "codog sessions [list|show|exists|search|audit|repair|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]",
+			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|search|audit|repair|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]\n  codog sessions search QUERY [--limit N] [--output-format text|json]\n  codog sessions audit [--output-format text|json]\n  codog sessions repair [--output-format text|json]\n  codog sessions switch ID [--output-format text|json]\n  codog sessions pin ID [message-index|last] [--output-format text|json]\n  codog sessions unpin ID [message-index|last] [--output-format text|json]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n  codog sessions prune [--empty|--keep N] [--confirm] [--session ID|--resume ID] [--output-format text|json]\n\nInspects, audits, repairs, imports, exports, searches, and mutates saved session metadata. `audit` reports session hygiene, identity placeholders, lineage, pin drift, and JSONL bloat. `repair` appends enriched session identity records when saved prompt history can replace typed placeholders. `switch` is local and returns continue commands for the selected session instead of opening an interactive REPL. Message indexes for `pin` and `unpin` are entered as 1-based numbers.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
@@ -61545,7 +61576,7 @@ Usage:
   %s [flags] tui
   %s [flags] clear [--confirm] [--json|--output-format text|json]
   %s [flags] conversation [--confirm] [--json|--output-format text|json]
-  %s [flags] sessions [list|show|exists|search|audit|export|import|fork|rename|prune|delete]
+  %s [flags] sessions [list|show|exists|search|audit|repair|export|import|fork|rename|prune|delete]
   %s [flags] backfill-sessions [--json|--output-format text|json]
   %s [flags] generateSessionName [--session ID|--resume ID|latest] [--source first|last] [--rename] [--json|--output-format text|json]
   %s [flags] rename NEW_ID [--session ID] [--json|--output-format text|json]

@@ -1362,6 +1362,41 @@ func (s *Store) BackfillPromptHistory() (BackfillReport, error) {
 	return report, nil
 }
 
+func (s *Store) RepairSessionIdentities() (BackfillReport, error) {
+	sessions, err := s.List()
+	if err != nil {
+		return BackfillReport{}, err
+	}
+	report := BackfillReport{
+		Kind:            "backfill_sessions",
+		Action:          "identity_repair",
+		Status:          "ok",
+		SessionsScanned: len(sessions),
+	}
+	for _, sess := range sessions {
+		records, err := s.readRecords(sess.Path)
+		if err != nil {
+			return BackfillReport{}, err
+		}
+		identityRecord, identityUpdated := sessionIdentityBackfillRecord(sess.ID, s.Workspace, records)
+		if !identityUpdated {
+			continue
+		}
+		records = append(records, identityRecord)
+		if err := s.writeRecords(sess.Path, records); err != nil {
+			return BackfillReport{}, err
+		}
+		report.SessionsUpdated++
+		report.IdentityUpdates++
+		report.BackfilledSessions = append(report.BackfilledSessions, BackfilledSession{
+			ID:              sess.ID,
+			Path:            sess.Path,
+			IdentityUpdated: true,
+		})
+	}
+	return report, nil
+}
+
 func (s *Store) Rewind(id string, removeMessages int) (RewindResult, error) {
 	if strings.TrimSpace(id) == "" {
 		return RewindResult{}, errors.New("session id is required")

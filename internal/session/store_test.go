@@ -1048,6 +1048,54 @@ func TestBackfillPromptHistory(t *testing.T) {
 	require.Equal(t, 1, report.SkippedDisabled)
 }
 
+func TestRepairSessionIdentities(t *testing.T) {
+	store := NewWorkspaceStore(t.TempDir(), t.TempDir())
+	legacyPath := store.pathFor("legacy-input")
+	require.NoError(t, os.MkdirAll(filepath.Dir(legacyPath), 0o755))
+	file, err := os.OpenFile(legacyPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	placeholder := normalizeSessionIdentity("legacy-input", store.Workspace, SessionIdentity{})
+	require.NoError(t, writeRecord(file, Record{Type: "session", Time: now, SessionID: "legacy-input"}))
+	require.NoError(t, writeRecord(file, Record{Type: "session_identity", Time: now, SessionID: "legacy-input", Identity: &placeholder}))
+	require.NoError(t, writeRecord(file, Record{Type: "input", Time: now, SessionID: "legacy-input", Input: "Repair placeholder identity"}))
+	require.NoError(t, file.Close())
+
+	explicit, err := store.CreateWithIdentity("explicit-identity", SessionIdentity{
+		Title:   "Explicit title",
+		Purpose: "manual",
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.Append(explicit.ID, anthropic.TextMessage("user", "do not overwrite")))
+
+	report, err := store.RepairSessionIdentities()
+	require.NoError(t, err)
+	require.Equal(t, "backfill_sessions", report.Kind)
+	require.Equal(t, "identity_repair", report.Action)
+	require.Equal(t, 2, report.SessionsScanned)
+	require.Equal(t, 1, report.SessionsUpdated)
+	require.Equal(t, 1, report.IdentityUpdates)
+	require.Len(t, report.BackfilledSessions, 1)
+	require.Equal(t, "legacy-input", report.BackfilledSessions[0].ID)
+	require.True(t, report.BackfilledSessions[0].IdentityUpdated)
+
+	repaired, err := store.Open("legacy-input")
+	require.NoError(t, err)
+	require.Equal(t, "Repair placeholder identity", repaired.Identity.Title)
+	require.Equal(t, "Repair placeholder identity", repaired.Identity.Purpose)
+	require.Empty(t, repaired.Identity.Placeholders)
+
+	unchanged, err := store.Open(explicit.ID)
+	require.NoError(t, err)
+	require.Equal(t, "Explicit title", unchanged.Identity.Title)
+	require.Equal(t, "manual", unchanged.Identity.Purpose)
+
+	report, err = store.RepairSessionIdentities()
+	require.NoError(t, err)
+	require.Equal(t, 0, report.SessionsUpdated)
+	require.Equal(t, 0, report.IdentityUpdates)
+}
+
 func TestExportMarkdownJSONJSONLAndHTML(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.Append("export-session", anthropic.TextMessage("user", "Summarize <this> repo")))
