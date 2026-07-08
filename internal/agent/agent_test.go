@@ -23690,6 +23690,47 @@ func TestSimpleInfoCommandParseErrorsHonorGlobalJSONFormat(t *testing.T) {
 	}
 }
 
+func TestSimpleInfoCommandsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+
+	workspace := t.TempDir()
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		kind   string
+		action string
+	}{
+		{name: "env", args: []string{"env"}, kind: "env"},
+		{name: "sandbox-toggle", args: []string{"sandbox-toggle", "status"}, kind: "sandbox_toggle", action: "status"},
+		{name: "system-prompt", args: []string{"system-prompt"}, kind: "system-prompt", action: "show"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			require.NoError(t, err)
+			var report map[string]any
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, tc.kind, report["kind"])
+			if tc.action != "" {
+				require.Equal(t, tc.action, report["action"])
+			}
+			require.NotContains(t, out, "Sandbox Toggle")
+			require.NotContains(t, out, "Environment")
+		})
+	}
+}
+
 func TestEnvCommandRedactsSensitiveValues(t *testing.T) {
 	report := buildEnvReport([]string{
 		"ALPHA=visible",

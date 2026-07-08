@@ -1072,7 +1072,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "onboarding":
 		return wrapStructured(app.Onboarding(rest))
 	case "env":
-		if err := app.Env(rest); err != nil {
+		envArgs := injectGlobalOutputFormat("env", rest, format)
+		if err := app.Env(envArgs); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
@@ -1081,7 +1082,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "sandbox":
 		return wrapStructured(app.Sandbox())
 	case "sandbox-toggle":
-		if err := app.SandboxToggle(rest); err != nil {
+		sandboxToggleArgs := injectGlobalOutputFormat("sandbox-toggle", rest, format)
+		if err := app.SandboxToggle(sandboxToggleArgs); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
@@ -1159,7 +1161,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "dump-manifests":
 		return wrapStructured(app.DumpManifests(rest))
 	case "system-prompt":
-		if err := app.SystemPromptCommand(rest); err != nil {
+		systemPromptArgs := injectGlobalOutputFormat("system-prompt", rest, format)
+		if err := app.SystemPromptCommand(systemPromptArgs); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
