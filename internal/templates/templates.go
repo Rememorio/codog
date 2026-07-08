@@ -11,11 +11,14 @@ import (
 )
 
 type Template struct {
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	Source  string `json:"source"`
-	Preview string `json:"preview"`
-	Body    string `json:"body,omitempty"`
+	Name           string `json:"name"`
+	Path           string `json:"path"`
+	Source         string `json:"source"`
+	Preview        string `json:"preview"`
+	Body           string `json:"body,omitempty"`
+	Active         bool   `json:"active"`
+	ShadowedBy     string `json:"shadowed_by,omitempty"`
+	ShadowedByPath string `json:"shadowed_by_path,omitempty"`
 }
 
 type Rendered struct {
@@ -25,6 +28,13 @@ type Rendered struct {
 	Vars       map[string]string `json:"vars,omitempty"`
 	Rendered   string            `json:"rendered"`
 	Unresolved []string          `json:"unresolved,omitempty"`
+}
+
+type DiscoveryRoot struct {
+	Source string `json:"source"`
+	Label  string `json:"label"`
+	Path   string `json:"path"`
+	Exists bool   `json:"exists"`
 }
 
 var variableRe = regexp.MustCompile(`\{\{\s*\.?([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
@@ -56,16 +66,64 @@ func Load(configHome, workspace string) ([]Template, error) {
 				Source:  root.source,
 				Preview: preview(body),
 				Body:    body,
+				Active:  true,
 			})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Name == out[j].Name {
-			return out[i].Source < out[j].Source
+			leftRank := sourceRank(out[i].Source)
+			rightRank := sourceRank(out[j].Source)
+			if leftRank == rightRank {
+				return out[i].Path < out[j].Path
+			}
+			return leftRank < rightRank
 		}
 		return out[i].Name < out[j].Name
 	})
+	annotateActiveTemplates(out)
 	return out, nil
+}
+
+func Sources(configHome, workspace string) []DiscoveryRoot {
+	out := []DiscoveryRoot{}
+	for _, root := range roots(configHome, workspace) {
+		_, err := os.Stat(root.path)
+		out = append(out, DiscoveryRoot{
+			Source: root.source,
+			Label:  root.source + " templates",
+			Path:   root.path,
+			Exists: err == nil,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if sourceRank(out[i].Source) == sourceRank(out[j].Source) {
+			return out[i].Path < out[j].Path
+		}
+		return sourceRank(out[i].Source) < sourceRank(out[j].Source)
+	})
+	return out
+}
+
+func annotateActiveTemplates(all []Template) {
+	winners := map[string]int{}
+	for index := range all {
+		key := strings.ToLower(strings.TrimSpace(all[index].Name))
+		if key == "" {
+			all[index].Active = false
+			continue
+		}
+		winnerIndex, ok := winners[key]
+		if !ok {
+			winners[key] = index
+			all[index].Active = true
+			continue
+		}
+		winner := all[winnerIndex]
+		all[index].Active = false
+		all[index].ShadowedBy = winner.Source
+		all[index].ShadowedByPath = winner.Path
+	}
 }
 
 func Find(configHome, workspace, name string) (Template, error) {
@@ -89,6 +147,7 @@ func Find(configHome, workspace, name string) (Template, error) {
 			Source:  root.source,
 			Preview: preview(body),
 			Body:    body,
+			Active:  true,
 		}, nil
 	}
 	return Template{}, fmt.Errorf("template %q not found", name)
@@ -146,6 +205,17 @@ func rootsByPrecedence(configHome, workspace string) []root {
 	return []root{
 		{filepath.Join(workspace, ".codog", "templates"), "workspace"},
 		{filepath.Join(configHome, "templates"), "user"},
+	}
+}
+
+func sourceRank(source string) int {
+	switch source {
+	case "workspace":
+		return 0
+	case "user":
+		return 10
+	default:
+		return 100
 	}
 }
 

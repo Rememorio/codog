@@ -26921,11 +26921,16 @@ func TestTemplatesCommandAndSlash(t *testing.T) {
 
 	require.NoError(t, app.Templates([]string{"show", "--json"}))
 	var templateList struct {
-		Kind      string                     `json:"kind"`
-		Action    string                     `json:"action"`
-		Status    string                     `json:"status"`
-		Query     string                     `json:"query"`
-		Count     int                        `json:"count"`
+		Kind    string `json:"kind"`
+		Action  string `json:"action"`
+		Status  string `json:"status"`
+		Query   string `json:"query"`
+		Count   int    `json:"count"`
+		Summary struct {
+			Total    int `json:"total"`
+			Active   int `json:"active"`
+			Shadowed int `json:"shadowed"`
+		} `json:"summary"`
 		Templates []prompttemplates.Template `json:"templates"`
 	}
 	require.NoError(t, json.Unmarshal(out.Bytes(), &templateList))
@@ -26933,6 +26938,9 @@ func TestTemplatesCommandAndSlash(t *testing.T) {
 	require.Equal(t, "list", templateList.Action)
 	require.Equal(t, "ok", templateList.Status)
 	require.Equal(t, 2, templateList.Count)
+	require.Equal(t, 2, templateList.Summary.Total)
+	require.Equal(t, 2, templateList.Summary.Active)
+	require.Zero(t, templateList.Summary.Shadowed)
 	out.Reset()
 
 	require.NoError(t, app.Templates([]string{"ls", "--json"}))
@@ -26949,6 +26957,41 @@ func TestTemplatesCommandAndSlash(t *testing.T) {
 	require.Equal(t, "plan", templateList.Query)
 	require.Equal(t, 1, templateList.Count)
 	require.Equal(t, "plan", templateList.Templates[0].Name)
+	out.Reset()
+
+	require.NoError(t, app.Templates([]string{"sources", "--json"}))
+	var templateSources struct {
+		Kind      string                          `json:"kind"`
+		Action    string                          `json:"action"`
+		Status    string                          `json:"status"`
+		RootCount int                             `json:"root_count"`
+		Roots     []prompttemplates.DiscoveryRoot `json:"roots"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &templateSources))
+	require.Equal(t, "templates", templateSources.Kind)
+	require.Equal(t, "sources", templateSources.Action)
+	require.Equal(t, "ok", templateSources.Status)
+	require.Equal(t, len(templateSources.Roots), templateSources.RootCount)
+	requireTemplateSourceRoot(t, templateSources.Roots, "workspace", filepath.Join(workspace, ".codog", "templates"), true)
+	requireTemplateSourceRoot(t, templateSources.Roots, "user", filepath.Join(configHome, "templates"), true)
+	out.Reset()
+
+	require.NoError(t, app.Templates([]string{"audit", "--json"}))
+	var templateAudit templateAuditReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &templateAudit))
+	require.Equal(t, "templates", templateAudit.Kind)
+	require.Equal(t, "audit", templateAudit.Action)
+	require.Equal(t, "ok", templateAudit.Status)
+	require.Equal(t, 2, templateAudit.TemplateCount)
+	require.Equal(t, 2, templateAudit.ActiveTemplateCount)
+	require.Zero(t, templateAudit.ShadowedTemplateCount)
+	require.Equal(t, len(templateAudit.Sources), templateAudit.SourceCount)
+	require.Contains(t, templateAudit.Message, "passed")
+	out.Reset()
+
+	require.NoError(t, app.Templates([]string{"doctor"}))
+	require.Contains(t, out.String(), "Template Audit")
+	require.Contains(t, out.String(), "Templates           2")
 	out.Reset()
 
 	require.NoError(t, app.Templates([]string{"show", "review"}))
@@ -26995,7 +27038,66 @@ func TestTemplatesCommandAndSlash(t *testing.T) {
 	require.Equal(t, "search", templateList.Action)
 	require.Equal(t, "review", templateList.Query)
 	require.Equal(t, 1, templateList.Count)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/templates root --json", &session.Session{ID: "session"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &templateSources))
+	require.Equal(t, "sources", templateSources.Action)
 	require.Empty(t, errOut.String())
+}
+
+func TestTemplatesAuditReportsShadowedEntries(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "templates"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "templates"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "templates", "review.md"), []byte("User review {{target}}."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "templates", "review.md"), []byte("Workspace review {{target}}."), 0o644))
+
+	var out bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: configHome}, Workspace: workspace, Out: &out, Err: io.Discard}
+
+	require.NoError(t, app.Templates([]string{"check", "--json"}))
+	var audit templateAuditReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &audit))
+	require.Equal(t, "templates", audit.Kind)
+	require.Equal(t, "audit", audit.Action)
+	require.Equal(t, "ok", audit.Status)
+	require.Equal(t, 2, audit.TemplateCount)
+	require.Equal(t, 1, audit.ActiveTemplateCount)
+	require.Equal(t, 1, audit.ShadowedTemplateCount)
+
+	out.Reset()
+	require.NoError(t, app.Templates([]string{"list", "--json"}))
+	var list struct {
+		Templates []prompttemplates.Template `json:"templates"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &list))
+	userReview := templateReportEntry(list.Templates, "review", "user")
+	require.False(t, userReview.Active)
+	require.Equal(t, "workspace", userReview.ShadowedBy)
+	require.NotEmpty(t, userReview.ShadowedByPath)
+}
+
+func templateReportEntry(all []prompttemplates.Template, name string, source string) prompttemplates.Template {
+	for _, tmpl := range all {
+		if tmpl.Name == name && tmpl.Source == source {
+			return tmpl
+		}
+	}
+	return prompttemplates.Template{}
+}
+
+func requireTemplateSourceRoot(t *testing.T, roots []prompttemplates.DiscoveryRoot, source string, path string, exists bool) {
+	t.Helper()
+	for _, root := range roots {
+		if root.Source == source && root.Path == path {
+			require.Equal(t, exists, root.Exists)
+			require.NotEmpty(t, root.Label)
+			return
+		}
+	}
+	require.Failf(t, "template source root not found", "source=%s path=%s roots=%v", source, path, roots)
 }
 
 func TestCommandsCommandAndSlash(t *testing.T) {

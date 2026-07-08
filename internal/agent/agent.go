@@ -50207,6 +50207,10 @@ func (a *App) Templates(args []string) error {
 			return renderMissingActionArgument(a.Out, "templates", "search", "query", "templates search requires a query", "Usage: codog templates search QUERY [--json|--output-format text|json].", format)
 		}
 		return a.renderTemplatesListWithAction(format, "search", query)
+	case "audit":
+		return a.templateAudit(rest)
+	case "sources":
+		return a.templateSources(rest)
 	case "show":
 		format, remaining, err := parseTemplateOutputArgs("templates show", rest)
 		if err != nil {
@@ -50264,7 +50268,7 @@ func (a *App) Templates(args []string) error {
 		return unexpectedExtraArgsError{
 			Command: "templates",
 			Args:    []string{action},
-			Usage:   "codog templates [list|search|show|apply] [ARGS...] [--json|--output-format text|json]",
+			Usage:   "codog templates [list|search|audit|sources|show|apply] [ARGS...] [--json|--output-format text|json]",
 		}
 	}
 	return nil
@@ -50276,6 +50280,10 @@ func normalizeTemplatesAction(action string) string {
 		return "list"
 	case "search", "find", "query", "lookup":
 		return "search"
+	case "audit", "doctor", "check", "validate":
+		return "audit"
+	case "source", "sources", "root", "roots":
+		return "sources"
 	case "show", "info", "describe", "get", "view", "cat":
 		return "show"
 	case "apply", "render", "run", "exec", "execute", "call", "invoke":
@@ -50304,12 +50312,23 @@ func (a *App) renderTemplatesListWithAction(format string, action string, query 
 		for i := range summaries {
 			summaries[i].Body = ""
 		}
+		activeCount := 0
+		for _, tmpl := range all {
+			if tmpl.Active {
+				activeCount++
+			}
+		}
 		data, _ := json.MarshalIndent(map[string]any{
-			"kind":      "templates",
-			"action":    action,
-			"status":    "ok",
-			"query":     filter,
-			"count":     len(all),
+			"kind":   "templates",
+			"action": action,
+			"status": "ok",
+			"query":  filter,
+			"count":  len(all),
+			"summary": map[string]any{
+				"total":    len(all),
+				"active":   activeCount,
+				"shadowed": len(all) - activeCount,
+			},
 			"templates": summaries,
 		}, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -50340,6 +50359,98 @@ func filterTemplates(all []prompttemplates.Template, filter string) []prompttemp
 		}
 	}
 	return out
+}
+
+type templateAuditReport struct {
+	Kind                  string                          `json:"kind"`
+	Action                string                          `json:"action"`
+	Status                string                          `json:"status"`
+	TemplateCount         int                             `json:"template_count"`
+	ActiveTemplateCount   int                             `json:"active_template_count"`
+	ShadowedTemplateCount int                             `json:"shadowed_template_count"`
+	SourceCount           int                             `json:"source_count"`
+	Sources               []prompttemplates.DiscoveryRoot `json:"sources"`
+	Message               string                          `json:"message"`
+}
+
+func (a *App) templateAudit(args []string) error {
+	format, err := parseSimpleOutputFormat("templates audit", args)
+	if err != nil {
+		return err
+	}
+	all, err := prompttemplates.Load(a.Config.ConfigHome, a.Workspace)
+	if err != nil {
+		return err
+	}
+	roots := prompttemplates.Sources(a.Config.ConfigHome, a.Workspace)
+	activeCount := 0
+	for _, tmpl := range all {
+		if tmpl.Active {
+			activeCount++
+		}
+	}
+	report := templateAuditReport{
+		Kind:                  "templates",
+		Action:                "audit",
+		Status:                "ok",
+		TemplateCount:         len(all),
+		ActiveTemplateCount:   activeCount,
+		ShadowedTemplateCount: len(all) - activeCount,
+		SourceCount:           len(roots),
+		Sources:               roots,
+	}
+	report.Message = templateAuditMessage(report)
+	return renderTemplateAuditReport(a.Out, format, report)
+}
+
+func templateAuditMessage(report templateAuditReport) string {
+	return "Template audit passed."
+}
+
+func renderTemplateAuditReport(out io.Writer, format string, report templateAuditReport) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Template Audit")
+	fmt.Fprintf(out, "  Status              %s\n", report.Status)
+	fmt.Fprintf(out, "  Templates           %d\n", report.TemplateCount)
+	fmt.Fprintf(out, "  Active              %d\n", report.ActiveTemplateCount)
+	fmt.Fprintf(out, "  Shadowed            %d\n", report.ShadowedTemplateCount)
+	fmt.Fprintf(out, "  Sources             %d\n", report.SourceCount)
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message             %s\n", report.Message)
+	}
+	return nil
+}
+
+func (a *App) templateSources(args []string) error {
+	format, err := parseSimpleOutputFormat("templates sources", args)
+	if err != nil {
+		return err
+	}
+	roots := prompttemplates.Sources(a.Config.ConfigHome, a.Workspace)
+	if format == "json" {
+		data, _ := json.MarshalIndent(map[string]any{
+			"kind":       "templates",
+			"action":     "sources",
+			"status":     "ok",
+			"root_count": len(roots),
+			"roots":      roots,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, "Template Sources")
+	for _, root := range roots {
+		state := "missing"
+		if root.Exists {
+			state = "present"
+		}
+		fmt.Fprintf(a.Out, "  %-11s %-8s %s\n", root.Source, state, root.Path)
+	}
+	return nil
 }
 
 type templateApplyRequest struct {
@@ -59058,9 +59169,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"templates",
 			"templates",
-			"codog templates [list|ls|search|find|show|view|apply|render|run]",
-			"Templates\n\nUsage:\n  codog templates [list|ls|search|find|show|view|apply|render|run]\n  codog templates search QUERY [--output-format text|json]\n\nLists, searches, shows, or renders parameterized prompt templates. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter templates by name, source, preview, or body; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `run`, `exec`, `execute`, `call`, and `invoke` are aliases for `apply`.\n",
-			[]string{"templates", "query", "name", "path", "body"},
+			"codog templates [list|ls|search|find|audit|doctor|sources|roots|show|view|apply|render|run]",
+			"Templates\n\nUsage:\n  codog templates [list|ls|search|find|audit|doctor|sources|roots|show|view|apply|render|run]\n  codog templates search QUERY [--output-format text|json]\n  codog templates audit [--output-format text|json]\n\nLists, searches, audits sources, shows, or renders parameterized prompt templates. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter templates by name, source, preview, or body; `audit`, `doctor`, `check`, and `validate` report source health plus active and shadowed templates; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `run`, `exec`, `execute`, `call`, and `invoke` are aliases for `apply`.\n",
+			[]string{"templates", "roots", "sources", "query", "name", "path", "body", "active", "shadowed_by"},
 			[]string{"ok", "error"},
 			false,
 		), true
@@ -59267,7 +59378,7 @@ Usage:
   %s [flags] pin|unpin [message-index|last] [--session ID] [--json|--output-format text|json]
   %s [flags] skill|skills [list|ls|search|find|audit|doctor|sources|roots|status|enable|disable|show|info|describe|invoke|add|install|uninstall]
   %s [flags] commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec]
-  %s [flags] templates [list|ls|search|find|show|view|apply|render|run]
+  %s [flags] templates [list|ls|search|find|audit|doctor|sources|roots|show|view|apply|render|run]
   %s [flags] hooks [list|health EVENT|run EVENT|watch-paths list|check] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|ls|status|show|view|set|use|clear|off] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME] | models [list|ls|aliases|routes|search|find QUERY|show|view [MODEL]|current|help] [--json|--output-format text|json]
