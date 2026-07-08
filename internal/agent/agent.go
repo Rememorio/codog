@@ -52444,11 +52444,7 @@ func buildMCPUnsupportedActionReport(requestedAction string, hint string) mcpUns
 		ErrorKind:       "unsupported_action",
 		RequestedAction: strings.TrimSpace(requestedAction),
 		Hint:            strings.TrimSpace(hint),
-		Usage: mcpUsageBlock{
-			SlashCommand: "/mcp [list|ls|show SERVER|tools [SERVER]|auth [--refresh|refresh|--clear|clear|logout] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
-			DirectCLI:    "codog mcp [list|ls|show SERVER|tools [SERVER]|auth [--refresh|refresh|--clear|clear|logout] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
-			Sources:      []string{".codog.json", ".codog.local.json", "user config"},
-		},
+		Usage:           mcpGeneralUsageBlock(),
 	}
 	report.Error = buildCLIErrorEnvelope(errors.New(report.ErrorKind+": unsupported mcp action "+report.RequestedAction), cliErrorReport{
 		Kind:      report.ErrorKind,
@@ -52490,23 +52486,27 @@ func buildMCPUsageReport(unexpected string) mcpUsageReport {
 		ok = false
 		value := "unknown_mcp_action"
 		errorKind = &value
-		hintValue := "Use: list|ls, show SERVER, tools [SERVER], auth [--refresh|refresh|--clear|clear|logout] [SERVER], resources [SERVER], resource-templates [SERVER], prompts [SERVER], or help"
+		hintValue := "Use: list|ls, show SERVER, tools [SERVER], auth [--refresh|refresh|--clear|clear|logout] [SERVER], call SERVER TOOL JSON, resources [SERVER], resource-templates [SERVER], read SERVER URI, prompts [SERVER], prompt SERVER NAME [JSON], or help"
 		hint = &hintValue
 		unexpectedValue = &unexpected
 	}
 	return mcpUsageReport{
-		Kind:      "mcp",
-		Action:    "help",
-		OK:        ok,
-		Status:    status,
-		ErrorKind: errorKind,
-		Hint:      hint,
-		Usage: mcpUsageBlock{
-			SlashCommand: "/mcp [list|ls|show SERVER|tools [SERVER]|auth [--refresh|refresh|--clear|clear|logout] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
-			DirectCLI:    "codog mcp [list|ls|show SERVER|tools [SERVER]|auth [--refresh|refresh|--clear|clear|logout] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
-			Sources:      []string{".codog.json", ".codog.local.json", "user config"},
-		},
+		Kind:       "mcp",
+		Action:     "help",
+		OK:         ok,
+		Status:     status,
+		ErrorKind:  errorKind,
+		Hint:       hint,
+		Usage:      mcpGeneralUsageBlock(),
 		Unexpected: unexpectedValue,
+	}
+}
+
+func mcpGeneralUsageBlock() mcpUsageBlock {
+	return mcpUsageBlock{
+		SlashCommand: "/mcp [list|ls|show SERVER|tools [SERVER]|auth [--refresh|refresh|--clear|clear|logout] [SERVER]|call SERVER TOOL JSON|resources [SERVER]|resource-templates [SERVER]|read SERVER URI|prompts [SERVER]|prompt SERVER NAME [JSON]|help]",
+		DirectCLI:    "codog mcp [list|ls|show SERVER|tools [SERVER]|auth [--refresh|refresh|--clear|clear|logout] [SERVER]|call SERVER TOOL JSON|resources [SERVER]|resource-templates [SERVER]|read SERVER URI|prompts [SERVER]|prompt SERVER NAME [JSON]|help]",
+		Sources:      []string{".codog.json", ".codog.local.json", "user config"},
 	}
 }
 
