@@ -1389,6 +1389,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
 	require.True(t, commandAcceptsGlobalOutputFormat("CheckGitHubStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("code-intel"))
+	require.True(t, commandAcceptsGlobalOutputFormat("completion"))
 	require.True(t, commandAcceptsGlobalOutputFormat("CreatingStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ExistingWorkflowStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("generateSessionName"))
@@ -1416,11 +1417,18 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("prefetch"))
 	require.True(t, commandAcceptsGlobalOutputFormat("checkpoint"))
 	require.True(t, commandAcceptsGlobalOutputFormat("deferred-init"))
+	require.True(t, commandAcceptsGlobalOutputFormat("definition"))
+	require.True(t, commandAcceptsGlobalOutputFormat("diagnostics"))
+	require.True(t, commandAcceptsGlobalOutputFormat("format"))
+	require.True(t, commandAcceptsGlobalOutputFormat("hover"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ide"))
 	require.True(t, commandAcceptsGlobalOutputFormat("install"))
+	require.True(t, commandAcceptsGlobalOutputFormat("map"))
 	require.True(t, commandAcceptsGlobalOutputFormat("remote"))
 	require.True(t, commandAcceptsGlobalOutputFormat("notebook-read"))
 	require.True(t, commandAcceptsGlobalOutputFormat("notebook-edit"))
+	require.True(t, commandAcceptsGlobalOutputFormat("references"))
+	require.True(t, commandAcceptsGlobalOutputFormat("symbols"))
 	require.True(t, commandAcceptsGlobalOutputFormat("teleport"))
 	require.True(t, commandAcceptsGlobalOutputFormat("startup-report"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ultraplan"))
@@ -17568,6 +17576,25 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "runner.go:5:function Run")
 	out.Reset()
 
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--cwd", workspace,
+			"--output-format", "json",
+			"symbols",
+		}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var cliSymbols symbolsReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &cliSymbols))
+	require.Equal(t, "symbols", cliSymbols.Kind)
+	require.GreaterOrEqual(t, cliSymbols.Total, 2)
+
 	require.NoError(t, app.Definition([]string{"Run"}))
 	require.Contains(t, out.String(), "Location         runner.go:5")
 	out.Reset()
@@ -17645,6 +17672,20 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Diagnostics")
 	require.Contains(t, out.String(), "Total            0")
 	out.Reset()
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--cwd", workspace,
+			"--output-format", "json",
+			"diagnostics", "./...",
+		}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var cliDiagnostics diagnosticsReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &cliDiagnostics))
+	require.Equal(t, "diagnostics", cliDiagnostics.Kind)
+	require.Equal(t, 0, cliDiagnostics.Total)
 
 	require.True(t, app.handleSlash(context.Background(), "/definition Runner", sess))
 	require.Contains(t, out.String(), "Location         runner.go:3")
