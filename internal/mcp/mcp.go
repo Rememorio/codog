@@ -260,6 +260,7 @@ type ServerTransport struct {
 type ServerDetails struct {
 	Command                    string   `json:"command,omitempty"`
 	URL                        string   `json:"url,omitempty"`
+	ArgsSummary                []string `json:"args_summary,omitempty"`
 	ArgsCount                  int      `json:"args_count"`
 	ToolCallTimeoutMS          int      `json:"tool_call_timeout_ms,omitempty"`
 	EnvKeys                    []string `json:"env_keys,omitempty"`
@@ -357,7 +358,7 @@ func ServerSignature(server config.MCPServerConfig) string {
 		return "url:" + redactedURL(server.URL)
 	}
 	parts := []string{server.Command}
-	parts = append(parts, server.Args...)
+	parts = append(parts, redactedArgsSummary(server.Args)...)
 	return "stdio:" + renderCommandSignature(parts)
 }
 
@@ -414,6 +415,7 @@ func DescribeServer(name string, server config.MCPServerConfig) ServerDescriptor
 		Summary:   stdioServerSummary(server),
 		Details: ServerDetails{
 			Command:           server.Command,
+			ArgsSummary:       redactedArgsSummary(server.Args),
 			ArgsCount:         len(server.Args),
 			ToolCallTimeoutMS: server.ToolCallTimeoutMS,
 			EnvKeys:           envKeys(server.Env),
@@ -578,6 +580,76 @@ func redactedURL(rawURL string) string {
 		parsed.RawQuery = redacted.Encode()
 	}
 	return parsed.String()
+}
+
+func redactedArgsSummary(args []string) []string {
+	if len(args) == 0 {
+		return nil
+	}
+	summary := make([]string, 0, len(args))
+	redactNext := false
+	for _, arg := range args {
+		if redactNext {
+			summary = append(summary, redactedTokenPlaceholder(arg))
+			redactNext = false
+			continue
+		}
+		redacted, consumesNext := redactCommandArg(arg)
+		summary = append(summary, redacted)
+		redactNext = consumesNext
+	}
+	return summary
+}
+
+func redactCommandArg(arg string) (string, bool) {
+	trimmed := strings.TrimSpace(arg)
+	if trimmed == "" {
+		return arg, false
+	}
+	if redacted, ok := redactURLArg(trimmed); ok {
+		return redacted, false
+	}
+	if key, value, ok := strings.Cut(trimmed, "="); ok {
+		if isSecretArgName(key) {
+			return key + "=" + redactedTokenPlaceholder(value), false
+		}
+		if redacted, changed := redactURLArg(value); changed {
+			return key + "=" + redacted, false
+		}
+		return arg, false
+	}
+	if isSecretArgName(trimmed) {
+		return trimmed, true
+	}
+	return arg, false
+}
+
+func redactURLArg(arg string) (string, bool) {
+	parsed, err := url.Parse(arg)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return arg, false
+	}
+	redacted := redactedURL(arg)
+	return redacted, redacted != arg
+}
+
+func isSecretArgName(name string) bool {
+	name = strings.TrimLeft(strings.ToLower(strings.TrimSpace(name)), "-/")
+	name = strings.ReplaceAll(name, "_", "-")
+	switch name {
+	case "api-key", "apikey", "access-token", "refresh-token", "token", "auth-token", "authorization", "password", "passwd", "secret", "client-secret", "credential", "credentials", "bearer":
+		return true
+	default:
+		return strings.HasSuffix(name, "-token") || strings.HasSuffix(name, "-secret") || strings.HasSuffix(name, "-password")
+	}
+}
+
+func redactedTokenPlaceholder(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "[redacted]"
+	}
+	return fmt.Sprintf("[redacted:%d-char-token]", len(value))
 }
 
 func renderCommandSignature(parts []string) string {

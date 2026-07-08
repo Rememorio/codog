@@ -26284,6 +26284,67 @@ func TestMCPConfigCommands(t *testing.T) {
 	require.ErrorContains(t, err, "invalid MCP server name")
 }
 
+func TestMCPShowRedactsSensitiveTransportArguments(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{
+			"stdio-secret": {
+				Command: "uvx",
+				Args: []string{
+					"mcp-server",
+					"--api-key",
+					"sk-stdio-secret",
+					"--tenant=public",
+					"--access-token=stdio-access-secret",
+				},
+			},
+			"http-secret": {
+				URL:           "https://user:pass@example.test/mcp?token=query-secret&mode=ok",
+				Headers:       map[string]string{"Authorization": "Bearer header-secret"},
+				HeadersHelper: "./headers-helper --api-key helper-secret",
+			},
+		}},
+		Out: &out,
+		Err: io.Discard,
+	}
+
+	require.NoError(t, app.MCP(context.Background(), []string{"show", "stdio-secret", "--json"}))
+	stdioJSON := out.String()
+	require.Contains(t, stdioJSON, `"args_summary"`)
+	require.Contains(t, stdioJSON, `"--tenant=public"`)
+	require.Contains(t, stdioJSON, `"--api-key"`)
+	require.Contains(t, stdioJSON, `"[redacted:`)
+	require.NotContains(t, stdioJSON, "sk-stdio-secret")
+	require.NotContains(t, stdioJSON, "stdio-access-secret")
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"show", "stdio-secret"}))
+	stdioText := out.String()
+	require.Contains(t, stdioText, "Signature")
+	require.NotContains(t, stdioText, "sk-stdio-secret")
+	require.NotContains(t, stdioText, "stdio-access-secret")
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"show", "http-secret", "--json"}))
+	httpJSON := out.String()
+	require.Contains(t, httpJSON, "token=%5Bredacted%5D")
+	require.Contains(t, httpJSON, "https://%5Bredacted%5D@example.test")
+	require.NotContains(t, httpJSON, "pass")
+	require.NotContains(t, httpJSON, "query-secret")
+	require.NotContains(t, httpJSON, "header-secret")
+	require.NotContains(t, httpJSON, "helper-secret")
+	require.NotContains(t, httpJSON, "./headers-helper")
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"show", "http-secret"}))
+	httpText := out.String()
+	require.NotContains(t, httpText, "pass")
+	require.NotContains(t, httpText, "query-secret")
+	require.NotContains(t, httpText, "header-secret")
+	require.NotContains(t, httpText, "helper-secret")
+	require.NotContains(t, httpText, "./headers-helper")
+}
+
 func TestMCPServeCommand(t *testing.T) {
 	workspace := t.TempDir()
 	input := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}` + "\n")

@@ -467,6 +467,31 @@ func TestServerSignatureMatchesStdioCompatibility(t *testing.T) {
 	require.NotContains(t, ServerSignature(server), "secret")
 }
 
+func TestServerSignatureRedactsSensitiveArgs(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command: "uvx",
+		Args: []string{
+			"mcp-server",
+			"--api-key",
+			"sk-secret-token",
+			"--tenant=public",
+			"--access-token=access-secret",
+			"https://user:pass@example.test/mcp?token=query-secret",
+		},
+	}
+
+	signature := ServerSignature(server)
+	require.Contains(t, signature, "mcp-server")
+	require.Contains(t, signature, "--tenant=public")
+	require.Contains(t, signature, "--api-key|[redacted:")
+	require.Contains(t, signature, "--access-token=[redacted:")
+	require.Contains(t, signature, "https://%5Bredacted%5D@example.test/mcp?token=%5Bredacted%5D")
+	require.NotContains(t, signature, "sk-secret-token")
+	require.NotContains(t, signature, "access-secret")
+	require.NotContains(t, signature, "pass")
+	require.NotContains(t, signature, "query-secret")
+}
+
 func TestServerConfigHashTracksContentWithoutLeakingEnv(t *testing.T) {
 	base := config.MCPServerConfig{
 		Command: "uvx",
@@ -544,7 +569,7 @@ func TestServerConfigHashTracksRemoteOAuthConfig(t *testing.T) {
 func TestDescribeServerRedactsSensitiveConfigValues(t *testing.T) {
 	server := config.MCPServerConfig{
 		Command:           "uvx",
-		Args:              []string{"mcp-server", "--token=secret"},
+		Args:              []string{"mcp-server", "--token=secret", "--api-key", "sk-secret"},
 		Env:               []string{"TOKEN=secret", "MODE=stdio"},
 		ToolCallTimeoutMS: 15000,
 	}
@@ -553,15 +578,17 @@ func TestDescribeServerRedactsSensitiveConfigValues(t *testing.T) {
 	require.True(t, description.Valid)
 	require.False(t, description.Required)
 	require.Equal(t, "stdio", description.Transport.ID)
-	require.Equal(t, "uvx (2 args)", description.Summary)
+	require.Equal(t, "uvx (4 args)", description.Summary)
 	require.Equal(t, "uvx", description.Details.Command)
-	require.Equal(t, 2, description.Details.ArgsCount)
+	require.Equal(t, 4, description.Details.ArgsCount)
+	require.Equal(t, []string{"mcp-server", "--token=[redacted:6-char-token]", "--api-key", "[redacted:9-char-token]"}, description.Details.ArgsSummary)
 	require.Equal(t, 15000, description.Details.ToolCallTimeoutMS)
 	require.Equal(t, []string{"MODE", "TOKEN"}, description.Details.EnvKeys)
 	data, err := json.Marshal(description)
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "TOKEN=secret")
 	require.NotContains(t, string(data), "--token=secret")
+	require.NotContains(t, string(data), "sk-secret")
 }
 
 func TestStdioRequestTimeoutUsesConfiguredMCPTimeout(t *testing.T) {
