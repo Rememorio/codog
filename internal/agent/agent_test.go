@@ -2656,6 +2656,34 @@ func TestManagementSurfaceErrorsHonorGlobalJSONFormat(t *testing.T) {
 			errorKind: "unexpected_extra_args",
 			contains:  []string{`"command": "reload-plugins"`, `"bogus"`},
 		},
+		{
+			name:      "dump manifests missing output format",
+			args:      []string{"dump-manifests", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "dump-manifests"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "dump manifests invalid output format",
+			args:      []string{"dump-manifests", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"option": "--output-format"`, `"value": "yaml"`},
+		},
+		{
+			name:      "dump manifests unknown flag",
+			args:      []string{"dump-manifests", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "dump-manifests"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "dump manifests unexpected argument",
+			args:      []string{"dump-manifests", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "dump-manifests"`, `"bogus"`},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := captureStdout(t, func() error {

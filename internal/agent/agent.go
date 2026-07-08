@@ -5644,6 +5644,7 @@ func parseDumpManifestsArgs(args []string) (dumpManifestsRequest, error) {
 	if format, ok := scanDumpManifestsOutputFormat(args); ok {
 		req.Format = format
 	}
+	const usage = "codog dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]"
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -5652,7 +5653,7 @@ func parseDumpManifestsArgs(args []string) (dumpManifestsRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("dump-manifests output format is required")
+				return req, missingFlagValueError{Command: "dump-manifests", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -5663,7 +5664,7 @@ func parseDumpManifestsArgs(args []string) (dumpManifestsRequest, error) {
 				return req, missingFlagValueError{
 					Command: "dump-manifests",
 					Flag:    "--manifests-dir",
-					Usage:   "codog dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]",
+					Usage:   usage,
 				}
 			}
 			req.ManifestsDir = args[index]
@@ -5673,20 +5674,23 @@ func parseDumpManifestsArgs(args []string) (dumpManifestsRequest, error) {
 				return req, missingFlagValueError{
 					Command: "dump-manifests",
 					Flag:    "--manifests-dir",
-					Usage:   "codog dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]",
+					Usage:   usage,
 				}
 			}
 			req.ManifestsDir = value
 		default:
-			return req, fmt.Errorf("unknown dump-manifests option %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "dump-manifests", Option: arg, Usage: usage}
+			}
+			return req, unexpectedExtraArgsError{Command: "dump-manifests", Args: []string{arg}, Usage: usage}
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-		return req, nil
-	default:
-		return req, fmt.Errorf("unknown dump-manifests output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat("dump-manifests", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
 	}
+	req.Format = normalizedFormat
+	return req, nil
 }
 
 func scanDumpManifestsOutputFormat(args []string) (string, bool) {
