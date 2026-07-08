@@ -1,6 +1,9 @@
 package agentruns
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -53,6 +56,26 @@ func TestStoreRejectsInvalidRuns(t *testing.T) {
 
 	_, err = store.Save(Run{ID: "run-1"})
 	require.ErrorContains(t, err, "task id is required")
+}
+
+func TestStoreTrimsIDsAndListsDeterministically(t *testing.T) {
+	store := NewStore(t.TempDir())
+	created := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+
+	trimmed, err := store.Save(Run{ID: "  run-b  ", TaskID: "  task-b  ", CreatedAt: created})
+	require.NoError(t, err)
+	require.Equal(t, "run-b", trimmed.ID)
+	require.Equal(t, "task-b", trimmed.TaskID)
+	_, err = store.Save(Run{ID: "run-a", TaskID: "task-a", CreatedAt: created})
+	require.NoError(t, err)
+	_, err = store.Save(Run{ID: "old", TaskID: "task-old", CreatedAt: created.Add(-time.Hour)})
+	require.NoError(t, err)
+
+	runs, err := store.List()
+	require.NoError(t, err)
+	require.Equal(t, []string{"run-a", "run-b", "old"}, []string{runs[0].ID, runs[1].ID, runs[2].ID})
+	require.FileExists(t, filepath.Join(store.Dir, "run-b.json"))
+	require.NoFileExists(t, filepath.Join(store.Dir, "  run-b  .json"))
 }
 
 func TestStatusForTaskReportsHealth(t *testing.T) {
@@ -146,4 +169,118 @@ func TestStatusForTaskReportsHealth(t *testing.T) {
 	require.Equal(t, background.LaneFreshnessUnknown, orphan.Freshness)
 	require.Equal(t, "orphaned", orphan.Health.State)
 	require.NotEmpty(t, orphan.Error)
+}
+
+func TestStatusForTaskUsesDefaultFreshnessWindow(t *testing.T) {
+	configHome := t.TempDir()
+	taskStore := background.NewStore(configHome)
+	now := time.Now().UTC()
+	require.NoError(t, writeTask(taskStore, background.Task{
+		ID:      "task-default-window",
+		Status:  "running",
+		PID:     os.Getpid(),
+		LogPath: filepath.Join(taskStore.Dir, "task-default-window.log"),
+		Heartbeat: &background.LaneHeartbeat{
+			ObservedAt:     now.Add(-time.Minute),
+			TransportAlive: true,
+			Status:         "running",
+		},
+	}))
+
+	status := StatusForTask(taskStore, Run{ID: "run-default-window", TaskID: "task-default-window"})
+	require.Equal(t, background.LaneFreshnessStalled, status.Freshness)
+	require.Equal(t, "stalled", status.Health.State)
+}
+
+func TestPruneRemovesOldCompletedAndOrphanedRuns(t *testing.T) {
+	configHome := t.TempDir()
+	runStore := NewStore(configHome)
+	taskStore := background.NewStore(configHome)
+	now := time.Now().UTC()
+	old := now.Add(-72 * time.Hour)
+	newer := now.Add(-24 * time.Hour)
+	require.NoError(t, writeTask(taskStore, background.Task{
+		ID:          "task-old",
+		Status:      "completed",
+		StartedAt:   old.Add(-time.Minute),
+		CompletedAt: &old,
+		LogPath:     filepath.Join(taskStore.Dir, "task-old.log"),
+	}))
+	require.NoError(t, writeTask(taskStore, background.Task{
+		ID:          "task-newer",
+		Status:      "completed",
+		StartedAt:   newer.Add(-time.Minute),
+		CompletedAt: &newer,
+		LogPath:     filepath.Join(taskStore.Dir, "task-newer.log"),
+	}))
+	require.NoError(t, writeTask(taskStore, background.Task{
+		ID:        "task-running",
+		Status:    "running",
+		PID:       os.Getpid(),
+		StartedAt: old,
+		LogPath:   filepath.Join(taskStore.Dir, "task-running.log"),
+	}))
+	for _, run := range []Run{
+		{ID: "run-old", TaskID: "task-old", CreatedAt: old, UpdatedAt: old},
+		{ID: "run-newer", TaskID: "task-newer", CreatedAt: newer, UpdatedAt: newer},
+		{ID: "run-running", TaskID: "task-running", CreatedAt: old, UpdatedAt: old},
+		{ID: "run-orphan", TaskID: "missing-task", CreatedAt: now, UpdatedAt: now},
+	} {
+		_, err := runStore.Save(run)
+		require.NoError(t, err)
+	}
+
+	result, err := Prune(runStore, taskStore, background.PruneOptions{OlderThan: 48 * time.Hour, Keep: 1})
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"run-old", "run-orphan"}, result.Removed)
+	require.Equal(t, 2, result.RemovedCount)
+	require.Equal(t, 2, result.Kept)
+	require.NoFileExists(t, filepath.Join(runStore.Dir, "run-old.json"))
+	require.NoFileExists(t, filepath.Join(runStore.Dir, "run-orphan.json"))
+	require.FileExists(t, filepath.Join(runStore.Dir, "run-newer.json"))
+	require.FileExists(t, filepath.Join(runStore.Dir, "run-running.json"))
+}
+
+func TestBuildBoardGroupsBlockedAndOrphanedRuns(t *testing.T) {
+	configHome := t.TempDir()
+	taskStore := background.NewStore(configHome)
+	now := time.Date(2026, 7, 4, 9, 0, 0, 0, time.UTC)
+	require.NoError(t, writeTask(taskStore, background.Task{
+		ID:        "task-blocked",
+		Status:    "waiting",
+		StartedAt: now.Add(-time.Minute),
+		LogPath:   filepath.Join(taskStore.Dir, "task-blocked.log"),
+		Heartbeat: &background.LaneHeartbeat{
+			ObservedAt:     now.Add(-5 * time.Second),
+			TransportAlive: true,
+			Status:         "waiting",
+		},
+	}))
+
+	board := BuildBoard(taskStore, []Run{
+		{ID: "run-blocked", TaskID: "task-blocked"},
+		{ID: "run-orphan", TaskID: "missing-task"},
+	}, now, time.Minute)
+	require.Len(t, board.Blocked, 1)
+	require.Equal(t, "run-blocked", board.Blocked[0].Run.ID)
+	require.Equal(t, background.LaneFreshnessHealthy, board.Blocked[0].Freshness)
+	require.Len(t, board.Orphaned, 1)
+	require.Equal(t, "run-orphan", board.Orphaned[0].Run.ID)
+	require.NotEmpty(t, board.Orphaned[0].Error)
+}
+
+func writeTask(store background.Store, task background.Task) error {
+	if err := os.MkdirAll(store.Dir, 0o755); err != nil {
+		return err
+	}
+	if task.LogPath != "" {
+		if err := os.WriteFile(task.LogPath, nil, 0o644); err != nil {
+			return err
+		}
+	}
+	data, err := json.MarshalIndent(task, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(store.Dir, task.ID+".json"), append(data, '\n'), 0o644)
 }

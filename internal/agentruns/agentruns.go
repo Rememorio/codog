@@ -87,10 +87,12 @@ func NewStore(configHome string) Store {
 // Save writes a complete agent run record, filling timestamps when they are
 // missing.
 func (s Store) Save(run Run) (Run, error) {
-	if strings.TrimSpace(run.ID) == "" {
+	run.ID = strings.TrimSpace(run.ID)
+	run.TaskID = strings.TrimSpace(run.TaskID)
+	if run.ID == "" {
 		return Run{}, errors.New("agent run id is required")
 	}
-	if strings.TrimSpace(run.TaskID) == "" {
+	if run.TaskID == "" {
 		return Run{}, errors.New("agent run task id is required")
 	}
 	if err := validateID(run.ID); err != nil {
@@ -137,6 +139,9 @@ func (s Store) List() ([]Run, error) {
 		runs = append(runs, run)
 	}
 	sort.Slice(runs, func(i, j int) bool {
+		if runs[i].CreatedAt.Equal(runs[j].CreatedAt) {
+			return runs[i].ID < runs[j].ID
+		}
 		return runs[i].CreatedAt.After(runs[j].CreatedAt)
 	})
 	return runs, nil
