@@ -99,6 +99,97 @@ func TestServeExposesResourcesAndPrompts(t *testing.T) {
 	require.Contains(t, errPayload["message"], "escapes workspace")
 }
 
+func TestServeReadsStatusToolsAndPromptVariants(t *testing.T) {
+	workspace := t.TempDir()
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"codog://status"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"codog://tools"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"prompts/get","params":{"name":"review_changes","arguments":{"focus":"race conditions"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"prompts/get","params":{"name":"review_changes","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"prompts/get","params":{"name":"explain_workspace","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"prompts/get","params":{"name":"summarize_file","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"codog://unknown"}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	require.NoError(t, Serve(context.Background(), strings.NewReader(input), &out, tools.NewRegistry(workspace), Options{
+		Workspace:      workspace,
+		PermissionMode: string(tools.PermissionWorkspace),
+	}))
+
+	responses := decodeResponses(t, out.String())
+	require.Len(t, responses, 7)
+	statusText := responses[0]["result"].(map[string]any)["contents"].([]any)[0].(map[string]any)["text"].(string)
+	require.Contains(t, statusText, `"kind": "mcp_status"`)
+	require.Contains(t, statusText, `"permission_mode": "workspace-write"`)
+	toolsText := responses[1]["result"].(map[string]any)["contents"].([]any)[0].(map[string]any)["text"].(string)
+	require.Contains(t, toolsText, `"kind": "mcp_tools"`)
+	require.Contains(t, toolsText, `"read_file"`)
+	require.Contains(t, promptText(t, responses[2]), "race conditions")
+	require.Contains(t, promptText(t, responses[3]), "Prioritize bugs")
+	require.Contains(t, promptText(t, responses[4]), "workspace structure")
+	errPayload := responses[5]["error"].(map[string]any)
+	require.EqualValues(t, -32602, errPayload["code"])
+	require.Contains(t, errPayload["message"], "path argument is required")
+	errPayload = responses[6]["error"].(map[string]any)
+	require.EqualValues(t, -32602, errPayload["code"])
+	require.Contains(t, errPayload["message"], "unknown resource URI")
+}
+
+func TestServeReadsTruncatedFileResourceAndRequiresWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	large := strings.Repeat("x", maxResourceReadBytes+16)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "large.txt"), []byte(large), 0o644))
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"codog://file/large.txt"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"codog://file/large.txt"}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	require.NoError(t, Serve(context.Background(), strings.NewReader(input), &out, tools.NewRegistry(workspace), Options{Workspace: workspace}))
+	responses := decodeResponses(t, out.String())
+	require.Len(t, responses, 2)
+	text := responses[0]["result"].(map[string]any)["contents"].([]any)[0].(map[string]any)["text"].(string)
+	require.Len(t, text, maxResourceReadBytes+len("\n[truncated]"))
+	require.True(t, strings.HasSuffix(text, "\n[truncated]"))
+
+	out.Reset()
+	require.NoError(t, Serve(context.Background(), strings.NewReader(input), &out, tools.NewRegistry(workspace), Options{}))
+	responses = decodeResponses(t, out.String())
+	require.Len(t, responses, 2)
+	errPayload := responses[0]["error"].(map[string]any)
+	require.EqualValues(t, -32602, errPayload["code"])
+	require.Contains(t, errPayload["message"], "workspace is not configured")
+}
+
+func TestServeReportsProtocolErrors(t *testing.T) {
+	workspace := t.TempDir()
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"unknown/method","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"resources/read","params":[]}`,
+		`{"jsonrpc":"2.0","id":4,"method":"prompts/get","params":{"name":"missing","arguments":{}}}`,
+		`{not-json}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	require.NoError(t, Serve(context.Background(), strings.NewReader(input), &out, tools.NewRegistry(workspace), Options{}))
+
+	responses := decodeResponses(t, out.String())
+	require.Len(t, responses, 5)
+	require.EqualValues(t, -32601, responses[0]["error"].(map[string]any)["code"])
+	require.Contains(t, responses[0]["error"].(map[string]any)["message"], "method not found")
+	require.EqualValues(t, -32602, responses[1]["error"].(map[string]any)["code"])
+	require.Contains(t, responses[1]["error"].(map[string]any)["message"], "tool name is required")
+	require.EqualValues(t, -32602, responses[2]["error"].(map[string]any)["code"])
+	require.EqualValues(t, -32602, responses[3]["error"].(map[string]any)["code"])
+	require.Contains(t, responses[3]["error"].(map[string]any)["message"], "unknown prompt")
+	require.EqualValues(t, -32700, responses[4]["error"].(map[string]any)["code"])
+}
+
 func TestServeReturnsToolErrorsAsMCPContent(t *testing.T) {
 	workspace := t.TempDir()
 	input := strings.Join([]string{
@@ -181,4 +272,12 @@ func promptNames(values []any) []string {
 		}
 	}
 	return names
+}
+
+func promptText(t *testing.T, response map[string]any) string {
+	t.Helper()
+	messages := response["result"].(map[string]any)["messages"].([]any)
+	content := messages[0].(map[string]any)["content"].(map[string]any)
+	text, _ := content["text"].(string)
+	return text
 }
