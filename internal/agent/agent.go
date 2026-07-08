@@ -12421,6 +12421,15 @@ type oauthTokenDeleteReport struct {
 	Deleted bool   `json:"deleted"`
 }
 
+type oauthTokenRevokeReport struct {
+	Kind    string `json:"kind"`
+	Action  string `json:"action"`
+	Status  string `json:"status"`
+	Revoked bool   `json:"revoked"`
+	Profile string `json:"profile"`
+	Token   string `json:"token"`
+}
+
 type oauthProviderDeleteReport struct {
 	Kind    string `json:"kind"`
 	Action  string `json:"action"`
@@ -12618,7 +12627,7 @@ func normalizeOAuthJSONArgs(args []string) ([]string, error) {
 	return out, nil
 }
 
-func (a *App) oauthTokenRevoke(args []string) (map[string]any, error) {
+func (a *App) oauthTokenRevoke(args []string) (oauthTokenRevokeReport, error) {
 	profileName := ""
 	tokenKind := "access"
 	if len(args) > 0 {
@@ -12629,11 +12638,11 @@ func (a *App) oauthTokenRevoke(args []string) (map[string]any, error) {
 	}
 	profile, err := oauth.ResolveProviderProfile(a.Config.ConfigHome, profileName)
 	if err != nil {
-		return nil, err
+		return oauthTokenRevokeReport{}, err
 	}
 	token, err := oauth.LoadToken(a.Config.ConfigHome)
 	if err != nil {
-		return nil, err
+		return oauthTokenRevokeReport{}, err
 	}
 	tokenValue := token.AccessToken
 	hint := "access_token"
@@ -12641,12 +12650,12 @@ func (a *App) oauthTokenRevoke(args []string) (map[string]any, error) {
 		tokenValue = token.RefreshToken
 		hint = "refresh_token"
 	} else if tokenKind != "access" {
-		return nil, errors.New("token kind must be access or refresh")
+		return oauthTokenRevokeReport{}, errors.New("token kind must be access or refresh")
 	}
 	if err := oauth.RevokeToken(context.Background(), profile.Metadata, profile.ClientID, tokenValue, hint); err != nil {
-		return nil, err
+		return oauthTokenRevokeReport{}, err
 	}
-	return map[string]any{"revoked": true, "profile": profile.Name, "token": tokenKind}, nil
+	return oauthTokenRevokeReport{Kind: "oauth_token", Action: "revoke", Status: "ok", Revoked: true, Profile: profile.Name, Token: tokenKind}, nil
 }
 
 func (a *App) oauthProvider(args []string) error {

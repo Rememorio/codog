@@ -4828,11 +4828,14 @@ func risky(value any) {
 
 	out, err = runResumedJSON("/oauth", "token", "revoke", "default", "refresh")
 	require.NoError(t, err)
-	var resumedOAuthTokenRevoke map[string]any
+	var resumedOAuthTokenRevoke oauthTokenRevokeReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthTokenRevoke))
-	require.Equal(t, true, resumedOAuthTokenRevoke["revoked"])
-	require.Equal(t, "default", resumedOAuthTokenRevoke["profile"])
-	require.Equal(t, "refresh", resumedOAuthTokenRevoke["token"])
+	require.Equal(t, "oauth_token", resumedOAuthTokenRevoke.Kind)
+	require.Equal(t, "revoke", resumedOAuthTokenRevoke.Action)
+	require.Equal(t, "ok", resumedOAuthTokenRevoke.Status)
+	require.True(t, resumedOAuthTokenRevoke.Revoked)
+	require.Equal(t, "default", resumedOAuthTokenRevoke.Profile)
+	require.Equal(t, "refresh", resumedOAuthTokenRevoke.Token)
 	require.Contains(t, oauthRevoked, "refresh_token:resume-oauth-refresh-1234")
 
 	out, err = runResumedJSON("/oauth", "token", "save", "resume-oauth-new-access", "resume-oauth-new-refresh")
@@ -31826,8 +31829,14 @@ func TestOAuthTokenRevokeAndLogoutCommands(t *testing.T) {
 		Out:    &out,
 	}
 	require.NoError(t, app.OAuth([]string{"token", "revoke", "default", "refresh"}))
-	require.Contains(t, out.String(), `"revoked": true`)
-	require.Contains(t, out.String(), `"token": "refresh"`)
+	var revokeResult oauthTokenRevokeReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &revokeResult))
+	require.Equal(t, "oauth_token", revokeResult.Kind)
+	require.Equal(t, "revoke", revokeResult.Action)
+	require.Equal(t, "ok", revokeResult.Status)
+	require.True(t, revokeResult.Revoked)
+	require.Equal(t, "default", revokeResult.Profile)
+	require.Equal(t, "refresh", revokeResult.Token)
 	require.Contains(t, *revoked, "refresh_token:refresh-1")
 	out.Reset()
 
