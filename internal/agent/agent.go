@@ -32072,6 +32072,12 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 		}
 		renderSessionPruneText(a.Out, report)
 		return nil
+	case "pin", "unpin":
+		req, err := parseSessionPinArgs("codog sessions "+normalizeSessionAction(args[0]), args[1:], overrides.Resume, "text")
+		if err != nil {
+			return err
+		}
+		return a.runPinRequest(normalizeSessionAction(args[0]), req)
 	case "show", "rename":
 		if len(args) == 1 || strings.HasPrefix(strings.TrimSpace(args[1]), "-") {
 			withSession := append([]string{args[0], overrides.Resume}, args[1:]...)
@@ -45783,6 +45789,10 @@ func (a *App) setPin(action string, args []string, overrides config.FlagOverride
 	if err != nil {
 		return err
 	}
+	return a.runPinRequest(action, req)
+}
+
+func (a *App) runPinRequest(action string, req pinRequest) error {
 	if req.MessageIndex < 0 {
 		sess, err := a.Sessions.OpenExisting(req.SessionID)
 		if err != nil {
@@ -45795,6 +45805,7 @@ func (a *App) setPin(action string, args []string, overrides config.FlagOverride
 		req.MessageIndex = len(sess.Messages) - 1
 	}
 	var result session.PinResult
+	var err error
 	if action == "unpin" {
 		result, err = a.Sessions.UnpinMessage(req.SessionID, req.MessageIndex)
 	} else {
@@ -45821,6 +45832,73 @@ func (a *App) setPin(action string, args []string, overrides config.FlagOverride
 	}
 	renderPinReport(a.Out, report)
 	return nil
+}
+
+func parseSessionPinArgs(command string, args []string, defaultSession string, defaultFormat string) (pinRequest, error) {
+	usage := command + " SESSION [message-index|last] [--json|--output-format text|json]"
+	req := pinRequest{SessionID: strings.TrimSpace(defaultSession), Format: defaultFormat, MessageIndex: -1}
+	if req.Format == "" {
+		req.Format = "text"
+	}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session" || arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: command, Option: arg, Usage: usage}
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if strings.TrimSpace(defaultSession) == "" {
+		if len(positionals) == 0 && strings.TrimSpace(req.SessionID) == "" {
+			return req, fmt.Errorf("usage: %s", usage)
+		}
+		if len(positionals) > 0 && strings.TrimSpace(req.SessionID) == "" {
+			req.SessionID = positionals[0]
+			positionals = positionals[1:]
+		}
+	}
+	if len(positionals) > 1 {
+		return req, unexpectedExtraArgsError{Command: command, Args: append([]string(nil), positionals[1:]...), Usage: usage}
+	}
+	if len(positionals) == 1 {
+		index, err := parsePinMessageIndex(positionals[0], command)
+		if err != nil {
+			return req, err
+		}
+		req.MessageIndex = index
+	}
+	normalizedFormat, err := normalizeOutputFormat(command, req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalizedFormat
+	if strings.TrimSpace(req.SessionID) == "" {
+		req.SessionID = "latest"
+	}
+	return req, nil
 }
 
 func parsePinArgs(command string, args []string, overrides config.FlagOverrides) (pinRequest, error) {
@@ -46501,6 +46579,15 @@ func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 			return
 		}
 		renderSessionPruneText(a.Err, report)
+	case "pin", "unpin":
+		req, err := parseSessionPinArgs("/session "+action, args[1:], sess.ID, "text")
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		if err := a.runPinRequest(action, req); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "delete":
 		req, err := parseSessionDeleteArgs("/session delete", args[1:])
 		if err != nil {
@@ -46682,6 +46769,12 @@ func (a *App) SessionsCommand(args []string) error {
 			return nil
 		}
 		renderSessionPruneText(a.Out, report)
+	case "pin", "unpin":
+		req, err := parseSessionPinArgs("codog sessions "+action, args[1:], "", "json")
+		if err != nil {
+			return err
+		}
+		return a.runPinRequest(action, req)
 	case "delete":
 		deleteArgs := args[1:]
 		if !argsHaveOutputFormat(deleteArgs) {
@@ -46730,6 +46823,10 @@ func normalizeSessionAction(action string) string {
 		return "rename"
 	case "prune", "gc", "clean":
 		return "prune"
+	case "pin", "bookmark-message", "keep-message":
+		return "pin"
+	case "unpin", "unbookmark-message", "drop-message":
+		return "unpin"
 	case "delete", "del", "remove", "rm":
 		return "delete"
 	default:
@@ -46762,7 +46859,7 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_sessions_action",
 			Message:   fmt.Sprintf("unsupported sessions action %q", action),
-			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions switch ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions prune`, or `codog sessions delete ID`. Common aliases include ls, get, has, clone, checkout, mv, gc, and rm.",
+			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions switch ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions pin ID [message]`, `codog sessions unpin ID [message]`, `codog sessions prune`, or `codog sessions delete ID`. Common aliases include ls, get, has, clone, checkout, mv, gc, and rm.",
 		}, format)
 	}
 	return renderCLIError(out, err, format)
@@ -58689,14 +58786,14 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return commandHelpSpec{
 			Topic:                   "session",
 			Command:                 "session",
-			Usage:                   "codog sessions [list|show|exists|export|import|fork|switch|rename|prune|delete] [ARGS...]",
-			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|export|import|fork|switch|rename|prune|delete] [ARGS...]\n  codog sessions switch ID [--output-format text|json]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n  codog sessions prune [--empty|--keep N] [--confirm] [--session ID|--resume ID] [--output-format text|json]\n\nInspects, imports, exports, and mutates saved session metadata. `switch` is local and returns continue commands for the selected session instead of opening an interactive REPL.\n",
+			Usage:                   "codog sessions [list|show|exists|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]",
+			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]\n  codog sessions switch ID [--output-format text|json]\n  codog sessions pin ID [message-index|last] [--output-format text|json]\n  codog sessions unpin ID [message-index|last] [--output-format text|json]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n  codog sessions prune [--empty|--keep N] [--confirm] [--session ID|--resume ID] [--output-format text|json]\n\nInspects, imports, exports, and mutates saved session metadata. `switch` is local and returns continue commands for the selected session instead of opening an interactive REPL. Message indexes for `pin` and `unpin` are entered as 1-based numbers.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
 			RequiresSessionResume:   false,
 			MutatesWorkspace:        false,
-			OutputFields:            []string{"id", "messages", "created_at", "updated_at"},
+			OutputFields:            []string{"id", "messages", "created_at", "updated_at", "pinned_messages"},
 			StatusValues:            []string{"ok", "error"},
 		}, true
 	case "bookmarks":
