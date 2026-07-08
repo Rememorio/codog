@@ -23644,6 +23644,50 @@ func TestExtraUsageCommandAndSlash(t *testing.T) {
 	require.Contains(t, cliOut, `"visit_count":`)
 }
 
+func TestCompatibilityLinkCommandsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+
+	workspace := t.TempDir()
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		kind   string
+		action string
+	}{
+		{name: "extra usage", args: []string{"extra-usage", "status", "--admin"}, kind: "extra_usage", action: "status"},
+		{name: "extra usage core", args: []string{"extra-usage-core", "status", "--personal"}, kind: "extra_usage", action: "status"},
+		{name: "extra usage noninteractive", args: []string{"extra-usage-noninteractive", "--admin", "--open"}, kind: "extra_usage", action: "show"},
+		{name: "install slack app", args: []string{"install-slack-app", "status"}, kind: "install_slack_app", action: "status"},
+		{name: "stickers", args: []string{"stickers", "status"}, kind: "stickers", action: "status"},
+		{name: "passes", args: []string{"passes", "status"}, kind: "passes", action: "status"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			require.NoError(t, err)
+			var report map[string]any
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, tc.kind, report["kind"])
+			require.Equal(t, tc.action, report["action"])
+			require.NotContains(t, out, "Extra Usage")
+			require.NotContains(t, out, "Slack App Setup")
+			require.NotContains(t, out, "Sticker Order")
+			require.NotContains(t, out, "Guest Passes")
+		})
+	}
+}
+
 func TestProjectCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/project\n"), 0o644))

@@ -823,17 +823,20 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "extra-usage":
-		if err := app.ExtraUsage(rest); err != nil {
+		extraUsageArgs := injectGlobalOutputFormat("extra-usage", rest, format)
+		if err := app.ExtraUsage(extraUsageArgs); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
 	case "extra-usage-core":
-		if err := app.ExtraUsage(rest); err != nil {
+		extraUsageArgs := injectGlobalOutputFormat("extra-usage", rest, format)
+		if err := app.ExtraUsage(extraUsageArgs); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
 	case "extra-usage-noninteractive":
-		if err := app.ExtraUsage(appendExtraUsageNoOpen(rest)); err != nil {
+		extraUsageArgs := injectGlobalOutputFormat("extra-usage", rest, format)
+		if err := app.ExtraUsage(appendExtraUsageNoOpen(extraUsageArgs)); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
@@ -943,11 +946,14 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "ApiKeyStep", "CheckExistingSecretStep", "CheckGitHubStep", "ChooseRepoStep", "CreatingStep", "ErrorStep", "ExistingWorkflowStep", "InstallAppStep", "OAuthFlowStep", "SuccessStep", "WarningsStep":
 		return wrapStructured(app.InstallGitHubAppStep(command, rest))
 	case "install-slack-app":
-		return wrapStructured(app.InstallSlackApp(rest))
+		slackAppArgs := injectGlobalOutputFormat("install-slack-app", rest, format)
+		return wrapStructured(app.InstallSlackApp(slackAppArgs))
 	case "stickers":
-		return wrapStructured(app.Stickers(rest))
+		stickerArgs := injectGlobalOutputFormat("stickers", rest, format)
+		return wrapStructured(app.Stickers(stickerArgs))
 	case "passes":
-		return wrapStructured(app.Passes(rest))
+		passesArgs := injectGlobalOutputFormat("passes", rest, format)
+		return wrapStructured(app.Passes(passesArgs))
 	case "issue":
 		return wrapStructured(app.IssueDraft(rest, overrides))
 	case "run":
@@ -59390,7 +59396,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"break-cache", "bridge", "bridge-kick", "bootstrap-plan", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "completion", "config", "continue", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "deferred-init", "definition", "desktop", "diagnostics", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "exit-plan", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
-		"format", "help", "hover", "ide", "init", "init-verifiers", "insights", "install", "ios", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "map", "marketplace", "max-tokens", "max-turns",
+		"format", "help", "hover", "ide", "init", "init-verifiers", "insights", "install", "install-slack-app", "ios", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "map", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "open", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "pr_comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote", "remote-control", "remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "safer-scope", "sandbox-toggle",
