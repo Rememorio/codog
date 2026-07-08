@@ -1190,6 +1190,11 @@ func TestBridgeMCPMethods(t *testing.T) {
 		`{"jsonrpc":"2.0","id":8,"method":"mcp/prompts","params":{"server":"test"}}`,
 		`{"jsonrpc":"2.0","id":9,"method":"mcp/prompt","params":{"server":"test","prompt":"review","arguments":{"topic":"hooks"}}}`,
 		`{"jsonrpc":"2.0","id":10,"method":"mcp/auth","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":11,"method":"mcp/auth","params":{}}`,
+		`{"jsonrpc":"2.0","id":12,"method":"mcp/tools","params":{}}`,
+		`{"jsonrpc":"2.0","id":13,"method":"mcp/resources","params":{}}`,
+		`{"jsonrpc":"2.0","id":14,"method":"mcp/resource-templates","params":{}}`,
+		`{"jsonrpc":"2.0","id":15,"method":"mcp/prompts","params":{}}`,
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
@@ -1217,6 +1222,11 @@ func TestBridgeMCPMethods(t *testing.T) {
 	require.Contains(t, out.String(), `"text":"Review hooks"`)
 	require.Contains(t, out.String(), `"kind":"mcp_auth"`)
 	require.Contains(t, out.String(), `"status":"ok"`)
+	require.Contains(t, out.String(), `"id":11,"result":{"count":1,"kind":"mcp_auth","servers":[{"server":"test"`)
+	require.Contains(t, out.String(), `"id":12,"result":{"count":1,"kind":"mcp_tools","servers":[{"server":"test"`)
+	require.Contains(t, out.String(), `"id":13,"result":{"count":1,"kind":"mcp_resources","servers":[{"server":"test"`)
+	require.Contains(t, out.String(), `"id":14,"result":{"count":1,"kind":"mcp_resource_templates","servers":[{"server":"test"`)
+	require.Contains(t, out.String(), `"id":15,"result":{"count":1,"kind":"mcp_prompts","servers":[{"server":"test"`)
 }
 
 func TestBridgeMCPRejectsInvalidInputs(t *testing.T) {
