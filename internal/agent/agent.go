@@ -979,7 +979,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "subagent":
 		return wrapStructured(app.Subagent(rest, overrides))
 	case "reload-plugins":
-		return wrapStructured(app.ReloadPlugins(rest))
+		return wrapStructured(app.ReloadPluginsWithFormat(rest, format))
 	case "PluginErrors", "PluginOptionsDialog", "PluginOptionsFlow", "PluginTrustWarning", "UnifiedInstalledCell", "parseArgs", "pluginDetailsHelpers", "usePagination":
 		return wrapStructured(app.PluginCompatibility(command, rest))
 	case "AddMarketplace":
@@ -7676,7 +7676,11 @@ type reloadPluginsReport struct {
 }
 
 func (a *App) ReloadPlugins(args []string) error {
-	req, err := parseReloadPluginsArgs(args)
+	return a.ReloadPluginsWithFormat(args, "text")
+}
+
+func (a *App) ReloadPluginsWithFormat(args []string, defaultFormat string) error {
+	req, err := parseReloadPluginsArgs(args, defaultFormat)
 	if err != nil {
 		return err
 	}
@@ -7731,8 +7735,13 @@ func (a *App) newToolRegistry() (*tools.Registry, error) {
 	return tools.NewRegistryWithOptions(a.Workspace, toolRegistryOptionsFromConfig(a.Config, additionalDirs, questionIn, questionOut, executable)), nil
 }
 
-func parseReloadPluginsArgs(args []string) (reloadPluginsRequest, error) {
-	req := reloadPluginsRequest{Format: "text"}
+const reloadPluginsUsage = "codog reload-plugins [reload|refresh] [--json|--output-format text|json]"
+
+func parseReloadPluginsArgs(args []string, defaultFormat string) (reloadPluginsRequest, error) {
+	if strings.TrimSpace(defaultFormat) == "" {
+		defaultFormat = "text"
+	}
+	req := reloadPluginsRequest{Format: defaultFormat}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -7741,19 +7750,24 @@ func parseReloadPluginsArgs(args []string) (reloadPluginsRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("reload-plugins output format is required")
+				return req, missingFlagValueError{Command: "reload-plugins", Flag: arg, Usage: reloadPluginsUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "reload" || arg == "refresh":
 		default:
-			return req, fmt.Errorf("unexpected reload-plugins argument %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "reload-plugins", Option: arg, Usage: reloadPluginsUsage}
+			}
+			return req, unexpectedExtraArgsError{Command: "reload-plugins", Args: []string{arg}, Usage: reloadPluginsUsage}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "reload-plugins"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("reload-plugins", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 

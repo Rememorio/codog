@@ -2635,6 +2635,27 @@ func TestManagementSurfaceErrorsHonorGlobalJSONFormat(t *testing.T) {
 			errorKind: "unexpected_extra_args",
 			contains:  []string{`"command": "mobile"`, `"android"`},
 		},
+		{
+			name:      "reload plugins missing output format",
+			args:      []string{"reload-plugins", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "reload-plugins"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "reload plugins unknown flag",
+			args:      []string{"reload-plugins", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "reload-plugins"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "reload plugins unexpected argument",
+			args:      []string{"reload-plugins", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "reload-plugins"`, `"bogus"`},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := captureStdout(t, func() error {
@@ -32222,6 +32243,20 @@ func TestReloadPluginsRebuildsCurrentToolRegistry(t *testing.T) {
 	require.Contains(t, out.String(), `"plugin_tools": 1`)
 	require.True(t, app.Tools.Has("demo_tool"))
 	out.Reset()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": app.Config.ConfigHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--cwd", workspace, "--output-format", "json", "reload-plugins"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var cliReport reloadPluginsReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &cliReport))
+	require.Equal(t, "reload_plugins", cliReport.Kind)
+	require.Equal(t, 1, cliReport.Plugins)
+	require.Equal(t, 1, cliReport.PluginTools)
 
 	require.NoError(t, app.ReloadPlugins(nil))
 	require.Contains(t, out.String(), "Plugins Reloaded")
