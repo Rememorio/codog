@@ -2684,6 +2684,41 @@ func TestManagementSurfaceErrorsHonorGlobalJSONFormat(t *testing.T) {
 			errorKind: "unexpected_extra_args",
 			contains:  []string{`"command": "dump-manifests"`, `"bogus"`},
 		},
+		{
+			name:      "brief missing output format",
+			args:      []string{"brief", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "brief"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "brief missing status",
+			args:      []string{"brief", "--status", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "brief"`, `"option": "--status"`},
+		},
+		{
+			name:      "brief missing attachment",
+			args:      []string{"brief", "--attach", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "brief"`, `"option": "--attach"`},
+		},
+		{
+			name:      "brief unknown option",
+			args:      []string{"brief", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "brief"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "brief invalid status",
+			args:      []string{"brief", "done", "--status", "urgent"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--status"`, `"value": "urgent"`},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := captureStdout(t, func() error {
@@ -26037,6 +26072,25 @@ func TestBriefCommandUsesToolPayloadAndSlash(t *testing.T) {
 	require.Equal(t, workspace, status.Workspace)
 	require.Equal(t, "codog brief MESSAGE", status.NextCommand)
 	out.Reset()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--cwd", workspace, "--output-format", "json", "brief"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var cliStatus briefStatusReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &cliStatus))
+	require.Equal(t, "brief", cliStatus.Kind)
+	require.Equal(t, "status", cliStatus.Action)
+	require.Equal(t, "ready", cliStatus.Status)
+	expectedWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	actualWorkspace, err := filepath.EvalSymlinks(cliStatus.Workspace)
+	require.NoError(t, err)
+	require.Equal(t, expectedWorkspace, actualWorkspace)
 
 	require.NoError(t, app.Brief([]string{"Build", "passed", "--status", "proactive", "--attach", "notes.md", "--json"}))
 	require.Contains(t, out.String(), `"message": "Build passed"`)

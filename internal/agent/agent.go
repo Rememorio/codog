@@ -1023,7 +1023,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "good-claude":
 		return wrapStructured(app.GoodClaude(rest))
 	case "brief":
-		return wrapStructured(app.Brief(rest))
+		return wrapStructured(app.BriefWithFormat(rest, format))
 	case "bootstrap-plan":
 		return wrapStructured(app.BootstrapPlan(rest))
 	case "prefetch":
@@ -5047,7 +5047,11 @@ type briefStatusReport struct {
 }
 
 func (a *App) Brief(args []string) error {
-	req, err := parseBriefArgs(args)
+	return a.BriefWithFormat(args, "text")
+}
+
+func (a *App) BriefWithFormat(args []string, defaultFormat string) error {
+	req, err := parseBriefArgs(args, defaultFormat)
 	if err != nil {
 		return err
 	}
@@ -5108,34 +5112,39 @@ func renderBriefStatus(out io.Writer, report briefStatusReport) {
 	fmt.Fprintf(out, "  Usage       %s\n", report.Usage)
 }
 
-func parseBriefArgs(args []string) (briefRequest, error) {
-	req := briefRequest{Status: "normal", Format: "text"}
+const briefUsage = "codog brief MESSAGE [--status normal|proactive] [--attach PATH] [--json|--output-format text|json]"
+
+func parseBriefArgs(args []string, defaultFormat string) (briefRequest, error) {
+	if strings.TrimSpace(defaultFormat) == "" {
+		defaultFormat = "text"
+	}
+	req := briefRequest{Status: "normal", Format: defaultFormat}
 	var message []string
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
 		case arg == "--json":
 			req.Format = "json"
-		case arg == "--output-format":
+		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("brief output format is required")
+				return req, missingFlagValueError{Command: "brief", Flag: arg, Usage: briefUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--status":
 			index++
-			if index >= len(args) {
-				return req, errors.New("brief status is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "brief", Flag: arg, Usage: briefUsage}
 			}
 			req.Status = args[index]
 		case strings.HasPrefix(arg, "--status="):
 			req.Status = strings.TrimPrefix(arg, "--status=")
 		case arg == "--attach" || arg == "--attachment" || arg == "--file":
 			index++
-			if index >= len(args) {
-				return req, errors.New("brief attachment path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "brief", Flag: arg, Usage: briefUsage}
 			}
 			req.Attachments = append(req.Attachments, args[index])
 		case strings.HasPrefix(arg, "--attach="):
@@ -5145,7 +5154,7 @@ func parseBriefArgs(args []string) (briefRequest, error) {
 		case strings.HasPrefix(arg, "--file="):
 			req.Attachments = append(req.Attachments, strings.TrimPrefix(arg, "--file="))
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown brief flag %q", arg)
+			return req, unknownOptionError{Command: "brief", Option: arg, Usage: briefUsage}
 		default:
 			message = append(message, arg)
 		}
@@ -5155,13 +5164,18 @@ func parseBriefArgs(args []string) (briefRequest, error) {
 	switch req.Status {
 	case "normal", "proactive":
 	default:
-		return req, fmt.Errorf("unknown brief status %q", req.Status)
+		return req, invalidFlagValueError{
+			Flag:    "--status",
+			Value:   req.Status,
+			Message: "brief status must be normal or proactive",
+			Usage:   briefUsage,
+		}
 	}
-	switch req.Format {
-	case "text", "json":
-	default:
-		return req, fmt.Errorf("unknown brief output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat("brief", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
