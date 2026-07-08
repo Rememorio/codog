@@ -29117,6 +29117,33 @@ func TestExportCommandWritesFormats(t *testing.T) {
 	require.Contains(t, string(data), "export me")
 }
 
+func TestExportCommandAvoidsOverwritingExistingOutput(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "first export")))
+	var out bytes.Buffer
+	app := &App{Sessions: store, Workspace: workspace, Out: &out, Err: io.Discard}
+
+	output := filepath.Join(workspace, "transcript.custom")
+	require.NoError(t, os.WriteFile(output, []byte("keep me\n"), 0o644))
+	require.NoError(t, app.Export([]string{"--session=source", "--format=json", "--output", output}))
+
+	var report struct {
+		File   string `json:"file"`
+		Format string `json:"format"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "json", report.Format)
+	require.Equal(t, filepath.Join(workspace, "transcript-2.custom"), report.File)
+	original, err := os.ReadFile(output)
+	require.NoError(t, err)
+	require.Equal(t, "keep me\n", string(original))
+	exported, err := os.ReadFile(report.File)
+	require.NoError(t, err)
+	require.Contains(t, string(exported), `"id": "source"`)
+}
+
 func TestExportRejectsRelativePathTraversal(t *testing.T) {
 	configHome := t.TempDir()
 	parent := t.TempDir()
@@ -29220,6 +29247,20 @@ func TestExportSlashWritesCurrentSession(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/export notes.md", sess))
 	require.Contains(t, errOut.String(), "exported session source")
 	data, err := os.ReadFile(filepath.Join(workspace, "notes.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "slash export")
+	errOut.Reset()
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes-2.md"), []byte("existing\n"), 0o644))
+	require.True(t, app.handleSlash(context.Background(), "/export notes.md", sess))
+	require.Contains(t, errOut.String(), "notes-3.md")
+	data, err = os.ReadFile(filepath.Join(workspace, "notes.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "slash export")
+	data, err = os.ReadFile(filepath.Join(workspace, "notes-2.md"))
+	require.NoError(t, err)
+	require.Equal(t, "existing\n", string(data))
+	data, err = os.ReadFile(filepath.Join(workspace, "notes-3.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "slash export")
 	errOut.Reset()

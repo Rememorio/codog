@@ -46596,7 +46596,8 @@ func (a *App) writeExport(req exportRequest) error {
 	if err := session.ValidateExportOutputPath(path); err != nil {
 		return exportFilesystemError{Operation: "validate_output_path", Path: path, Err: err}
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	path, err = writeUniqueExportFile(path, data)
+	if err != nil {
 		return exportFilesystemError{Operation: "write_output", Path: path, Err: err}
 	}
 	format, _ := session.NormalizeExportFormat(req.Format)
@@ -47485,11 +47486,49 @@ func (a *App) handleExportSlash(args []string, sess *session.Session) {
 		fmt.Fprintln(a.Err, "error:", err)
 		return
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	path, err = writeUniqueExportFile(path, data)
+	if err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
 		return
 	}
 	fmt.Fprintf(a.Err, "exported session %s to %s (%d messages)\n", exported.ID, path, len(exported.Messages))
+}
+
+func writeUniqueExportFile(path string, data []byte) (string, error) {
+	for attempt := 0; attempt < 10000; attempt++ {
+		candidate := exportCollisionCandidate(path, attempt)
+		file, err := os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return candidate, err
+		}
+		if _, err := file.Write(data); err != nil {
+			_ = file.Close()
+			return candidate, err
+		}
+		if err := file.Close(); err != nil {
+			return candidate, err
+		}
+		return candidate, nil
+	}
+	return path, fmt.Errorf("no available export filename for %s", path)
+}
+
+func exportCollisionCandidate(path string, attempt int) string {
+	if attempt <= 0 {
+		return path
+	}
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	if stem == "" {
+		stem = base
+		ext = ""
+	}
+	return filepath.Join(dir, fmt.Sprintf("%s-%d%s", stem, attempt+1, ext))
 }
 
 func parseExportArgs(args []string, defaultSession string) (exportRequest, error) {
