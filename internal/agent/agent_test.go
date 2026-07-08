@@ -2755,6 +2755,20 @@ func TestManagementSurfaceErrorsHonorGlobalJSONFormat(t *testing.T) {
 			contains:  []string{`"command": "cron due"`, `"extra"`},
 		},
 		{
+			name:      "background missing output format",
+			args:      []string{"background", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "background"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "background invalid output format",
+			args:      []string{"background", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"option": "--output-format"`, `"value": "yaml"`},
+		},
+		{
 			name:      "team missing output format",
 			args:      []string{"team", "--output-format"},
 			kind:      "missing_flag_value",
@@ -6340,22 +6354,34 @@ func risky(value any) {
 
 	out, err = runResumedJSON("/tasks", "ls")
 	require.NoError(t, err)
-	var resumedTasks []background.Task
+	var resumedTasks backgroundCommandReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedTasks))
-	require.Empty(t, resumedTasks)
+	require.Equal(t, "background", resumedTasks.Kind)
+	require.Equal(t, "list", resumedTasks.Action)
+	require.Equal(t, "ok", resumedTasks.Status)
+	require.Empty(t, resumedTasks.Tasks)
 
 	out, err = runResumedJSON("/tasks", "board")
 	require.NoError(t, err)
-	var resumedTaskBoard background.LaneBoard
+	var resumedTaskBoard backgroundCommandReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedTaskBoard))
-	require.Empty(t, resumedTaskBoard.Active)
-	require.Empty(t, resumedTaskBoard.Blocked)
-	require.Empty(t, resumedTaskBoard.Finished)
+	require.Equal(t, "background", resumedTaskBoard.Kind)
+	require.Equal(t, "board", resumedTaskBoard.Action)
+	require.Equal(t, "ok", resumedTaskBoard.Status)
+	require.NotNil(t, resumedTaskBoard.Board)
+	require.Empty(t, resumedTaskBoard.Board.Active)
+	require.Empty(t, resumedTaskBoard.Board.Blocked)
+	require.Empty(t, resumedTaskBoard.Board.Finished)
 
 	out, err = runResumedJSON("/tasks", "run", "echo", "resumed-task")
 	require.NoError(t, err)
-	var resumedTaskRun background.Task
-	require.NoError(t, json.Unmarshal([]byte(out), &resumedTaskRun))
+	var resumedTaskRunReport backgroundCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTaskRunReport))
+	require.Equal(t, "background", resumedTaskRunReport.Kind)
+	require.Equal(t, "run", resumedTaskRunReport.Action)
+	require.Equal(t, "ok", resumedTaskRunReport.Status)
+	require.NotNil(t, resumedTaskRunReport.Task)
+	resumedTaskRun := *resumedTaskRunReport.Task
 	require.Equal(t, "resume-slash", resumedTaskRun.SessionID)
 	require.Equal(t, "echo resumed-task", resumedTaskRun.Command)
 	resumedTaskWorkspace, err := filepath.EvalSymlinks(resumedTaskRun.Workspace)
@@ -6366,8 +6392,13 @@ func risky(value any) {
 
 	out, err = runResumedJSON("/tasks", "get", resumedTaskRun.ID)
 	require.NoError(t, err)
-	var resumedTaskGet background.Task
-	require.NoError(t, json.Unmarshal([]byte(out), &resumedTaskGet))
+	var resumedTaskGetReport backgroundCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTaskGetReport))
+	require.Equal(t, "background", resumedTaskGetReport.Kind)
+	require.Equal(t, "status", resumedTaskGetReport.Action)
+	require.Equal(t, "ok", resumedTaskGetReport.Status)
+	require.NotNil(t, resumedTaskGetReport.Task)
+	resumedTaskGet := *resumedTaskGetReport.Task
 	require.Equal(t, resumedTaskRun.ID, resumedTaskGet.ID)
 	require.Equal(t, "echo resumed-task", resumedTaskGet.Command)
 
@@ -29548,6 +29579,26 @@ func TestBackgroundJSONReportsAndWatchMaxEvents(t *testing.T) {
 	require.Len(t, report.Tasks, 1)
 	require.Equal(t, task.ID, report.Tasks[0].ID)
 	out.Reset()
+
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--cwd", workspace,
+			"--output-format", "json",
+			"tasks", "list",
+		}, config.FlagOverrides{SessionID: "session-1"})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &report))
+	require.Equal(t, "background", report.Kind)
+	require.Equal(t, "list", report.Action)
+	require.Equal(t, "session-1", report.SessionID)
+	require.Len(t, report.Tasks, 1)
+	require.Equal(t, task.ID, report.Tasks[0].ID)
 
 	require.NoError(t, app.BackgroundWithOverrides([]string{"status", task.ID, "--output-format", "json"}, config.FlagOverrides{}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))

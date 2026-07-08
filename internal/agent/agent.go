@@ -961,9 +961,15 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "lint":
 		return wrapStructured(app.ProjectCommand(ctx, "lint", rest))
 	case "background":
-		return wrapStructured(app.BackgroundWithOverrides(rest, overrides))
+		if err := app.BackgroundWithFormat(rest, overrides, format); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "tasks", "bashes":
-		return wrapStructured(app.BackgroundWithOverrides(rest, overrides))
+		if err := app.BackgroundWithFormat(rest, overrides, format); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "cron":
 		if err := app.CronWithFormat(rest, format); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -6889,7 +6895,11 @@ func renderTeamReport(out io.Writer, report teamCommandReport) {
 }
 
 func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverrides) error {
-	cleanArgs, format, err := parseBackgroundOutputFormat(args)
+	return a.BackgroundWithFormat(args, overrides, "text")
+}
+
+func (a *App) BackgroundWithFormat(args []string, overrides config.FlagOverrides, defaultFormat string) error {
+	cleanArgs, format, err := parseBackgroundOutputFormat(args, defaultFormat)
 	if err != nil {
 		return err
 	}
@@ -7234,8 +7244,11 @@ func renderBackgroundReport(out io.Writer, report backgroundCommandReport) error
 	return nil
 }
 
-func parseBackgroundOutputFormat(args []string) ([]string, string, error) {
-	format := "text"
+func parseBackgroundOutputFormat(args []string, defaultFormat string) ([]string, string, error) {
+	format := strings.TrimSpace(defaultFormat)
+	if format == "" {
+		format = "text"
+	}
 	remaining := make([]string, 0, len(args))
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -7249,7 +7262,7 @@ func parseBackgroundOutputFormat(args []string) ([]string, string, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return nil, "", errors.New("background output format is required")
+				return nil, "", missingFlagValueError{Command: "background", Flag: arg, Usage: backgroundUsage}
 			}
 			format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -7258,7 +7271,7 @@ func parseBackgroundOutputFormat(args []string) ([]string, string, error) {
 			remaining = append(remaining, arg)
 		}
 	}
-	normalized, err := normalizeTextOrJSON(format, "background")
+	normalized, err := normalizeOutputFormat("background", format, []string{"text", "json"})
 	if err != nil {
 		return nil, "", err
 	}
@@ -32501,12 +32514,12 @@ func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOver
 	switch action {
 	case "", "list", "run", "status", "logs", "board",
 		"heartbeat", "stop", "restart", "prune", "supervise":
-		return a.BackgroundWithOverrides(args, overrides)
+		return a.BackgroundWithFormat(args, overrides, format)
 	case "watch":
 		if err := validateResumedBackgroundWatch(args); err != nil {
 			return err
 		}
-		return a.BackgroundWithOverrides(args, overrides)
+		return a.BackgroundWithFormat(args, overrides, format)
 	default:
 		command := "/tasks"
 		if action != "" {
@@ -32517,7 +32530,7 @@ func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOver
 }
 
 func validateResumedBackgroundWatch(args []string) error {
-	cleanArgs, _, err := parseBackgroundOutputFormat(args)
+	cleanArgs, _, err := parseBackgroundOutputFormat(args, "text")
 	if err != nil {
 		return err
 	}
