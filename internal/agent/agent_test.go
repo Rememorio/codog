@@ -2586,6 +2586,55 @@ func TestManagementSurfaceErrorsHonorGlobalJSONFormat(t *testing.T) {
 			errorKind: "unexpected_extra_args",
 			contains:  []string{`"command": "passes show"`, `"extra"`},
 		},
+		{
+			name:      "desktop missing output format",
+			args:      []string{"desktop", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "desktop"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "desktop missing session",
+			args:      []string{"desktop", "--session", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "desktop"`, `"option": "--session"`},
+		},
+		{
+			name:      "desktop unknown flag",
+			args:      []string{"desktop", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "desktop"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "desktop unexpected argument",
+			args:      []string{"desktop", "status", "extra"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "desktop"`, `"extra"`},
+		},
+		{
+			name:      "mobile missing addr",
+			args:      []string{"mobile", "--addr", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "mobile"`, `"option": "--addr"`},
+		},
+		{
+			name:      "mobile unknown flag",
+			args:      []string{"mobile", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "mobile"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "mobile unexpected argument",
+			args:      []string{"mobile", "ios", "android"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "mobile"`, `"android"`},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := captureStdout(t, func() error {

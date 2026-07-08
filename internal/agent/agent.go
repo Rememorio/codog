@@ -4298,6 +4298,9 @@ type handoffStatusReport struct {
 	Message   string            `json:"message,omitempty"`
 }
 
+const desktopHandoffUsage = "codog desktop|app [handoff|status|clear] [--session ID|--resume ID] [--output-format text|json]"
+const mobileHandoffUsage = "codog mobile|ios|android [handoff|status|clear] [--addr HOST:PORT] [--session ID|--resume ID] [--output-format text|json]"
+
 func (a *App) Desktop(args []string, overrides config.FlagOverrides) error {
 	req, err := parseDesktopHandoffArgs(args, overrides)
 	if err != nil {
@@ -4414,32 +4417,32 @@ func parseDesktopHandoffArgs(args []string, overrides config.FlagOverrides) (des
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("desktop output format is required")
+				return req, missingFlagValueError{Command: "desktop", Flag: arg, Usage: desktopHandoffUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--session":
 			index++
-			if index >= len(args) {
-				return req, errors.New("desktop session id is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "desktop", Flag: arg, Usage: desktopHandoffUsage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
 			req.SessionID = strings.TrimPrefix(arg, "--session=")
 		case arg == "--resume":
 			index++
-			if index >= len(args) {
-				return req, errors.New("desktop resume session id is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "desktop", Flag: arg, Usage: desktopHandoffUsage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--resume="):
 			req.SessionID = strings.TrimPrefix(arg, "--resume=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown desktop flag %q", arg)
+			return req, unknownOptionError{Command: "desktop", Option: arg, Usage: desktopHandoffUsage}
 		default:
 			if actionSet {
-				return req, fmt.Errorf("unexpected desktop argument %q", arg)
+				return req, unexpectedExtraArgsError{Command: "desktop", Args: []string{arg}, Usage: desktopHandoffUsage}
 			}
 			switch strings.ToLower(arg) {
 			case "handoff", "show":
@@ -4449,14 +4452,16 @@ func parseDesktopHandoffArgs(args []string, overrides config.FlagOverrides) (des
 			case "clear", "remove":
 				req.Action = "clear"
 			default:
-				return req, fmt.Errorf("unknown desktop action %q", arg)
+				return req, unexpectedExtraArgsError{Command: "desktop", Args: []string{arg}, Usage: desktopHandoffUsage}
 			}
 			actionSet = true
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "desktop"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("desktop", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
@@ -4604,72 +4609,74 @@ func parseMobileHandoffArgs(args []string, overrides config.FlagOverrides) (mobi
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("mobile output format is required")
+				return req, missingFlagValueError{Command: "mobile", Flag: arg, Usage: mobileHandoffUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--addr":
 			index++
-			if index >= len(args) {
-				return req, errors.New("mobile remote address is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "mobile", Flag: arg, Usage: mobileHandoffUsage}
 			}
 			req.Addr = args[index]
 		case strings.HasPrefix(arg, "--addr="):
 			req.Addr = strings.TrimPrefix(arg, "--addr=")
 		case arg == "--session":
 			index++
-			if index >= len(args) {
-				return req, errors.New("mobile session id is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "mobile", Flag: arg, Usage: mobileHandoffUsage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
 			req.SessionID = strings.TrimPrefix(arg, "--session=")
 		case arg == "--resume":
 			index++
-			if index >= len(args) {
-				return req, errors.New("mobile resume session id is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "mobile", Flag: arg, Usage: mobileHandoffUsage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--resume="):
 			req.SessionID = strings.TrimPrefix(arg, "--resume=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown mobile flag %q", arg)
+			return req, unknownOptionError{Command: "mobile", Option: arg, Usage: mobileHandoffUsage}
 		default:
 			normalized := strings.ToLower(arg)
 			switch normalized {
 			case "handoff", "show":
 				if actionSet {
-					return req, fmt.Errorf("unexpected mobile argument %q", arg)
+					return req, unexpectedExtraArgsError{Command: "mobile", Args: []string{arg}, Usage: mobileHandoffUsage}
 				}
 				req.Action = "handoff"
 				actionSet = true
 			case "status", "list":
 				if actionSet {
-					return req, fmt.Errorf("unexpected mobile argument %q", arg)
+					return req, unexpectedExtraArgsError{Command: "mobile", Args: []string{arg}, Usage: mobileHandoffUsage}
 				}
 				req.Action = "status"
 				actionSet = true
 			case "clear", "remove":
 				if actionSet {
-					return req, fmt.Errorf("unexpected mobile argument %q", arg)
+					return req, unexpectedExtraArgsError{Command: "mobile", Args: []string{arg}, Usage: mobileHandoffUsage}
 				}
 				req.Action = "clear"
 				actionSet = true
 			case "all", "ios", "android":
 				if platformSet {
-					return req, fmt.Errorf("unexpected mobile argument %q", arg)
+					return req, unexpectedExtraArgsError{Command: "mobile", Args: []string{arg}, Usage: mobileHandoffUsage}
 				}
 				req.Platform = normalized
 				platformSet = true
 			default:
-				return req, fmt.Errorf("unexpected mobile argument %q", arg)
+				return req, unexpectedExtraArgsError{Command: "mobile", Args: []string{arg}, Usage: mobileHandoffUsage}
 			}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "mobile"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("mobile", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
