@@ -327,6 +327,96 @@ func TestVersionCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, cliOut, "Version")
 }
 
+func TestUsageOverviewCommandsHaveDistinctReports(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	inputUsage := anthropic.Usage{InputTokens: 100}
+	outputUsage := anthropic.Usage{OutputTokens: 50, CacheReadInputTokens: 25}
+	require.NoError(t, store.AppendWithUsage("usage-session", anthropic.TextMessage("user", "hello"), &inputUsage))
+	require.NoError(t, store.AppendWithUsage("usage-session", anthropic.Message{
+		Role: "assistant",
+		Content: []anthropic.ContentBlock{
+			{Type: "text", Text: "working"},
+			{Type: "tool_use", ID: "tool-1", Name: "read_file", Input: json.RawMessage(`{"path":"main.go"}`)},
+		},
+	}, &outputUsage))
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome, Model: "claude-sonnet-4-5", MaxTokens: 4096},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.UsageOverview("cost", []string{"--json"}, config.FlagOverrides{SessionID: "usage-session"}))
+	var cost usageOverviewReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &cost))
+	require.Equal(t, "cost", cost.Kind)
+	require.Equal(t, "show", cost.Action)
+	require.Equal(t, "ok", cost.Status)
+	require.Equal(t, "usage-session", cost.SessionID)
+	require.Equal(t, 175, cost.TotalTokens)
+	require.NotNil(t, cost.CostUSD)
+	require.Equal(t, cost.EstimatedUSD, *cost.CostUSD)
+	require.Equal(t, "actual", cost.Source)
+	require.Greater(t, *cost.CostUSD, 0.0)
+	out.Reset()
+
+	require.NoError(t, app.UsageOverview("tokens", []string{"--json"}, config.FlagOverrides{SessionID: "usage-session"}))
+	var tokens usageOverviewReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &tokens))
+	require.Equal(t, "tokens", tokens.Kind)
+	require.Equal(t, 100, tokens.InputTokens)
+	require.Equal(t, 50, tokens.OutputTokens)
+	require.Equal(t, 25, tokens.CacheReadInputTokens)
+	require.Equal(t, 64000, tokens.MaxOutputTokens)
+	require.Equal(t, 200000, tokens.ContextWindowTokens)
+	require.Equal(t, 199825, tokens.ContextRemainingTokens)
+	require.InDelta(t, 0.0009, tokens.ContextUsedRatio, 0.0001)
+	out.Reset()
+
+	require.NoError(t, app.UsageOverview("stats", []string{"--json"}, config.FlagOverrides{SessionID: "usage-session"}))
+	var stats usageOverviewReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &stats))
+	require.Equal(t, "stats", stats.Kind)
+	require.Len(t, stats.Roles, 2)
+	require.NotEmpty(t, stats.Blocks)
+	require.NotNil(t, stats.ToolUse)
+	require.Equal(t, 1, stats.ToolUse.ToolUses)
+	out.Reset()
+
+	require.NoError(t, app.UsageOverview("cost", nil, config.FlagOverrides{SessionID: "usage-session"}))
+	require.Contains(t, out.String(), "Cost")
+	require.Contains(t, out.String(), "Cost USD")
+}
+
+func TestUsageOverviewDirectTokensDispatch(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := json.Marshal(map[string]string{
+		"config_home": configHome,
+		"model":       "claude-sonnet-4-5",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	store := session.NewWorkspaceStore(configHome, workspace)
+	usageRecord := anthropic.Usage{InputTokens: 8, OutputTokens: 5}
+	require.NoError(t, store.AppendWithUsage("dispatch-session", anthropic.TextMessage("assistant", "hello"), &usageRecord))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--cwd", workspace, "--session", "dispatch-session", "tokens", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report usageOverviewReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "tokens", report.Kind)
+	require.Equal(t, 13, report.TotalTokens)
+	require.Equal(t, 200000, report.ContextWindowTokens)
+}
+
 func requireResumeSafeHelpLine(t *testing.T, help string) string {
 	t.Helper()
 	for _, line := range strings.Split(help, "\n") {
@@ -3953,7 +4043,8 @@ func TestSlashCommandNameCanonicalizesAliases(t *testing.T) {
 		"/web-setup":           "remote-setup",
 		"/color":               "theme",
 		"/caches":              "cache",
-		"/stats":               "usage",
+		"/stats":               "stats",
+		"/tokens":              "tokens",
 		"/thinkback":           "think-back",
 		"/thinkback-play":      "think-back",
 		"/parity":              "mock-parity",
@@ -18558,8 +18649,14 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/stats", sess))
-	require.Contains(t, out.String(), "Usage")
+	require.Contains(t, out.String(), "Stats")
 	require.Contains(t, out.String(), "Session          usage-session")
+	require.Contains(t, out.String(), "Tool use         calls=1 results=1 errors=0")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/tokens", sess))
+	require.Contains(t, out.String(), "Tokens")
+	require.Contains(t, out.String(), "Total tokens")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/cache", sess))

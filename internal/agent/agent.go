@@ -766,7 +766,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "cost", "tokens":
-		return wrapStructured(app.ShowCost(overrides))
+		if err := app.UsageOverview(command, rest, overrides); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "cache", "caches":
 		if err := app.Cache(rest, overrides); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -783,7 +786,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "stats":
-		if err := app.Usage(rest, overrides); err != nil {
+		if err := app.UsageOverview(command, rest, overrides); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
@@ -32980,8 +32983,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Pin(resumeSlashArgs("pin", args, format), resumed)
 	case "/unpin":
 		return a.Unpin(resumeSlashArgs("unpin", args, format), resumed)
-	case "/cost":
-		return a.ShowCost(resumed)
+	case "/cost", "/tokens", "/stats":
+		return a.UsageOverview(strings.TrimPrefix(name, "/"), resumeSlashArgs(strings.TrimPrefix(name, "/"), args, format), resumed)
 	case "/usage":
 		return a.Usage(resumeSlashArgs("usage", args, format), resumed)
 	case "/cache":
@@ -34088,8 +34091,6 @@ func slashCommandName(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "/exit_plan_mode":
 		return "exit-plan"
-	case "/tokens":
-		return "cost"
 	case "/session", "/sessions":
 		return "sessions"
 	case "/settings":
@@ -34116,8 +34117,6 @@ func slashCommandName(name string) string {
 		return "theme"
 	case "/caches":
 		return "cache"
-	case "/stats":
-		return "usage"
 	case "/thinkback", "/thinkback-play":
 		return "think-back"
 	case "/parity":
@@ -38999,8 +38998,8 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Notifications(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/cost":
-		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
+	case "/cost", "/tokens", "/stats":
+		_ = a.UsageOverview(strings.TrimPrefix(command, "/"), fields[1:], config.FlagOverrides{SessionID: sess.ID})
 	case "/cache":
 		if err := a.Cache(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -54743,20 +54742,153 @@ func renderSimpleCompatibility(out io.Writer, report simpleCompatibilityReport, 
 	return nil
 }
 
+type usageOverviewReport struct {
+	Kind                     string                `json:"kind"`
+	Action                   string                `json:"action"`
+	Status                   string                `json:"status"`
+	SessionID                string                `json:"session_id,omitempty"`
+	Model                    string                `json:"model"`
+	MessageCount             int                   `json:"message_count"`
+	InputTokens              int                   `json:"input_tokens"`
+	OutputTokens             int                   `json:"output_tokens"`
+	CacheCreationInputTokens int                   `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int                   `json:"cache_read_input_tokens,omitempty"`
+	TotalTokens              int                   `json:"total_tokens"`
+	EstimatedUSD             float64               `json:"estimated_usd"`
+	CostUSD                  *float64              `json:"cost_usd,omitempty"`
+	Source                   string                `json:"source"`
+	MaxOutputTokens          int                   `json:"max_output_tokens,omitempty"`
+	ContextWindowTokens      int                   `json:"context_window_tokens,omitempty"`
+	ContextRemainingTokens   int                   `json:"context_remaining_tokens,omitempty"`
+	ContextUsedRatio         float64               `json:"context_used_ratio,omitempty"`
+	Summary                  usage.Summary         `json:"summary"`
+	Roles                    []usage.RoleUsage     `json:"roles,omitempty"`
+	Blocks                   []usage.BlockUsage    `json:"blocks,omitempty"`
+	ToolUse                  *usage.ToolUseSummary `json:"tool_use,omitempty"`
+	Message                  string                `json:"message,omitempty"`
+}
+
 func (a *App) ShowCost(overrides config.FlagOverrides) error {
-	sess, err := a.openSession(overrides)
+	return a.UsageOverview("cost", []string{"--output-format", "json"}, overrides)
+}
+
+func (a *App) UsageOverview(command string, args []string, overrides config.FlagOverrides) error {
+	kind := normalizeUsageOverviewKind(command)
+	format, err := parseSimpleOutputFormat(kind, args)
 	if err != nil {
 		return err
 	}
-	summary := usage.Estimate(sess.Messages, a.Config.Model)
-	if actual, err := a.sessionUsageValues(sess.ID); err == nil {
-		if actualSummary, ok := usage.ActualSummary(actual, a.Config.Model); ok {
-			summary = actualSummary
-		}
+	report, err := a.buildUsageOverviewReport(kind, overrides)
+	if err != nil {
+		return err
 	}
-	data, _ := json.MarshalIndent(summary, "", "  ")
-	fmt.Fprintln(a.Out, string(data))
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderUsageOverview(a.Out, report)
 	return nil
+}
+
+func normalizeUsageOverviewKind(command string) string {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "tokens":
+		return "tokens"
+	case "stats":
+		return "stats"
+	default:
+		return "cost"
+	}
+}
+
+func (a *App) buildUsageOverviewReport(kind string, overrides config.FlagOverrides) (usageOverviewReport, error) {
+	sess, err := a.openSession(overrides)
+	if err != nil {
+		return usageOverviewReport{}, err
+	}
+	actual, _ := a.sessionUsageValues(sess.ID)
+	usageReport := usage.BuildReportWithUsage(sess.ID, a.Config.Model, sess.Messages, actual)
+	summary := usageReport.Summary
+	report := usageOverviewReport{
+		Kind:                     normalizeUsageOverviewKind(kind),
+		Action:                   "show",
+		Status:                   "ok",
+		SessionID:                sess.ID,
+		Model:                    a.Config.Model,
+		MessageCount:             len(sess.Messages),
+		InputTokens:              summary.InputTokens,
+		OutputTokens:             summary.OutputTokens,
+		CacheCreationInputTokens: summary.CacheCreationInputTokens,
+		CacheReadInputTokens:     summary.CacheReadInputTokens,
+		TotalTokens:              summary.TotalTokens,
+		EstimatedUSD:             summary.EstimatedUSD,
+		Source:                   summary.Source,
+		Summary:                  summary,
+	}
+	if report.Kind == "cost" {
+		costUSD := summary.EstimatedUSD
+		report.CostUSD = &costUSD
+	}
+	if limit, ok := modelrouting.TokenLimitForModel(a.Config.Model); ok {
+		report.MaxOutputTokens = limit.MaxOutputTokens
+		report.ContextWindowTokens = limit.ContextWindowTokens
+		if limit.ContextWindowTokens > summary.TotalTokens {
+			report.ContextRemainingTokens = limit.ContextWindowTokens - summary.TotalTokens
+		}
+		report.ContextUsedRatio = roundedRatio(summary.TotalTokens, limit.ContextWindowTokens)
+	}
+	if report.Kind == "stats" {
+		report.Roles = append([]usage.RoleUsage(nil), usageReport.Roles...)
+		report.Blocks = append([]usage.BlockUsage(nil), usageReport.Blocks...)
+		toolUse := usageReport.ToolUse
+		report.ToolUse = &toolUse
+	}
+	return report, nil
+}
+
+func renderUsageOverview(out io.Writer, report usageOverviewReport) {
+	fmt.Fprintln(out, usageOverviewTitle(report.Kind))
+	if report.SessionID != "" {
+		fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	}
+	fmt.Fprintf(out, "  Model            %s\n", emptyAsNone(report.Model))
+	fmt.Fprintf(out, "  Messages         %d\n", report.MessageCount)
+	fmt.Fprintf(out, "  Total tokens     %d\n", report.TotalTokens)
+	fmt.Fprintf(out, "  Input tokens     %d\n", report.InputTokens)
+	fmt.Fprintf(out, "  Output tokens    %d\n", report.OutputTokens)
+	if report.CacheCreationInputTokens != 0 || report.CacheReadInputTokens != 0 {
+		fmt.Fprintf(out, "  Cache tokens     create=%d read=%d\n", report.CacheCreationInputTokens, report.CacheReadInputTokens)
+	}
+	if report.ContextWindowTokens > 0 {
+		fmt.Fprintf(out, "  Context window   %d\n", report.ContextWindowTokens)
+		fmt.Fprintf(out, "  Context used     %.2f%%\n", report.ContextUsedRatio*100)
+		fmt.Fprintf(out, "  Context left     %d\n", report.ContextRemainingTokens)
+	}
+	if report.Kind == "cost" {
+		costUSD := report.EstimatedUSD
+		if report.CostUSD != nil {
+			costUSD = *report.CostUSD
+		}
+		fmt.Fprintf(out, "  Cost USD         %.5f\n", costUSD)
+	} else {
+		fmt.Fprintf(out, "  Estimated USD    %.5f\n", report.EstimatedUSD)
+	}
+	fmt.Fprintf(out, "  Source           %s\n", emptyAsNone(report.Source))
+	if report.Kind == "stats" && report.ToolUse != nil {
+		fmt.Fprintf(out, "  Tool use         calls=%d results=%d errors=%d\n", report.ToolUse.ToolUses, report.ToolUse.ToolResults, report.ToolUse.Errors)
+	}
+}
+
+func usageOverviewTitle(kind string) string {
+	switch normalizeUsageOverviewKind(kind) {
+	case "tokens":
+		return "Tokens"
+	case "stats":
+		return "Stats"
+	default:
+		return "Cost"
+	}
 }
 
 func (a *App) Usage(args []string, overrides config.FlagOverrides) error {
