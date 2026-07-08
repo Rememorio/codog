@@ -46991,6 +46991,21 @@ func (a *App) SessionsCommand(args []string) error {
 			existsArgs = append(append([]string(nil), existsArgs...), "--json")
 		}
 		return a.SessionExists(existsArgs, "")
+	case "search":
+		req, err := parseSessionSearchArgs("codog sessions search", args[1:], "json")
+		if err != nil {
+			return err
+		}
+		report, err := a.searchSessionsWithReport(req)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderSessionSearchText(a.Out, report)
 	case "export":
 		return a.SessionExport(args[1:])
 	case "import":
@@ -47110,6 +47125,8 @@ func normalizeSessionAction(action string) string {
 		return "show"
 	case "exists", "has":
 		return "exists"
+	case "search", "find", "grep":
+		return "search"
 	case "export", "dump":
 		return "export"
 	case "import", "load":
@@ -47158,7 +47175,7 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_sessions_action",
 			Message:   fmt.Sprintf("unsupported sessions action %q", action),
-			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions switch ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions pin ID [message]`, `codog sessions unpin ID [message]`, `codog sessions prune`, or `codog sessions delete ID`. Common aliases include ls, get, has, clone, checkout, mv, gc, and rm.",
+			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions search QUERY`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions switch ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions pin ID [message]`, `codog sessions unpin ID [message]`, `codog sessions prune`, or `codog sessions delete ID`. Common aliases include ls, get, has, find, clone, checkout, mv, gc, and rm.",
 		}, format)
 	}
 	return renderCLIError(out, err, format)
@@ -49123,6 +49140,222 @@ func renderSessionListText(out io.Writer, report sessionListReport) {
 			lineage = fmt.Sprintf("\tbranch=%s", sess.BranchName)
 		}
 		fmt.Fprintf(out, "%s\t%d messages\tlifecycle=%s\t%s%s%s%s\n", sess.ID, sess.MessageCount, sess.Lifecycle.Signal, sess.Path, lineage, pinned, active)
+	}
+}
+
+type sessionSearchRequest struct {
+	Query  string
+	Limit  int
+	Format string
+}
+
+type sessionSearchReport struct {
+	Kind            string               `json:"kind"`
+	Action          string               `json:"action"`
+	Status          string               `json:"status"`
+	Query           string               `json:"query"`
+	Count           int                  `json:"count"`
+	ScannedSessions int                  `json:"scanned_sessions"`
+	MatchLimit      int                  `json:"match_limit"`
+	Truncated       bool                 `json:"truncated,omitempty"`
+	Matches         []sessionSearchMatch `json:"matches"`
+}
+
+type sessionSearchMatch struct {
+	SessionID    string `json:"session_id"`
+	Path         string `json:"path"`
+	MessageCount int    `json:"message_count"`
+	MessageIndex int    `json:"message_index,omitempty"`
+	Role         string `json:"role,omitempty"`
+	Field        string `json:"field"`
+	Snippet      string `json:"snippet"`
+	Title        string `json:"title,omitempty"`
+	UpdatedAtMS  int64  `json:"updated_at_ms,omitempty"`
+}
+
+func parseSessionSearchArgs(command string, args []string, defaultFormat string) (sessionSearchRequest, error) {
+	req := sessionSearchRequest{Limit: 50, Format: defaultFormat}
+	if req.Format == "" {
+		req.Format = "text"
+	}
+	usage := command + " QUERY [--limit N] [--json|--output-format text|json]"
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--limit":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
+			}
+			limit, err := parsePositiveIntOption(args[index], "--limit", usage)
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: command, Option: arg, Usage: usage}
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) == 0 {
+		return req, fmt.Errorf("usage: %s", usage)
+	}
+	req.Query = strings.TrimSpace(strings.Join(positionals, " "))
+	if req.Query == "" {
+		return req, fmt.Errorf("usage: %s", usage)
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown %s output format %q", command, req.Format)
+	}
+	return req, nil
+}
+
+func (a *App) searchSessionsWithReport(req sessionSearchRequest) (sessionSearchReport, error) {
+	sessions, err := a.Sessions.List()
+	if err != nil {
+		return sessionSearchReport{}, err
+	}
+	report := sessionSearchReport{
+		Kind:            "session_search",
+		Action:          "search",
+		Status:          "ok",
+		Query:           req.Query,
+		ScannedSessions: len(sessions),
+		MatchLimit:      req.Limit,
+		Matches:         []sessionSearchMatch{},
+	}
+	for _, sess := range sessions {
+		for _, match := range sessionSearchMatches(sess, req.Query) {
+			if len(report.Matches) >= req.Limit {
+				report.Truncated = true
+				report.Count = len(report.Matches)
+				return report, nil
+			}
+			report.Matches = append(report.Matches, match)
+		}
+	}
+	report.Count = len(report.Matches)
+	return report, nil
+}
+
+func sessionSearchMatches(sess session.Session, query string) []sessionSearchMatch {
+	matches := []sessionSearchMatch{}
+	addField := func(field string, value string) {
+		if !sessionSearchContains(value, query) {
+			return
+		}
+		matches = append(matches, sessionSearchMatch{
+			SessionID:    sess.ID,
+			Path:         sess.Path,
+			MessageCount: len(sess.Messages),
+			Field:        field,
+			Snippet:      sessionSearchSnippet(value, query, 180),
+			Title:        sess.Identity.Title,
+			UpdatedAtMS:  timeMillis(sess.Metadata.UpdatedAt),
+		})
+	}
+	addField("id", sess.ID)
+	addField("title", sess.Identity.Title)
+	addField("workspace", sess.Identity.Workspace)
+	addField("worktree", sess.Identity.Worktree)
+	addField("purpose", sess.Identity.Purpose)
+	for index, msg := range sess.Messages {
+		text := strings.TrimSpace(renderMessagePlainText(msg))
+		if !sessionSearchContains(text, query) {
+			continue
+		}
+		matches = append(matches, sessionSearchMatch{
+			SessionID:    sess.ID,
+			Path:         sess.Path,
+			MessageCount: len(sess.Messages),
+			MessageIndex: index + 1,
+			Role:         msg.Role,
+			Field:        "message",
+			Snippet:      sessionSearchSnippet(text, query, 180),
+			Title:        sess.Identity.Title,
+			UpdatedAtMS:  timeMillis(sess.Metadata.UpdatedAt),
+		})
+	}
+	return matches
+}
+
+func sessionSearchContains(value string, query string) bool {
+	value = strings.TrimSpace(value)
+	query = strings.TrimSpace(query)
+	if value == "" || query == "" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(value), strings.ToLower(query))
+}
+
+func sessionSearchSnippet(value string, query string, limit int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if limit <= 0 || utf8.RuneCountInString(value) <= limit {
+		return value
+	}
+	lowerValue := strings.ToLower(value)
+	lowerQuery := strings.ToLower(strings.TrimSpace(query))
+	index := strings.Index(lowerValue, lowerQuery)
+	if index < 0 {
+		runes := []rune(value)
+		return string(runes[:min(len(runes), limit)])
+	}
+	start := max(0, index-(limit/3))
+	end := min(len(value), start+limit)
+	if end-start < limit {
+		start = max(0, end-limit)
+	}
+	for start > 0 && !utf8.RuneStart(value[start]) {
+		start--
+	}
+	for end < len(value) && !utf8.RuneStart(value[end]) {
+		end++
+	}
+	snippet := strings.TrimSpace(value[start:end])
+	if start > 0 {
+		snippet = "..." + snippet
+	}
+	if end < len(value) {
+		snippet += "..."
+	}
+	return snippet
+}
+
+func renderSessionSearchText(out io.Writer, report sessionSearchReport) {
+	fmt.Fprintln(out, "Session Search")
+	fmt.Fprintf(out, "  Query            %s\n", report.Query)
+	fmt.Fprintf(out, "  Sessions scanned %d\n", report.ScannedSessions)
+	fmt.Fprintf(out, "  Matches          %d\n", report.Count)
+	if report.Truncated {
+		fmt.Fprintf(out, "  Truncated        yes, limit=%d\n", report.MatchLimit)
+	}
+	for _, match := range report.Matches {
+		location := match.Field
+		if match.MessageIndex > 0 {
+			location = fmt.Sprintf("message %d %s", match.MessageIndex, match.Role)
+		}
+		fmt.Fprintf(out, "  - %s\t%s\t%s\n", match.SessionID, location, match.Snippet)
 	}
 }
 
@@ -60004,14 +60237,14 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return commandHelpSpec{
 			Topic:                   "session",
 			Command:                 "session",
-			Usage:                   "codog sessions [list|show|exists|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]",
-			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]\n  codog sessions switch ID [--output-format text|json]\n  codog sessions pin ID [message-index|last] [--output-format text|json]\n  codog sessions unpin ID [message-index|last] [--output-format text|json]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n  codog sessions prune [--empty|--keep N] [--confirm] [--session ID|--resume ID] [--output-format text|json]\n\nInspects, imports, exports, and mutates saved session metadata. `switch` is local and returns continue commands for the selected session instead of opening an interactive REPL. Message indexes for `pin` and `unpin` are entered as 1-based numbers.\n",
+			Usage:                   "codog sessions [list|show|exists|search|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]",
+			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|search|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]\n  codog sessions search QUERY [--limit N] [--output-format text|json]\n  codog sessions switch ID [--output-format text|json]\n  codog sessions pin ID [message-index|last] [--output-format text|json]\n  codog sessions unpin ID [message-index|last] [--output-format text|json]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n  codog sessions prune [--empty|--keep N] [--confirm] [--session ID|--resume ID] [--output-format text|json]\n\nInspects, imports, exports, searches, and mutates saved session metadata. `switch` is local and returns continue commands for the selected session instead of opening an interactive REPL. Message indexes for `pin` and `unpin` are entered as 1-based numbers.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
 			RequiresSessionResume:   false,
 			MutatesWorkspace:        false,
-			OutputFields:            []string{"id", "messages", "created_at", "updated_at", "pinned_messages"},
+			OutputFields:            []string{"sessions", "session_details", "session_id", "messages", "query", "matches", "message_index", "snippet", "created_at", "updated_at", "pinned_messages"},
 			StatusValues:            []string{"ok", "error"},
 		}, true
 	case "bookmarks":
@@ -60126,7 +60359,7 @@ Usage:
   %s [flags] tui
   %s [flags] clear [--confirm] [--json|--output-format text|json]
   %s [flags] conversation [--confirm] [--json|--output-format text|json]
-  %s [flags] sessions [list|show|exists|export|import|fork|rename|prune|delete]
+  %s [flags] sessions [list|show|exists|search|export|import|fork|rename|prune|delete]
   %s [flags] backfill-sessions [--json|--output-format text|json]
   %s [flags] generateSessionName [--session ID|--resume ID|latest] [--source first|last] [--rename] [--json|--output-format text|json]
   %s [flags] rename NEW_ID [--session ID] [--json|--output-format text|json]

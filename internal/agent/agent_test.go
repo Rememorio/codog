@@ -12708,6 +12708,63 @@ func TestSessionsListJSONIncludesDetails(t *testing.T) {
 	require.Equal(t, 2, details[forked.ID].MessageCount)
 }
 
+func TestSessionsSearchJSONIncludesIdentityAndMessageMatches(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	_, err := store.CreateWithIdentity("alpha", session.SessionIdentity{
+		Title:   "Billing migration",
+		Purpose: "follow up on invoice tooling",
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.Append("alpha", anthropic.TextMessage("user", "investigate the payment retry path")))
+	require.NoError(t, store.Append("alpha", anthropic.TextMessage("assistant", "the retry path touches invoice reconciliation")))
+	require.NoError(t, store.Append("beta", anthropic.TextMessage("user", "unrelated notes")))
+
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out}
+	require.NoError(t, app.SessionsCommand([]string{"search", "invoice", "--json"}))
+
+	var report sessionSearchReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "session_search", report.Kind)
+	require.Equal(t, "search", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "invoice", report.Query)
+	require.Equal(t, 2, report.ScannedSessions)
+	require.Equal(t, 2, report.Count)
+	require.False(t, report.Truncated)
+
+	fields := map[string]sessionSearchMatch{}
+	for _, match := range report.Matches {
+		fields[match.Field] = match
+		require.Equal(t, "alpha", match.SessionID)
+		require.NotEmpty(t, match.Path)
+		require.Equal(t, 2, match.MessageCount)
+		require.Contains(t, strings.ToLower(match.Snippet), "invoice")
+	}
+	require.Equal(t, "purpose", fields["purpose"].Field)
+	require.Equal(t, "message", fields["message"].Field)
+	require.Equal(t, 2, fields["message"].MessageIndex)
+	require.Equal(t, "assistant", fields["message"].Role)
+}
+
+func TestSessionsSearchTextHonorsLimit(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("alpha", anthropic.TextMessage("user", "needle one")))
+	require.NoError(t, store.Append("alpha", anthropic.TextMessage("assistant", "needle two")))
+
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out}
+	require.NoError(t, app.SessionsCommand([]string{"find", "needle", "--limit", "1", "--output-format", "text"}))
+
+	text := out.String()
+	require.Contains(t, text, "Session Search")
+	require.Contains(t, text, "Matches          1")
+	require.Contains(t, text, "Truncated        yes, limit=1")
+	require.Contains(t, text, "alpha")
+	require.Contains(t, text, "needle one")
+	require.NotContains(t, text, "needle two")
+}
+
 func TestResumeCommandReportsSessionAndContinueCommands(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))
