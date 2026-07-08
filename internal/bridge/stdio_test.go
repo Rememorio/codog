@@ -242,6 +242,23 @@ func TestBridgeWorkspaceFilesSearchAndDiff(t *testing.T) {
 	require.Contains(t, out.String(), `+hello codog`)
 }
 
+func TestBridgeGoDiagnostics(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/bridge-diag\n\ngo 1.22\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package diag\n\nfunc Broken() { Missing() }\n"), 0o644))
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	input := `{"jsonrpc":"2.0","id":1,"method":"diagnostics/go","params":{"patterns":["./..."]}}` + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test", Workspace: workspace}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"jsonrpc":"2.0"`)
+	require.Contains(t, out.String(), `"id":1`)
+	require.Contains(t, out.String(), `"path":"main.go"`)
+	require.Contains(t, out.String(), "undefined")
+	require.Contains(t, out.String(), "Missing")
+}
+
 func TestBridgeCodeIntelligence(t *testing.T) {
 	workspace := t.TempDir()
 	source := strings.Join([]string{
