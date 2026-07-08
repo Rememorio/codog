@@ -10,7 +10,7 @@ not try to present itself as one. The goal is to build a practical local agent
 while keeping the implementation understandable enough to study, modify, and
 extend.
 
-Codog is most useful today if you want:
+Codog is most useful today when you want:
 
 - a terminal coding agent with local, file-backed state;
 - a Go codebase that shows how agent loops and tool execution fit together;
@@ -55,37 +55,47 @@ command reference.
 
 ## Current State
 
-Codog is usable for local experimentation and ordinary repository workflows.
-The strongest surfaces are:
+Codog is usable for local experimentation and ordinary repository workflows,
+but the surface area is intentionally labeled by reliability.
 
-- one-shot prompts, REPL, Bubble Tea TUI, text output, JSON output, and streaming
-  JSON output;
+Stable enough for daily local use:
+
+- one-shot prompts, REPL, text output, JSON output, and streaming JSON output;
 - Anthropic-compatible streaming, plus configurable routes for
   OpenAI-compatible APIs, Ollama, xAI, DashScope, and custom base URLs;
-- local tools for shell commands, file reads and writes, search, edits, git,
-  notebooks, and code intelligence;
-- JSONL sessions, resume, history, rewind, summaries, exports, usage reporting,
-  and compaction;
-- permission modes, allow and deny rules, hooks, audit events, and basic sandbox
-  toggles;
-- slash commands, skills, templates, Markdown agent definitions, MCP
-  client/server paths, provider profiles, background tasks, and bridge
-  surfaces;
-- deterministic mock parity scenarios for remote control, IDE bridge commands,
-  MCP auth recovery, policy checks, updater manifests, background agents,
-  auth credential lifecycle, project memory, session summaries, compaction
-  summaries, context views, focused paths, theme, privacy, interface
-  preferences, keybindings, output styles, browser and notification
-  preferences, telemetry controls, skill activation, model selection
-  persistence, model runtime controls, token and turn budget persistence, LSP
-  metadata, directory attachments and references, onboarding, bookmarks,
-  Markdown agent discovery, statusline rendering, command validation, config
-  validation status, and setup diagnostics.
+- local shell, read, write, edit, grep, glob, git, and notebook tools;
+- JSONL sessions with resume, search, history, rewind, summaries, exports,
+  usage reporting, compaction, hygiene audits, and oversized-log rotation;
+- permission modes, allow and deny rules, workspace boundary checks, hooks,
+  audit events, and setup diagnostics;
+- `codog doctor`, `codog status`, `codog onboarding`, and `codog mock-parity`
+  as repeatable health and compatibility checks.
 
-The broad integration surfaces still need real deployment hardening before they
-should be relied on for multi-user or enterprise use, especially around hosted
-remote sessions, organization policy rollout, marketplace distribution, and
-cross-platform sandbox enforcement.
+Useful but still experimental:
+
+- Bubble Tea TUI, slash commands, skills, templates, output styles, and
+  Markdown agent definitions;
+- MCP client and server paths, including lifecycle diagnostics and auth
+  recovery reporting;
+- code intelligence and LSP routing for symbols, diagnostics, hover,
+  references, completion, formatting, code actions, and notebook cells;
+- background tasks, task boards, team runs, subagents, branch freshness checks,
+  and remote-control surfaces;
+- OAuth helpers, provider profiles, updater manifests, policy reports,
+  marketplace metadata, desktop/mobile handoff manifests, and bridge commands.
+
+Not production-hardened yet:
+
+- hosted remote sessions and remote identity management;
+- organization-wide policy rollout and enterprise administration;
+- plugin marketplace trust, signing, distribution, and update channels;
+- cross-platform sandbox enforcement for hostile repositories or commands;
+- IDE extensions, notebook/LSP integrations, and multi-agent orchestration at
+  the level expected from a commercial tool.
+
+The CLI exposes many compatibility commands because they are useful for testing
+and migration work. A command being present does not mean the surrounding
+product workflow is finished.
 
 ## Design Principles
 
@@ -126,15 +136,18 @@ exported without a database.
 
 ## Code Intelligence
 
-Codog includes a Go-focused code-intelligence layer behind the `lsp` tool and
-the `/code-intel` slash command. It works without a separate language server for
-common repository queries: symbols, definitions, references, hover, completion,
-diagnostics, formatting previews, rename previews, semantic tokens, code lenses,
-inlay hints, inline values, code actions, call hierarchy, and type hierarchy.
+Codog includes an experimental Go-focused code-intelligence layer behind the
+`lsp` tool and the `/code-intel` slash command. Without a configured language
+server it can answer common Go repository queries from syntax trees and `go`
+tool diagnostics, including symbols, definitions, references, hover text,
+completion candidates, diagnostics, formatting previews, and rename previews.
 
 When a configured LSP server is available, Codog can route supported requests to
-that server. Without one, it falls back to deterministic static analysis built
-from the workspace's Go syntax tree and `go` tool diagnostics.
+that server for richer actions such as semantic tokens, code lenses, inlay
+hints, inline values, code actions, call hierarchy, and type hierarchy. These
+routes are useful for integration testing and local workflows, but they should
+be treated as experimental until they have been exercised against the specific
+server and repository you plan to use.
 
 ## Configuration
 
