@@ -119,6 +119,40 @@ func TestRenderWithSessionSubstitutesSessionID(t *testing.T) {
 	require.Equal(t, "session=session-123 args=target", RenderWithSession(command, "target", "session-123").Rendered)
 }
 
+func TestInstallAndUninstallCommands(t *testing.T) {
+	configHome := t.TempDir()
+	sourceRoot := t.TempDir()
+	sourceFile := filepath.Join(sourceRoot, "review.md")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("Review $ARGUMENTS"), 0o644))
+
+	report, err := Install(sourceFile, filepath.Join(configHome, "commands"), "", "user")
+	require.NoError(t, err)
+	require.Equal(t, "commands", report.Kind)
+	require.Equal(t, "install", report.Action)
+	require.Equal(t, "review", report.Name)
+	require.Equal(t, "user", report.Target)
+	require.FileExists(t, filepath.Join(configHome, "commands", "review.md"))
+
+	named, err := Install(sourceFile, filepath.Join(configHome, "commands"), "team:audit", "user")
+	require.NoError(t, err)
+	require.Equal(t, "team:audit", named.Name)
+	require.FileExists(t, filepath.Join(configHome, "commands", "team", "audit.md"))
+
+	removed, err := Uninstall("team:audit", []string{filepath.Join(configHome, "commands")})
+	require.NoError(t, err)
+	require.Equal(t, "uninstall", removed.Action)
+	require.True(t, removed.Removed)
+	require.NoFileExists(t, filepath.Join(configHome, "commands", "team", "audit.md"))
+
+	_, err = Install(filepath.Join(sourceRoot, "missing.md"), filepath.Join(configHome, "commands"), "", "user")
+	var missing SourceNotFoundError
+	require.ErrorAs(t, err, &missing)
+
+	_, err = Install(sourceRoot, filepath.Join(configHome, "commands"), "", "user")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "markdown file")
+}
+
 func TestCompatibilityCommandRootsStopAtProjectBoundary(t *testing.T) {
 	configHome := t.TempDir()
 	parent := t.TempDir()

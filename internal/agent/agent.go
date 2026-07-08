@@ -49971,11 +49971,57 @@ func (a *App) Commands(args []string) error {
 		if !strings.HasSuffix(rendered.Rendered, "\n") {
 			fmt.Fprintln(a.Out)
 		}
+	case "install":
+		req, err := parseCommandInstallArgs(rest)
+		if err != nil {
+			if errors.Is(err, errCommandInstallMissingSource) {
+				return renderCommandInstallMissingSource(a.Out, req.Format)
+			}
+			return err
+		}
+		targetRoot, targetLabel, err := a.commandTargetRoot(req.Target)
+		if err != nil {
+			return err
+		}
+		report, err := customcommands.Install(req.Source, targetRoot, req.Name, targetLabel)
+		if err != nil {
+			return renderCommandLookupError(a.Out, "install", req.Source, err, req.Format)
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprintln(a.Out, "Command Installed")
+		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
+		fmt.Fprintf(a.Out, "  Target           %s\n", report.Target)
+		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
+	case "uninstall":
+		req, err := parseCommandUninstallArgs(rest)
+		if err != nil {
+			if errors.Is(err, errCommandUninstallMissingName) {
+				return renderMissingActionArgument(a.Out, "commands", "uninstall", "command_name", "commands uninstall requires a command name", "Usage: codog commands uninstall NAME [--project|--user|--claude] [--json|--output-format text|json]. Run `codog commands list` to see installed commands.", req.Format)
+			}
+			return err
+		}
+		roots := a.commandUninstallRoots(req.Target)
+		report, err := customcommands.Uninstall(req.Name, roots)
+		if err != nil {
+			return renderCommandLookupError(a.Out, "uninstall", req.Name, err, req.Format)
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprintln(a.Out, "Command Uninstalled")
+		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
+		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
 	default:
 		return unexpectedExtraArgsError{
 			Command: "commands",
 			Args:    []string{action},
-			Usage:   "codog commands [list|search|audit|sources|show|run] [ARGS...] [--json|--output-format text|json]",
+			Usage:   "codog commands [list|search|audit|sources|show|run|install|uninstall] [ARGS...] [--json|--output-format text|json]",
 		}
 	}
 	return nil
@@ -49995,9 +50041,214 @@ func normalizeCommandsAction(action string) string {
 		return "show"
 	case "run", "render", "exec", "execute", "call", "invoke":
 		return "run"
+	case "install", "add":
+		return "install"
+	case "uninstall", "remove", "delete", "rm", "del":
+		return "uninstall"
 	default:
 		return strings.ToLower(strings.TrimSpace(action))
 	}
+}
+
+type commandInstallRequest struct {
+	Format string
+	Target string
+	Name   string
+	Source string
+}
+
+type commandUninstallRequest struct {
+	Format string
+	Target string
+	Name   string
+}
+
+var (
+	errCommandInstallMissingSource = errors.New("commands install source is required")
+	errCommandUninstallMissingName = errors.New("commands uninstall name is required")
+)
+
+func parseCommandInstallArgs(args []string) (commandInstallRequest, error) {
+	req := commandInstallRequest{Format: "text", Target: "user"}
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("commands install output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--project" || arg == "--workspace":
+			req.Target = "project"
+		case arg == "--user":
+			req.Target = "user"
+		case arg == "--claude":
+			req.Target = "claude"
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("commands install target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--name":
+			index++
+			if index >= len(args) {
+				return req, errors.New("commands install name is required")
+			}
+			req.Name = args[index]
+		case strings.HasPrefix(arg, "--name="):
+			req.Name = strings.TrimPrefix(arg, "--name=")
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "commands install"); err != nil {
+		return req, err
+	}
+	if len(positionals) == 0 {
+		return req, errCommandInstallMissingSource
+	}
+	if len(positionals) != 1 {
+		return req, errors.New("usage: codog commands install [--project|--user|--claude] [--name NAME] SOURCE [--json]")
+	}
+	req.Source = positionals[0]
+	return req, nil
+}
+
+func parseCommandUninstallArgs(args []string) (commandUninstallRequest, error) {
+	req := commandUninstallRequest{Format: "text"}
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("commands uninstall output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--project" || arg == "--workspace":
+			req.Target = "project"
+		case arg == "--user":
+			req.Target = "user"
+		case arg == "--claude":
+			req.Target = "claude"
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("commands uninstall target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "commands uninstall"); err != nil {
+		return req, err
+	}
+	if len(positionals) == 0 {
+		return req, errCommandUninstallMissingName
+	}
+	if len(positionals) != 1 {
+		return req, errors.New("usage: codog commands uninstall NAME [--project|--user|--claude] [--json]")
+	}
+	req.Name = positionals[0]
+	return req, nil
+}
+
+func (a *App) commandTargetRoot(target string) (string, string, error) {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "", "user":
+		return filepath.Join(a.Config.ConfigHome, "commands"), "user", nil
+	case "project", "workspace":
+		return filepath.Join(a.Workspace, ".codog", "commands"), "workspace", nil
+	case "claude":
+		return filepath.Join(a.Workspace, ".claude", "commands"), "claude", nil
+	default:
+		return "", "", fmt.Errorf("unknown commands target %q", target)
+	}
+}
+
+func (a *App) commandUninstallRoots(target string) []string {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "user":
+		return []string{filepath.Join(a.Config.ConfigHome, "commands")}
+	case "project", "workspace":
+		return []string{filepath.Join(a.Workspace, ".codog", "commands")}
+	case "claude":
+		return []string{filepath.Join(a.Workspace, ".claude", "commands")}
+	default:
+		return []string{
+			filepath.Join(a.Workspace, ".codog", "commands"),
+			filepath.Join(a.Workspace, ".claude", "commands"),
+			filepath.Join(a.Config.ConfigHome, "commands"),
+		}
+	}
+}
+
+func renderCommandLookupError(out io.Writer, action string, subject string, err error, format string) error {
+	if errors.Is(err, customcommands.ErrNotFound) {
+		return renderCustomCommandNotFound(out, action, subject, format)
+	}
+	var sourceMissing customcommands.SourceNotFoundError
+	if errors.As(err, &sourceMissing) {
+		source := strings.TrimSpace(sourceMissing.Source)
+		if source == "" {
+			source = subject
+		}
+		return renderCustomCommandNotFound(out, action, source, format)
+	}
+	return err
+}
+
+func renderCustomCommandNotFound(out io.Writer, action string, subject string, format string) error {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		action = "show"
+	}
+	subject = strings.TrimSpace(subject)
+	message := "custom command was not found"
+	if subject != "" {
+		if action == "install" {
+			message = fmt.Sprintf("custom command source %q was not found", subject)
+		} else {
+			message = fmt.Sprintf("custom command %q was not found", subject)
+		}
+	}
+	return renderActionError(out, actionErrorReport{
+		Kind:      "commands",
+		Action:    action,
+		Status:    "error",
+		ErrorKind: "command_not_found",
+		Message:   message,
+		Hint:      "Run `codog commands list` to see available commands, or `codog commands add <path>` / `codog commands install <path>` to install one.",
+	}, format)
+}
+
+func renderCommandInstallMissingSource(out io.Writer, format string) error {
+	return renderActionError(out, actionErrorReport{
+		Kind:      "commands",
+		Action:    "install",
+		Status:    "error",
+		ErrorKind: "missing_argument",
+		Argument:  "install_source",
+		Message:   "commands install requires a source",
+		Hint:      "Usage: codog commands install [--project|--user|--claude] [--name NAME] SOURCE [--json|--output-format text|json].",
+	}, format)
 }
 
 func (a *App) renderCommandsList(format string) error {
@@ -59159,8 +59410,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"commands",
 			"commands",
-			"codog commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec]",
-			"Commands\n\nUsage:\n  codog commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec]\n  codog commands search QUERY [--output-format text|json]\n  codog commands audit [--output-format text|json]\n\nLists, searches, audits sources, shows, or renders custom Markdown slash commands from Codog and compatible Claude command directories. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter commands by name, source, preview, or body; `audit`, `doctor`, `check`, and `validate` report source health, active and shadowed commands, and frontmatter parse errors; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `exec`, `execute`, `call`, and `invoke` are aliases for `run`.\n",
+			"codog commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec|add|install|uninstall|remove|rm]",
+			"Commands\n\nUsage:\n  codog commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec|add|install|uninstall|remove|rm]\n  codog commands search QUERY [--output-format text|json]\n  codog commands audit [--output-format text|json]\n  codog commands install [--project|--user|--claude] [--name NAME] SOURCE [--output-format text|json]\n\nLists, searches, audits sources, shows, renders, installs, or removes custom Markdown slash commands from Codog and compatible Claude command directories. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter commands by name, source, preview, or body; `audit`, `doctor`, `check`, and `validate` report source health, active and shadowed commands, and frontmatter parse errors; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `exec`, `execute`, `call`, and `invoke` are aliases for `run`; `add` is an alias for `install`; `remove`, `rm`, and `del` are aliases for `uninstall`.\n",
 			[]string{"commands", "roots", "sources", "query", "name", "path", "body", "active", "shadowed_by", "frontmatter_errors", "frontmatter_error_count"},
 			[]string{"ok", "degraded", "error"},
 			false,
@@ -59377,7 +59628,7 @@ Usage:
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID] | paste [--print|--json] [--session ID]
   %s [flags] pin|unpin [message-index|last] [--session ID] [--json|--output-format text|json]
   %s [flags] skill|skills [list|ls|search|find|audit|doctor|sources|roots|status|enable|disable|show|info|describe|invoke|add|install|uninstall]
-  %s [flags] commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec]
+  %s [flags] commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec|add|install|uninstall|remove|rm]
   %s [flags] templates [list|ls|search|find|audit|doctor|sources|roots|show|view|apply|render|run]
   %s [flags] hooks [list|health EVENT|run EVENT|watch-paths list|check] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|ls|status|show|view|set|use|clear|off] [NAME] [--json|--output-format text|json]

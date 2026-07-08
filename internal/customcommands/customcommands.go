@@ -55,6 +55,38 @@ type Rendered struct {
 	Rendered     string   `json:"rendered"`
 }
 
+type InstallReport struct {
+	Kind   string `json:"kind"`
+	Action string `json:"action"`
+	Status string `json:"status"`
+	Name   string `json:"name"`
+	Source string `json:"source"`
+	Path   string `json:"path"`
+	Target string `json:"target"`
+}
+
+type UninstallReport struct {
+	Kind    string `json:"kind"`
+	Action  string `json:"action"`
+	Status  string `json:"status"`
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Removed bool   `json:"removed"`
+}
+
+type SourceNotFoundError struct {
+	Source string
+	Err    error
+}
+
+func (e SourceNotFoundError) Error() string {
+	return fmt.Sprintf("custom command source %q was not found", e.Source)
+}
+
+func (e SourceNotFoundError) Unwrap() error {
+	return e.Err
+}
+
 var ErrNotFound = errors.New("custom command not found")
 
 type root struct {
@@ -174,6 +206,95 @@ func Find(configHome, workspace, name string) (Command, error) {
 
 func Render(command Command, args string) Rendered {
 	return RenderWithSession(command, args, "")
+}
+
+func Install(source string, targetRoot string, explicitName string, targetLabel string) (InstallReport, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return InstallReport{}, errors.New("command install source is required")
+	}
+	targetRoot = strings.TrimSpace(targetRoot)
+	if targetRoot == "" {
+		return InstallReport{}, errors.New("command install target is required")
+	}
+	absSource, err := filepath.Abs(source)
+	if err != nil {
+		return InstallReport{}, err
+	}
+	resolvedSource, err := filepath.EvalSymlinks(absSource)
+	if err != nil {
+		return InstallReport{}, SourceNotFoundError{Source: source, Err: err}
+	}
+	info, err := os.Stat(resolvedSource)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return InstallReport{}, SourceNotFoundError{Source: source, Err: err}
+		}
+		return InstallReport{}, err
+	}
+	if info.IsDir() || !strings.EqualFold(filepath.Ext(resolvedSource), ".md") {
+		return InstallReport{}, fmt.Errorf("command source %q must be a markdown file", source)
+	}
+	name := strings.TrimSpace(explicitName)
+	if name == "" {
+		name = strings.TrimSuffix(filepath.Base(resolvedSource), filepath.Ext(resolvedSource))
+	}
+	name = normalizeName(name)
+	if err := validateCommandName(name); err != nil {
+		return InstallReport{}, err
+	}
+	if err := os.MkdirAll(targetRoot, 0o755); err != nil {
+		return InstallReport{}, err
+	}
+	dest := filepath.Join(targetRoot, commandPathName(name)+".md")
+	if err := copyFile(resolvedSource, dest, 0o644); err != nil {
+		return InstallReport{}, err
+	}
+	return InstallReport{
+		Kind:   "commands",
+		Action: "install",
+		Status: "ok",
+		Name:   name,
+		Source: resolvedSource,
+		Path:   dest,
+		Target: targetLabel,
+	}, nil
+}
+
+func Uninstall(name string, roots []string) (UninstallReport, error) {
+	name = normalizeName(name)
+	if name == "" {
+		return UninstallReport{}, errors.New("command name is required")
+	}
+	if err := validateCommandName(name); err != nil {
+		return UninstallReport{}, err
+	}
+	pathName := commandPathName(name)
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		candidate := filepath.Join(root, pathName+".md")
+		if _, err := os.Stat(candidate); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return UninstallReport{}, err
+		}
+		if err := os.Remove(candidate); err != nil {
+			return UninstallReport{}, err
+		}
+		return UninstallReport{
+			Kind:    "commands",
+			Action:  "uninstall",
+			Status:  "ok",
+			Name:    name,
+			Path:    candidate,
+			Removed: true,
+		}, nil
+	}
+	return UninstallReport{}, fmt.Errorf("%w: %s", ErrNotFound, name)
 }
 
 func RenderWithSession(command Command, args string, sessionID string) Rendered {
@@ -460,6 +581,18 @@ func commandPathName(name string) string {
 	return filepath.FromSlash(strings.ReplaceAll(name, ":", "/"))
 }
 
+func validateCommandName(name string) error {
+	if name == "" || strings.Contains(name, "..") || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("invalid command name %q", name)
+	}
+	for _, part := range strings.Split(name, ":") {
+		if strings.TrimSpace(part) == "" || part == "." {
+			return fmt.Errorf("invalid command name %q", name)
+		}
+	}
+	return nil
+}
+
 func normalizeName(name string) string {
 	name = strings.TrimSpace(strings.TrimPrefix(name, "/"))
 	name = strings.TrimSuffix(name, ".md")
@@ -492,4 +625,15 @@ func preview(body string) string {
 		}
 	}
 	return "<empty>"
+}
+
+func copyFile(source string, dest string, mode os.FileMode) error {
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(dest, data, mode)
 }

@@ -27288,6 +27288,62 @@ func TestCommandsAuditReportsFrontmatterErrors(t *testing.T) {
 	require.Contains(t, audit.Message, "frontmatter")
 }
 
+func TestCommandsInstallAndUninstall(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	sourceRoot := t.TempDir()
+	sourceFile := filepath.Join(sourceRoot, "review.md")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("Review $ARGUMENTS"), 0o644))
+
+	var out bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: configHome}, Workspace: workspace, Out: &out, Err: io.Discard}
+
+	require.NoError(t, app.Commands([]string{"install", sourceFile, "--json"}))
+	var install customcommands.InstallReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &install))
+	require.Equal(t, "commands", install.Kind)
+	require.Equal(t, "install", install.Action)
+	require.Equal(t, "review", install.Name)
+	require.Equal(t, "user", install.Target)
+	require.FileExists(t, filepath.Join(configHome, "commands", "review.md"))
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"add", "--project", "--name", "team:audit", sourceFile, "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &install))
+	require.Equal(t, "team:audit", install.Name)
+	require.Equal(t, "workspace", install.Target)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "commands", "team", "audit.md"))
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"install", "--claude", "--name", "legacy:review", sourceFile}))
+	require.Contains(t, out.String(), "Command Installed")
+	require.FileExists(t, filepath.Join(workspace, ".claude", "commands", "legacy", "review.md"))
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/commands install --project "+sourceFile+" --json", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), `"target": "workspace"`)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "commands", "review.md"))
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"uninstall", "review", "--project", "--json"}))
+	var uninstall customcommands.UninstallReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &uninstall))
+	require.Equal(t, "commands", uninstall.Kind)
+	require.Equal(t, "uninstall", uninstall.Action)
+	require.True(t, uninstall.Removed)
+	require.NoFileExists(t, filepath.Join(workspace, ".codog", "commands", "review.md"))
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"rm", "team:audit", "--project"}))
+	require.Contains(t, out.String(), "Command Uninstalled")
+	require.NoFileExists(t, filepath.Join(workspace, ".codog", "commands", "team", "audit.md"))
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/commands remove legacy:review --claude --json", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), `"removed": true`)
+	require.NoFileExists(t, filepath.Join(workspace, ".claude", "commands", "legacy", "review.md"))
+}
+
 func TestResourceCatalogErrorsHonorGlobalJSONFormat(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -27322,6 +27378,20 @@ func TestResourceCatalogErrorsHonorGlobalJSONFormat(t *testing.T) {
 			kind:      "commands",
 			errorKind: "missing_argument",
 			contains:  []string{`"action": "search"`, `"argument": "query"`},
+		},
+		{
+			name:      "commands install missing source",
+			args:      []string{"commands", "install"},
+			kind:      "commands",
+			errorKind: "missing_argument",
+			contains:  []string{`"action": "install"`, `"argument": "install_source"`},
+		},
+		{
+			name:      "commands uninstall missing name",
+			args:      []string{"commands", "uninstall"},
+			kind:      "commands",
+			errorKind: "missing_argument",
+			contains:  []string{`"action": "uninstall"`, `"argument": "command_name"`},
 		},
 		{
 			name:      "templates search missing query",
