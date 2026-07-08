@@ -1389,6 +1389,116 @@ func TestBridgeFaultsRecordListAndClear(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(configHome, "bridge", "faults.json"))
 }
 
+func TestBridgeFaultDetailsClassifiesDiagnostics(t *testing.T) {
+	cases := []struct {
+		name        string
+		action      string
+		args        []string
+		category    string
+		severity    string
+		messagePart string
+		remediation string
+	}{
+		{
+			name:        "poll ok",
+			action:      "poll",
+			args:        []string{"204"},
+			category:    "polling",
+			severity:    "info",
+			messagePart: "204",
+			remediation: "retry polling",
+		},
+		{
+			name:        "poll warn",
+			action:      "poll",
+			args:        []string{"404"},
+			category:    "polling",
+			severity:    "warn",
+			messagePart: "404",
+			remediation: "retry polling",
+		},
+		{
+			name:        "poll failure",
+			action:      "poll",
+			category:    "polling",
+			severity:    "error",
+			messagePart: "polling diagnostic failure",
+			remediation: "running and reachable",
+		},
+		{
+			name:        "runtime error",
+			action:      "error",
+			args:        []string{"panic", "boom"},
+			category:    "runtime_error",
+			severity:    "error",
+			messagePart: "panic boom",
+			remediation: "restart the bridge",
+		},
+		{
+			name:        "disconnect",
+			action:      "disconnect",
+			category:    "connection",
+			severity:    "error",
+			messagePart: "connection drop",
+			remediation: "trust token",
+		},
+		{
+			name:        "latency",
+			action:      "latency",
+			args:        []string{"250ms"},
+			category:    "latency",
+			severity:    "warn",
+			messagePart: "250ms",
+			remediation: "responsiveness",
+		},
+		{
+			name:        "timeout",
+			action:      "timeout",
+			category:    "timeout",
+			severity:    "error",
+			messagePart: "timeout",
+			remediation: "timeouts continue",
+		},
+		{
+			name:        "custom",
+			action:      "custom",
+			args:        []string{"detail"},
+			category:    "diagnostic",
+			severity:    "info",
+			messagePart: "custom detail",
+			remediation: "follow-up",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			details := bridgeFaultDetails(tc.action, tc.args)
+			require.Equal(t, tc.category, details.Category)
+			require.Equal(t, tc.severity, details.Severity)
+			require.True(t, details.Recoverable)
+			require.Contains(t, details.Message, tc.messagePart)
+			require.Contains(t, details.Remediation, tc.remediation)
+		})
+	}
+}
+
+func TestRecordBridgeFaultTrimsAndRetainsRecentEvents(t *testing.T) {
+	server := Server{ConfigHome: t.TempDir()}
+
+	for i := 0; i < maxBridgeFaultEvents+5; i++ {
+		_, err := server.RecordBridgeFault(" ERROR ", []string{" ", "event", strconv.Itoa(i)})
+		require.NoError(t, err)
+	}
+
+	events, err := server.BridgeFaults()
+	require.NoError(t, err)
+	require.Len(t, events, maxBridgeFaultEvents)
+	require.Equal(t, "error", events[0].Action)
+	require.Equal(t, []string{"event", "5"}, events[0].Args)
+	require.Equal(t, "runtime_error", events[0].Category)
+	require.Equal(t, []string{"event", strconv.Itoa(maxBridgeFaultEvents + 4)}, events[len(events)-1].Args)
+}
+
 func TestBridgeFaultsJSONRPC(t *testing.T) {
 	configHome := t.TempDir()
 	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
