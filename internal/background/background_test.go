@@ -23,6 +23,32 @@ func TestLogsReturnsTail(t *testing.T) {
 	require.Equal(t, "codog", logs)
 }
 
+func TestStoreDefaultsAndTaskIDValidation(t *testing.T) {
+	configHome := t.TempDir()
+	store := NewStore(configHome)
+	require.Equal(t, filepath.Join(configHome, "background"), store.Dir)
+	require.Equal(t, PruneOptions{OlderThan: 30 * 24 * time.Hour, Keep: 100}, DefaultPruneOptions())
+
+	require.ErrorContains(t, store.save(Task{ID: "../outside", Status: "completed"}), "single path component")
+	require.NoFileExists(t, filepath.Join(configHome, "outside.json"))
+	_, err := store.Get("../outside")
+	require.ErrorContains(t, err, "single path component")
+	_, err = store.Get(" ")
+	require.ErrorContains(t, err, "task id is required")
+}
+
+func TestListSortsTasksDeterministically(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	started := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	require.NoError(t, store.save(Task{ID: "same-b", Status: "completed", StartedAt: started, LogPath: filepath.Join(store.Dir, "same-b.log")}))
+	require.NoError(t, store.save(Task{ID: "same-a", Status: "completed", StartedAt: started, LogPath: filepath.Join(store.Dir, "same-a.log")}))
+	require.NoError(t, store.save(Task{ID: "old", Status: "completed", StartedAt: started.Add(-time.Hour), LogPath: filepath.Join(store.Dir, "old.log")}))
+
+	tasks, err := store.List()
+	require.NoError(t, err)
+	require.Equal(t, []string{"same-a", "same-b", "old"}, []string{tasks[0].ID, tasks[1].ID, tasks[2].ID})
+}
+
 func TestLogRangeReturnsBoundedChunkFromOffset(t *testing.T) {
 	store := Store{Dir: t.TempDir()}
 	logPath := filepath.Join(store.Dir, "task.log")
@@ -38,6 +64,18 @@ func TestLogRangeReturnsBoundedChunkFromOffset(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(5), nextOffset)
 	require.Equal(t, "alpha", logs)
+}
+
+func TestLogFromReadsFromOffsetWithoutLimit(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	logPath := filepath.Join(store.Dir, "task.log")
+	require.NoError(t, os.WriteFile(logPath, []byte("alpha beta gamma"), 0o644))
+	require.NoError(t, store.save(Task{ID: "task", Status: "completed", LogPath: logPath}))
+
+	nextOffset, logs, err := store.LogFrom("task", 6)
+	require.NoError(t, err)
+	require.Equal(t, int64(len("alpha beta gamma")), nextOffset)
+	require.Equal(t, "beta gamma", logs)
 }
 
 func TestWatchEmitsStatusAndLogEvents(t *testing.T) {
@@ -293,6 +331,68 @@ func TestLaneBoardGroupsTasksAndReportsFreshness(t *testing.T) {
 	require.True(t, board.Finished[1].Lifecycle.Terminal)
 	require.Equal(t, "completed", board.Finished[1].Lifecycle.Status)
 	require.NotEmpty(t, board.Finished[1].TerminalOutcome.Fingerprint)
+}
+
+func TestLaneBoardUsesCurrentTimeWrapper(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	require.NoError(t, store.save(Task{
+		ID:        "active",
+		Status:    "running",
+		PID:       os.Getpid(),
+		StartedAt: time.Now().UTC(),
+		LogPath:   filepath.Join(store.Dir, "active.log"),
+	}))
+
+	board, err := store.LaneBoard(time.Minute)
+	require.NoError(t, err)
+	require.NotZero(t, board.GeneratedAt)
+	require.Len(t, board.Active, 1)
+	require.Equal(t, "active", board.Active[0].TaskID)
+}
+
+func TestRecordTerminalEventNormalizesAndDeduplicates(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	now := time.Date(2026, 7, 5, 11, 0, 0, 0, time.UTC)
+	exitCode := 9
+	require.NoError(t, store.save(Task{
+		ID:          "task",
+		Status:      "running",
+		PID:         os.Getpid(),
+		StartedAt:   now.Add(-time.Minute),
+		CompletedAt: &now,
+		ExitCode:    &exitCode,
+		Error:       "boom",
+		LogPath:     filepath.Join(store.Dir, "task.log"),
+	}))
+
+	first, err := store.RecordTerminalEvent("task", TerminalEvent{
+		Status: " failed ",
+		Provenance: EventProvenance{
+			SourceKind: "replay",
+			Emitter:    "agent",
+			Confidence: "high",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "failed", first.Status)
+	require.Len(t, first.TerminalEvents, 1)
+	require.True(t, first.TerminalEvents[0].Actionable)
+	require.Equal(t, exitCode, *first.TerminalEvents[0].ExitCode)
+	require.Equal(t, "boom", first.TerminalEvents[0].Error)
+	require.Equal(t, now, first.TerminalEvents[0].ObservedAt)
+	require.NotNil(t, first.TerminalOutcome)
+	require.Equal(t, 1, first.TerminalOutcome.EventCount)
+
+	duplicate, err := store.RecordTerminalEvent("task", TerminalEvent{Status: "failed"})
+	require.NoError(t, err)
+	require.Len(t, duplicate.TerminalEvents, 2)
+	require.True(t, duplicate.TerminalEvents[1].Duplicate)
+	require.False(t, duplicate.TerminalEvents[1].Actionable)
+	require.Equal(t, 2, duplicate.TerminalOutcome.EventCount)
+	require.Equal(t, 1, duplicate.TerminalOutcome.DuplicateCount)
+
+	_, err = store.RecordTerminalEvent("task", TerminalEvent{Status: "running"})
+	require.ErrorContains(t, err, "terminal event status must be terminal")
 }
 
 func TestResolveLifecycleDistinguishesTransportDeathFromTerminalStatus(t *testing.T) {

@@ -572,6 +572,9 @@ func (s Store) List() ([]Task, error) {
 		tasks = append(tasks, task)
 	}
 	sort.Slice(tasks, func(i, j int) bool {
+		if tasks[i].StartedAt.Equal(tasks[j].StartedAt) {
+			return tasks[i].ID < tasks[j].ID
+		}
 		return tasks[i].StartedAt.After(tasks[j].StartedAt)
 	})
 	return tasks, nil
@@ -965,6 +968,10 @@ func taskLaneBucket(status string) string {
 }
 
 func (s Store) Get(id string) (Task, error) {
+	id, err := validateTaskID(id)
+	if err != nil {
+		return Task{}, err
+	}
 	data, err := os.ReadFile(filepath.Join(s.Dir, id+".json"))
 	if err != nil {
 		return Task{}, err
@@ -1174,6 +1181,11 @@ func (s Store) readLogRange(path string, offset int64, limitBytes int64) (int64,
 }
 
 func (s Store) save(task Task) error {
+	id, err := validateTaskID(task.ID)
+	if err != nil {
+		return err
+	}
+	task.ID = id
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return err
 	}
@@ -1216,6 +1228,17 @@ func (s Store) save(task Task) error {
 	}
 	keepTemp = false
 	return nil
+}
+
+func validateTaskID(id string) (string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", errors.New("background task id is required")
+	}
+	if id == "." || id == ".." || strings.ContainsAny(id, `/\`) {
+		return "", errors.New("background task id must be a single path component")
+	}
+	return id, nil
 }
 
 func (s Store) remove(task Task) error {
