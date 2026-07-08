@@ -38634,6 +38634,8 @@ type modelsRequest struct {
 	Format string
 	Action string
 	Model  string
+	Target string
+	Path   string
 }
 
 type modelReport struct {
@@ -38750,30 +38752,9 @@ func (a *App) Model(args []string) error {
 	if err != nil {
 		return err
 	}
-	previous := a.Config.Model
-	action := "show"
-	path := ""
-	if req.Model != "" {
-		path, err = a.preferenceConfigPath(req.Target, req.Path)
-		if err != nil {
-			return err
-		}
-		if _, err := config.SetFileValue(path, "model", req.Model); err != nil {
-			return err
-		}
-		action = "set"
-		a.Config.Model = req.Model
-	}
-	report := modelReport{
-		Kind:     "model",
-		Action:   action,
-		Status:   "ok",
-		Model:    a.Config.Model,
-		Previous: previous,
-		Path:     path,
-	}
-	if action == "show" {
-		report.Previous = ""
+	report, err := a.applyModelRequest(req)
+	if err != nil {
+		return err
 	}
 	return renderModelReport(a.Out, report, req.Format)
 }
@@ -38816,6 +38797,15 @@ func (a *App) Models(args []string) error {
 		return renderModelSearchReport(a.Out, a.buildModelSearchReport(req.Model), req.Format)
 	case "show":
 		return renderModelDetailReport(a.Out, a.buildModelDetailReport(req.Model), req.Format)
+	case "set":
+		if strings.TrimSpace(req.Model) == "" {
+			return renderMissingActionArgument(a.Out, "models", "set", "model", "models set requires a model", "Usage: codog models set MODEL [--target user|project|local] [--path PATH] [--output-format text|json].", req.Format)
+		}
+		report, err := a.applyModelRequest(modelRequest{Format: req.Format, Model: req.Model, Target: req.Target, Path: req.Path})
+		if err != nil {
+			return err
+		}
+		return renderModelReport(a.Out, report, req.Format)
 	default:
 		return renderActionError(a.Out, actionErrorReport{
 			Kind:      "models",
@@ -38823,9 +38813,39 @@ func (a *App) Models(args []string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_models_action",
 			Message:   fmt.Sprintf("unsupported models action %q", req.Action),
-			Hint:      "Usage: codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|help] [--output-format text|json].",
+			Hint:      modelsUsage,
 		}, req.Format)
 	}
+}
+
+func (a *App) applyModelRequest(req modelRequest) (modelReport, error) {
+	previous := a.Config.Model
+	action := "show"
+	path := ""
+	if strings.TrimSpace(req.Model) != "" {
+		var err error
+		path, err = a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return modelReport{}, err
+		}
+		if _, err := config.SetFileValue(path, "model", req.Model); err != nil {
+			return modelReport{}, err
+		}
+		action = "set"
+		a.Config.Model = req.Model
+	}
+	report := modelReport{
+		Kind:     "model",
+		Action:   action,
+		Status:   "ok",
+		Model:    a.Config.Model,
+		Previous: previous,
+		Path:     path,
+	}
+	if action == "show" {
+		report.Previous = ""
+	}
+	return report, nil
 }
 
 func (a *App) buildModelsReport() modelsReport {
@@ -38957,7 +38977,7 @@ func (a *App) ResumedModel(args []string) error {
 
 const (
 	modelUsage  = "codog model [MODEL] [--target user|project|local] [--path PATH] [--output-format text|json]"
-	modelsUsage = "codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|help] [--output-format text|json]"
+	modelsUsage = "codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|set MODEL|help] [--target user|project|local] [--path PATH] [--output-format text|json]"
 )
 
 func parseModelArgs(args []string) (modelRequest, error) {
@@ -39008,7 +39028,7 @@ func parseModelArgs(args []string) (modelRequest, error) {
 }
 
 func parseModelsArgs(args []string) (modelsRequest, error) {
-	req := modelsRequest{Format: "text", Action: "list"}
+	req := modelsRequest{Format: "text", Action: "list", Target: "user"}
 	positionals := []string{}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -39023,6 +39043,22 @@ func parseModelsArgs(args []string) (modelsRequest, error) {
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "models", Flag: arg, Usage: modelsUsage}
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "models", Flag: arg, Usage: modelsUsage}
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
 		case strings.HasPrefix(arg, "-"):
 			return req, unknownOptionError{Command: "models", Option: arg, Usage: modelsUsage}
 		default:
@@ -39039,7 +39075,7 @@ func parseModelsArgs(args []string) (modelsRequest, error) {
 	}
 	rawAction := strings.ToLower(strings.TrimSpace(positionals[0]))
 	req.Action = normalizeModelsAction(rawAction)
-	if req.Action == "show" || req.Action == "search" {
+	if req.Action == "show" || req.Action == "search" || req.Action == "set" {
 		if rawAction == "current" {
 			if len(positionals) > 1 {
 				return req, unexpectedExtraArgsError{
@@ -39075,6 +39111,8 @@ func normalizeModelsAction(action string) string {
 		return "show"
 	case "search", "find", "lookup", "query":
 		return "search"
+	case "set", "select", "use":
+		return "set"
 	case "help":
 		return "help"
 	default:
@@ -58102,8 +58140,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"model",
 			"model",
-			"codog model [MODEL] [--output-format text|json]",
-			"Model\n\nUsage:\n  codog model [MODEL] [--output-format text|json]\n\nShows or changes the configured default model for future provider requests.\n",
+			modelUsage,
+			"Model\n\nUsage:\n  codog model [MODEL] [--target user|project|local] [--path PATH] [--output-format text|json]\n\nShows or changes the configured default model for future provider requests.\n",
 			[]string{"model", "previous", "requested_model"},
 			[]string{"ok", "error"},
 			true,
@@ -58112,8 +58150,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec := localCommandHelpSpec(
 			"models",
 			"models",
-			"codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|help] [--output-format text|json]",
-			"Models\n\nUsage:\n  codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|help] [--output-format text|json]\n  codog model help [--output-format text|json]\n\nShows bounded local model-selection guidance, built-in aliases, routing rules, searchable model metadata, and local model diagnostics without making a provider request. Common discovery aliases such as `catalog`, `lookup`, `query`, `get`, and `describe` are normalized to canonical actions.\n",
+			modelsUsage,
+			"Models\n\nUsage:\n  codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|set MODEL|help] [--target user|project|local] [--path PATH] [--output-format text|json]\n  codog model help [--output-format text|json]\n\nShows bounded local model-selection guidance, built-in aliases, routing rules, searchable model metadata, and local model diagnostics without making a provider request. `models set MODEL` stores the configured model through the same preference path as `codog model MODEL`. Common discovery aliases such as `catalog`, `lookup`, `query`, `get`, and `describe` are normalized to canonical actions.\n",
 			[]string{"default_model", "aliases", "routes", "configured_model", "resolved_configured_model", "provider", "wire_model", "requires_provider_request"},
 			[]string{"ok", "error"},
 			false,

@@ -3719,7 +3719,23 @@ func TestModelsCommandActionAliases(t *testing.T) {
 	require.Equal(t, "kimi", detail.RequestedModel)
 	require.Equal(t, "kimi-k2.5", detail.ResolvedModel)
 
+	modelPath := filepath.Join(t.TempDir(), "model.json")
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "set", "opus", "--path", modelPath, "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var setModel modelReport
+	require.NoError(t, json.Unmarshal([]byte(out), &setModel))
+	require.Equal(t, "model", setModel.Kind)
+	require.Equal(t, "set", setModel.Action)
+	require.Equal(t, "opus", setModel.Model)
+	require.Equal(t, modelPath, setModel.Path)
+	modelData, err := os.ReadFile(modelPath)
+	require.NoError(t, err)
+	require.Contains(t, string(modelData), `"model": "opus"`)
+
 	var slashOut bytes.Buffer
+	slashPath := filepath.Join(t.TempDir(), "slash-model.json")
 	app := &App{
 		Config: config.Config{ConfigHome: configHome},
 		Out:    &slashOut,
@@ -3729,6 +3745,17 @@ func TestModelsCommandActionAliases(t *testing.T) {
 	require.NoError(t, json.Unmarshal(slashOut.Bytes(), &detail))
 	require.Equal(t, "show", detail.Action)
 	require.Equal(t, "kimi-k2.5", detail.ResolvedModel)
+
+	slashOut.Reset()
+	require.True(t, app.handleSlash(context.Background(), "/models set grok --path "+slashPath+" --json", &session.Session{ID: "session"}))
+	require.NoError(t, json.Unmarshal(slashOut.Bytes(), &setModel))
+	require.Equal(t, "set", setModel.Action)
+	require.Equal(t, "grok", setModel.Model)
+	require.Equal(t, slashPath, setModel.Path)
+	require.Equal(t, "grok", app.Config.Model)
+	slashData, err := os.ReadFile(slashPath)
+	require.NoError(t, err)
+	require.Contains(t, string(slashData), `"model": "grok"`)
 }
 
 func TestDirectSlashSuggestsProjectCommands(t *testing.T) {
