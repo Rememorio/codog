@@ -1,8 +1,10 @@
 package saferscope
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +34,52 @@ func TestPreviewBuildsActionableChoices(t *testing.T) {
 	require.Equal(t, ".codogignore", choices["ignore"].IgnoreFile)
 	require.Contains(t, choices["ignore"].IgnoreEntries, "node_modules/")
 	require.Contains(t, choices["ignore"].IgnoreEntries, "dist/")
+}
+
+func TestPreviewHonorsExplicitTargetAndRenderText(t *testing.T) {
+	workspace := testWorkspace(t)
+
+	report, err := Preview(workspace, Options{Target: "app"})
+	require.NoError(t, err)
+	require.Equal(t, "preview", report.Action)
+	require.Equal(t, "actionable", report.Status)
+	choices := choicesByID(report.Choices)
+	require.Contains(t, choices, "workspace")
+	require.Equal(t, filepath.Join(workspace, "app"), choices["workspace"].Target)
+	require.Contains(t, choices["workspace"].PreviewIncludes, "app/main.go")
+
+	var out bytes.Buffer
+	RenderText(&out, report)
+	text := out.String()
+	require.Contains(t, text, "Safer Scope")
+	require.Contains(t, text, "Status           actionable")
+	require.Contains(t, text, "Choice           workspace available")
+	require.Contains(t, text, "Target         "+filepath.Join(workspace, "app"))
+	require.Contains(t, text, "Restore          codog scope restore")
+}
+
+func TestPreviewRejectsUnsafeTarget(t *testing.T) {
+	workspace := testWorkspace(t)
+	outside := filepath.Join(filepath.Dir(workspace), "outside")
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+
+	_, err := Preview(workspace, Options{Target: outside})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "scope target escapes workspace")
+
+	_, err = Preview(workspace, Options{Target: "app/main.go"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "scope target is not a directory")
+}
+
+func TestPreviewCleanWorkspaceReturnsNoAction(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644))
+
+	report, err := Preview(workspace, Options{})
+	require.NoError(t, err)
+	require.Equal(t, "clean", report.Status)
+	require.Empty(t, report.Choices)
 }
 
 func TestApplySwitchesWorkspaceAndRecordsRestoreState(t *testing.T) {
@@ -121,6 +169,22 @@ func TestApplyIgnoreAcceptsLegacyAppendBlockChoice(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(workspace, ".codogignore"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), IgnoreMarker)
+}
+
+func TestApplyBothRecordsAllChoices(t *testing.T) {
+	workspace := testWorkspace(t)
+
+	report, err := Apply(workspace, Options{Choice: "both"})
+	require.NoError(t, err)
+	require.Equal(t, "workspace,ignore", report.AppliedChoice)
+	require.Len(t, report.Applied, 2)
+	require.Equal(t, filepath.Join(workspace, "app"), report.ActiveWorkspace)
+
+	state, err := LoadState(filepath.Join(workspace, "app"))
+	require.NoError(t, err)
+	require.Equal(t, "workspace,ignore", state.AppliedChoice)
+	require.Equal(t, ".codogignore", state.IgnoreFile)
+	require.True(t, strings.Contains(strings.Join(state.IgnoreEntries, "\n"), "node_modules/"))
 }
 
 func testWorkspace(t *testing.T) string {
