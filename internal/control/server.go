@@ -2436,13 +2436,14 @@ func (s Server) mcpAuth(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		payload.Server = r.URL.Query().Get("server")
 	}
-	if strings.TrimSpace(payload.Server) != "" {
-		server, err := s.mcpServer(payload.Server)
+	serverName := strings.TrimSpace(payload.Server)
+	if serverName != "" {
+		server, err := s.mcpServer(serverName)
 		if err != nil {
 			writeError(w, err, http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, map[string]any{"kind": "mcp_auth", "server": payload.Server, "result": mcp.InspectAuth(context.Background(), payload.Server, server)})
+		writeJSON(w, map[string]any{"kind": "mcp_auth", "server": serverName, "result": mcp.InspectAuth(context.Background(), serverName, server)})
 		return
 	}
 	names := s.mcpServerNames()
