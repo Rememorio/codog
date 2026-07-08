@@ -2719,6 +2719,41 @@ func TestManagementSurfaceErrorsHonorGlobalJSONFormat(t *testing.T) {
 			errorKind: "invalid_flag_value",
 			contains:  []string{`"option": "--status"`, `"value": "urgent"`},
 		},
+		{
+			name:      "cron missing output format",
+			args:      []string{"cron", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "cron"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "cron missing description",
+			args:      []string{"cron", "create", "@daily", "check", "--description", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "cron"`, `"option": "--description"`},
+		},
+		{
+			name:      "cron invalid now",
+			args:      []string{"cron", "due", "--now", "soon"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--now"`, `"value": "soon"`},
+		},
+		{
+			name:      "cron create missing prompt",
+			args:      []string{"cron", "create", "@daily"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "cron create"`, `"argument": "SCHEDULE PROMPT"`},
+		},
+		{
+			name:      "cron due unexpected argument",
+			args:      []string{"cron", "due", "extra"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "cron due"`, `"extra"`},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := captureStdout(t, func() error {
@@ -29880,6 +29915,21 @@ func TestCronCommandAndSlash(t *testing.T) {
 	require.Len(t, listed.Entries, 1)
 	require.Equal(t, created.Entry.ID, listed.Entries[0].ID)
 	out.Reset()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--cwd", workspace, "--output-format", "json", "cron", "list"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var cliListed cronCommandReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &cliListed))
+	require.Equal(t, "cron", cliListed.Kind)
+	require.Equal(t, "list", cliListed.Action)
+	require.Equal(t, 1, cliListed.Count)
+	require.Equal(t, created.Entry.ID, cliListed.Entries[0].ID)
 
 	require.True(t, app.handleSlash(context.Background(), "/cron list --json", &session.Session{ID: "session-1"}))
 	require.Contains(t, out.String(), `"kind": "cron"`)

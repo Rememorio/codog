@@ -965,7 +965,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "tasks", "bashes":
 		return wrapStructured(app.BackgroundWithOverrides(rest, overrides))
 	case "cron":
-		if err := app.Cron(rest); err != nil {
+		if err := app.CronWithFormat(rest, format); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
@@ -6005,7 +6005,11 @@ type cronCommandReport struct {
 }
 
 func (a *App) Cron(args []string) error {
-	req, err := parseCronArgs(args)
+	return a.CronWithFormat(args, "text")
+}
+
+func (a *App) CronWithFormat(args []string, defaultFormat string) error {
+	req, err := parseCronArgsWithDefault(args, defaultFormat)
 	if err != nil {
 		return err
 	}
@@ -6092,7 +6096,14 @@ func (a *App) Cron(args []string) error {
 }
 
 func parseCronArgs(args []string) (cronRequest, error) {
-	req := cronRequest{Action: "list", Format: "text"}
+	return parseCronArgsWithDefault(args, "text")
+}
+
+func parseCronArgsWithDefault(args []string, defaultFormat string) (cronRequest, error) {
+	if strings.TrimSpace(defaultFormat) == "" {
+		defaultFormat = "text"
+	}
+	req := cronRequest{Action: "list", Format: defaultFormat}
 	actionSet := false
 	positionals := []string{}
 	for i := 0; i < len(args); i++ {
@@ -6103,37 +6114,38 @@ func parseCronArgs(args []string) (cronRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			i++
 			if i >= len(args) {
-				return req, errors.New("cron output format is required")
+				return req, missingFlagValueError{Command: "cron", Flag: arg, Usage: cronUsage}
 			}
 			req.Format = args[i]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--description" || arg == "-d":
 			i++
-			if i >= len(args) {
-				return req, errors.New("cron description is required")
+			if i >= len(args) || isOutputFormatFlag(args[i]) {
+				return req, missingFlagValueError{Command: "cron", Flag: arg, Usage: cronUsage}
 			}
 			req.Description = args[i]
 		case strings.HasPrefix(arg, "--description="):
 			req.Description = strings.TrimPrefix(arg, "--description=")
 		case arg == "--now":
 			i++
-			if i >= len(args) {
-				return req, errors.New("cron now timestamp is required")
+			if i >= len(args) || isOutputFormatFlag(args[i]) {
+				return req, missingFlagValueError{Command: "cron", Flag: arg, Usage: cronUsage}
 			}
 			parsed, err := time.Parse(time.RFC3339, args[i])
 			if err != nil {
-				return req, fmt.Errorf("invalid cron now timestamp: %w", err)
+				return req, invalidFlagValueError{Flag: "--now", Value: args[i], Message: "cron now timestamp must be RFC3339", Usage: cronUsage}
 			}
 			req.Now = parsed
 		case strings.HasPrefix(arg, "--now="):
-			parsed, err := time.Parse(time.RFC3339, strings.TrimPrefix(arg, "--now="))
+			value := strings.TrimPrefix(arg, "--now=")
+			parsed, err := time.Parse(time.RFC3339, value)
 			if err != nil {
-				return req, fmt.Errorf("invalid cron now timestamp: %w", err)
+				return req, invalidFlagValueError{Flag: "--now", Value: value, Message: "cron now timestamp must be RFC3339", Usage: cronUsage}
 			}
 			req.Now = parsed
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown cron flag %q", arg)
+			return req, unknownOptionError{Command: "cron", Option: arg, Usage: cronUsage}
 		case !actionSet && isCronAction(arg):
 			req.Action = normalizeCronAction(arg)
 			actionSet = true
@@ -6141,7 +6153,7 @@ func parseCronArgs(args []string) (cronRequest, error) {
 			positionals = append(positionals, arg)
 		}
 	}
-	format, err := normalizeTextOrJSON(req.Format, "cron")
+	format, err := normalizeOutputFormat("cron", req.Format, []string{"text", "json"})
 	if err != nil {
 		return req, err
 	}
@@ -6161,21 +6173,21 @@ func parseCronArgs(args []string) (cronRequest, error) {
 		}
 	case "create":
 		if len(positionals) < 2 {
-			return req, errors.New("usage: codog cron create SCHEDULE PROMPT [--description TEXT] [--json|--output-format text|json]")
+			return req, requiredArgumentError{Command: "cron create", Argument: "SCHEDULE PROMPT", Usage: cronUsage}
 		}
 		req.Schedule = positionals[0]
 		req.Prompt = strings.Join(positionals[1:], " ")
 	case "delete", "mark-run":
 		if len(positionals) != 1 {
 			if req.Action == "delete" {
-				return req, errors.New("usage: codog cron delete CRON_ID [--json|--output-format text|json]")
+				return req, requiredArgumentError{Command: "cron delete", Argument: "CRON_ID", Usage: cronUsage}
 			}
-			return req, errors.New("usage: codog cron mark-run CRON_ID [--now RFC3339] [--json|--output-format text|json]")
+			return req, requiredArgumentError{Command: "cron mark-run", Argument: "CRON_ID", Usage: cronUsage}
 		}
 		req.ID = positionals[0]
 	case "due", "run-due":
 		if len(positionals) != 0 {
-			return req, fmt.Errorf("usage: codog cron %s [--now RFC3339] [--json|--output-format text|json]", req.Action)
+			return req, unexpectedExtraArgsError{Command: "cron " + req.Action, Args: append([]string(nil), positionals...), Usage: cronUsage}
 		}
 	default:
 		return req, unexpectedExtraArgsError{
@@ -32569,13 +32581,13 @@ func (a *App) runResumedHooksSlash(ctx context.Context, args []string, format st
 }
 
 func (a *App) runResumedCronSlash(args []string, format string) error {
-	req, err := parseCronArgs(args)
+	req, err := parseCronArgsWithDefault(args, format)
 	if err != nil {
 		return err
 	}
 	switch req.Action {
 	case "list", "create", "delete", "due", "mark-run", "run-due":
-		return a.Cron(args)
+		return a.CronWithFormat(args, format)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/cron", req.Action), format)
 	}
