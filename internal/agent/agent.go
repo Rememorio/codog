@@ -1779,8 +1779,12 @@ func (a *App) Remote(args []string) error {
 		return a.RemoteSetup(args, config.FlagOverrides{})
 	}
 	addr := "127.0.0.1:8791"
-	if len(args) > 1 {
-		addr = args[1]
+	serveArgs, err := resumedRemoteServeArgs(args)
+	if err != nil {
+		return renderCLIError(a.Out, err, requestedOutputFormat(args))
+	}
+	if len(serveArgs) > 1 {
+		addr = serveArgs[1]
 	}
 	return a.serveRemoteControl(context.Background(), addr)
 }
