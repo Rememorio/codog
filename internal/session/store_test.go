@@ -420,6 +420,41 @@ func TestStorePruneKeepsNewestSessions(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(store.Dir, "older.jsonl"))
 }
 
+func TestAppendRotatesOversizedSessionLogs(t *testing.T) {
+	store := NewStore(t.TempDir())
+	path := store.pathFor("large")
+	require.NoError(t, os.MkdirAll(store.Dir, 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(`{"type":"message","session_id":"large"}`+"\n"), 0o644))
+	require.NoError(t, os.Truncate(path, MaxSessionJSONLBytes))
+
+	require.NoError(t, store.Append("large", anthropic.TextMessage("user", "fresh message")))
+
+	require.FileExists(t, rotatedSessionLogPath(path, 1))
+	require.FileExists(t, path)
+	info, err := os.Stat(rotatedSessionLogPath(path, 1))
+	require.NoError(t, err)
+	require.Equal(t, MaxSessionJSONLBytes, info.Size())
+	opened, err := store.OpenExisting("large")
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 1)
+	require.Equal(t, "fresh message", opened.Messages[0].Content[0].Text)
+
+	for index := 0; index < MaxRotatedSessionLogs+2; index++ {
+		require.NoError(t, os.Truncate(path, MaxSessionJSONLBytes))
+		require.NoError(t, store.Append("large", anthropic.TextMessage("user", "rotation")))
+	}
+	for index := 1; index <= MaxRotatedSessionLogs; index++ {
+		require.FileExists(t, rotatedSessionLogPath(path, index))
+	}
+	require.NoFileExists(t, rotatedSessionLogPath(path, MaxRotatedSessionLogs+1))
+
+	require.NoError(t, store.Delete("large"))
+	require.NoFileExists(t, path)
+	for index := 1; index <= MaxRotatedSessionLogs; index++ {
+		require.NoFileExists(t, rotatedSessionLogPath(path, index))
+	}
+}
+
 func TestOpenExistingDoesNotCreateAndReportsDirectoryPaths(t *testing.T) {
 	store := NewStore(t.TempDir())
 

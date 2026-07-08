@@ -208,6 +208,13 @@ const DefaultCleanupPeriodDays = 30
 const primarySessionExtension = ".jsonl"
 const legacySessionExtension = ".json"
 
+// MaxSessionJSONLBytes is the active transcript size that triggers rotation.
+const MaxSessionJSONLBytes int64 = 5 * 1024 * 1024
+
+// MaxRotatedSessionLogs is the number of oversized transcript snapshots kept
+// next to the active session JSONL.
+const MaxRotatedSessionLogs = 3
+
 var sessionFileExtensions = []string{primarySessionExtension, legacySessionExtension}
 var sessionReferenceAliases = map[string]struct{}{
 	"latest": {},
@@ -522,11 +529,8 @@ func (s *Store) AppendWithUsage(id string, msg anthropic.Message, usage *anthrop
 	if s.PersistenceDisabled {
 		return nil
 	}
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
-		return err
-	}
 	path := s.pathFor(id)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := s.openSessionAppendFile(path)
 	if err != nil {
 		return err
 	}
@@ -549,11 +553,8 @@ func (s *Store) AppendInput(id string, input string) error {
 	if input == "" {
 		return nil
 	}
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
-		return err
-	}
 	path := s.pathFor(id)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := s.openSessionAppendFile(path)
 	if err != nil {
 		return err
 	}
@@ -573,11 +574,8 @@ func (s *Store) AppendPromptHistoryDisabled(id string) error {
 	if strings.TrimSpace(id) == "" {
 		return errors.New("session id is required")
 	}
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
-		return err
-	}
 	path := s.pathFor(id)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := s.openSessionAppendFile(path)
 	if err != nil {
 		return err
 	}
@@ -588,6 +586,56 @@ func (s *Store) AppendPromptHistoryDisabled(id string) error {
 		Input:     "disabled",
 		SessionID: id,
 	})
+}
+
+func (s *Store) openSessionAppendFile(path string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	if err := rotateSessionLogIfOversized(path); err != nil {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+}
+
+func rotateSessionLogIfOversized(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.IsDir() || info.Size() < MaxSessionJSONLBytes {
+		return nil
+	}
+	for index := MaxRotatedSessionLogs; index >= 1; index-- {
+		current := rotatedSessionLogPath(path, index)
+		if index == MaxRotatedSessionLogs {
+			if err := os.Remove(current); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			continue
+		}
+		next := rotatedSessionLogPath(path, index+1)
+		if err := os.Rename(current, next); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return os.Rename(path, rotatedSessionLogPath(path, 1))
+}
+
+func rotatedSessionLogPath(path string, index int) string {
+	return fmt.Sprintf("%s.%d", path, index)
+}
+
+func removeRotatedSessionLogs(path string) error {
+	for index := 1; index <= MaxRotatedSessionLogs; index++ {
+		if err := os.Remove(rotatedSessionLogPath(path, index)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) Exists(id string) (bool, error) {
@@ -632,7 +680,7 @@ func (s *Store) Delete(id string) error {
 	if err := os.Remove(path); err != nil {
 		return err
 	}
-	return nil
+	return removeRotatedSessionLogs(path)
 }
 
 // PinMessage marks the zero-based message index as pinned for the session.
@@ -2287,6 +2335,16 @@ func isSessionFileName(name string) bool {
 	return isSessionFileExtension(filepath.Ext(name))
 }
 
+func isRotatedSessionLogName(name string) bool {
+	for index := 1; index <= MaxRotatedSessionLogs; index++ {
+		suffix := fmt.Sprintf(".%d", index)
+		if strings.HasSuffix(name, suffix) && isSessionFileName(strings.TrimSuffix(name, suffix)) {
+			return true
+		}
+	}
+	return false
+}
+
 func isSessionFileExtension(extension string) bool {
 	for _, candidate := range sessionFileExtensions {
 		if strings.EqualFold(extension, candidate) {
@@ -2334,7 +2392,7 @@ func (s *Store) removeSessionFiles(shouldRemove func(os.FileInfo) bool) error {
 			if entry.IsDir() {
 				return nil
 			}
-			if !isSessionFileName(entry.Name()) {
+			if !isSessionFileName(entry.Name()) && !isRotatedSessionLogName(entry.Name()) {
 				return nil
 			}
 			clean := filepath.Clean(path)

@@ -49160,8 +49160,6 @@ func renderSessionListText(out io.Writer, report sessionListReport) {
 	}
 }
 
-const sessionAuditOversizedBytes = 5 * 1024 * 1024
-
 type sessionAuditReport struct {
 	Kind                     string              `json:"kind"`
 	Action                   string              `json:"action"`
@@ -49301,7 +49299,7 @@ func (report *sessionAuditReport) auditSession(sess session.Session) {
 			NextAction:   "codog sessions unpin " + shellQuote(sess.ID) + " " + strconv.Itoa(index+1),
 		})
 	}
-	if info, err := os.Stat(sess.Path); err == nil && info.Size() > sessionAuditOversizedBytes {
+	if info, err := os.Stat(sess.Path); err == nil && info.Size() >= session.MaxSessionJSONLBytes {
 		report.OversizedFileCount++
 		report.Issues = append(report.Issues, sessionAuditIssue{
 			Kind:       "oversized_jsonl",
