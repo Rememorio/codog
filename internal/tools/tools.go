@@ -8709,7 +8709,11 @@ func (t TaskUpdateTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if strings.TrimSpace(id) == "" {
 		return "", errors.New("task_id is required")
 	}
-	task, err := taskStore(t.ConfigHome, t.Workspace).Update(id, payload.Message)
+	message := strings.TrimSpace(payload.Message)
+	if message == "" {
+		return "", errors.New("task update message is required")
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).Update(id, message)
 	if err != nil {
 		return "", err
 	}

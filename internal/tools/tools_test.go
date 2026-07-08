@@ -4017,6 +4017,10 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 	require.False(t, blockedOutput.TimedOut)
 	require.Equal(t, 2000, blockedOutput.TimeoutMS)
 
+	_, err = TaskUpdateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"taskId":"`+task.ID+`","message":"   "}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "task update message is required")
+
 	updateOut, err := TaskUpdateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"taskId":"`+task.ID+`","message":"review logs"}`))
 	require.NoError(t, err)
 	require.Contains(t, updateOut, `"task_id": "`+task.ID+`"`)
