@@ -12,8 +12,11 @@ import (
 	"time"
 )
 
+// StateFileName is the workspace-local file that stores the selected output style.
 const StateFileName = "output-style.json"
 
+// Style describes one available output style loaded from built-in, user, or
+// workspace catalogs.
 type Style struct {
 	Name    string `json:"name"`
 	Source  string `json:"source"`
@@ -22,27 +25,54 @@ type Style struct {
 	Body    string `json:"body,omitempty"`
 }
 
+// StyleSummary is the list-facing view of a style, including precedence
+// diagnostics.
 type StyleSummary struct {
-	Name    string `json:"name"`
-	Source  string `json:"source"`
-	Path    string `json:"path,omitempty"`
-	Preview string `json:"preview"`
-	Active  bool   `json:"active,omitempty"`
+	Name           string `json:"name"`
+	Source         string `json:"source"`
+	Path           string `json:"path,omitempty"`
+	Preview        string `json:"preview"`
+	Active         bool   `json:"active,omitempty"`
+	Effective      bool   `json:"effective,omitempty"`
+	ShadowedBy     string `json:"shadowed_by,omitempty"`
+	ShadowedByPath string `json:"shadowed_by_path,omitempty"`
 }
 
+// DiscoveryRoot describes a catalog location that can provide output styles.
+type DiscoveryRoot struct {
+	Source string `json:"source"`
+	Label  string `json:"label"`
+	Path   string `json:"path,omitempty"`
+	Exists bool   `json:"exists"`
+}
+
+// HealthSummary summarizes effective and shadowed output style definitions.
+type HealthSummary struct {
+	Total     int `json:"total"`
+	Effective int `json:"effective"`
+	Shadowed  int `json:"shadowed"`
+}
+
+// State stores the workspace's active output style selection.
 type State struct {
 	Kind      string    `json:"kind"`
 	Active    string    `json:"active,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// Report is the JSON and text-rendering payload for output style commands.
 type Report struct {
-	Kind   string         `json:"kind"`
-	Action string         `json:"action"`
-	Status string         `json:"status"`
-	Active string         `json:"active,omitempty"`
-	Styles []StyleSummary `json:"styles,omitempty"`
-	Style  *Style         `json:"style,omitempty"`
+	Kind        string          `json:"kind"`
+	Action      string          `json:"action"`
+	Status      string          `json:"status"`
+	Active      string          `json:"active,omitempty"`
+	Query       string          `json:"query,omitempty"`
+	Styles      []StyleSummary  `json:"styles,omitempty"`
+	Style       *Style          `json:"style,omitempty"`
+	Sources     []DiscoveryRoot `json:"sources,omitempty"`
+	SourceCount int             `json:"source_count,omitempty"`
+	Summary     *HealthSummary  `json:"summary,omitempty"`
+	Message     string          `json:"message,omitempty"`
 }
 
 // NotFoundError reports that a named output style could not be found.
@@ -80,6 +110,7 @@ var builtinStyles = []Style{
 	},
 }
 
+// StatePath returns the workspace-local path used to persist output style state.
 func StatePath(workspace string) string {
 	workspace = strings.TrimSpace(workspace)
 	if workspace == "" {
@@ -88,6 +119,7 @@ func StatePath(workspace string) string {
 	return filepath.Join(workspace, ".codog", StateFileName)
 }
 
+// List reports every discovered output style with precedence diagnostics.
 func List(configHome, workspace string) (Report, error) {
 	styles, err := Load(configHome, workspace)
 	if err != nil {
@@ -98,14 +130,87 @@ func List(configHome, workspace string) (Report, error) {
 		return Report{}, err
 	}
 	return Report{
-		Kind:   "output_style",
-		Action: "list",
-		Status: "ok",
-		Active: state.Active,
-		Styles: summarize(styles, state.Active),
+		Kind:    "output_style",
+		Action:  "list",
+		Status:  "ok",
+		Active:  state.Active,
+		Styles:  summarize(styles, state.Active),
+		Summary: summarizeStyleHealth(styles),
 	}, nil
 }
 
+// Search reports output styles whose name, source, preview, or body matches query.
+func Search(configHome, workspace, query string) (Report, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return Report{}, errors.New("output style search query is required")
+	}
+	styles, err := Load(configHome, workspace)
+	if err != nil {
+		return Report{}, err
+	}
+	filtered := filterStyles(styles, query)
+	state, err := LoadState(workspace)
+	if err != nil {
+		return Report{}, err
+	}
+	return Report{
+		Kind:    "output_style",
+		Action:  "search",
+		Status:  "ok",
+		Active:  state.Active,
+		Query:   query,
+		Styles:  summarize(filtered, state.Active),
+		Summary: summarizeStyleHealth(filtered),
+	}, nil
+}
+
+// Sources reports the output style catalog roots in effective precedence order.
+func Sources(configHome, workspace string) []DiscoveryRoot {
+	out := []DiscoveryRoot{{Source: "builtin", Label: "Built-in output styles", Exists: true}}
+	for _, root := range roots(configHome, workspace) {
+		_, err := os.Stat(root.path)
+		out = append(out, DiscoveryRoot{
+			Source: root.source,
+			Label:  sourceLabel(root.source),
+			Path:   root.path,
+			Exists: err == nil,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if sourceRank(out[i].Source) == sourceRank(out[j].Source) {
+			return out[i].Path < out[j].Path
+		}
+		return sourceRank(out[i].Source) < sourceRank(out[j].Source)
+	})
+	return out
+}
+
+// Audit reports output style catalog health and shadowing diagnostics.
+func Audit(configHome, workspace string) (Report, error) {
+	styles, err := Load(configHome, workspace)
+	if err != nil {
+		return Report{}, err
+	}
+	state, err := LoadState(workspace)
+	if err != nil {
+		return Report{}, err
+	}
+	sources := Sources(configHome, workspace)
+	return Report{
+		Kind:        "output_style",
+		Action:      "audit",
+		Status:      "ok",
+		Active:      state.Active,
+		Styles:      summarize(styles, state.Active),
+		Sources:     sources,
+		SourceCount: len(sources),
+		Summary:     summarizeStyleHealth(styles),
+		Message:     "Output style audit passed.",
+	}, nil
+}
+
+// Show reports the effective output style with the requested name.
 func Show(configHome, workspace, name string) (Report, error) {
 	style, err := Find(configHome, workspace, name)
 	if err != nil {
@@ -124,6 +229,7 @@ func Show(configHome, workspace, name string) (Report, error) {
 	}, nil
 }
 
+// Set selects the effective output style with the requested name for workspace.
 func Set(configHome, workspace, name string) (Report, error) {
 	style, err := Find(configHome, workspace, name)
 	if err != nil {
@@ -141,6 +247,7 @@ func Set(configHome, workspace, name string) (Report, error) {
 	}, nil
 }
 
+// Clear removes the workspace's selected output style.
 func Clear(workspace string) (Report, error) {
 	path := StatePath(workspace)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -149,6 +256,7 @@ func Clear(workspace string) (Report, error) {
 	return Report{Kind: "output_style", Action: "clear", Status: "ok"}, nil
 }
 
+// Load discovers built-in, user, and workspace output styles.
 func Load(configHome, workspace string) ([]Style, error) {
 	var styles []Style
 	styles = append(styles, builtinStyles...)
@@ -188,6 +296,24 @@ func Load(configHome, workspace string) ([]Style, error) {
 	return styles, nil
 }
 
+func filterStyles(styles []Style, query string) []Style {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return styles
+	}
+	out := make([]Style, 0, len(styles))
+	for _, style := range styles {
+		if strings.Contains(strings.ToLower(style.Name), query) ||
+			strings.Contains(strings.ToLower(style.Source), query) ||
+			strings.Contains(strings.ToLower(style.Preview), query) ||
+			strings.Contains(strings.ToLower(style.Body), query) {
+			out = append(out, style)
+		}
+	}
+	return out
+}
+
+// Find returns the effective output style with the requested name.
 func Find(configHome, workspace, name string) (Style, error) {
 	name, err := cleanName(name)
 	if err != nil {
@@ -213,6 +339,7 @@ func Find(configHome, workspace, name string) (Style, error) {
 	return Style{}, NotFoundError{Name: name}
 }
 
+// LoadState reads the workspace's persisted output style selection.
 func LoadState(workspace string) (State, error) {
 	data, err := os.ReadFile(StatePath(workspace))
 	if err != nil {
@@ -232,6 +359,7 @@ func LoadState(workspace string) (State, error) {
 	return state, nil
 }
 
+// SaveState persists the workspace's output style selection atomically.
 func SaveState(workspace string, state State) error {
 	state.Kind = "output_style"
 	state.Active = strings.TrimSpace(state.Active)
@@ -260,6 +388,7 @@ func SaveState(workspace string, state State) error {
 	return os.Rename(tmpPath, path)
 }
 
+// RenderPrompt renders the selected output style as system-prompt context.
 func RenderPrompt(configHome, workspace string) string {
 	state, err := LoadState(workspace)
 	if err != nil || state.Active == "" {
@@ -280,9 +409,24 @@ func RenderPrompt(configHome, workspace string) string {
 	return builder.String()
 }
 
+// RenderText writes a human-readable output style report.
 func RenderText(w io.Writer, report Report) {
 	fmt.Fprintln(w, "Output Style")
 	fmt.Fprintf(w, "  Active           %s\n", valueOrNone(report.Active))
+	if report.Query != "" {
+		fmt.Fprintf(w, "  Query            %s\n", report.Query)
+	}
+	if report.Summary != nil {
+		fmt.Fprintf(w, "  Styles           %d\n", report.Summary.Total)
+		fmt.Fprintf(w, "  Effective        %d\n", report.Summary.Effective)
+		fmt.Fprintf(w, "  Shadowed         %d\n", report.Summary.Shadowed)
+	}
+	if len(report.Sources) != 0 {
+		fmt.Fprintf(w, "  Sources          %d\n", report.SourceCount)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(w, "  Message          %s\n", report.Message)
+	}
 	if report.Style != nil {
 		fmt.Fprintf(w, "  Selected         %s (%s)\n", report.Style.Name, report.Style.Source)
 		if report.Style.Path != "" {
@@ -302,7 +446,25 @@ func RenderText(w io.Writer, report Report) {
 		if style.Active {
 			marker = "*"
 		}
-		fmt.Fprintf(w, "  %s %s\t%s\t%s\n", marker, style.Name, style.Source, style.Preview)
+		status := "effective"
+		if style.ShadowedBy != "" {
+			status = "shadowed by " + style.ShadowedBy
+		}
+		fmt.Fprintf(w, "  %s %s\t%s\t%s\t%s\n", marker, style.Name, style.Source, status, style.Preview)
+	}
+	if len(report.Sources) != 0 {
+		fmt.Fprintln(w, "Sources")
+		for _, root := range report.Sources {
+			state := "missing"
+			if root.Exists {
+				state = "present"
+			}
+			path := root.Path
+			if path == "" {
+				path = "builtin://output-styles"
+			}
+			fmt.Fprintf(w, "  %-11s %-8s %s\n", root.Source, state, path)
+		}
 	}
 }
 
@@ -322,16 +484,40 @@ func rootsByPrecedence(configHome, workspace string) []root {
 
 func summarize(styles []Style, active string) []StyleSummary {
 	out := make([]StyleSummary, 0, len(styles))
+	winners := map[string]Style{}
 	for _, style := range styles {
-		out = append(out, StyleSummary{
+		key := strings.ToLower(strings.TrimSpace(style.Name))
+		summary := StyleSummary{
 			Name:    style.Name,
 			Source:  style.Source,
 			Path:    style.Path,
 			Preview: style.Preview,
 			Active:  style.Name == active,
-		})
+		}
+		if winner, ok := winners[key]; ok {
+			summary.ShadowedBy = winner.Source
+			summary.ShadowedByPath = winner.Path
+		} else {
+			winners[key] = style
+			summary.Effective = true
+		}
+		out = append(out, summary)
 	}
 	return out
+}
+
+func summarizeStyleHealth(styles []Style) *HealthSummary {
+	summaries := summarize(styles, "")
+	report := &HealthSummary{Total: len(styles)}
+	for _, style := range summaries {
+		if style.Effective {
+			report.Effective++
+		}
+		if style.ShadowedBy != "" {
+			report.Shadowed++
+		}
+	}
+	return report
 }
 
 func cleanName(name string) (string, error) {
@@ -361,8 +547,23 @@ func sourceRank(source string) int {
 		return 0
 	case "user":
 		return 1
-	default:
+	case "builtin":
 		return 2
+	default:
+		return 3
+	}
+}
+
+func sourceLabel(source string) string {
+	switch source {
+	case "user":
+		return "User output styles"
+	case "workspace":
+		return "Workspace output styles"
+	case "builtin":
+		return "Built-in output styles"
+	default:
+		return source
 	}
 }
 

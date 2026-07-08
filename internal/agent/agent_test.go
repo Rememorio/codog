@@ -18852,6 +18852,37 @@ func TestOutputStyleCommandAndSlashInjectsSystemPrompt(t *testing.T) {
 	require.Equal(t, "output_style", listReport.Kind)
 	require.Equal(t, "list", listReport.Action)
 	require.NotEmpty(t, listReport.Styles)
+	require.NotNil(t, listReport.Summary)
+	out.Reset()
+
+	require.NoError(t, app.OutputStyle([]string{"find", "compact", "--json"}))
+	var searchReport outputstyle.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &searchReport))
+	require.Equal(t, "output_style", searchReport.Kind)
+	require.Equal(t, "search", searchReport.Action)
+	require.Equal(t, "compact", searchReport.Query)
+	require.Len(t, searchReport.Styles, 1)
+	require.Equal(t, "brief", searchReport.Styles[0].Name)
+	out.Reset()
+
+	require.NoError(t, app.OutputStyle([]string{"sources", "--json"}))
+	var sourcesReport outputstyle.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &sourcesReport))
+	require.Equal(t, "output_style", sourcesReport.Kind)
+	require.Equal(t, "sources", sourcesReport.Action)
+	require.Equal(t, len(sourcesReport.Sources), sourcesReport.SourceCount)
+	requireOutputStyleSourceRoot(t, sourcesReport.Sources, "user", filepath.Join(configHome, "output-styles"), true)
+	requireOutputStyleSourceRoot(t, sourcesReport.Sources, "workspace", filepath.Join(workspace, ".codog", "output-styles"), false)
+	out.Reset()
+
+	require.NoError(t, app.OutputStyle([]string{"audit", "--json"}))
+	var auditReport outputstyle.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &auditReport))
+	require.Equal(t, "output_style", auditReport.Kind)
+	require.Equal(t, "audit", auditReport.Action)
+	require.Equal(t, "ok", auditReport.Status)
+	require.NotNil(t, auditReport.Summary)
+	require.Contains(t, auditReport.Message, "passed")
 	out.Reset()
 
 	require.NoError(t, app.OutputStyle([]string{"use", "brief", "--json"}))
@@ -18864,6 +18895,11 @@ func TestOutputStyleCommandAndSlashInjectsSystemPrompt(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/output-style view brief", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Body")
 	require.Contains(t, out.String(), "Answer in one compact paragraph.")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/output-style doctor --json", &session.Session{ID: "session"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &auditReport))
+	require.Equal(t, "audit", auditReport.Action)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/output-style off", &session.Session{ID: "session"}))
@@ -18908,6 +18944,13 @@ func TestOutputStyleErrorsHonorGlobalJSONFormat(t *testing.T) {
 			contains:  []string{`"command": "output-style show"`, `"argument": "NAME"`},
 		},
 		{
+			name:      "search missing query",
+			args:      []string{"output-style", "search"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "output-style search"`, `"argument": "QUERY"`},
+		},
+		{
 			name:      "set missing name",
 			args:      []string{"output-style", "set"},
 			kind:      "missing_argument",
@@ -18947,6 +18990,18 @@ func TestOutputStyleErrorsHonorGlobalJSONFormat(t *testing.T) {
 			}
 		})
 	}
+}
+
+func requireOutputStyleSourceRoot(t *testing.T, roots []outputstyle.DiscoveryRoot, source string, path string, exists bool) {
+	t.Helper()
+	for _, root := range roots {
+		if root.Source == source && root.Path == path {
+			require.Equal(t, exists, root.Exists)
+			require.NotEmpty(t, root.Label)
+			return
+		}
+	}
+	require.Failf(t, "output style source root not found", "source=%s path=%s roots=%v", source, path, roots)
 }
 
 func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {

@@ -16389,7 +16389,7 @@ type outputStyleRequest struct {
 	Format string
 }
 
-const outputStyleUsage = "codog output-style [list|ls|status|show|view|set|use|clear|off] [NAME] [--output-format text|json]"
+const outputStyleUsage = "codog output-style [list|ls|search|find|audit|doctor|sources|roots|status|show|view|set|use|clear|off] [NAME] [--output-format text|json]"
 
 func (a *App) OutputStyle(args []string) error {
 	req, err := parseOutputStyleArgs(args)
@@ -16400,6 +16400,19 @@ func (a *App) OutputStyle(args []string) error {
 	switch req.Action {
 	case "list":
 		report, err = outputstyle.List(a.Config.ConfigHome, a.Workspace)
+	case "search":
+		report, err = outputstyle.Search(a.Config.ConfigHome, a.Workspace, req.Name)
+	case "audit":
+		report, err = outputstyle.Audit(a.Config.ConfigHome, a.Workspace)
+	case "sources":
+		sources := outputstyle.Sources(a.Config.ConfigHome, a.Workspace)
+		report = outputstyle.Report{
+			Kind:        "output_style",
+			Action:      "sources",
+			Status:      "ok",
+			Sources:     sources,
+			SourceCount: len(sources),
+		}
 	case "show":
 		report, err = outputstyle.Show(a.Config.ConfigHome, a.Workspace, req.Name)
 	case "set":
@@ -16462,15 +16475,25 @@ func parseOutputStyleArgs(args []string) (outputStyleRequest, error) {
 	rawAction := strings.ToLower(strings.TrimSpace(rest[0]))
 	action := normalizeOutputStyleAction(rawAction)
 	switch action {
-	case "list":
+	case "list", "audit", "sources":
 		if len(rest) > 1 {
 			return outputStyleRequest{}, unexpectedExtraArgsError{
-				Command: "output-style list",
+				Command: "output-style " + action,
 				Args:    rest[1:],
 				Usage:   outputStyleUsage,
 			}
 		}
-		req.Action = "list"
+		req.Action = action
+	case "search":
+		if len(rest) < 2 {
+			return outputStyleRequest{}, requiredArgumentError{
+				Command:  "output-style search",
+				Argument: "QUERY",
+				Usage:    outputStyleUsage,
+			}
+		}
+		req.Action = "search"
+		req.Name = strings.TrimSpace(strings.Join(rest[1:], " "))
 	case "show", "set":
 		if len(rest) < 2 {
 			return outputStyleRequest{}, requiredArgumentError{
@@ -16515,6 +16538,12 @@ func normalizeOutputStyleAction(action string) string {
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "", "list", "ls", "status", "current":
 		return "list"
+	case "search", "find", "query", "lookup":
+		return "search"
+	case "audit", "doctor", "check", "validate":
+		return "audit"
+	case "source", "sources", "root", "roots":
+		return "sources"
 	case "show", "info", "describe", "get", "view", "cat":
 		return "show"
 	case "set", "use", "select", "enable", "on":
@@ -59872,7 +59901,7 @@ Usage:
   %s [flags] commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec|add|install|uninstall|remove|rm]
   %s [flags] templates [list|ls|search|find|audit|doctor|sources|roots|show|view|apply|render|run|add|install|uninstall|remove|rm]
   %s [flags] hooks [list|health EVENT|run EVENT|watch-paths list|check] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
-  %s [flags] output-style [list|ls|status|show|view|set|use|clear|off] [NAME] [--json|--output-format text|json]
+  %s [flags] output-style [list|ls|search|find|audit|doctor|sources|roots|status|show|view|set|use|clear|off] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME] | models [list|ls|aliases|routes|search|find QUERY|show|view [MODEL]|current|help] [--json|--output-format text|json]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] budget [status|show|ls|set|use|reset|clear|off] [--max-tokens N] [--max-turns N] [--target user|project|local] [--json|--output-format text|json]
