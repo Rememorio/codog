@@ -559,12 +559,23 @@ func (s *Store) AppendInput(id string, input string) error {
 		return err
 	}
 	defer file.Close()
-	return writeRecord(file, Record{
+	records, readErr := s.readRecords(path)
+	inputRecord := Record{
 		Type:      "input",
 		Time:      time.Now().UTC(),
 		Input:     input,
 		SessionID: id,
-	})
+	}
+	if err := writeRecord(file, inputRecord); err != nil {
+		return err
+	}
+	if readErr != nil {
+		return nil
+	}
+	if identityRecord, ok := sessionIdentityBackfillRecord(id, s.Workspace, append(records, inputRecord)); ok {
+		return writeRecord(file, identityRecord)
+	}
+	return nil
 }
 
 func (s *Store) AppendPromptHistoryDisabled(id string) error {

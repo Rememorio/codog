@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -570,6 +571,47 @@ func TestOpenCreatesSessionIdentityWithTypedPlaceholders(t *testing.T) {
 	opened, err := store.Open(created.ID)
 	require.NoError(t, err)
 	require.Equal(t, created.Identity, opened.Identity)
+}
+
+func TestAppendInputEnrichesSessionIdentityImmediately(t *testing.T) {
+	store := NewWorkspaceStore(t.TempDir(), t.TempDir())
+	created, err := store.Open("prompt-session")
+	require.NoError(t, err)
+	require.Contains(t, created.Identity.Placeholders, IdentityPlaceholder{Field: "purpose", Reason: "purpose_not_provided"})
+
+	require.NoError(t, store.AppendInput(created.ID, "Investigate flaky scheduler test\nwith trace logs"))
+
+	identity, err := store.Identity(created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "Investigate flaky scheduler test with trace logs", identity.Title)
+	require.Equal(t, "Investigate flaky scheduler test with trace logs", identity.Purpose)
+	require.Empty(t, identity.Placeholders)
+
+	data, err := os.ReadFile(created.Path)
+	require.NoError(t, err)
+	require.Equal(t, 2, strings.Count(string(data), `"type":"session_identity"`))
+	require.Contains(t, string(data), `"purpose":"Investigate flaky scheduler test with trace logs"`)
+}
+
+func TestAppendInputPreservesExplicitSessionIdentity(t *testing.T) {
+	store := NewWorkspaceStore(t.TempDir(), t.TempDir())
+	created, err := store.CreateWithIdentity("explicit-input", SessionIdentity{
+		Title:   "Release checklist",
+		Purpose: "manual",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, store.AppendInput(created.ID, "Rewrite identity from prompt"))
+
+	identity, err := store.Identity(created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "Release checklist", identity.Title)
+	require.Equal(t, "manual", identity.Purpose)
+	require.Empty(t, identity.Placeholders)
+
+	data, err := os.ReadFile(created.Path)
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(string(data), `"type":"session_identity"`))
 }
 
 func TestUpdateIdentityEnrichesTypedPlaceholders(t *testing.T) {
