@@ -4801,10 +4801,13 @@ func risky(value any) {
 
 	out, err = runResumedJSON("/oauth", "provider", "delete", "delete-me")
 	require.NoError(t, err)
-	var resumedOAuthProviderDelete map[string]any
+	var resumedOAuthProviderDelete oauthProviderDeleteReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthProviderDelete))
-	require.Equal(t, true, resumedOAuthProviderDelete["deleted"])
-	require.Equal(t, "delete-me", resumedOAuthProviderDelete["name"])
+	require.Equal(t, "oauth_provider", resumedOAuthProviderDelete.Kind)
+	require.Equal(t, "delete", resumedOAuthProviderDelete.Action)
+	require.Equal(t, "ok", resumedOAuthProviderDelete.Status)
+	require.True(t, resumedOAuthProviderDelete.Deleted)
+	require.Equal(t, "delete-me", resumedOAuthProviderDelete.Name)
 
 	out, err = runResumedJSON("/oauth", "token", "show", "--json")
 	require.NoError(t, err)
@@ -4842,9 +4845,12 @@ func risky(value any) {
 
 	out, err = runResumedJSON("/oauth", "token", "delete")
 	require.NoError(t, err)
-	var resumedOAuthTokenDelete map[string]bool
+	var resumedOAuthTokenDelete oauthTokenDeleteReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthTokenDelete))
-	require.True(t, resumedOAuthTokenDelete["deleted"])
+	require.Equal(t, "oauth_token", resumedOAuthTokenDelete.Kind)
+	require.Equal(t, "delete", resumedOAuthTokenDelete.Action)
+	require.Equal(t, "ok", resumedOAuthTokenDelete.Status)
+	require.True(t, resumedOAuthTokenDelete.Deleted)
 
 	out, err = runResumedJSON("/oauth", "token", "save", "resume-oauth-logout-access")
 	require.NoError(t, err)
@@ -30978,7 +30984,12 @@ func TestOAuthTokenCommands(t *testing.T) {
 
 	out.Reset()
 	require.NoError(t, app.OAuth([]string{"token", "delete"}))
-	require.Contains(t, out.String(), `"deleted":true`)
+	var deleted oauthTokenDeleteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &deleted))
+	require.Equal(t, "oauth_token", deleted.Kind)
+	require.Equal(t, "delete", deleted.Action)
+	require.Equal(t, "ok", deleted.Status)
+	require.True(t, deleted.Deleted)
 }
 
 func TestOAuthErrorsHonorGlobalJSONFormat(t *testing.T) {

@@ -12414,6 +12414,21 @@ const (
 	oauthBrowserUsage  = "codog oauth browser start|exchange|login|status"
 )
 
+type oauthTokenDeleteReport struct {
+	Kind    string `json:"kind"`
+	Action  string `json:"action"`
+	Status  string `json:"status"`
+	Deleted bool   `json:"deleted"`
+}
+
+type oauthProviderDeleteReport struct {
+	Kind    string `json:"kind"`
+	Action  string `json:"action"`
+	Status  string `json:"status"`
+	Deleted bool   `json:"deleted"`
+	Name    string `json:"name"`
+}
+
 // OAuth runs local OAuth helper commands for provider profiles and tokens.
 func (a *App) OAuth(args []string) error {
 	var err error
@@ -12551,7 +12566,9 @@ func (a *App) OAuth(args []string) error {
 		if err := oauth.DeleteToken(a.Config.ConfigHome); err != nil {
 			return err
 		}
-		fmt.Fprintln(a.Out, `{"deleted":true}`)
+		report := oauthTokenDeleteReport{Kind: "oauth_token", Action: "delete", Status: "ok", Deleted: true}
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
 		return nil
 	default:
 		return unexpectedExtraArgsError{
@@ -12669,7 +12686,7 @@ func (a *App) oauthProvider(args []string) error {
 		if err := oauth.DeleteProviderProfile(a.Config.ConfigHome, args[1]); err != nil {
 			return err
 		}
-		payload = map[string]any{"deleted": true, "name": args[1]}
+		payload = oauthProviderDeleteReport{Kind: "oauth_provider", Action: "delete", Status: "ok", Deleted: true, Name: args[1]}
 	default:
 		return unexpectedExtraArgsError{
 			Command: "oauth provider",
