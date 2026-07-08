@@ -2537,6 +2537,55 @@ func TestManagementSurfaceErrorsHonorGlobalJSONFormat(t *testing.T) {
 			errorKind: "unexpected_extra_args",
 			contains:  []string{`"command": "extra-usage"`, `"bogus"`},
 		},
+		{
+			name:      "install slack app missing output format",
+			args:      []string{"install-slack-app", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "install-slack-app"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "install slack app unknown option",
+			args:      []string{"install-slack-app", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "install-slack-app"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "stickers missing target",
+			args:      []string{"stickers", "--target", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "stickers"`, `"option": "--target"`},
+		},
+		{
+			name:      "stickers unexpected argument",
+			args:      []string{"stickers", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "stickers"`, `"bogus"`},
+		},
+		{
+			name:      "passes missing referral flag value",
+			args:      []string{"passes", "--referral-url", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "passes"`, `"option": "--referral-url"`},
+		},
+		{
+			name:      "passes set url missing value",
+			args:      []string{"passes", "set-url"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "passes set-url"`, `"argument": "URL"`},
+		},
+		{
+			name:      "passes unexpected argument",
+			args:      []string{"passes", "show", "extra"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "passes show"`, `"extra"`},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := captureStdout(t, func() error {

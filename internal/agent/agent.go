@@ -22242,6 +22242,9 @@ const stickerOrderURL = "https://www.stickermule.com/claudecode"
 const extraUsagePersonalURL = "https://claude.ai/settings/usage"
 const extraUsageAdminURL = "https://claude.ai/admin-settings/usage"
 const guestPassDocsURL = "https://support.claude.com/en/articles/12875061-claude-code-guest-passes"
+const installSlackAppUsage = "codog install-slack-app [status|list] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
+const stickersUsage = "codog stickers [status|list] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
+const passesUsage = "codog passes [status|list|show|open|set-url URL|clear-url] [--docs] [--referral-url URL] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
 
 var openExternalURL = openSystemURL
 
@@ -23211,23 +23214,23 @@ func parseInstallSlackAppArgs(args []string) (installSlackAppRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("install-slack-app output format is required")
+				return req, missingFlagValueError{Command: "install-slack-app", Flag: arg, Usage: installSlackAppUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("install-slack-app target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "install-slack-app", Flag: arg, Usage: installSlackAppUsage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("install-slack-app config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "install-slack-app", Flag: arg, Usage: installSlackAppUsage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
@@ -23240,12 +23243,17 @@ func parseInstallSlackAppArgs(args []string) (installSlackAppRequest, error) {
 			req.Action = "status"
 			req.Open = false
 		default:
-			return req, fmt.Errorf("unknown install-slack-app option %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "install-slack-app", Option: arg, Usage: installSlackAppUsage}
+			}
+			return req, unexpectedExtraArgsError{Command: "install-slack-app", Args: []string{arg}, Usage: installSlackAppUsage}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "install-slack-app"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("install-slack-app", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
@@ -23340,23 +23348,23 @@ func parseStickersArgs(args []string) (stickersRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("stickers output format is required")
+				return req, missingFlagValueError{Command: "stickers", Flag: arg, Usage: stickersUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("stickers target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "stickers", Flag: arg, Usage: stickersUsage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("stickers config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "stickers", Flag: arg, Usage: stickersUsage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
@@ -23369,12 +23377,17 @@ func parseStickersArgs(args []string) (stickersRequest, error) {
 			req.Action = "status"
 			req.Open = false
 		default:
-			return req, fmt.Errorf("unknown stickers option %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "stickers", Option: arg, Usage: stickersUsage}
+			}
+			return req, unexpectedExtraArgsError{Command: "stickers", Args: []string{arg}, Usage: stickersUsage}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "stickers"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("stickers", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
@@ -23657,23 +23670,23 @@ func parsePassesArgs(args []string) (passesRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("passes output format is required")
+				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("passes target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("passes config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
@@ -23686,8 +23699,8 @@ func parsePassesArgs(args []string) (passesRequest, error) {
 			req.Docs = true
 		case arg == "--referral-url":
 			index++
-			if index >= len(args) {
-				return req, errors.New("passes referral URL is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
 			}
 			req.ReferralURL = args[index]
 		case strings.HasPrefix(arg, "--referral-url="):
@@ -23696,9 +23709,11 @@ func parsePassesArgs(args []string) (passesRequest, error) {
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "passes"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("passes", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
@@ -23717,18 +23732,21 @@ func parsePassesArgs(args []string) (passesRequest, error) {
 			req.ReferralURL = rest[1]
 		}
 		if req.ReferralURL == "" {
-			return req, errors.New("passes referral URL is required")
+			return req, requiredArgumentError{Command: "passes set-url", Argument: "URL", Usage: passesUsage}
 		}
 	case "clear-url", "clear", "unset":
 		req.Action = "clear-url"
 	default:
-		return req, fmt.Errorf("unknown passes command %q", rest[0])
+		if strings.HasPrefix(rest[0], "-") {
+			return req, unknownOptionError{Command: "passes", Option: rest[0], Usage: passesUsage}
+		}
+		return req, unexpectedExtraArgsError{Command: "passes", Args: []string{rest[0]}, Usage: passesUsage}
 	}
 	if (req.Action == "show" || req.Action == "open" || req.Action == "clear-url") && len(rest) > 1 {
-		return req, fmt.Errorf("unexpected passes argument %q", rest[1])
+		return req, unexpectedExtraArgsError{Command: "passes " + req.Action, Args: rest[1:], Usage: passesUsage}
 	}
 	if req.Action == "set-url" && len(rest) > 2 {
-		return req, fmt.Errorf("unexpected passes argument %q", rest[2])
+		return req, unexpectedExtraArgsError{Command: "passes set-url", Args: rest[2:], Usage: passesUsage}
 	}
 	return req, nil
 }
