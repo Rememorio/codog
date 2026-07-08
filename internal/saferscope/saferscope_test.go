@@ -86,6 +86,13 @@ func TestApplySwitchesWorkspaceAndRecordsRestoreState(t *testing.T) {
 	workspace := testWorkspace(t)
 	now := time.Date(2026, 7, 7, 1, 2, 3, 0, time.UTC)
 
+	status, err := Status(workspace)
+	require.NoError(t, err)
+	require.Equal(t, "status", status.Action)
+	require.Equal(t, "inactive", status.Status)
+	require.False(t, status.Confirmed)
+	require.Equal(t, "no safer scope state found", status.Message)
+
 	report, err := Apply(workspace, Options{Choice: "workspace", Now: now})
 	require.NoError(t, err)
 	require.Equal(t, "apply", report.Action)
@@ -105,6 +112,18 @@ func TestApplySwitchesWorkspaceAndRecordsRestoreState(t *testing.T) {
 	require.FileExists(t, StatePath(workspace))
 	require.FileExists(t, StatePath(filepath.Join(workspace, "app")))
 
+	status, err = Status(filepath.Join(workspace, "app"))
+	require.NoError(t, err)
+	require.Equal(t, "status", status.Action)
+	require.Equal(t, "applied", status.Status)
+	require.True(t, status.Confirmed)
+	require.Equal(t, workspace, status.OriginalWorkspace)
+	require.Equal(t, filepath.Join(workspace, "app"), status.ActiveWorkspace)
+	require.Equal(t, "workspace", status.AppliedChoice)
+	require.Len(t, status.Applied, 1)
+	require.Equal(t, "workspace", status.Applied[0].ID)
+	require.Equal(t, "switch_workspace", status.Applied[0].Action)
+
 	restore, err := Restore(filepath.Join(workspace, "app"))
 	require.NoError(t, err)
 	require.Equal(t, "restore", restore.Action)
@@ -114,6 +133,10 @@ func TestApplySwitchesWorkspaceAndRecordsRestoreState(t *testing.T) {
 	require.NoFileExists(t, StatePath(filepath.Join(workspace, "app")))
 	_, err = LoadState(filepath.Join(workspace, "app"))
 	require.ErrorIs(t, err, os.ErrNotExist)
+
+	status, err = Status(workspace)
+	require.NoError(t, err)
+	require.Equal(t, "inactive", status.Status)
 }
 
 func TestApplyIgnoreWritesAndRestoresIgnoreBlock(t *testing.T) {
@@ -132,6 +155,15 @@ func TestApplyIgnoreWritesAndRestoresIgnoreBlock(t *testing.T) {
 	require.Contains(t, string(data), IgnoreMarker)
 	require.Contains(t, string(data), "node_modules/")
 	require.Contains(t, string(data), "dist/")
+
+	status, err := Status(workspace)
+	require.NoError(t, err)
+	require.Equal(t, "applied", status.Status)
+	require.Equal(t, "ignore", status.AppliedChoice)
+	require.Len(t, status.Applied, 1)
+	require.Equal(t, ActionCreateIgnoreFile, status.Applied[0].Action)
+	require.Equal(t, ".codogignore", status.Applied[0].IgnoreFile)
+	require.Contains(t, status.Applied[0].IgnoreEntries, "node_modules/")
 
 	_, err = Restore(workspace)
 	require.NoError(t, err)

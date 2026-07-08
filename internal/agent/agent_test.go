@@ -17535,15 +17535,32 @@ func TestScopeCommandAppliesAndRestoresSaferWorkspace(t *testing.T) {
 	require.Contains(t, out.String(), `"id": "workspace"`)
 	out.Reset()
 
+	require.NoError(t, app.Scope([]string{"status", "--json"}))
+	require.Contains(t, out.String(), `"action": "status"`)
+	require.Contains(t, out.String(), `"status": "inactive"`)
+	out.Reset()
+
 	require.NoError(t, app.Scope([]string{"apply", "--json"}))
 	require.Equal(t, filepath.Join(workspace, "app"), app.Workspace)
 	require.Contains(t, out.String(), `"confirmed": true`)
 	require.Contains(t, out.String(), `"active_workspace":`)
 	out.Reset()
 
+	require.NoError(t, app.Scope([]string{"status", "--json"}))
+	require.Contains(t, out.String(), `"action": "status"`)
+	require.Contains(t, out.String(), `"status": "applied"`)
+	require.Contains(t, out.String(), `"applied_choice": "workspace"`)
+	require.Contains(t, out.String(), `"restore_command": "codog scope restore"`)
+	out.Reset()
+
 	require.NoError(t, app.Scope([]string{"restore", "--json"}))
 	require.Equal(t, workspace, app.Workspace)
 	require.Contains(t, out.String(), `"restored": true`)
+	out.Reset()
+
+	require.NoError(t, app.Scope([]string{"state", "--output-format", "text"}))
+	require.Contains(t, out.String(), "Safer Scope")
+	require.Contains(t, out.String(), "Status           inactive")
 	require.Empty(t, errOut.String())
 }
 

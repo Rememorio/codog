@@ -16303,6 +16303,8 @@ func (a *App) Scope(args []string) error {
 	}
 	var report saferscope.Report
 	switch req.Action {
+	case "status":
+		report, err = saferscope.Status(a.Workspace)
 	case "preview":
 		report, err = saferscope.Preview(a.Workspace, saferscope.Options{
 			Choice:           req.Choice,
@@ -16343,7 +16345,7 @@ func (a *App) Scope(args []string) error {
 }
 
 func parseScopeArgs(args []string) (scopeRequest, error) {
-	const usage = "codog scope [preview|apply|restore] [--choice auto|workspace|ignore|create_ignore_file|both] [--target PATH] [--json|--output-format text|json]"
+	const usage = "codog scope [status|preview|apply|restore] [--choice auto|workspace|ignore|create_ignore_file|both] [--target PATH] [--json|--output-format text|json]"
 	req := scopeRequest{Action: "preview", Choice: "auto", Format: "text"}
 	var positionals []string
 	for index := 0; index < len(args); index++ {
@@ -16389,6 +16391,8 @@ func parseScopeArgs(args []string) (scopeRequest, error) {
 	req.Format = normalizedFormat
 	if len(positionals) > 0 {
 		switch strings.ToLower(positionals[0]) {
+		case "status", "state", "current":
+			req.Action = "status"
 		case "preview", "plan", "show":
 			req.Action = "preview"
 		case "apply", "use":
@@ -60714,8 +60718,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec := localCommandHelpSpec(
 			"scope",
 			"scope",
-			"codog scope [preview|apply|restore] [--choice auto|workspace|ignore|both] [--target PATH] [--output-format text|json]",
-			"Scope\n\nUsage:\n  codog scope [preview|apply|restore] [--choice auto|workspace|ignore|both] [--target PATH] [--output-format text|json]\n  codog safer-scope [same flags]\n  /scope [preview|apply|restore]\n\nTurns workspace token-risk warnings into reversible actions. `preview` lists actionable safer-scope choices with included and excluded paths. `apply` records the broader workspace, then either switches the current runtime workspace to the safer source subdirectory, appends a reversible `.codogignore` block, or does both. `restore` returns to the recorded broader workspace and removes the generated ignore block when one was applied.\n",
+			"codog scope [status|preview|apply|restore] [--choice auto|workspace|ignore|both] [--target PATH] [--output-format text|json]",
+			"Scope\n\nUsage:\n  codog scope [status|preview|apply|restore] [--choice auto|workspace|ignore|both] [--target PATH] [--output-format text|json]\n  codog safer-scope [same flags]\n  /scope [status|preview|apply|restore]\n\nTurns workspace token-risk warnings into reversible actions. `status` shows the current safer-scope state without mutating files. `preview` lists actionable safer-scope choices with included and excluded paths. `apply` records the broader workspace, then either switches the current runtime workspace to the safer source subdirectory, appends a reversible `.codogignore` block, or does both. `restore` returns to the recorded broader workspace and removes the generated ignore block when one was applied.\n",
 			[]string{"status", "workspace", "active_workspace", "scope_risk", "choices", "applied", "restore_command"},
 			[]string{"clean", "actionable", "applied", "restored", "no_action", "error"},
 			true,
@@ -60724,7 +60728,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		if topic == "safer-scope" {
 			spec.Topic = "safer-scope"
 			spec.Command = "safer-scope"
-			spec.Usage = "codog safer-scope [preview|apply|restore] [--choice auto|workspace|ignore|both] [--target PATH] [--output-format text|json]"
+			spec.Usage = "codog safer-scope [status|preview|apply|restore] [--choice auto|workspace|ignore|both] [--target PATH] [--output-format text|json]"
 		}
 		return spec, true
 	case "search":

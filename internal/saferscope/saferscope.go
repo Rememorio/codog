@@ -99,6 +99,40 @@ func Preview(workspace string, opts Options) (Report, error) {
 	}, nil
 }
 
+// Status reports any safer-scope state recorded for the current workspace.
+func Status(workspace string) (Report, error) {
+	workspace, err := cleanWorkspace(workspace)
+	if err != nil {
+		return Report{}, err
+	}
+	state, err := LoadState(workspace)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Report{
+				Kind:      "safer_scope",
+				Action:    "status",
+				Status:    "inactive",
+				Workspace: workspace,
+				Message:   "no safer scope state found",
+			}, nil
+		}
+		return Report{}, err
+	}
+	return Report{
+		Kind:              "safer_scope",
+		Action:            "status",
+		Status:            "applied",
+		Confirmed:         true,
+		Workspace:         workspace,
+		OriginalWorkspace: state.OriginalWorkspace,
+		ActiveWorkspace:   firstNonEmpty(state.ActiveWorkspace, workspace),
+		AppliedChoice:     state.AppliedChoice,
+		Message:           "safer scope state loaded",
+		Applied:           choicesFromState(state),
+		RestoreCommand:    "codog scope restore",
+	}, nil
+}
+
 // Apply executes selected safer-scope choices and writes restore metadata.
 func Apply(workspace string, opts Options) (Report, error) {
 	workspace, err := cleanWorkspace(workspace)
@@ -280,11 +314,20 @@ func RenderText(w io.Writer, report Report) {
 	fmt.Fprintln(w, "Safer Scope")
 	fmt.Fprintf(w, "  Status           %s\n", report.Status)
 	fmt.Fprintf(w, "  Workspace        %s\n", report.Workspace)
+	if report.OriginalWorkspace != "" {
+		fmt.Fprintf(w, "  Original         %s\n", report.OriginalWorkspace)
+	}
 	if report.ActiveWorkspace != "" {
 		fmt.Fprintf(w, "  Active workspace %s\n", report.ActiveWorkspace)
 	}
+	if report.AppliedChoice != "" {
+		fmt.Fprintf(w, "  Applied choice   %s\n", report.AppliedChoice)
+	}
 	fmt.Fprintf(w, "  Advisory         %t\n", report.Advisory)
 	fmt.Fprintf(w, "  Confirmed        %t\n", report.Confirmed)
+	if report.Message != "" {
+		fmt.Fprintf(w, "  Message          %s\n", report.Message)
+	}
 	if report.Risk.Status != "" {
 		fmt.Fprintf(w, "  Scope risk       %s", report.Risk.Status)
 		if report.Risk.Level != "" {
@@ -302,6 +345,18 @@ func RenderText(w io.Writer, report Report) {
 		}
 		if len(choice.PreviewExcludes) > 0 {
 			fmt.Fprintf(w, "    Excludes       %s\n", strings.Join(choice.PreviewExcludes, ", "))
+		}
+		if len(choice.IgnoreEntries) > 0 {
+			fmt.Fprintf(w, "    Ignore entries %s\n", strings.Join(choice.IgnoreEntries, ", "))
+		}
+	}
+	for _, choice := range report.Applied {
+		fmt.Fprintf(w, "  Applied          %s %s\n", choice.ID, choice.Action)
+		if choice.Target != "" {
+			fmt.Fprintf(w, "    Target         %s\n", choice.Target)
+		}
+		if choice.IgnoreFile != "" {
+			fmt.Fprintf(w, "    Ignore file    %s\n", choice.IgnoreFile)
 		}
 		if len(choice.IgnoreEntries) > 0 {
 			fmt.Fprintf(w, "    Ignore entries %s\n", strings.Join(choice.IgnoreEntries, ", "))
@@ -395,6 +450,53 @@ func choiceAliasesAction(choice, action string) bool {
 	default:
 		return false
 	}
+}
+
+func choicesFromState(state State) []Choice {
+	parts := strings.Split(state.AppliedChoice, ",")
+	choices := make([]Choice, 0, len(parts))
+	for _, part := range parts {
+		id := strings.TrimSpace(part)
+		if id == "" {
+			continue
+		}
+		switch id {
+		case "workspace":
+			choices = append(choices, Choice{
+				ID:          "workspace",
+				Action:      "switch_workspace",
+				Status:      "applied",
+				Target:      state.ActiveWorkspace,
+				Description: "runtime workspace switched to safer source subdirectory",
+			})
+		case "ignore":
+			choices = append(choices, Choice{
+				ID:            "ignore",
+				Action:        ActionCreateIgnoreFile,
+				Status:        "applied",
+				IgnoreFile:    state.IgnoreFile,
+				IgnoreEntries: append([]string(nil), state.IgnoreEntries...),
+				Description:   "reversible ignore block applied",
+			})
+		default:
+			choices = append(choices, Choice{
+				ID:          id,
+				Action:      id,
+				Status:      "applied",
+				Description: "safer-scope choice applied",
+			})
+		}
+	}
+	return choices
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func workspaceChoice(workspace string, target string, inventory fileinventory.Report, excludes []string) Choice {

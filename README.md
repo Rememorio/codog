@@ -186,7 +186,8 @@ and recommends narrower scope choices or ignore/cleanup targets.
 Use `codog scope preview` to turn those findings into actionable choices.
 `codog scope apply` can switch the current runtime workspace to a safer source
 subdirectory or append a reversible `.codogignore` block; `codog scope restore`
-returns to the broader workspace.
+returns to the broader workspace. `codog scope status` reports whether a
+safer-scope state is currently active.
 
 Ignore-file behavior:
 
