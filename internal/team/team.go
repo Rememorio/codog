@@ -140,6 +140,13 @@ func (s Store) MarkDeleted(id string) (Team, error) {
 
 // Save writes a complete team record.
 func (s Store) Save(team Team) error {
+	team.ID = strings.TrimSpace(team.ID)
+	if team.ID == "" {
+		return errors.New("team_id is required")
+	}
+	if !safeID(team.ID) {
+		return fmt.Errorf("invalid team_id %q", team.ID)
+	}
 	if err := os.MkdirAll(s.dir(), 0o755); err != nil {
 		return err
 	}
