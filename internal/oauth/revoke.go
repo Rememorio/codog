@@ -9,6 +9,9 @@ import (
 )
 
 type LogoutResult struct {
+	Kind           string `json:"kind,omitempty"`
+	Action         string `json:"action,omitempty"`
+	Status         string `json:"status,omitempty"`
 	Deleted        bool   `json:"deleted"`
 	AccessRevoked  bool   `json:"access_revoked,omitempty"`
 	RefreshRevoked bool   `json:"refresh_revoked,omitempty"`
@@ -51,11 +54,11 @@ func Logout(ctx context.Context, configHome string, profileName string) (LogoutR
 	token, err := LoadToken(configHome)
 	if err != nil {
 		if errors.Is(err, ErrNoToken) {
-			return LogoutResult{Deleted: true, Revocation: "no_token"}, nil
+			return LogoutResult{Kind: "oauth", Action: "logout", Status: "ok", Deleted: true, Revocation: "no_token"}, nil
 		}
 		return LogoutResult{}, err
 	}
-	result := LogoutResult{}
+	result := LogoutResult{Kind: "oauth", Action: "logout", Status: "ok"}
 	profile, err := ResolveProviderProfile(configHome, profileName)
 	if err == nil && profile.Metadata.RevocationEndpoint != "" {
 		if token.AccessToken != "" {
