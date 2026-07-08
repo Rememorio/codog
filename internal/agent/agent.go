@@ -38652,6 +38652,7 @@ type modelReport struct {
 	Previous       string `json:"previous,omitempty"`
 	RequestedModel string `json:"requested_model,omitempty"`
 	Path           string `json:"path,omitempty"`
+	Cleared        bool   `json:"cleared,omitempty"`
 }
 
 type modelAliasReport struct {
@@ -38812,6 +38813,12 @@ func (a *App) Models(args []string) error {
 			return err
 		}
 		return renderModelReport(a.Out, report, req.Format)
+	case "clear":
+		report, err := a.clearModelRequest(modelRequest{Format: req.Format, Target: req.Target, Path: req.Path})
+		if err != nil {
+			return err
+		}
+		return renderModelReport(a.Out, report, req.Format)
 	default:
 		return renderActionError(a.Out, actionErrorReport{
 			Kind:      "models",
@@ -38852,6 +38859,27 @@ func (a *App) applyModelRequest(req modelRequest) (modelReport, error) {
 		report.Previous = ""
 	}
 	return report, nil
+}
+
+func (a *App) clearModelRequest(req modelRequest) (modelReport, error) {
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return modelReport{}, err
+	}
+	if _, err := config.UnsetFileValue(path, "model"); err != nil {
+		return modelReport{}, err
+	}
+	previous := a.Config.Model
+	a.Config.Model = config.DefaultModel
+	return modelReport{
+		Kind:     "model",
+		Action:   "clear",
+		Status:   "ok",
+		Model:    a.Config.Model,
+		Previous: previous,
+		Path:     path,
+		Cleared:  true,
+	}, nil
 }
 
 func (a *App) buildModelsReport() modelsReport {
@@ -38983,7 +39011,7 @@ func (a *App) ResumedModel(args []string) error {
 
 const (
 	modelUsage  = "codog model [MODEL] [--target user|project|local] [--path PATH] [--output-format text|json]"
-	modelsUsage = "codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|set MODEL|help] [--target user|project|local] [--path PATH] [--output-format text|json]"
+	modelsUsage = "codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|set MODEL|clear|reset|help] [--target user|project|local] [--path PATH] [--output-format text|json]"
 )
 
 func parseModelArgs(args []string) (modelRequest, error) {
@@ -39095,6 +39123,16 @@ func parseModelsArgs(args []string) (modelsRequest, error) {
 		req.Model = strings.TrimSpace(strings.Join(positionals[1:], " "))
 		return req, nil
 	}
+	if req.Action == "clear" {
+		if len(positionals) > 1 {
+			return req, unexpectedExtraArgsError{
+				Command: "models " + req.Action,
+				Args:    append([]string(nil), positionals[1:]...),
+				Usage:   modelsUsage,
+			}
+		}
+		return req, nil
+	}
 	if len(positionals) > 1 {
 		return req, unexpectedExtraArgsError{
 			Command: "models " + req.Action,
@@ -39119,6 +39157,8 @@ func normalizeModelsAction(action string) string {
 		return "search"
 	case "set", "select", "use":
 		return "set"
+	case "clear", "reset", "unset", "default":
+		return "clear"
 	case "help":
 		return "help"
 	default:
@@ -58248,7 +58288,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"models",
 			"models",
 			modelsUsage,
-			"Models\n\nUsage:\n  codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|set MODEL|help] [--target user|project|local] [--path PATH] [--output-format text|json]\n  codog model help [--output-format text|json]\n\nShows bounded local model-selection guidance, built-in aliases, routing rules, searchable model metadata, and local model diagnostics without making a provider request. `models set MODEL` stores the configured model through the same preference path as `codog model MODEL`. Common discovery aliases such as `catalog`, `lookup`, `query`, `get`, and `describe` are normalized to canonical actions.\n",
+			"Models\n\nUsage:\n  codog models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|set MODEL|clear|reset|help] [--target user|project|local] [--path PATH] [--output-format text|json]\n  codog model help [--output-format text|json]\n\nShows bounded local model-selection guidance, built-in aliases, routing rules, searchable model metadata, and local model diagnostics without making a provider request. `models set MODEL` stores the configured model through the same preference path as `codog model MODEL`; `models clear` removes that preference so the default model path is used again. Common discovery aliases such as `catalog`, `lookup`, `query`, `get`, and `describe` are normalized to canonical actions.\n",
 			[]string{"default_model", "aliases", "routes", "configured_model", "resolved_configured_model", "provider", "wire_model", "requires_provider_request"},
 			[]string{"ok", "error"},
 			false,

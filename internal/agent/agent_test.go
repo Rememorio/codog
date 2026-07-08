@@ -3734,6 +3734,21 @@ func TestModelsCommandActionAliases(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(modelData), `"model": "opus"`)
 
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "clear", "--path", modelPath, "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var clearModel modelReport
+	require.NoError(t, json.Unmarshal([]byte(out), &clearModel))
+	require.Equal(t, "model", clearModel.Kind)
+	require.Equal(t, "clear", clearModel.Action)
+	require.Equal(t, config.DefaultModel, clearModel.Model)
+	require.Equal(t, config.DefaultModel, clearModel.Previous)
+	require.True(t, clearModel.Cleared)
+	modelData, err = os.ReadFile(modelPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(modelData), `"model"`)
+
 	var slashOut bytes.Buffer
 	slashPath := filepath.Join(t.TempDir(), "slash-model.json")
 	app := &App{
@@ -3756,6 +3771,18 @@ func TestModelsCommandActionAliases(t *testing.T) {
 	slashData, err := os.ReadFile(slashPath)
 	require.NoError(t, err)
 	require.Contains(t, string(slashData), `"model": "grok"`)
+
+	slashOut.Reset()
+	require.True(t, app.handleSlash(context.Background(), "/models reset --path "+slashPath+" --json", &session.Session{ID: "session"}))
+	require.NoError(t, json.Unmarshal(slashOut.Bytes(), &clearModel))
+	require.Equal(t, "clear", clearModel.Action)
+	require.Equal(t, config.DefaultModel, clearModel.Model)
+	require.Equal(t, "grok", clearModel.Previous)
+	require.True(t, clearModel.Cleared)
+	require.Equal(t, config.DefaultModel, app.Config.Model)
+	slashData, err = os.ReadFile(slashPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(slashData), `"model"`)
 }
 
 func TestDirectSlashSuggestsProjectCommands(t *testing.T) {
