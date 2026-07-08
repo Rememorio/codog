@@ -49940,7 +49940,20 @@ type sessionListReport struct {
 	SessionDetails []sessionListDetail `json:"session_details"`
 	Active         string              `json:"active,omitempty"`
 	Count          int                 `json:"count"`
+	Total          int                 `json:"total"`
+	Limit          int                 `json:"limit"`
+	Offset         int                 `json:"offset"`
+	HasMore        bool                `json:"has_more"`
+	NextOffset     *int                `json:"next_offset,omitempty"`
 	Workspace      string              `json:"workspace,omitempty"`
+}
+
+type sessionListRequest struct {
+	Format    string
+	Limit     int
+	Offset    int
+	UseLimit  bool
+	UseOffset bool
 }
 
 type sessionListDetail struct {
@@ -49970,23 +49983,16 @@ func (a *App) ListSessions() error {
 }
 
 func (a *App) ListSessionsWithActive(args []string, activeID string) error {
-	format, remaining, err := parseTemplateOutputArgs("sessions list", args)
+	req, err := parseSessionListArgs(args)
 	if err != nil {
 		return err
-	}
-	if len(remaining) > 0 {
-		return unexpectedExtraArgsError{
-			Command: "sessions list",
-			Args:    append([]string(nil), remaining...),
-			Usage:   "codog sessions list [--json|--output-format text|json]",
-		}
 	}
 	sessions, err := a.Sessions.List()
 	if err != nil {
 		return err
 	}
-	report := buildSessionListReport(sessions, activeID, a.Workspace)
-	if format == "json" {
+	report := buildSessionListReport(sessions, activeID, a.Workspace, req)
+	if req.Format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
@@ -49995,19 +50001,26 @@ func (a *App) ListSessionsWithActive(args []string, activeID string) error {
 	return nil
 }
 
-func buildSessionListReport(sessions []session.Session, activeID string, workspace string) sessionListReport {
+func buildSessionListReport(sessions []session.Session, activeID string, workspace string, req sessionListRequest) sessionListReport {
 	activeID = strings.TrimSpace(activeID)
+	total := len(sessions)
+	page, offset, limit, nextOffset := paginateSessions(sessions, req)
 	report := sessionListReport{
 		Kind:           "sessions",
 		Status:         "ok",
 		Action:         "list",
-		Sessions:       make([]string, 0, len(sessions)),
-		SessionDetails: make([]sessionListDetail, 0, len(sessions)),
+		Sessions:       make([]string, 0, len(page)),
+		SessionDetails: make([]sessionListDetail, 0, len(page)),
 		Active:         activeID,
-		Count:          len(sessions),
+		Count:          len(page),
+		Total:          total,
+		Limit:          limit,
+		Offset:         offset,
+		HasMore:        nextOffset != nil,
+		NextOffset:     nextOffset,
 		Workspace:      strings.TrimSpace(workspace),
 	}
-	for _, sess := range sessions {
+	for _, sess := range page {
 		report.Sessions = append(report.Sessions, sess.ID)
 		report.SessionDetails = append(report.SessionDetails, sessionListDetail{
 			ID:                  sess.ID,
@@ -50027,7 +50040,95 @@ func buildSessionListReport(sessions []session.Session, activeID string, workspa
 	return report
 }
 
+func parseSessionListArgs(args []string) (sessionListRequest, error) {
+	const usage = "codog sessions list [--limit N] [--offset N] [--json|--output-format text|json]"
+	format, remaining, err := parseTemplateOutputArgs("sessions list", args)
+	if err != nil {
+		return sessionListRequest{}, err
+	}
+	req := sessionListRequest{Format: format}
+	for index := 0; index < len(remaining); index++ {
+		arg := remaining[index]
+		switch {
+		case arg == "--limit" || arg == "-n":
+			index++
+			if index >= len(remaining) {
+				return req, missingFlagValueError{Command: "sessions list", Flag: arg, Usage: usage}
+			}
+			limit, err := parsePositiveIntOption(remaining[index], "--limit", usage)
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+			req.UseLimit = true
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+			req.UseLimit = true
+		case arg == "--offset":
+			index++
+			if index >= len(remaining) {
+				return req, missingFlagValueError{Command: "sessions list", Flag: arg, Usage: usage}
+			}
+			offset, err := parseNonNegativeIntOption(remaining[index], "--offset", usage)
+			if err != nil {
+				return req, err
+			}
+			req.Offset = offset
+			req.UseOffset = true
+		case strings.HasPrefix(arg, "--offset="):
+			offset, err := parseNonNegativeIntOption(strings.TrimPrefix(arg, "--offset="), "--offset", usage)
+			if err != nil {
+				return req, err
+			}
+			req.Offset = offset
+			req.UseOffset = true
+		default:
+			return req, unexpectedExtraArgsError{
+				Command: "sessions list",
+				Args:    []string{arg},
+				Usage:   usage,
+			}
+		}
+	}
+	return req, nil
+}
+
+func paginateSessions(sessions []session.Session, req sessionListRequest) ([]session.Session, int, int, *int) {
+	total := len(sessions)
+	offset := 0
+	if req.UseOffset {
+		offset = req.Offset
+		if offset > total {
+			offset = total
+		}
+	}
+	limit := total - offset
+	if req.UseLimit {
+		limit = req.Limit
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	nextOffset := (*int)(nil)
+	if end < total {
+		next := end
+		nextOffset = &next
+	}
+	return sessions[offset:end], offset, limit, nextOffset
+}
+
 func renderSessionListText(out io.Writer, report sessionListReport) {
+	if report.HasMore {
+		fmt.Fprintf(out, "Showing %d of %d sessions from offset %d (next offset %d)\n", report.Count, report.Total, report.Offset, *report.NextOffset)
+	}
 	for _, sess := range report.SessionDetails {
 		active := ""
 		if sess.Active {

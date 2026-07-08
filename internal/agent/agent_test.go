@@ -13127,6 +13127,11 @@ func TestSessionsListJSONIncludesDetails(t *testing.T) {
 	require.Contains(t, report.Sessions, "source")
 	require.Contains(t, report.Sessions, forked.ID)
 	require.Equal(t, 2, report.Count)
+	require.Equal(t, 2, report.Total)
+	require.Equal(t, 2, report.Limit)
+	require.Equal(t, 0, report.Offset)
+	require.False(t, report.HasMore)
+	require.Nil(t, report.NextOffset)
 	require.Equal(t, "/workspace", report.Workspace)
 	require.Len(t, report.SessionDetails, 2)
 	details := map[string]sessionListDetail{}
@@ -13143,6 +13148,42 @@ func TestSessionsListJSONIncludesDetails(t *testing.T) {
 	require.Equal(t, "source", details[forked.ID].ParentSessionID)
 	require.Equal(t, "investigation", details[forked.ID].BranchName)
 	require.Equal(t, 2, details[forked.ID].MessageCount)
+}
+
+func TestSessionsListJSONPaginates(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	for _, id := range []string{"one", "two", "three"} {
+		require.NoError(t, store.Append(id, anthropic.TextMessage("user", id)))
+	}
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out}
+
+	require.NoError(t, app.SessionsCommand([]string{"list", "--json", "--offset", "0", "--limit", "1"}))
+	var firstPage sessionListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &firstPage))
+	require.Equal(t, 3, firstPage.Total)
+	require.Equal(t, 1, firstPage.Count)
+	require.Equal(t, 1, firstPage.Limit)
+	require.Equal(t, 0, firstPage.Offset)
+	require.True(t, firstPage.HasMore)
+	require.NotNil(t, firstPage.NextOffset)
+	require.Equal(t, 1, *firstPage.NextOffset)
+	require.Len(t, firstPage.Sessions, 1)
+	require.Len(t, firstPage.SessionDetails, 1)
+	firstID := firstPage.Sessions[0]
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"list", "--json", "--offset=1", "--limit=2"}))
+	var secondPage sessionListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &secondPage))
+	require.Equal(t, 3, secondPage.Total)
+	require.Equal(t, 2, secondPage.Count)
+	require.Equal(t, 2, secondPage.Limit)
+	require.Equal(t, 1, secondPage.Offset)
+	require.False(t, secondPage.HasMore)
+	require.Nil(t, secondPage.NextOffset)
+	require.Len(t, secondPage.Sessions, 2)
+	require.NotContains(t, secondPage.Sessions, firstID)
 }
 
 func TestSessionsSearchJSONIncludesIdentityAndMessageMatches(t *testing.T) {
