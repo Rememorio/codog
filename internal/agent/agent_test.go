@@ -12821,6 +12821,53 @@ func TestSessionsAuditReportsHygieneIssuesAndNextActions(t *testing.T) {
 	require.Contains(t, text, "codog sessions prune --empty --confirm")
 }
 
+func TestDoctorSurfacesSessionAuditWarnings(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	_, err := store.CreateWithIdentity("empty", session.SessionIdentity{})
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			BaseURL:        "https://api.example.test",
+			APIKey:         "secret",
+			PermissionMode: "workspace-write",
+		},
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  store,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Doctor([]string{"--json"}))
+	var report doctor.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "doctor", report.Kind)
+	var sessions doctor.Check
+	for _, check := range report.Checks {
+		if check.Name == "Sessions" {
+			sessions = check
+			break
+		}
+	}
+	require.Equal(t, "Sessions", sessions.Name)
+	require.Equal(t, doctor.StatusWarn, sessions.Status)
+	require.Contains(t, sessions.Hint, "codog sessions audit")
+	require.Equal(t, float64(1), sessions.Data["session_count"])
+	hygiene, ok := sessions.Data["hygiene"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "warn", hygiene["status"])
+	require.Equal(t, float64(1), hygiene["session_count"])
+	require.Equal(t, float64(1), hygiene["empty_count"])
+	require.NotZero(t, hygiene["placeholder_identity_count"])
+	require.Contains(t, strings.Join(sessions.Details, "\n"), "Identity placeholders")
+}
+
 func TestResumeCommandReportsSessionAndContinueCommands(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))

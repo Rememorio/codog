@@ -352,6 +352,49 @@ func TestRunReportsMemoryMetadata(t *testing.T) {
 	require.Equal(t, "2026-07-01T12:00:00Z", files[0].ModifiedAt)
 }
 
+func TestRunWarnsOnSessionHygieneIssues(t *testing.T) {
+	report := Run(Options{
+		Workspace:      t.TempDir(),
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   1,
+		SessionHygiene: &SessionHygiene{
+			Status:                   StatusWarn,
+			SessionCount:             1,
+			MessageCount:             2,
+			PlaceholderIdentityCount: 1,
+			Issues: []SessionHygieneIssue{{
+				Kind:       "identity_placeholder",
+				Severity:   StatusWarn,
+				SessionID:  "draft",
+				Field:      "purpose",
+				Message:    "session identity still uses a typed placeholder",
+				NextAction: "codog generateSessionName --session 'draft' --rename",
+			}},
+			NextActions: []string{"codog generateSessionName --session 'draft' --rename"},
+		},
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	require.Equal(t, StatusWarn, report.Status)
+	sessions := findCheck(t, report, "Sessions")
+	require.Equal(t, StatusWarn, sessions.Status)
+	require.Contains(t, sessions.Summary, "session hygiene")
+	require.Contains(t, sessions.Hint, "codog sessions audit")
+	require.Contains(t, strings.Join(sessions.Details, "\n"), "Identity placeholders: 1")
+	require.Contains(t, strings.Join(sessions.Details, "\n"), "codog generateSessionName")
+	hygiene, ok := sessions.Data["hygiene"].(*SessionHygiene)
+	require.True(t, ok)
+	require.Equal(t, 1, hygiene.PlaceholderIdentityCount)
+	require.Len(t, hygiene.Issues, 1)
+	require.Equal(t, "identity_placeholder", hygiene.Issues[0].Kind)
+}
+
 func TestRunFailsInvalidPermissionMode(t *testing.T) {
 	report := Run(Options{
 		Workspace:      t.TempDir(),

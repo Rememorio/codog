@@ -34286,10 +34286,12 @@ func (a *App) Doctor(args []string) error {
 		}
 	}
 	sessionCount := -1
+	var sessionHygiene *doctor.SessionHygiene
 	if a.Sessions != nil {
-		sessions, err := a.Sessions.List()
+		report, err := a.auditSessionsWithReport()
 		if err == nil {
-			sessionCount = len(sessions)
+			sessionCount = report.SessionCount
+			sessionHygiene = doctorSessionHygiene(report)
 		}
 	}
 	memoryStatuses := buildMemoryFileStatuses(a.Workspace, a.memoryRulesImportOptions())
@@ -34328,6 +34330,7 @@ func (a *App) Doctor(args []string) error {
 		MCPValidation:         mcpValidation,
 		HookValidation:        hookValidation,
 		SessionCount:          sessionCount,
+		SessionHygiene:        sessionHygiene,
 		MemoryFiles:           memoryStatuses,
 		UserPromptSubmit:      a.Config.Hooks.UserPromptSubmit,
 		SessionStart:          a.Config.Hooks.SessionStart,
@@ -49229,6 +49232,41 @@ func (a *App) auditSessionsWithReport() (sessionAuditReport, error) {
 	}
 	report.NextActions = sessionAuditNextActions(report)
 	return report, nil
+}
+
+func doctorSessionHygiene(report sessionAuditReport) *doctor.SessionHygiene {
+	issues := make([]doctor.SessionHygieneIssue, 0, len(report.Issues))
+	for _, issue := range report.Issues {
+		issues = append(issues, doctor.SessionHygieneIssue{
+			Kind:         issue.Kind,
+			Severity:     issue.Severity,
+			SessionID:    issue.SessionID,
+			Path:         issue.Path,
+			Field:        issue.Field,
+			MessageIndex: issue.MessageIndex,
+			SizeBytes:    issue.SizeBytes,
+			Message:      issue.Message,
+			NextAction:   issue.NextAction,
+		})
+	}
+	return &doctor.SessionHygiene{
+		Status:                   report.Status,
+		Workspace:                report.Workspace,
+		SessionDir:               report.SessionDir,
+		LegacySessionDir:         report.LegacySessionDir,
+		SessionCount:             report.SessionCount,
+		MessageCount:             report.MessageCount,
+		EmptyCount:               report.EmptyCount,
+		BranchCount:              report.BranchCount,
+		PinnedMessageCount:       report.PinnedMessageCount,
+		PlaceholderIdentityCount: report.PlaceholderIdentityCount,
+		MissingIdentityCount:     report.MissingIdentityCount,
+		WorkspaceMismatchCount:   report.WorkspaceMismatchCount,
+		PinnedOutOfRangeCount:    report.PinnedOutOfRangeCount,
+		OversizedFileCount:       report.OversizedFileCount,
+		Issues:                   issues,
+		NextActions:              append([]string(nil), report.NextActions...),
+	}
 }
 
 func (report *sessionAuditReport) auditSession(sess session.Session) {

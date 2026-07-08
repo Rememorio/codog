@@ -53,6 +53,7 @@ type Options struct {
 	MCPValidation         localstatus.MCPValidationStatus
 	HookValidation        localstatus.HookValidationStatus
 	SessionCount          int
+	SessionHygiene        *SessionHygiene
 	MemoryFiles           []localstatus.MemoryFileStatus
 	UserPromptSubmit      []string
 	SessionStart          []string
@@ -90,6 +91,39 @@ type Options struct {
 type ToolPermission struct {
 	Name               string `json:"name"`
 	RequiredPermission string `json:"required_permission"`
+}
+
+// SessionHygiene contains the session audit facts surfaced by Doctor.
+type SessionHygiene struct {
+	Status                   string                `json:"status"`
+	Workspace                string                `json:"workspace,omitempty"`
+	SessionDir               string                `json:"session_dir,omitempty"`
+	LegacySessionDir         string                `json:"legacy_session_dir,omitempty"`
+	SessionCount             int                   `json:"session_count"`
+	MessageCount             int                   `json:"message_count"`
+	EmptyCount               int                   `json:"empty_count"`
+	BranchCount              int                   `json:"branch_count"`
+	PinnedMessageCount       int                   `json:"pinned_message_count"`
+	PlaceholderIdentityCount int                   `json:"placeholder_identity_count"`
+	MissingIdentityCount     int                   `json:"missing_identity_count"`
+	WorkspaceMismatchCount   int                   `json:"workspace_mismatch_count"`
+	PinnedOutOfRangeCount    int                   `json:"pinned_out_of_range_count"`
+	OversizedFileCount       int                   `json:"oversized_file_count"`
+	Issues                   []SessionHygieneIssue `json:"issues,omitempty"`
+	NextActions              []string              `json:"next_actions,omitempty"`
+}
+
+// SessionHygieneIssue describes one actionable session hygiene finding.
+type SessionHygieneIssue struct {
+	Kind         string `json:"kind"`
+	Severity     string `json:"severity"`
+	SessionID    string `json:"session_id"`
+	Path         string `json:"path,omitempty"`
+	Field        string `json:"field,omitempty"`
+	MessageIndex int    `json:"message_index,omitempty"`
+	SizeBytes    int64  `json:"size_bytes,omitempty"`
+	Message      string `json:"message"`
+	NextAction   string `json:"next_action,omitempty"`
 }
 
 // Summary counts doctor checks by severity.
@@ -147,7 +181,7 @@ func Run(opts Options) Report {
 		checkTools(opts.ToolCount),
 		checkMCPValidation(opts.MCPValidation),
 		checkMCP(opts.MCPServerStatuses),
-		checkSessions(opts.SessionCount),
+		checkSessions(opts.SessionCount, opts.SessionHygiene),
 		checkHooks(opts),
 		checkHookValidation(opts.HookValidation),
 		checkGit(opts.Workspace, gitOperation),
@@ -790,11 +824,56 @@ func checkMCP(statuses []mcp.ServerStatus) Check {
 	return Check{Name: "MCP", Status: StatusOK, Summary: "All configured MCP servers responded.", Details: details}
 }
 
-func checkSessions(count int) Check {
+func checkSessions(count int, hygiene *SessionHygiene) Check {
 	if count < 0 {
 		return Check{Name: "Sessions", Status: StatusWarn, Summary: "Session store could not be listed."}
 	}
-	return Check{Name: "Sessions", Status: StatusOK, Summary: "Session store is readable.", Details: []string{fmt.Sprintf("Saved sessions: %d", count)}}
+	details := []string{fmt.Sprintf("Saved sessions: %d", count)}
+	data := map[string]any{"session_count": count}
+	if hygiene == nil {
+		return Check{Name: "Sessions", Status: StatusOK, Summary: "Session store is readable.", Details: details, Data: data}
+	}
+	details = append(details,
+		fmt.Sprintf("Saved messages: %d", hygiene.MessageCount),
+		fmt.Sprintf("Empty sessions: %d", hygiene.EmptyCount),
+		fmt.Sprintf("Branch sessions: %d", hygiene.BranchCount),
+		fmt.Sprintf("Pinned messages: %d", hygiene.PinnedMessageCount),
+		fmt.Sprintf("Identity placeholders: %d", hygiene.PlaceholderIdentityCount),
+		fmt.Sprintf("Missing identity fields: %d", hygiene.MissingIdentityCount),
+		fmt.Sprintf("Workspace mismatches: %d", hygiene.WorkspaceMismatchCount),
+		fmt.Sprintf("Pinned messages out of range: %d", hygiene.PinnedOutOfRangeCount),
+		fmt.Sprintf("Oversized JSONL files: %d", hygiene.OversizedFileCount),
+	)
+	if len(hygiene.NextActions) != 0 {
+		details = append(details, "Next actions: "+strings.Join(hygiene.NextActions, "; "))
+	}
+	data["hygiene"] = hygiene
+	warnCount := sessionHygieneWarnCount(*hygiene)
+	if strings.TrimSpace(hygiene.Status) == StatusWarn || warnCount > 0 {
+		return Check{
+			Name:    "Sessions",
+			Status:  StatusWarn,
+			Summary: fmt.Sprintf("%d session hygiene issue(s) need attention.", warnCount),
+			Details: details,
+			Hint:    "Run `codog sessions audit` for issue details and suggested repair commands.",
+			Data:    data,
+		}
+	}
+	return Check{Name: "Sessions", Status: StatusOK, Summary: "Session store is readable and hygiene checks passed.", Details: details, Data: data}
+}
+
+func sessionHygieneWarnCount(hygiene SessionHygiene) int {
+	total := hygiene.PlaceholderIdentityCount + hygiene.MissingIdentityCount + hygiene.WorkspaceMismatchCount + hygiene.PinnedOutOfRangeCount + hygiene.OversizedFileCount
+	if total != 0 {
+		return total
+	}
+	for _, issue := range hygiene.Issues {
+		switch strings.TrimSpace(issue.Severity) {
+		case StatusWarn, "error":
+			total++
+		}
+	}
+	return total
 }
 
 func checkHooks(opts Options) Check {
