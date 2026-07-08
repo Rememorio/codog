@@ -23579,7 +23579,7 @@ func TestPassesFetchesEligibilityAndRedemptions(t *testing.T) {
 		seen = append(seen, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/oauth/organizations/org-123/referral/eligibility":
-			fmt.Fprintln(w, `{"eligible":true,"remaining_passes":2,"referral_code_details":{"referral_link":"https://example.test/pass","campaign":"claude_code_guest_pass"}}`)
+			fmt.Fprintln(w, `{"eligible":true,"remaining_passes":2,"referrer_reward":{"currency":"USD","amount_minor_units":500},"referral_code_details":{"referral_link":"https://example.test/pass","campaign":"claude_code_guest_pass"}}`)
 		case "/api/oauth/organizations/org-123/referral/redemptions":
 			fmt.Fprintln(w, `{"limit":3,"redemptions":[{"email":"used@example.test"}]}`)
 		default:
@@ -23617,6 +23617,10 @@ func TestPassesFetchesEligibilityAndRedemptions(t *testing.T) {
 	require.Equal(t, 1, *report.Redeemed)
 	require.NotNil(t, report.AvailablePasses)
 	require.Equal(t, 2, *report.AvailablePasses)
+	require.NotNil(t, report.ReferrerReward)
+	require.Equal(t, "USD", report.ReferrerReward.Currency)
+	require.Equal(t, 500, report.ReferrerReward.AmountMinorUnits)
+	require.Equal(t, "$5", report.ReferrerRewardFormatted)
 	require.Equal(t, "https://example.test/pass", report.ReferralURL)
 	require.True(t, report.SavedReferralURL)
 	require.True(t, report.SavedEligibilityCache)
@@ -23632,6 +23636,8 @@ func TestPassesFetchesEligibilityAndRedemptions(t *testing.T) {
 	require.Contains(t, string(data), `"guest_pass_eligibility_cache"`)
 	require.Contains(t, string(data), `"org-123"`)
 	require.Contains(t, string(data), `"remaining_passes": 2`)
+	require.Contains(t, string(data), `"referrer_reward"`)
+	require.Contains(t, string(data), `"amount_minor_units": 500`)
 	out.Reset()
 
 	require.NoError(t, app.Passes([]string{"status", "--json"}))
@@ -23643,6 +23649,8 @@ func TestPassesFetchesEligibilityAndRedemptions(t *testing.T) {
 	require.True(t, *cached.Eligible)
 	require.NotNil(t, cached.RemainingPasses)
 	require.Equal(t, 2, *cached.RemainingPasses)
+	require.NotNil(t, cached.ReferrerReward)
+	require.Equal(t, "$5", cached.ReferrerRewardFormatted)
 	require.Equal(t, "https://example.test/pass", cached.ReferralURL)
 	require.True(t, cached.UpsellReset)
 	require.True(t, cached.UpsellVisible)
@@ -23672,6 +23680,13 @@ func TestPassesFetchesEligibilityAndRedemptions(t *testing.T) {
 	require.Contains(t, string(data), `"has_visited_passes": true`)
 	require.Contains(t, string(data), `"passes_upsell_seen_count": 1`)
 	require.Contains(t, string(data), `"passes_last_seen_remaining": 2`)
+}
+
+func TestFormatGuestPassReward(t *testing.T) {
+	require.Empty(t, formatGuestPassReward(nil))
+	require.Equal(t, "$5", formatGuestPassReward(&config.MoneyInfo{Currency: "USD", AmountMinorUnits: 500}))
+	require.Equal(t, "CA$7.50", formatGuestPassReward(&config.MoneyInfo{Currency: "cad", AmountMinorUnits: 750}))
+	require.Equal(t, "JPY 1234.56", formatGuestPassReward(&config.MoneyInfo{Currency: "jpy", AmountMinorUnits: 123456}))
 }
 
 func TestExtraUsageCommandAndSlash(t *testing.T) {

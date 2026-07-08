@@ -206,7 +206,7 @@ func TestLoadCompatibilityConfigCompatibility(t *testing.T) {
 		},
 		{
 			name:         "formal compatibility aliases",
-			body:         `{"compatibility":{"slackAppInstallCount":3,"stickerOrderCount":2,"extraUsageVisitCount":4,"guestPassReferralURL":"https://example.test/pass","guestPassVisitCount":5,"passesEligibilityCache":{"org-123":{"eligible":true,"timestamp":"2026-07-08T00:00:00Z","campaign":"claude_code_guest_pass","referral_url":"https://example.test/pass","remaining_passes":2}},"hasVisitedPasses":true,"passesUpsellSeenCount":2,"passesLastSeenRemaining":1}}`,
+			body:         `{"compatibility":{"slackAppInstallCount":3,"stickerOrderCount":2,"extraUsageVisitCount":4,"guestPassReferralURL":"https://example.test/pass","guestPassVisitCount":5,"passesEligibilityCache":{"org-123":{"eligible":true,"timestamp":"2026-07-08T00:00:00Z","campaign":"claude_code_guest_pass","referral_url":"https://example.test/pass","remaining_passes":2,"referrer_reward":{"currency":"USD","amount_minor_units":500}}},"hasVisitedPasses":true,"passesUpsellSeenCount":2,"passesLastSeenRemaining":1}}`,
 			slackCount:   3,
 			stickerCount: 2,
 			extraCount:   4,
@@ -249,6 +249,11 @@ func TestLoadCompatibilityConfigCompatibility(t *testing.T) {
 				require.NotNil(t, entry.RemainingPasses)
 				require.Equal(t, tc.remaining, *entry.RemainingPasses)
 				require.True(t, entry.Timestamp.Equal(time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)))
+				if tc.name == "formal compatibility aliases" {
+					require.NotNil(t, entry.ReferrerReward)
+					require.Equal(t, "USD", entry.ReferrerReward.Currency)
+					require.Equal(t, 500, entry.ReferrerReward.AmountMinorUnits)
+				}
 			}
 			if tc.visited {
 				require.NotNil(t, cfg.Future.HasVisitedPasses)

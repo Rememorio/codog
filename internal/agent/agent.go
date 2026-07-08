@@ -22359,38 +22359,40 @@ type passesRequest struct {
 }
 
 type passesReport struct {
-	Kind                  string `json:"kind"`
-	Action                string `json:"action"`
-	Status                string `json:"status"`
-	URL                   string `json:"url"`
-	URLSource             string `json:"url_source"`
-	DocsURL               string `json:"docs_url"`
-	ReferralURL           string `json:"referral_url,omitempty"`
-	ReferralConfigured    bool   `json:"referral_configured"`
-	Opened                bool   `json:"opened"`
-	Opener                string `json:"opener,omitempty"`
-	VisitCount            int    `json:"visit_count"`
-	Path                  string `json:"path,omitempty"`
-	Message               string `json:"message,omitempty"`
-	RequestSent           bool   `json:"request_sent,omitempty"`
-	OrganizationUUID      string `json:"organization_uuid,omitempty"`
-	Campaign              string `json:"campaign,omitempty"`
-	Eligible              *bool  `json:"eligible,omitempty"`
-	RemainingPasses       *int   `json:"remaining_passes,omitempty"`
-	Limit                 *int   `json:"limit,omitempty"`
-	Redeemed              *int   `json:"redeemed,omitempty"`
-	AvailablePasses       *int   `json:"available_passes,omitempty"`
-	SavedReferralURL      bool   `json:"saved_referral_url,omitempty"`
-	CacheHit              bool   `json:"cache_hit,omitempty"`
-	CachedAt              string `json:"cached_at,omitempty"`
-	SavedEligibilityCache bool   `json:"saved_eligibility_cache,omitempty"`
-	HasVisitedPasses      bool   `json:"has_visited_passes"`
-	UpsellSeenCount       int    `json:"upsell_seen_count"`
-	LastSeenRemaining     *int   `json:"last_seen_remaining,omitempty"`
-	UpsellVisible         bool   `json:"upsell_visible"`
-	UpsellReset           bool   `json:"upsell_reset,omitempty"`
-	MarkedVisited         bool   `json:"marked_visited,omitempty"`
-	MarkedUpsellSeen      bool   `json:"marked_upsell_seen,omitempty"`
+	Kind                    string            `json:"kind"`
+	Action                  string            `json:"action"`
+	Status                  string            `json:"status"`
+	URL                     string            `json:"url"`
+	URLSource               string            `json:"url_source"`
+	DocsURL                 string            `json:"docs_url"`
+	ReferralURL             string            `json:"referral_url,omitempty"`
+	ReferralConfigured      bool              `json:"referral_configured"`
+	Opened                  bool              `json:"opened"`
+	Opener                  string            `json:"opener,omitempty"`
+	VisitCount              int               `json:"visit_count"`
+	Path                    string            `json:"path,omitempty"`
+	Message                 string            `json:"message,omitempty"`
+	RequestSent             bool              `json:"request_sent,omitempty"`
+	OrganizationUUID        string            `json:"organization_uuid,omitempty"`
+	Campaign                string            `json:"campaign,omitempty"`
+	Eligible                *bool             `json:"eligible,omitempty"`
+	RemainingPasses         *int              `json:"remaining_passes,omitempty"`
+	Limit                   *int              `json:"limit,omitempty"`
+	Redeemed                *int              `json:"redeemed,omitempty"`
+	AvailablePasses         *int              `json:"available_passes,omitempty"`
+	ReferrerReward          *config.MoneyInfo `json:"referrer_reward,omitempty"`
+	ReferrerRewardFormatted string            `json:"referrer_reward_formatted,omitempty"`
+	SavedReferralURL        bool              `json:"saved_referral_url,omitempty"`
+	CacheHit                bool              `json:"cache_hit,omitempty"`
+	CachedAt                string            `json:"cached_at,omitempty"`
+	SavedEligibilityCache   bool              `json:"saved_eligibility_cache,omitempty"`
+	HasVisitedPasses        bool              `json:"has_visited_passes"`
+	UpsellSeenCount         int               `json:"upsell_seen_count"`
+	LastSeenRemaining       *int              `json:"last_seen_remaining,omitempty"`
+	UpsellVisible           bool              `json:"upsell_visible"`
+	UpsellReset             bool              `json:"upsell_reset,omitempty"`
+	MarkedVisited           bool              `json:"marked_visited,omitempty"`
+	MarkedUpsellSeen        bool              `json:"marked_upsell_seen,omitempty"`
 }
 
 const slackAppURL = "https://slack.com/marketplace/A08SF47R6P4-claude"
@@ -23797,6 +23799,7 @@ func (a *App) Passes(args []string) error {
 		if fetched.AvailablePasses != nil {
 			report.AvailablePasses = fetched.AvailablePasses
 		}
+		applyGuestPassRewardToReport(&report, fetched.ReferrerReward)
 		if req.SaveURL && strings.TrimSpace(fetched.ReferralURL) != "" {
 			if err := setCompatibilityValue(path, "compatibility.guest_pass_referral_url", legacyGuestPassReferralURLKey, fetched.ReferralURL); err != nil {
 				return err
@@ -24070,6 +24073,7 @@ type guestPassesFetchResult struct {
 	Limit            *int
 	Redeemed         *int
 	AvailablePasses  *int
+	ReferrerReward   *config.MoneyInfo
 }
 
 func (a *App) cachedGuestPassEligibility(req passesRequest) (config.GuestPassEligibilityCacheEntry, bool) {
@@ -24107,6 +24111,7 @@ func applyGuestPassCacheToReport(report *passesReport, entry config.GuestPassEli
 	report.Limit = cloneIntPtr(entry.Limit)
 	report.Redeemed = cloneIntPtr(entry.Redeemed)
 	report.AvailablePasses = cloneIntPtr(entry.AvailablePasses)
+	applyGuestPassRewardToReport(report, entry.ReferrerReward)
 }
 
 func cloneIntPtr(value *int) *int {
@@ -24115,6 +24120,49 @@ func cloneIntPtr(value *int) *int {
 	}
 	cloned := *value
 	return &cloned
+}
+
+func cloneMoneyInfoPtr(value *config.MoneyInfo) *config.MoneyInfo {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func applyGuestPassRewardToReport(report *passesReport, reward *config.MoneyInfo) {
+	report.ReferrerReward = cloneMoneyInfoPtr(reward)
+	report.ReferrerRewardFormatted = formatGuestPassReward(reward)
+}
+
+func formatGuestPassReward(reward *config.MoneyInfo) string {
+	if reward == nil {
+		return ""
+	}
+	currency := strings.ToUpper(strings.TrimSpace(reward.Currency))
+	symbols := map[string]string{
+		"USD": "$",
+		"EUR": "\u20ac",
+		"GBP": "\u00a3",
+		"BRL": "R$",
+		"CAD": "CA$",
+		"AUD": "A$",
+		"NZD": "NZ$",
+		"SGD": "S$",
+	}
+	symbol := symbols[currency]
+	if symbol == "" {
+		if currency == "" {
+			symbol = ""
+		} else {
+			symbol = currency + " "
+		}
+	}
+	major := float64(reward.AmountMinorUnits) / 100
+	if reward.AmountMinorUnits%100 == 0 {
+		return fmt.Sprintf("%s%d", symbol, reward.AmountMinorUnits/100)
+	}
+	return fmt.Sprintf("%s%.2f", symbol, major)
 }
 
 func configBoolValue(value *bool) bool {
@@ -24204,6 +24252,7 @@ func (a *App) saveGuestPassEligibilityCache(path string, fetched guestPassesFetc
 		Limit:           cloneIntPtr(fetched.Limit),
 		Redeemed:        cloneIntPtr(fetched.Redeemed),
 		AvailablePasses: cloneIntPtr(fetched.AvailablePasses),
+		ReferrerReward:  cloneMoneyInfoPtr(fetched.ReferrerReward),
 	}
 	if err := setCompatibilityValue(path, "compatibility.guest_pass_eligibility_cache", "future.guest_pass_eligibility_cache", cache); err != nil {
 		return err
@@ -24213,8 +24262,9 @@ func (a *App) saveGuestPassEligibilityCache(path string, fetched guestPassesFetc
 }
 
 type guestPassesEligibilityResponse struct {
-	Eligible            bool `json:"eligible"`
-	RemainingPasses     *int `json:"remaining_passes"`
+	Eligible            bool              `json:"eligible"`
+	RemainingPasses     *int              `json:"remaining_passes"`
+	ReferrerReward      *config.MoneyInfo `json:"referrer_reward"`
 	ReferralCodeDetails *struct {
 		ReferralLink string `json:"referral_link"`
 		Campaign     string `json:"campaign"`
@@ -24261,6 +24311,7 @@ func (a *App) fetchGuestPasses(ctx context.Context, req passesRequest) (guestPas
 		Campaign:         campaign,
 		Eligible:         eligibility.Eligible,
 		RemainingPasses:  eligibility.RemainingPasses,
+		ReferrerReward:   cloneMoneyInfoPtr(eligibility.ReferrerReward),
 	}
 	if eligibility.ReferralCodeDetails != nil {
 		result.ReferralURL = strings.TrimSpace(eligibility.ReferralCodeDetails.ReferralLink)
@@ -24403,6 +24454,9 @@ func renderPassesReport(out io.Writer, report passesReport) {
 	}
 	if report.AvailablePasses != nil {
 		fmt.Fprintf(out, "  Available        %d\n", *report.AvailablePasses)
+	}
+	if report.ReferrerRewardFormatted != "" {
+		fmt.Fprintf(out, "  Referrer reward  %s\n", report.ReferrerRewardFormatted)
 	}
 	if report.SavedReferralURL {
 		fmt.Fprintln(out, "  Saved referral   true")
