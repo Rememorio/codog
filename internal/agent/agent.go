@@ -51931,6 +51931,7 @@ type mcpListReport struct {
 	ConfigLoadErrorKind string                          `json:"config_load_error_kind,omitempty"`
 	Servers             []mcp.ServerStatus              `json:"servers"`
 	InvalidServers      []localstatus.ValidationIssue   `json:"invalid_servers,omitempty"`
+	NextActions         []string                        `json:"next_actions,omitempty"`
 }
 
 type mcpShowReport struct {
@@ -52024,7 +52025,7 @@ func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPV
 			status = "degraded"
 		}
 	}
-	return mcpListReport{
+	report := mcpListReport{
 		Kind:                "mcp",
 		Action:              "list",
 		Status:              status,
@@ -52043,6 +52044,34 @@ func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPV
 		Servers:             statuses,
 		InvalidServers:      append([]localstatus.ValidationIssue(nil), validation.InvalidServers...),
 	}
+	report.NextActions = mcpListNextActions(report)
+	return report
+}
+
+func mcpListNextActions(report mcpListReport) []string {
+	actions := []string{}
+	if report.ConfigLoadError != nil {
+		actions = append(actions, "codog doctor --json")
+	}
+	for _, invalid := range report.InvalidServers {
+		if strings.TrimSpace(invalid.Name) == "" {
+			continue
+		}
+		actions = append(actions, "codog mcp show "+shellQuote(invalid.Name)+" --json")
+	}
+	for _, failure := range report.Startup.FailedRequired {
+		if strings.TrimSpace(failure.Name) == "" {
+			continue
+		}
+		actions = append(actions, "codog mcp show "+shellQuote(failure.Name)+" --json")
+	}
+	for _, failure := range report.Startup.FailedOptional {
+		if strings.TrimSpace(failure.Name) == "" {
+			continue
+		}
+		actions = append(actions, "codog mcp show "+shellQuote(failure.Name)+" --json")
+	}
+	return dedupeStrings(actions)
 }
 
 func buildMCPRemoteMissingArgumentReport(action string, requestedAction string, argument string) mcpRemoteActionErrorReport {
@@ -52395,11 +52424,25 @@ func renderMCPListReport(out io.Writer, format string, report mcpListReport) {
 				fmt.Fprintf(out, "    - %s: %s\n", failure.Name, mcpStartupFailureSummary(failure))
 			}
 		}
+		if len(report.Startup.FailedOptional) > 0 {
+			fmt.Fprintln(out)
+			fmt.Fprintln(out, "  Failed optional MCP servers")
+			for _, failure := range report.Startup.FailedOptional {
+				fmt.Fprintf(out, "    - %s: %s\n", failure.Name, mcpStartupFailureSummary(failure))
+			}
+		}
 		if len(report.InvalidServers) > 0 {
 			fmt.Fprintln(out)
 			fmt.Fprintln(out, "  Invalid MCP servers")
 			for _, invalid := range report.InvalidServers {
 				fmt.Fprintf(out, "    - %s: %s\n", invalid.Name, invalid.Reason)
+			}
+		}
+		if len(report.NextActions) > 0 {
+			fmt.Fprintln(out)
+			fmt.Fprintln(out, "  Next actions")
+			for _, action := range report.NextActions {
+				fmt.Fprintf(out, "    - %s\n", action)
 			}
 		}
 		return

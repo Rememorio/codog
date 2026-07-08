@@ -24502,6 +24502,49 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Contains(t, out.String(), "Review hooks")
 }
 
+func TestMCPListReportsOptionalFailuresAndNextActions(t *testing.T) {
+	required := config.MCPServerConfig{
+		Command:  os.Args[0],
+		Args:     []string{"-test.run=TestAgentMCPHelperProcess"},
+		Env:      []string{"CODOG_AGENT_MCP_HELPER=1"},
+		Required: true,
+	}
+	optionalMissing := config.MCPServerConfig{
+		Command:  "codog-definitely-missing-mcp-server",
+		Required: false,
+	}
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{
+			"optional-missing": optionalMissing,
+			"required-ready":   required,
+		}},
+		Out: &out,
+		Err: io.Discard,
+	}
+
+	require.NoError(t, app.MCP(context.Background(), []string{"list"}))
+	text := out.String()
+	require.Contains(t, text, "Startup gate      degraded (1 optional failed)")
+	require.Contains(t, text, "Failed optional MCP servers")
+	require.Contains(t, text, "optional-missing")
+	require.Contains(t, text, "Next actions")
+	require.Contains(t, text, "codog mcp show 'optional-missing' --json")
+	require.NotContains(t, text, "Failed required MCP servers")
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"list", "--json"}))
+	var report mcpListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "degraded", report.Status)
+	require.Equal(t, "degraded", report.Startup.Status)
+	require.Equal(t, 1, report.Startup.OptionalFailedCount)
+	require.Empty(t, report.Startup.FailedRequired)
+	require.Len(t, report.Startup.FailedOptional, 1)
+	require.Equal(t, "optional-missing", report.Startup.FailedOptional[0].Name)
+	require.Contains(t, report.NextActions, "codog mcp show 'optional-missing' --json")
+}
+
 func actionCommandsFromMCPReport(actions []mcpauthdiag.NextAction) []string {
 	commands := make([]string, 0, len(actions))
 	for _, action := range actions {
