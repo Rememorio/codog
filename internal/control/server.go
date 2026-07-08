@@ -2964,17 +2964,17 @@ func (s Server) lspStore() (codeintel.LSPStore, error) {
 
 func lspCommandArgs(command json.RawMessage, commandArgs []string, args []string) ([]string, error) {
 	if len(commandArgs) > 0 {
-		return append([]string(nil), commandArgs...), nil
+		return normalizeLSPCommandArgs(commandArgs)
 	}
 	if len(args) > 0 {
-		return append([]string(nil), args...), nil
+		return normalizeLSPCommandArgs(args)
 	}
 	if len(command) == 0 || string(command) == "null" {
 		return nil, nil
 	}
 	var list []string
 	if err := json.Unmarshal(command, &list); err == nil {
-		return list, nil
+		return normalizeLSPCommandArgs(list)
 	}
 	var raw string
 	if err := json.Unmarshal(command, &raw); err != nil {
@@ -2985,6 +2985,18 @@ func lspCommandArgs(command json.RawMessage, commandArgs []string, args []string
 		return nil, nil
 	}
 	return []string{"sh", "-lc", raw}, nil
+}
+
+func normalizeLSPCommandArgs(args []string) ([]string, error) {
+	if len(args) == 0 {
+		return nil, nil
+	}
+	normalized := append([]string(nil), args...)
+	normalized[0] = strings.TrimSpace(normalized[0])
+	if normalized[0] == "" {
+		return nil, errors.New("command args must start with a command")
+	}
+	return normalized, nil
 }
 
 func (s Server) workspaceOps() workspaceops.Service {

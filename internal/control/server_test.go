@@ -1363,6 +1363,64 @@ func TestControlLSPEndpoints(t *testing.T) {
 	require.Contains(t, string(body), `"status":"stopped"`)
 }
 
+func TestControlLSPStartRejectsEmptyCommandArg(t *testing.T) {
+	root := t.TempDir()
+	server := httptest.NewServer(Server{
+		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
+		ConfigHome: filepath.Join(root, "home"),
+		Workspace:  filepath.Join(root, "workspace"),
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/lsp/start", "application/json", bytes.NewBufferString(`{"language":"go","command_args":["  ","--stdio"]}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "command args must start with a command")
+}
+
+func TestLSPCommandArgsNormalizesInputs(t *testing.T) {
+	args, err := lspCommandArgs(nil, []string{"  gopls  ", "-remote=auto", ""}, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"gopls", "-remote=auto", ""}, args)
+
+	args, err = lspCommandArgs(nil, nil, []string{"  rust-analyzer  "})
+	require.NoError(t, err)
+	require.Equal(t, []string{"rust-analyzer"}, args)
+
+	args, err = lspCommandArgs(json.RawMessage(`["  pylsp  ","--verbose"]`), nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"pylsp", "--verbose"}, args)
+
+	args, err = lspCommandArgs(json.RawMessage(`"gopls -remote=auto"`), nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"sh", "-lc", "gopls -remote=auto"}, args)
+
+	args, err = lspCommandArgs(json.RawMessage(`[]`), nil, nil)
+	require.NoError(t, err)
+	require.Nil(t, args)
+
+	args, err = lspCommandArgs(json.RawMessage(`null`), nil, nil)
+	require.NoError(t, err)
+	require.Nil(t, args)
+}
+
+func TestLSPCommandArgsRejectsInvalidInputs(t *testing.T) {
+	_, err := lspCommandArgs(nil, []string{" "}, nil)
+	require.ErrorContains(t, err, "command args must start with a command")
+
+	_, err = lspCommandArgs(nil, nil, []string{"\t"})
+	require.ErrorContains(t, err, "command args must start with a command")
+
+	_, err = lspCommandArgs(json.RawMessage(`[""]`), nil, nil)
+	require.ErrorContains(t, err, "command args must start with a command")
+
+	_, err = lspCommandArgs(json.RawMessage(`{"cmd":"gopls"}`), nil, nil)
+	require.ErrorContains(t, err, "command must be a string or string array")
+}
+
 func TestControlLSPRequiresConfigHome(t *testing.T) {
 	server := httptest.NewServer(Server{
 		Sessions:  &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")},
