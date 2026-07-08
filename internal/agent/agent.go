@@ -19733,6 +19733,7 @@ const (
 	legacyEnterprisePolicyPublicKeyKey   = "future.enterprise_policy_public_key"
 	legacyExtraUsageVisitCountKey        = "future.extra_usage_visit_count"
 	legacyGuestPassReferralURLKey        = "future.guest_pass_referral_url"
+	legacyGuestPassEligibilityCacheKey   = "future.guest_pass_eligibility_cache"
 	legacyGuestPassVisitCountKey         = "future.guest_pass_visit_count"
 	legacyNotificationsEnabledKey        = "future.notifications_enabled"
 	legacyPluginMarketplacePublicKeysKey = "future.plugin_marketplace_public_keys"
@@ -19750,7 +19751,7 @@ const (
 
 var (
 	backgroundResetKeys    = []string{"background", legacyBackgroundStatePathKey}
-	compatibilityResetKeys = []string{"compatibility", legacySlackAppInstallCountKey, legacyStickerOrderCountKey, legacyExtraUsageVisitCountKey, legacyGuestPassReferralURLKey, legacyGuestPassVisitCountKey}
+	compatibilityResetKeys = []string{"compatibility", legacySlackAppInstallCountKey, legacyStickerOrderCountKey, legacyExtraUsageVisitCountKey, legacyGuestPassReferralURLKey, legacyGuestPassEligibilityCacheKey, legacyGuestPassVisitCountKey}
 	editorBridgeResetKeys  = []string{"editor_bridge", legacyEditorBridgeSocketKey, legacyEditorBridgeTokenKey}
 	enterpriseResetKeys    = []string{"enterprise", legacyEnterprisePolicyKey, legacyEnterprisePolicyPublicKeyKey}
 	marketplaceResetKeys   = []string{"marketplace", legacyPluginMarketplacesKey, legacyPluginMarketplacePublicKeysKey}
@@ -22350,32 +22351,36 @@ type passesRequest struct {
 	Campaign    string
 	Redemptions bool
 	SaveURL     bool
+	SaveCache   bool
 	TimeoutMS   int
 }
 
 type passesReport struct {
-	Kind               string `json:"kind"`
-	Action             string `json:"action"`
-	Status             string `json:"status"`
-	URL                string `json:"url"`
-	URLSource          string `json:"url_source"`
-	DocsURL            string `json:"docs_url"`
-	ReferralURL        string `json:"referral_url,omitempty"`
-	ReferralConfigured bool   `json:"referral_configured"`
-	Opened             bool   `json:"opened"`
-	Opener             string `json:"opener,omitempty"`
-	VisitCount         int    `json:"visit_count"`
-	Path               string `json:"path,omitempty"`
-	Message            string `json:"message,omitempty"`
-	RequestSent        bool   `json:"request_sent,omitempty"`
-	OrganizationUUID   string `json:"organization_uuid,omitempty"`
-	Campaign           string `json:"campaign,omitempty"`
-	Eligible           *bool  `json:"eligible,omitempty"`
-	RemainingPasses    *int   `json:"remaining_passes,omitempty"`
-	Limit              *int   `json:"limit,omitempty"`
-	Redeemed           *int   `json:"redeemed,omitempty"`
-	AvailablePasses    *int   `json:"available_passes,omitempty"`
-	SavedReferralURL   bool   `json:"saved_referral_url,omitempty"`
+	Kind                  string `json:"kind"`
+	Action                string `json:"action"`
+	Status                string `json:"status"`
+	URL                   string `json:"url"`
+	URLSource             string `json:"url_source"`
+	DocsURL               string `json:"docs_url"`
+	ReferralURL           string `json:"referral_url,omitempty"`
+	ReferralConfigured    bool   `json:"referral_configured"`
+	Opened                bool   `json:"opened"`
+	Opener                string `json:"opener,omitempty"`
+	VisitCount            int    `json:"visit_count"`
+	Path                  string `json:"path,omitempty"`
+	Message               string `json:"message,omitempty"`
+	RequestSent           bool   `json:"request_sent,omitempty"`
+	OrganizationUUID      string `json:"organization_uuid,omitempty"`
+	Campaign              string `json:"campaign,omitempty"`
+	Eligible              *bool  `json:"eligible,omitempty"`
+	RemainingPasses       *int   `json:"remaining_passes,omitempty"`
+	Limit                 *int   `json:"limit,omitempty"`
+	Redeemed              *int   `json:"redeemed,omitempty"`
+	AvailablePasses       *int   `json:"available_passes,omitempty"`
+	SavedReferralURL      bool   `json:"saved_referral_url,omitempty"`
+	CacheHit              bool   `json:"cache_hit,omitempty"`
+	CachedAt              string `json:"cached_at,omitempty"`
+	SavedEligibilityCache bool   `json:"saved_eligibility_cache,omitempty"`
 }
 
 const slackAppURL = "https://slack.com/marketplace/A08SF47R6P4-claude"
@@ -22385,7 +22390,7 @@ const extraUsageAdminURL = "https://claude.ai/admin-settings/usage"
 const guestPassDocsURL = "https://support.claude.com/en/articles/12875061-claude-code-guest-passes"
 const installSlackAppUsage = "codog install-slack-app [status|list] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
 const stickersUsage = "codog stickers [status|list] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
-const passesUsage = "codog passes [status|list|show|open|fetch|set-url URL|clear-url] [--docs] [--referral-url URL] [--org UUID] [--token TOKEN] [--base-url URL] [--campaign NAME] [--redemptions] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
+const passesUsage = "codog passes [status|list|show|open|fetch|set-url URL|clear-url] [--docs] [--referral-url URL] [--org UUID] [--token TOKEN] [--base-url URL] [--campaign NAME] [--redemptions] [--no-save-cache] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
 
 var openExternalURL = openSystemURL
 
@@ -23736,6 +23741,13 @@ func (a *App) Passes(args []string) error {
 		Path:               path,
 	}
 	report.URL, report.URLSource = passesURLWithSource(report.ReferralURL, req.Docs)
+	if cached, ok := a.cachedGuestPassEligibility(req); ok {
+		applyGuestPassCacheToReport(&report, cached)
+		if report.ReferralURL == "" {
+			report.ReferralConfigured = false
+		}
+		report.URL, report.URLSource = passesURLWithSource(report.ReferralURL, req.Docs)
+	}
 	switch req.Action {
 	case "status":
 		report.Message = "Guest pass status loaded."
@@ -23771,6 +23783,12 @@ func (a *App) Passes(args []string) error {
 			}
 			a.Config.Future.GuestPassReferralURL = fetched.ReferralURL
 			report.SavedReferralURL = true
+		}
+		if req.SaveCache {
+			if err := a.saveGuestPassEligibilityCache(path, fetched, time.Now().UTC()); err != nil {
+				return err
+			}
+			report.SavedEligibilityCache = true
 		}
 		if fetched.Eligible {
 			report.Message = "Guest pass eligibility fetched."
@@ -23839,7 +23857,7 @@ func (a *App) Passes(args []string) error {
 }
 
 func parsePassesArgs(args []string) (passesRequest, error) {
-	req := passesRequest{Action: "open", Format: "text", Target: "user", Open: true, BaseURL: "https://api.anthropic.com", Campaign: "claude_code_guest_pass", SaveURL: true, TimeoutMS: 5000}
+	req := passesRequest{Action: "open", Format: "text", Target: "user", Open: true, BaseURL: "https://api.anthropic.com", Campaign: "claude_code_guest_pass", SaveURL: true, SaveCache: true, TimeoutMS: 5000}
 	var rest []string
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -23928,6 +23946,10 @@ func parsePassesArgs(args []string) (passesRequest, error) {
 			req.SaveURL = true
 		case arg == "--no-save-url":
 			req.SaveURL = false
+		case arg == "--save-cache":
+			req.SaveCache = true
+		case arg == "--no-save-cache":
+			req.SaveCache = false
 		case arg == "--timeout-ms":
 			index++
 			if index >= len(args) || isOutputFormatFlag(args[index]) {
@@ -24002,6 +24024,76 @@ type guestPassesFetchResult struct {
 	Limit            *int
 	Redeemed         *int
 	AvailablePasses  *int
+}
+
+func (a *App) cachedGuestPassEligibility(req passesRequest) (config.GuestPassEligibilityCacheEntry, bool) {
+	cache := a.Config.Future.GuestPassEligibilityCache
+	if len(cache) == 0 {
+		return config.GuestPassEligibilityCacheEntry{}, false
+	}
+	orgUUID := strings.TrimSpace(firstNonEmpty(req.OrgUUID, a.Config.ForceLoginOrgUUID))
+	if orgUUID != "" {
+		entry, ok := cache[orgUUID]
+		return entry, ok
+	}
+	if len(cache) == 1 {
+		for _, entry := range cache {
+			return entry, true
+		}
+	}
+	return config.GuestPassEligibilityCacheEntry{}, false
+}
+
+func applyGuestPassCacheToReport(report *passesReport, entry config.GuestPassEligibilityCacheEntry) {
+	report.CacheHit = true
+	if !entry.Timestamp.IsZero() {
+		report.CachedAt = entry.Timestamp.UTC().Format(time.RFC3339)
+	}
+	report.Eligible = &entry.Eligible
+	if entry.Campaign != "" {
+		report.Campaign = entry.Campaign
+	}
+	if entry.ReferralURL != "" {
+		report.ReferralURL = entry.ReferralURL
+		report.ReferralConfigured = true
+	}
+	report.RemainingPasses = cloneIntPtr(entry.RemainingPasses)
+	report.Limit = cloneIntPtr(entry.Limit)
+	report.Redeemed = cloneIntPtr(entry.Redeemed)
+	report.AvailablePasses = cloneIntPtr(entry.AvailablePasses)
+}
+
+func cloneIntPtr(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func (a *App) saveGuestPassEligibilityCache(path string, fetched guestPassesFetchResult, now time.Time) error {
+	if strings.TrimSpace(fetched.OrganizationUUID) == "" {
+		return nil
+	}
+	cache := map[string]config.GuestPassEligibilityCacheEntry{}
+	for org, entry := range a.Config.Future.GuestPassEligibilityCache {
+		cache[org] = entry
+	}
+	cache[fetched.OrganizationUUID] = config.GuestPassEligibilityCacheEntry{
+		Eligible:        fetched.Eligible,
+		Timestamp:       now.UTC(),
+		Campaign:        fetched.Campaign,
+		ReferralURL:     fetched.ReferralURL,
+		RemainingPasses: cloneIntPtr(fetched.RemainingPasses),
+		Limit:           cloneIntPtr(fetched.Limit),
+		Redeemed:        cloneIntPtr(fetched.Redeemed),
+		AvailablePasses: cloneIntPtr(fetched.AvailablePasses),
+	}
+	if err := setCompatibilityValue(path, "compatibility.guest_pass_eligibility_cache", "future.guest_pass_eligibility_cache", cache); err != nil {
+		return err
+	}
+	a.Config.Future.GuestPassEligibilityCache = cache
+	return nil
 }
 
 type guestPassesEligibilityResponse struct {
@@ -24198,6 +24290,15 @@ func renderPassesReport(out io.Writer, report passesReport) {
 	}
 	if report.SavedReferralURL {
 		fmt.Fprintln(out, "  Saved referral   true")
+	}
+	if report.CacheHit {
+		fmt.Fprintln(out, "  Cache hit        true")
+	}
+	if report.CachedAt != "" {
+		fmt.Fprintf(out, "  Cached at        %s\n", report.CachedAt)
+	}
+	if report.SavedEligibilityCache {
+		fmt.Fprintln(out, "  Saved cache      true")
 	}
 	fmt.Fprintf(out, "  Opened           %t\n", report.Opened)
 	if report.Opener != "" {

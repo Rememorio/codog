@@ -294,6 +294,7 @@ var futureFields = []fieldSpec{
 	{"extra_usage_visit_count", FieldNumber},
 	{"guest_pass_referral_url", FieldString},
 	{"guest_pass_visit_count", FieldNumber},
+	{"guest_pass_eligibility_cache", FieldObject},
 }
 
 var enterpriseFields = []fieldSpec{
@@ -344,6 +345,10 @@ var compatibilityFields = []fieldSpec{
 	{"guestPassReferralURL", FieldString},
 	{"guest_pass_visit_count", FieldNumber},
 	{"guestPassVisitCount", FieldNumber},
+	{"guest_pass_eligibility_cache", FieldObject},
+	{"guestPassEligibilityCache", FieldObject},
+	{"passes_eligibility_cache", FieldObject},
+	{"passesEligibilityCache", FieldObject},
 }
 
 var preferencesFields = []fieldSpec{

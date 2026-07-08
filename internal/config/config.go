@@ -562,27 +562,49 @@ func (s *SandboxConfig) UnmarshalJSON(data []byte) error {
 }
 
 type FutureConfig struct {
-	RemoteEnabled             bool              `json:"remote_enabled,omitempty"`
-	RemoteAuthToken           string            `json:"remote_auth_token,omitempty"`
-	RemoteLeaseSeconds        int               `json:"remote_lease_seconds,omitempty"`
-	EnterprisePolicy          string            `json:"enterprise_policy,omitempty"`
-	EnterprisePolicyPublicKey string            `json:"enterprise_policy_public_key,omitempty"`
-	PluginMarketplaces        []string          `json:"plugin_marketplaces,omitempty"`
-	PluginMarketplaceKeys     map[string]string `json:"plugin_marketplace_public_keys,omitempty"`
-	SandboxStrategy           string            `json:"sandbox_strategy,omitempty"`
-	Sandbox                   SandboxConfig     `json:"sandbox,omitempty"`
-	UpdaterManifestURL        string            `json:"updater_manifest_url,omitempty"`
-	EditorBridgeSocket        string            `json:"editor_bridge_socket,omitempty"`
-	EditorBridgeToken         string            `json:"editor_bridge_token,omitempty"`
-	BackgroundStatePath       string            `json:"background_state_path,omitempty"`
-	ChromeDefaultEnabled      *bool             `json:"chrome_default_enabled,omitempty"`
-	NotificationsEnabled      *bool             `json:"notifications_enabled,omitempty"`
-	UltraReviewEnabled        *bool             `json:"ultrareview_enabled,omitempty"`
-	SlackAppInstallCount      int               `json:"slack_app_install_count,omitempty"`
-	StickerOrderCount         int               `json:"sticker_order_count,omitempty"`
-	ExtraUsageVisitCount      int               `json:"extra_usage_visit_count,omitempty"`
-	GuestPassReferralURL      string            `json:"guest_pass_referral_url,omitempty"`
-	GuestPassVisitCount       int               `json:"guest_pass_visit_count,omitempty"`
+	RemoteEnabled             bool                                      `json:"remote_enabled,omitempty"`
+	RemoteAuthToken           string                                    `json:"remote_auth_token,omitempty"`
+	RemoteLeaseSeconds        int                                       `json:"remote_lease_seconds,omitempty"`
+	EnterprisePolicy          string                                    `json:"enterprise_policy,omitempty"`
+	EnterprisePolicyPublicKey string                                    `json:"enterprise_policy_public_key,omitempty"`
+	PluginMarketplaces        []string                                  `json:"plugin_marketplaces,omitempty"`
+	PluginMarketplaceKeys     map[string]string                         `json:"plugin_marketplace_public_keys,omitempty"`
+	SandboxStrategy           string                                    `json:"sandbox_strategy,omitempty"`
+	Sandbox                   SandboxConfig                             `json:"sandbox,omitempty"`
+	UpdaterManifestURL        string                                    `json:"updater_manifest_url,omitempty"`
+	EditorBridgeSocket        string                                    `json:"editor_bridge_socket,omitempty"`
+	EditorBridgeToken         string                                    `json:"editor_bridge_token,omitempty"`
+	BackgroundStatePath       string                                    `json:"background_state_path,omitempty"`
+	ChromeDefaultEnabled      *bool                                     `json:"chrome_default_enabled,omitempty"`
+	NotificationsEnabled      *bool                                     `json:"notifications_enabled,omitempty"`
+	UltraReviewEnabled        *bool                                     `json:"ultrareview_enabled,omitempty"`
+	SlackAppInstallCount      int                                       `json:"slack_app_install_count,omitempty"`
+	StickerOrderCount         int                                       `json:"sticker_order_count,omitempty"`
+	ExtraUsageVisitCount      int                                       `json:"extra_usage_visit_count,omitempty"`
+	GuestPassReferralURL      string                                    `json:"guest_pass_referral_url,omitempty"`
+	GuestPassVisitCount       int                                       `json:"guest_pass_visit_count,omitempty"`
+	GuestPassEligibilityCache map[string]GuestPassEligibilityCacheEntry `json:"guest_pass_eligibility_cache,omitempty"`
+}
+
+// GuestPassEligibilityCacheEntry stores cached guest pass eligibility by
+// organization UUID.
+type GuestPassEligibilityCacheEntry struct {
+	Eligible        bool       `json:"eligible"`
+	Timestamp       time.Time  `json:"timestamp"`
+	Campaign        string     `json:"campaign,omitempty"`
+	ReferralURL     string     `json:"referral_url,omitempty"`
+	RemainingPasses *int       `json:"remaining_passes,omitempty"`
+	Limit           *int       `json:"limit,omitempty"`
+	Redeemed        *int       `json:"redeemed,omitempty"`
+	AvailablePasses *int       `json:"available_passes,omitempty"`
+	ReferrerReward  *MoneyInfo `json:"referrer_reward,omitempty"`
+}
+
+// MoneyInfo describes a monetary reward value returned by guest pass
+// eligibility APIs.
+type MoneyInfo struct {
+	Currency         string `json:"currency,omitempty"`
+	AmountMinorUnits int    `json:"amount_minor_units,omitempty"`
 }
 
 // BackgroundConfig holds local background worker state settings.
@@ -624,16 +646,18 @@ func (b *BackgroundConfig) UnmarshalJSON(data []byte) error {
 
 // CompatibilityConfig holds counters for Claude Code compatibility entrypoints.
 type CompatibilityConfig struct {
-	SlackAppInstallCount    int    `json:"slack_app_install_count,omitempty"`
-	StickerOrderCount       int    `json:"sticker_order_count,omitempty"`
-	ExtraUsageVisitCount    int    `json:"extra_usage_visit_count,omitempty"`
-	GuestPassReferralURL    string `json:"guest_pass_referral_url,omitempty"`
-	GuestPassVisitCount     int    `json:"guest_pass_visit_count,omitempty"`
-	slackAppInstallSet      bool
-	stickerOrderSet         bool
-	extraUsageVisitSet      bool
-	guestPassReferralURLSet bool
-	guestPassVisitSet       bool
+	SlackAppInstallCount      int                                       `json:"slack_app_install_count,omitempty"`
+	StickerOrderCount         int                                       `json:"sticker_order_count,omitempty"`
+	ExtraUsageVisitCount      int                                       `json:"extra_usage_visit_count,omitempty"`
+	GuestPassReferralURL      string                                    `json:"guest_pass_referral_url,omitempty"`
+	GuestPassVisitCount       int                                       `json:"guest_pass_visit_count,omitempty"`
+	GuestPassEligibilityCache map[string]GuestPassEligibilityCacheEntry `json:"guest_pass_eligibility_cache,omitempty"`
+	slackAppInstallSet        bool
+	stickerOrderSet           bool
+	extraUsageVisitSet        bool
+	guestPassReferralURLSet   bool
+	guestPassVisitSet         bool
+	guestPassEligibilitySet   bool
 }
 
 // UnmarshalJSON accepts snake_case and camelCase compatibility aliases.
@@ -677,6 +701,21 @@ func (c *CompatibilityConfig) UnmarshalJSON(data []byte) error {
 		}
 		return nil
 	}
+	readEligibilityCacheAlias := func(target *map[string]GuestPassEligibilityCacheEntry, present *bool, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed map[string]GuestPassEligibilityCacheEntry
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid compatibility.%s: %w", key, err)
+			}
+			*target = parsed
+			*present = true
+		}
+		return nil
+	}
 	if err := readIntAlias(&parsed.SlackAppInstallCount, &parsed.slackAppInstallSet, "slackAppInstallCount", "slack_app_install_count"); err != nil {
 		return err
 	}
@@ -690,6 +729,9 @@ func (c *CompatibilityConfig) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if err := readIntAlias(&parsed.GuestPassVisitCount, &parsed.guestPassVisitSet, "guestPassVisitCount", "guest_pass_visit_count"); err != nil {
+		return err
+	}
+	if err := readEligibilityCacheAlias(&parsed.GuestPassEligibilityCache, &parsed.guestPassEligibilitySet, "guestPassEligibilityCache", "guest_pass_eligibility_cache", "passesEligibilityCache", "passes_eligibility_cache"); err != nil {
 		return err
 	}
 	*c = CompatibilityConfig(parsed)
@@ -2293,7 +2335,8 @@ func futureConfigSet(cfg FutureConfig) bool {
 		cfg.StickerOrderCount != 0 ||
 		cfg.ExtraUsageVisitCount != 0 ||
 		cfg.GuestPassReferralURL != "" ||
-		cfg.GuestPassVisitCount != 0
+		cfg.GuestPassVisitCount != 0 ||
+		len(cfg.GuestPassEligibilityCache) != 0
 }
 
 func remoteConfigSet(cfg RemoteConfig) bool {
@@ -2339,7 +2382,9 @@ func compatibilityConfigSet(cfg CompatibilityConfig) bool {
 		cfg.StickerOrderCount != 0 ||
 		cfg.ExtraUsageVisitCount != 0 ||
 		cfg.GuestPassReferralURL != "" ||
-		cfg.GuestPassVisitCount != 0
+		cfg.GuestPassVisitCount != 0 ||
+		cfg.guestPassEligibilitySet ||
+		len(cfg.GuestPassEligibilityCache) != 0
 }
 
 func backgroundConfigSet(cfg BackgroundConfig) bool {
@@ -2428,6 +2473,9 @@ func mergeCompatibilityConfigIntoFuture(dst *FutureConfig, src CompatibilityConf
 	if src.guestPassVisitSet || src.GuestPassVisitCount != 0 {
 		dst.GuestPassVisitCount = src.GuestPassVisitCount
 	}
+	if src.guestPassEligibilitySet || len(src.GuestPassEligibilityCache) != 0 {
+		dst.GuestPassEligibilityCache = cloneGuestPassEligibilityCache(src.GuestPassEligibilityCache)
+	}
 }
 
 func mergeBackgroundConfigIntoFuture(dst *FutureConfig, src BackgroundConfig) {
@@ -2500,6 +2548,45 @@ func mergeFutureConfig(dst *FutureConfig, src FutureConfig) {
 	if src.GuestPassVisitCount != 0 {
 		dst.GuestPassVisitCount = src.GuestPassVisitCount
 	}
+	if len(src.GuestPassEligibilityCache) != 0 {
+		dst.GuestPassEligibilityCache = cloneGuestPassEligibilityCache(src.GuestPassEligibilityCache)
+	}
+}
+
+func cloneGuestPassEligibilityCache(src map[string]GuestPassEligibilityCacheEntry) map[string]GuestPassEligibilityCacheEntry {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]GuestPassEligibilityCacheEntry, len(src))
+	for key, value := range src {
+		dst[key] = cloneGuestPassEligibilityCacheEntry(value)
+	}
+	return dst
+}
+
+func cloneGuestPassEligibilityCacheEntry(src GuestPassEligibilityCacheEntry) GuestPassEligibilityCacheEntry {
+	dst := src
+	if src.RemainingPasses != nil {
+		value := *src.RemainingPasses
+		dst.RemainingPasses = &value
+	}
+	if src.Limit != nil {
+		value := *src.Limit
+		dst.Limit = &value
+	}
+	if src.Redeemed != nil {
+		value := *src.Redeemed
+		dst.Redeemed = &value
+	}
+	if src.AvailablePasses != nil {
+		value := *src.AvailablePasses
+		dst.AvailablePasses = &value
+	}
+	if src.ReferrerReward != nil {
+		value := *src.ReferrerReward
+		dst.ReferrerReward = &value
+	}
+	return dst
 }
 
 func mergeSandboxConfig(dst *SandboxConfig, src SandboxConfig) {

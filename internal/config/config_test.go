@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/stretchr/testify/require"
@@ -183,24 +184,30 @@ func TestLoadCompatibilityConfigCompatibility(t *testing.T) {
 		extraCount   int
 		referralURL  string
 		passCount    int
+		cacheCount   int
+		remaining    int
 	}{
 		{
 			name:         "legacy future compatibility counters",
-			body:         `{"future":{"slack_app_install_count":3,"sticker_order_count":2,"extra_usage_visit_count":4,"guest_pass_referral_url":"https://example.test/pass","guest_pass_visit_count":5}}`,
+			body:         `{"future":{"slack_app_install_count":3,"sticker_order_count":2,"extra_usage_visit_count":4,"guest_pass_referral_url":"https://example.test/pass","guest_pass_visit_count":5,"guest_pass_eligibility_cache":{"org-123":{"eligible":true,"timestamp":"2026-07-08T00:00:00Z","campaign":"claude_code_guest_pass","referral_url":"https://example.test/pass","remaining_passes":2}}}}`,
 			slackCount:   3,
 			stickerCount: 2,
 			extraCount:   4,
 			referralURL:  "https://example.test/pass",
 			passCount:    5,
+			cacheCount:   1,
+			remaining:    2,
 		},
 		{
 			name:         "formal compatibility aliases",
-			body:         `{"compatibility":{"slackAppInstallCount":3,"stickerOrderCount":2,"extraUsageVisitCount":4,"guestPassReferralURL":"https://example.test/pass","guestPassVisitCount":5}}`,
+			body:         `{"compatibility":{"slackAppInstallCount":3,"stickerOrderCount":2,"extraUsageVisitCount":4,"guestPassReferralURL":"https://example.test/pass","guestPassVisitCount":5,"passesEligibilityCache":{"org-123":{"eligible":true,"timestamp":"2026-07-08T00:00:00Z","campaign":"claude_code_guest_pass","referral_url":"https://example.test/pass","remaining_passes":2}}}}`,
 			slackCount:   3,
 			stickerCount: 2,
 			extraCount:   4,
 			referralURL:  "https://example.test/pass",
 			passCount:    5,
+			cacheCount:   1,
+			remaining:    2,
 		},
 		{
 			name:         "formal compatibility wins with zero",
@@ -224,6 +231,16 @@ func TestLoadCompatibilityConfigCompatibility(t *testing.T) {
 			require.Equal(t, tc.extraCount, cfg.Future.ExtraUsageVisitCount)
 			require.Equal(t, tc.referralURL, cfg.Future.GuestPassReferralURL)
 			require.Equal(t, tc.passCount, cfg.Future.GuestPassVisitCount)
+			require.Len(t, cfg.Future.GuestPassEligibilityCache, tc.cacheCount)
+			if tc.cacheCount != 0 {
+				entry := cfg.Future.GuestPassEligibilityCache["org-123"]
+				require.True(t, entry.Eligible)
+				require.Equal(t, "claude_code_guest_pass", entry.Campaign)
+				require.Equal(t, "https://example.test/pass", entry.ReferralURL)
+				require.NotNil(t, entry.RemainingPasses)
+				require.Equal(t, tc.remaining, *entry.RemainingPasses)
+				require.True(t, entry.Timestamp.Equal(time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)))
+			}
 		})
 	}
 }
