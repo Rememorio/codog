@@ -2754,6 +2754,48 @@ func TestManagementSurfaceErrorsHonorGlobalJSONFormat(t *testing.T) {
 			errorKind: "unexpected_extra_args",
 			contains:  []string{`"command": "cron due"`, `"extra"`},
 		},
+		{
+			name:      "team missing output format",
+			args:      []string{"team", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "team"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "team missing task",
+			args:      []string{"team", "create", "reviewers", "--task", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "team"`, `"option": "--task"`},
+		},
+		{
+			name:      "team invalid limit",
+			args:      []string{"team", "logs", "team-1", "--limit", "many"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--limit"`, `"value": "many"`},
+		},
+		{
+			name:      "team invalid max events",
+			args:      []string{"team", "watch", "team-1", "--max-events", "-1"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--max-events"`, `"value": "-1"`},
+		},
+		{
+			name:      "team create missing task prompt",
+			args:      []string{"team", "create", "reviewers"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "team create"`, `"argument": "TASK"`},
+		},
+		{
+			name:      "team status missing id",
+			args:      []string{"team", "status"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "team status"`, `"argument": "TEAM_ID"`},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := captureStdout(t, func() error {
@@ -30055,6 +30097,21 @@ func TestTeamCommandAndSlash(t *testing.T) {
 	require.Equal(t, 1, listed.Count)
 	require.Equal(t, created.Team.ID, listed.Teams[0].ID)
 	out.Reset()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--cwd", workspace, "--output-format", "json", "team", "list"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var cliListed teamCommandReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &cliListed))
+	require.Equal(t, "team", cliListed.Kind)
+	require.Equal(t, "list", cliListed.Action)
+	require.Equal(t, 1, cliListed.Count)
+	require.Equal(t, created.Team.ID, cliListed.Teams[0].ID)
 
 	require.True(t, app.handleSlash(context.Background(), "/team ls --json", &session.Session{ID: "session-1"}))
 	require.Contains(t, out.String(), `"kind": "team"`)
