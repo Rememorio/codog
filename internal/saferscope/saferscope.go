@@ -20,7 +20,8 @@ const (
 	StateFileName           = "safer-scope.json"
 	IgnoreMarker            = "# Codog safer-scope exclusions"
 	ActionAppendIgnoreBlock = "append_ignore_block"
-	actionWriteIgnoreStub   = "write_ignore_stub"
+	ActionCreateIgnoreFile  = "create_ignore_file"
+	legacyWriteIgnoreStub   = "write_ignore_stub"
 )
 
 // Options controls safer-scope planning and application.
@@ -125,7 +126,7 @@ func Apply(workspace string, opts Options) (Report, error) {
 		switch choice.Action {
 		case "switch_workspace":
 			activeWorkspace = choice.Target
-		case ActionAppendIgnoreBlock, actionWriteIgnoreStub:
+		case ActionAppendIgnoreBlock, ActionCreateIgnoreFile, legacyWriteIgnoreStub:
 			if err := appendIgnoreBlock(workspace, choice.IgnoreFile, choice.IgnoreEntries); err != nil {
 				return Report{}, err
 			}
@@ -338,7 +339,7 @@ func buildPlan(workspace string, opts Options) (plan, error) {
 	if len(excludes) > 0 {
 		choices = append(choices, Choice{
 			ID:              "ignore",
-			Action:          ActionAppendIgnoreBlock,
+			Action:          ActionCreateIgnoreFile,
 			Status:          "available",
 			PreviewExcludes: append([]string(nil), excludes...),
 			IgnoreFile:      ".codogignore",
@@ -386,7 +387,14 @@ func selectChoices(plan plan, choice string) []Choice {
 }
 
 func choiceAliasesAction(choice, action string) bool {
-	return choice == actionWriteIgnoreStub && action == ActionAppendIgnoreBlock
+	switch choice {
+	case legacyWriteIgnoreStub, ActionAppendIgnoreBlock:
+		return action == ActionCreateIgnoreFile
+	case ActionCreateIgnoreFile:
+		return action == ActionCreateIgnoreFile
+	default:
+		return false
+	}
 }
 
 func workspaceChoice(workspace string, target string, inventory fileinventory.Report, excludes []string) Choice {

@@ -16043,7 +16043,7 @@ func (a *App) Scope(args []string) error {
 }
 
 func parseScopeArgs(args []string) (scopeRequest, error) {
-	const usage = "codog scope [preview|apply|restore] [--choice auto|workspace|ignore|both] [--target PATH] [--json|--output-format text|json]"
+	const usage = "codog scope [preview|apply|restore] [--choice auto|workspace|ignore|create_ignore_file|both] [--target PATH] [--json|--output-format text|json]"
 	req := scopeRequest{Action: "preview", Choice: "auto", Format: "text"}
 	var positionals []string
 	for index := 0; index < len(args); index++ {
@@ -16104,9 +16104,9 @@ func parseScopeArgs(args []string) (scopeRequest, error) {
 	}
 	choice := strings.ToLower(strings.TrimSpace(req.Choice))
 	switch choice {
-	case "", "auto", "workspace", "switch_workspace", "ignore", "append_ignore_block", "write_ignore_stub", "both", "all":
+	case "", "auto", "workspace", "switch_workspace", "ignore", "create_ignore_file", "append_ignore_block", "write_ignore_stub", "both", "all":
 	default:
-		return req, invalidFlagValueError{Flag: "--choice", Value: req.Choice, Message: "scope choice must be auto, workspace, ignore, or both", Usage: usage}
+		return req, invalidFlagValueError{Flag: "--choice", Value: req.Choice, Message: "scope choice must be auto, workspace, ignore, create_ignore_file, or both", Usage: usage}
 	}
 	if choice == "" {
 		req.Choice = "auto"

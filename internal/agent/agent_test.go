@@ -16968,7 +16968,7 @@ func TestScopeCommandAppliesAppendIgnoreBlockChoice(t *testing.T) {
 	require.NoError(t, app.Scope([]string{"apply", "--choice", "append_ignore_block", "--json"}))
 	require.Equal(t, workspace, app.Workspace)
 	require.Contains(t, out.String(), `"applied_choice": "ignore"`)
-	require.Contains(t, out.String(), `"action": "append_ignore_block"`)
+	require.Contains(t, out.String(), `"action": "create_ignore_file"`)
 	data, err := os.ReadFile(filepath.Join(workspace, ".codogignore"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "node_modules/")

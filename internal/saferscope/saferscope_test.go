@@ -28,7 +28,7 @@ func TestPreviewBuildsActionableChoices(t *testing.T) {
 	require.Equal(t, filepath.Join(workspace, "app"), choices["workspace"].Target)
 	require.Contains(t, choices["workspace"].PreviewIncludes, "app/main.go")
 	require.Contains(t, choices["workspace"].PreviewExcludes, "node_modules")
-	require.Equal(t, ActionAppendIgnoreBlock, choices["ignore"].Action)
+	require.Equal(t, ActionCreateIgnoreFile, choices["ignore"].Action)
 	require.Equal(t, ".codogignore", choices["ignore"].IgnoreFile)
 	require.Contains(t, choices["ignore"].IgnoreEntries, "node_modules/")
 	require.Contains(t, choices["ignore"].IgnoreEntries, "dist/")
@@ -76,7 +76,7 @@ func TestApplyIgnoreWritesAndRestoresIgnoreBlock(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "ignore", report.AppliedChoice)
 	require.Len(t, report.Applied, 1)
-	require.Equal(t, ActionAppendIgnoreBlock, report.Applied[0].Action)
+	require.Equal(t, ActionCreateIgnoreFile, report.Applied[0].Action)
 
 	data, err := os.ReadFile(filepath.Join(workspace, ".codogignore"))
 	require.NoError(t, err)
@@ -98,11 +98,25 @@ func TestApplyIgnoreWritesAndRestoresIgnoreBlock(t *testing.T) {
 func TestApplyIgnoreAcceptsLegacyStubChoice(t *testing.T) {
 	workspace := testWorkspace(t)
 
-	report, err := Apply(workspace, Options{Choice: actionWriteIgnoreStub})
+	report, err := Apply(workspace, Options{Choice: legacyWriteIgnoreStub})
 	require.NoError(t, err)
 	require.Equal(t, "ignore", report.AppliedChoice)
 	require.Len(t, report.Applied, 1)
-	require.Equal(t, ActionAppendIgnoreBlock, report.Applied[0].Action)
+	require.Equal(t, ActionCreateIgnoreFile, report.Applied[0].Action)
+
+	data, err := os.ReadFile(filepath.Join(workspace, ".codogignore"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), IgnoreMarker)
+}
+
+func TestApplyIgnoreAcceptsLegacyAppendBlockChoice(t *testing.T) {
+	workspace := testWorkspace(t)
+
+	report, err := Apply(workspace, Options{Choice: ActionAppendIgnoreBlock})
+	require.NoError(t, err)
+	require.Equal(t, "ignore", report.AppliedChoice)
+	require.Len(t, report.Applied, 1)
+	require.Equal(t, ActionCreateIgnoreFile, report.Applied[0].Action)
 
 	data, err := os.ReadFile(filepath.Join(workspace, ".codogignore"))
 	require.NoError(t, err)
