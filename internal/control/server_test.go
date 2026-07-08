@@ -187,6 +187,123 @@ func TestControlHooksHealth(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
+func TestHookHealthEventAliases(t *testing.T) {
+	cases := map[string]string{
+		"pre":                   "pre_tool_use",
+		"post-tool-use":         "post_tool_use",
+		"postfailure":           "post_tool_use_failure",
+		"permission-request":    "permission_request",
+		"permissiondenied":      "permission_denied",
+		"prompt":                "user_prompt_submit",
+		"session-end":           "session_end",
+		"compact":               "pre_compact",
+		"notify":                "notification",
+		"subagent-start":        "subagent_start",
+		"subagentstop":          "subagent_stop",
+		"worktree-create":       "worktree_create",
+		"worktreeremove":        "worktree_remove",
+		"cwdchanged":            "cwd_changed",
+		"task-created":          "task_created",
+		"taskcompleted":         "task_completed",
+		"instructions-loaded":   "instructions_loaded",
+		"filechanged":           "file_changed",
+		"  PRE_TOOL_USE  ":      "pre_tool_use",
+		"post_compact":          "post_compact",
+		"user-prompt-submit":    "user_prompt_submit",
+		"permission_denied":     "permission_denied",
+		"post_tool_use_failure": "post_tool_use_failure",
+		"instructions_loaded":   "instructions_loaded",
+		"worktree_remove":       "worktree_remove",
+		"task_completed":        "task_completed",
+		"file_changed":          "file_changed",
+		"subagent_stop":         "subagent_stop",
+		"cwd_changed":           "cwd_changed",
+		"stop-failure":          "stop_failure",
+		"sessionstart":          "session_start",
+		"setup":                 "setup",
+		"stop":                  "stop",
+	}
+	for input, want := range cases {
+		got, err := normalizeHookHealthEvent(input)
+		require.NoError(t, err, input)
+		require.Equal(t, want, got, input)
+	}
+
+	_, err := normalizeHookHealthEvent("bogus")
+	require.ErrorContains(t, err, "unknown hook event")
+}
+
+func TestHookHealthPayloadSpecialEvents(t *testing.T) {
+	cases := []struct {
+		name       string
+		req        hookHealthRequest
+		wantTool   string
+		wantTarget string
+	}{
+		{
+			name:       "notification",
+			req:        hookHealthRequest{Event: "notification", NotificationType: "background_task_started"},
+			wantTool:   "background_task_started",
+			wantTarget: "background_task_started",
+		},
+		{
+			name:       "subagent",
+			req:        hookHealthRequest{Event: "subagent_start", AgentType: "reviewer"},
+			wantTool:   "reviewer",
+			wantTarget: "reviewer",
+		},
+		{
+			name:       "worktree",
+			req:        hookHealthRequest{Event: "worktree_create", WorktreeID: "wt-1"},
+			wantTool:   "wt-1",
+			wantTarget: "wt-1",
+		},
+		{
+			name:       "cwd",
+			req:        hookHealthRequest{Event: "cwd_changed", NewCWD: "/tmp/work"},
+			wantTool:   "/tmp/work",
+			wantTarget: "/tmp/work",
+		},
+		{
+			name:       "task",
+			req:        hookHealthRequest{Event: "task_completed", TaskID: "task-1", TaskKind: "agent"},
+			wantTool:   "agent",
+			wantTarget: "agent",
+		},
+		{
+			name:       "file",
+			req:        hookHealthRequest{Event: "file_changed", Operation: "write_file", FilePath: "notes.md"},
+			wantTool:   "write_file",
+			wantTarget: "write_file",
+		},
+		{
+			name:       "instructions",
+			req:        hookHealthRequest{Event: "instructions_loaded", LoadReason: "session_start"},
+			wantTool:   "session_start",
+			wantTarget: "session_start",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := hookHealthPayload(tc.req)
+			require.Equal(t, tc.wantTool, payload.Tool)
+			require.Equal(t, tc.wantTarget, hookMatcherTarget(payload))
+		})
+	}
+}
+
+func TestHookCommandsForListUsesLegacyFallback(t *testing.T) {
+	legacy := []string{" echo legacy ", "", "printf ok"}
+	summaries := hookCommandsForList(nil, legacy)
+	require.Equal(t, []hookCommandSummary{{Command: "echo legacy"}, {Command: "printf ok"}}, summaries)
+
+	summaries = hookCommandsForList([]config.HookCommand{{Matcher: "bash", Type: "command", Command: "echo modern"}}, legacy)
+	require.Len(t, summaries, 1)
+	require.Equal(t, "bash", summaries[0].Matcher)
+	require.Equal(t, "echo modern", summaries[0].Command)
+}
+
 func TestControlState(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
