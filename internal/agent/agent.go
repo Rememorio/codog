@@ -47006,6 +47006,21 @@ func (a *App) SessionsCommand(args []string) error {
 			return nil
 		}
 		renderSessionSearchText(a.Out, report)
+	case "audit":
+		format, err := parseSimpleOutputFormat("sessions audit", args[1:])
+		if err != nil {
+			return err
+		}
+		report, err := a.auditSessionsWithReport()
+		if err != nil {
+			return err
+		}
+		if format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderSessionAuditText(a.Out, report)
 	case "export":
 		return a.SessionExport(args[1:])
 	case "import":
@@ -47127,6 +47142,8 @@ func normalizeSessionAction(action string) string {
 		return "exists"
 	case "search", "find", "grep":
 		return "search"
+	case "audit", "doctor", "check", "hygiene":
+		return "audit"
 	case "export", "dump":
 		return "export"
 	case "import", "load":
@@ -47175,7 +47192,7 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_sessions_action",
 			Message:   fmt.Sprintf("unsupported sessions action %q", action),
-			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions search QUERY`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions switch ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions pin ID [message]`, `codog sessions unpin ID [message]`, `codog sessions prune`, or `codog sessions delete ID`. Common aliases include ls, get, has, find, clone, checkout, mv, gc, and rm.",
+			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions search QUERY`, `codog sessions audit`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions switch ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions pin ID [message]`, `codog sessions unpin ID [message]`, `codog sessions prune`, or `codog sessions delete ID`. Common aliases include ls, get, has, find, doctor, clone, checkout, mv, gc, and rm.",
 		}, format)
 	}
 	return renderCLIError(out, err, format)
@@ -49140,6 +49157,230 @@ func renderSessionListText(out io.Writer, report sessionListReport) {
 			lineage = fmt.Sprintf("\tbranch=%s", sess.BranchName)
 		}
 		fmt.Fprintf(out, "%s\t%d messages\tlifecycle=%s\t%s%s%s%s\n", sess.ID, sess.MessageCount, sess.Lifecycle.Signal, sess.Path, lineage, pinned, active)
+	}
+}
+
+const sessionAuditOversizedBytes = 5 * 1024 * 1024
+
+type sessionAuditReport struct {
+	Kind                     string              `json:"kind"`
+	Action                   string              `json:"action"`
+	Status                   string              `json:"status"`
+	Workspace                string              `json:"workspace,omitempty"`
+	SessionDir               string              `json:"session_dir,omitempty"`
+	LegacySessionDir         string              `json:"legacy_session_dir,omitempty"`
+	SessionCount             int                 `json:"session_count"`
+	MessageCount             int                 `json:"message_count"`
+	EmptyCount               int                 `json:"empty_count"`
+	BranchCount              int                 `json:"branch_count"`
+	PinnedMessageCount       int                 `json:"pinned_message_count"`
+	PlaceholderIdentityCount int                 `json:"placeholder_identity_count"`
+	MissingIdentityCount     int                 `json:"missing_identity_count"`
+	WorkspaceMismatchCount   int                 `json:"workspace_mismatch_count"`
+	PinnedOutOfRangeCount    int                 `json:"pinned_out_of_range_count"`
+	OversizedFileCount       int                 `json:"oversized_file_count"`
+	Issues                   []sessionAuditIssue `json:"issues,omitempty"`
+	NextActions              []string            `json:"next_actions,omitempty"`
+}
+
+type sessionAuditIssue struct {
+	Kind         string `json:"kind"`
+	Severity     string `json:"severity"`
+	SessionID    string `json:"session_id"`
+	Path         string `json:"path,omitempty"`
+	Field        string `json:"field,omitempty"`
+	MessageIndex int    `json:"message_index,omitempty"`
+	SizeBytes    int64  `json:"size_bytes,omitempty"`
+	Message      string `json:"message"`
+	NextAction   string `json:"next_action,omitempty"`
+}
+
+func (a *App) auditSessionsWithReport() (sessionAuditReport, error) {
+	sessions, err := a.Sessions.List()
+	if err != nil {
+		return sessionAuditReport{}, err
+	}
+	report := sessionAuditReport{
+		Kind:               "session_audit",
+		Action:             "audit",
+		Status:             "ok",
+		Workspace:          strings.TrimSpace(a.Workspace),
+		SessionDir:         a.Sessions.Dir,
+		LegacySessionDir:   a.Sessions.LegacyDir,
+		SessionCount:       len(sessions),
+		Issues:             []sessionAuditIssue{},
+		NextActions:        []string{},
+		BranchCount:        0,
+		PinnedMessageCount: 0,
+	}
+	for _, sess := range sessions {
+		report.MessageCount += len(sess.Messages)
+		if strings.TrimSpace(sess.Metadata.ParentSessionID) != "" || strings.TrimSpace(sess.Metadata.BranchName) != "" {
+			report.BranchCount++
+		}
+		report.PinnedMessageCount += len(sess.Metadata.PinnedMessages)
+		report.auditSession(sess)
+	}
+	if len(report.Issues) != 0 {
+		for _, issue := range report.Issues {
+			if issue.Severity == "warn" || issue.Severity == "error" {
+				report.Status = "warn"
+				break
+			}
+		}
+	}
+	report.NextActions = sessionAuditNextActions(report)
+	return report, nil
+}
+
+func (report *sessionAuditReport) auditSession(sess session.Session) {
+	if len(sess.Messages) == 0 {
+		report.EmptyCount++
+		report.Issues = append(report.Issues, sessionAuditIssue{
+			Kind:       "empty_session",
+			Severity:   "info",
+			SessionID:  sess.ID,
+			Path:       sess.Path,
+			Message:    "session has no saved messages",
+			NextAction: "codog sessions prune --empty --confirm",
+		})
+	}
+	for _, placeholder := range sess.Identity.Placeholders {
+		report.PlaceholderIdentityCount++
+		field := strings.TrimSpace(placeholder.Field)
+		message := "session identity still uses a typed placeholder"
+		if strings.TrimSpace(placeholder.Reason) != "" {
+			message += ": " + strings.TrimSpace(placeholder.Reason)
+		}
+		report.Issues = append(report.Issues, sessionAuditIssue{
+			Kind:       "identity_placeholder",
+			Severity:   "warn",
+			SessionID:  sess.ID,
+			Path:       sess.Path,
+			Field:      field,
+			Message:    message,
+			NextAction: "codog generateSessionName --session " + shellQuote(sess.ID) + " --rename",
+		})
+	}
+	for _, field := range missingSessionIdentityFields(sess.Identity) {
+		report.MissingIdentityCount++
+		report.Issues = append(report.Issues, sessionAuditIssue{
+			Kind:       "identity_missing_field",
+			Severity:   "warn",
+			SessionID:  sess.ID,
+			Path:       sess.Path,
+			Field:      field,
+			Message:    "session identity is missing " + field,
+			NextAction: "codog sessions show " + shellQuote(sess.ID) + " --json",
+		})
+	}
+	if strings.TrimSpace(report.Workspace) != "" && strings.TrimSpace(sess.Identity.Workspace) != "" && !sameCleanPath(report.Workspace, sess.Identity.Workspace) {
+		report.WorkspaceMismatchCount++
+		report.Issues = append(report.Issues, sessionAuditIssue{
+			Kind:       "workspace_mismatch",
+			Severity:   "warn",
+			SessionID:  sess.ID,
+			Path:       sess.Path,
+			Field:      "workspace",
+			Message:    "session identity workspace differs from the current workspace",
+			NextAction: "codog sessions show " + shellQuote(sess.ID) + " --json",
+		})
+	}
+	for _, index := range sess.Metadata.PinnedMessages {
+		if index >= 0 && index < len(sess.Messages) {
+			continue
+		}
+		report.PinnedOutOfRangeCount++
+		report.Issues = append(report.Issues, sessionAuditIssue{
+			Kind:         "pinned_message_out_of_range",
+			Severity:     "warn",
+			SessionID:    sess.ID,
+			Path:         sess.Path,
+			MessageIndex: index + 1,
+			Message:      "pinned message index is outside the saved message range",
+			NextAction:   "codog sessions unpin " + shellQuote(sess.ID) + " " + strconv.Itoa(index+1),
+		})
+	}
+	if info, err := os.Stat(sess.Path); err == nil && info.Size() > sessionAuditOversizedBytes {
+		report.OversizedFileCount++
+		report.Issues = append(report.Issues, sessionAuditIssue{
+			Kind:       "oversized_jsonl",
+			Severity:   "warn",
+			SessionID:  sess.ID,
+			Path:       sess.Path,
+			SizeBytes:  info.Size(),
+			Message:    "session JSONL is large enough to slow resume and tooling",
+			NextAction: "codog compact --session " + shellQuote(sess.ID) + " --json",
+		})
+	}
+}
+
+func missingSessionIdentityFields(identity session.SessionIdentity) []string {
+	var fields []string
+	if strings.TrimSpace(identity.Title) == "" {
+		fields = append(fields, "title")
+	}
+	if strings.TrimSpace(identity.Workspace) == "" {
+		fields = append(fields, "workspace")
+	}
+	if strings.TrimSpace(identity.Worktree) == "" {
+		fields = append(fields, "worktree")
+	}
+	return fields
+}
+
+func sameCleanPath(left string, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return left == right
+	}
+	return filepath.Clean(left) == filepath.Clean(right)
+}
+
+func sessionAuditNextActions(report sessionAuditReport) []string {
+	actions := []string{}
+	if report.SessionCount == 0 {
+		actions = append(actions, "codog repl")
+	}
+	if report.EmptyCount > 0 {
+		actions = append(actions, "codog sessions prune --empty --confirm")
+	}
+	for _, issue := range report.Issues {
+		if strings.TrimSpace(issue.NextAction) != "" {
+			actions = append(actions, issue.NextAction)
+		}
+	}
+	return dedupeStrings(actions)
+}
+
+func renderSessionAuditText(out io.Writer, report sessionAuditReport) {
+	fmt.Fprintln(out, "Session Audit")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Workspace        %s\n", report.Workspace)
+	fmt.Fprintf(out, "  Sessions         %d\n", report.SessionCount)
+	fmt.Fprintf(out, "  Messages         %d\n", report.MessageCount)
+	fmt.Fprintf(out, "  Empty            %d\n", report.EmptyCount)
+	fmt.Fprintf(out, "  Branches         %d\n", report.BranchCount)
+	fmt.Fprintf(out, "  Pinned messages  %d\n", report.PinnedMessageCount)
+	fmt.Fprintf(out, "  Placeholders     %d\n", report.PlaceholderIdentityCount)
+	fmt.Fprintf(out, "  Missing identity %d\n", report.MissingIdentityCount)
+	fmt.Fprintf(out, "  Workspace drift  %d\n", report.WorkspaceMismatchCount)
+	fmt.Fprintf(out, "  Pin drift        %d\n", report.PinnedOutOfRangeCount)
+	fmt.Fprintf(out, "  Oversized files  %d\n", report.OversizedFileCount)
+	if len(report.Issues) > 0 {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "  Issues")
+		for _, issue := range report.Issues {
+			fmt.Fprintf(out, "    - [%s] %s %s: %s\n", issue.Severity, issue.SessionID, issue.Kind, issue.Message)
+		}
+	}
+	if len(report.NextActions) > 0 {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "  Next actions")
+		for _, action := range report.NextActions {
+			fmt.Fprintf(out, "    - %s\n", action)
+		}
 	}
 }
 
@@ -60280,15 +60521,15 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return commandHelpSpec{
 			Topic:                   "session",
 			Command:                 "session",
-			Usage:                   "codog sessions [list|show|exists|search|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]",
-			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|search|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]\n  codog sessions search QUERY [--limit N] [--output-format text|json]\n  codog sessions switch ID [--output-format text|json]\n  codog sessions pin ID [message-index|last] [--output-format text|json]\n  codog sessions unpin ID [message-index|last] [--output-format text|json]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n  codog sessions prune [--empty|--keep N] [--confirm] [--session ID|--resume ID] [--output-format text|json]\n\nInspects, imports, exports, searches, and mutates saved session metadata. `switch` is local and returns continue commands for the selected session instead of opening an interactive REPL. Message indexes for `pin` and `unpin` are entered as 1-based numbers.\n",
+			Usage:                   "codog sessions [list|show|exists|search|audit|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]",
+			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|search|audit|export|import|fork|switch|rename|pin|unpin|prune|delete] [ARGS...]\n  codog sessions search QUERY [--limit N] [--output-format text|json]\n  codog sessions audit [--output-format text|json]\n  codog sessions switch ID [--output-format text|json]\n  codog sessions pin ID [message-index|last] [--output-format text|json]\n  codog sessions unpin ID [message-index|last] [--output-format text|json]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n  codog sessions prune [--empty|--keep N] [--confirm] [--session ID|--resume ID] [--output-format text|json]\n\nInspects, audits, imports, exports, searches, and mutates saved session metadata. `audit` reports session hygiene, identity placeholders, lineage, pin drift, and JSONL bloat. `switch` is local and returns continue commands for the selected session instead of opening an interactive REPL. Message indexes for `pin` and `unpin` are entered as 1-based numbers.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
 			RequiresSessionResume:   false,
 			MutatesWorkspace:        false,
-			OutputFields:            []string{"sessions", "session_details", "session_id", "messages", "query", "matches", "message_index", "snippet", "created_at", "updated_at", "pinned_messages"},
-			StatusValues:            []string{"ok", "error"},
+			OutputFields:            []string{"sessions", "session_details", "session_id", "messages", "query", "matches", "issues", "next_actions", "message_index", "snippet", "created_at", "updated_at", "pinned_messages"},
+			StatusValues:            []string{"ok", "warn", "error"},
 		}, true
 	case "bookmarks":
 		return commandHelpSpec{
@@ -60402,7 +60643,7 @@ Usage:
   %s [flags] tui
   %s [flags] clear [--confirm] [--json|--output-format text|json]
   %s [flags] conversation [--confirm] [--json|--output-format text|json]
-  %s [flags] sessions [list|show|exists|search|export|import|fork|rename|prune|delete]
+  %s [flags] sessions [list|show|exists|search|audit|export|import|fork|rename|prune|delete]
   %s [flags] backfill-sessions [--json|--output-format text|json]
   %s [flags] generateSessionName [--session ID|--resume ID|latest] [--source first|last] [--rename] [--json|--output-format text|json]
   %s [flags] rename NEW_ID [--session ID] [--json|--output-format text|json]

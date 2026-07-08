@@ -12765,6 +12765,62 @@ func TestSessionsSearchTextHonorsLimit(t *testing.T) {
 	require.NotContains(t, text, "needle two")
 }
 
+func TestSessionsAuditReportsHygieneIssuesAndNextActions(t *testing.T) {
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	_, err := store.CreateWithIdentity("healthy", session.SessionIdentity{
+		Title:     "Healthy",
+		Workspace: workspace,
+		Worktree:  workspace,
+		Purpose:   "exercise audit",
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.Append("healthy", anthropic.TextMessage("user", "hello audit")))
+	forked, err := store.Fork("healthy", "investigation")
+	require.NoError(t, err)
+	_, err = store.CreateWithIdentity("empty", session.SessionIdentity{})
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Workspace: workspace}
+	require.NoError(t, app.SessionsCommand([]string{"doctor", "--json"}))
+
+	var report sessionAuditReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "session_audit", report.Kind)
+	require.Equal(t, "audit", report.Action)
+	require.Equal(t, "warn", report.Status)
+	require.Equal(t, workspace, report.Workspace)
+	require.Equal(t, 3, report.SessionCount)
+	require.Equal(t, 2, report.MessageCount)
+	require.Equal(t, 1, report.EmptyCount)
+	require.Equal(t, 1, report.BranchCount)
+	require.GreaterOrEqual(t, report.PlaceholderIdentityCount, 1)
+	require.Equal(t, 0, report.PinnedOutOfRangeCount)
+	require.Contains(t, report.NextActions, "codog sessions prune --empty --confirm")
+	require.Contains(t, report.NextActions, "codog generateSessionName --session 'empty' --rename")
+
+	issues := map[string]sessionAuditIssue{}
+	for _, issue := range report.Issues {
+		issues[issue.Kind+":"+issue.SessionID] = issue
+	}
+	require.Equal(t, "empty_session", issues["empty_session:empty"].Kind)
+	require.Equal(t, "info", issues["empty_session:empty"].Severity)
+	require.Equal(t, "identity_placeholder", issues["identity_placeholder:empty"].Kind)
+	require.Equal(t, "warn", issues["identity_placeholder:empty"].Severity)
+	require.Equal(t, "purpose", issues["identity_placeholder:empty"].Field)
+	require.NotContains(t, issues, "empty_session:"+forked.ID)
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"audit", "--output-format", "text"}))
+	text := out.String()
+	require.Contains(t, text, "Session Audit")
+	require.Contains(t, text, "Status           warn")
+	require.Contains(t, text, "Sessions         3")
+	require.Contains(t, text, "Next actions")
+	require.Contains(t, text, "codog sessions prune --empty --confirm")
+}
+
 func TestResumeCommandReportsSessionAndContinueCommands(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))
