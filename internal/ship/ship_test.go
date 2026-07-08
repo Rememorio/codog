@@ -35,3 +35,44 @@ func TestNewReportBuildsShipEventsAndLaneEvents(t *testing.T) {
 	require.Equal(t, "codog", lane[0].Provenance.Emitter)
 	require.Contains(t, lane[0].Evidence, "ship")
 }
+
+func TestNewReportAppliesDefaultsAndPreservesExplicitRange(t *testing.T) {
+	before := time.Now().UTC()
+	report := NewReport("", Provenance{
+		CommitRange: "custom-range",
+		FirstCommit: "aaa",
+		LastCommit:  "bbb",
+		CommitCount: 3,
+	}, Classification{}, time.Time{})
+	after := time.Now().UTC()
+
+	require.Equal(t, "planned", report.Status)
+	require.Equal(t, "custom-range", report.Provenance.CommitRange)
+	require.Contains(t, report.Summary, "3 intentional")
+	require.Contains(t, report.Summary, "via unknown")
+	require.Len(t, report.Events, 5)
+	for _, event := range report.Events {
+		require.Equal(t, "planned", event.Status)
+		require.False(t, event.At.Before(before.Add(-time.Second)))
+		require.False(t, event.At.After(after.Add(time.Second)))
+		require.Equal(t, "custom-range", event.Provenance.CommitRange)
+	}
+}
+
+func TestSummaryAndNormalizeRangeFallbacks(t *testing.T) {
+	require.Equal(t, "", normalizeRange(Provenance{}))
+	require.Equal(t, "bbb", normalizeRange(Provenance{LastCommit: "bbb"}))
+	require.Equal(t, "aaa", normalizeRange(Provenance{FirstCommit: "aaa"}))
+	require.Equal(t, "aaa", normalizeRange(Provenance{FirstCommit: "aaa", LastCommit: "aaa"}))
+	require.Equal(t, "aaa..bbb", normalizeRange(Provenance{FirstCommit: " aaa ", LastCommit: " bbb "}))
+	require.Equal(t, "manual", normalizeRange(Provenance{CommitRange: "manual", FirstCommit: "aaa", LastCommit: "bbb"}))
+
+	require.Equal(t, "4 intentional commit(s), 0 rider(s), via squash", Summary(
+		Provenance{CommitCount: 4, MergeMethod: "squash"},
+		Classification{},
+	))
+	require.Equal(t, "1 intentional commit(s), 2 rider(s), via unknown", Summary(
+		Provenance{},
+		Classification{Intentional: 1, Riders: 2},
+	))
+}
