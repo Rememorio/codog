@@ -470,11 +470,10 @@ func (s Service) Resolve(requested string, allowMissing bool) (string, string, e
 	candidate = filepath.Clean(candidate)
 	resolved := candidate
 	if allowMissing {
-		parent, err := filepath.EvalSymlinks(filepath.Dir(candidate))
+		resolved, err = resolveAllowMissingPath(candidate)
 		if err != nil {
 			return "", "", err
 		}
-		resolved = filepath.Join(parent, filepath.Base(candidate))
 	} else {
 		resolved, err = filepath.EvalSymlinks(candidate)
 		if err != nil {
@@ -489,6 +488,30 @@ func (s Service) Resolve(requested string, allowMissing bool) (string, string, e
 		return "", "", fmt.Errorf("path escapes workspace: %s", requested)
 	}
 	return resolved, filepath.ToSlash(rel), nil
+}
+
+func resolveAllowMissingPath(candidate string) (string, error) {
+	candidate = filepath.Clean(candidate)
+	current := candidate
+	missing := []string{}
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }
 
 // ResolveWorkspacePath resolves a directory-like workspace path, defaulting to the root.
