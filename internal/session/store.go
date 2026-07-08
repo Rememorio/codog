@@ -61,6 +61,7 @@ type IdentityPlaceholder struct {
 
 type PromptEntry struct {
 	Index     int       `json:"index"`
+	Role      string    `json:"role"`
 	Time      time.Time `json:"time"`
 	Text      string    `json:"text"`
 	SessionID string    `json:"session_id"`
@@ -1162,6 +1163,7 @@ func (s *Store) PromptHistory(id string) ([]PromptEntry, error) {
 		if record.Type == "input" && strings.TrimSpace(record.Input) != "" {
 			entries = append(entries, PromptEntry{
 				Index:     len(entries) + 1,
+				Role:      "user",
 				Time:      record.Time,
 				Text:      record.Input,
 				SessionID: id,
@@ -1186,6 +1188,7 @@ func (s *Store) PromptHistory(id string) ([]PromptEntry, error) {
 			}
 			entries = append(entries, PromptEntry{
 				Index:     len(entries) + 1,
+				Role:      record.Message.Role,
 				Time:      record.Time,
 				Text:      block.Text,
 				SessionID: id,

@@ -28946,6 +28946,8 @@ type historyRequest struct {
 	SessionID string
 	Format    string
 	Limit     int
+	Offset    int
+	UseOffset bool
 }
 
 type summaryRequest struct {
@@ -28962,7 +28964,7 @@ func (a *App) History(args []string, overrides config.FlagOverrides) error {
 	if session.IsSessionReferenceAlias(sessionID) {
 		latest, err := a.Sessions.LatestID()
 		if errors.Is(err, session.ErrNoSessions) {
-			return a.renderPromptHistory(req.Format, "", nil, req.Limit)
+			return a.renderPromptHistory(req.Format, "", nil, req)
 		}
 		if err != nil {
 			return err
@@ -28973,7 +28975,7 @@ func (a *App) History(args []string, overrides config.FlagOverrides) error {
 	if err != nil {
 		return err
 	}
-	return a.renderPromptHistory(req.Format, sessionID, entries, req.Limit)
+	return a.renderPromptHistory(req.Format, sessionID, entries, req)
 }
 
 func (a *App) Summary(args []string, overrides config.FlagOverrides) error {
@@ -29077,8 +29079,12 @@ func (a *App) Undo(args []string) error {
 	return nil
 }
 
-func (a *App) renderPromptHistory(format string, sessionID string, entries []session.PromptEntry, limit int) error {
-	report := prompthistory.Build(sessionID, entries, limit)
+func (a *App) renderPromptHistory(format string, sessionID string, entries []session.PromptEntry, req historyRequest) error {
+	report := prompthistory.BuildWithOptions(sessionID, entries, prompthistory.BuildOptions{
+		Limit:     req.Limit,
+		Offset:    req.Offset,
+		UseOffset: req.UseOffset,
+	})
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -34700,7 +34706,7 @@ func normalizePlanAction(value string) string {
 }
 
 func parseHistoryArgs(args []string, overrides config.FlagOverrides) (historyRequest, error) {
-	const usage = "codog history [SESSION|LIMIT] [--session ID] [--limit N] [--json|--output-format text|json]"
+	const usage = "codog history [SESSION|LIMIT] [--session ID] [--limit N] [--offset N] [--json|--output-format text|json]"
 	req := historyRequest{Format: "text", Limit: prompthistory.DefaultLimit}
 	if overrides.Resume != "" {
 		req.SessionID = overrides.Resume
@@ -34740,6 +34746,24 @@ func parseHistoryArgs(args []string, overrides config.FlagOverrides) (historyReq
 				return req, err
 			}
 			req.Limit = limit
+		case arg == "--offset":
+			index++
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "history", Flag: arg, Usage: usage}
+			}
+			offset, err := parseNonNegativeIntOption(args[index], "--offset", usage)
+			if err != nil {
+				return req, err
+			}
+			req.Offset = offset
+			req.UseOffset = true
+		case strings.HasPrefix(arg, "--offset="):
+			offset, err := parseNonNegativeIntOption(strings.TrimPrefix(arg, "--offset="), "--offset", usage)
+			if err != nil {
+				return req, err
+			}
+			req.Offset = offset
+			req.UseOffset = true
 		case arg == "--session":
 			index++
 			if missingFlagValueAt(args, index) {

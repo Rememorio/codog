@@ -13,6 +13,7 @@ const DefaultLimit = 20
 
 type Entry struct {
 	Index     int       `json:"index"`
+	Role      string    `json:"role"`
 	Time      time.Time `json:"time"`
 	Text      string    `json:"text"`
 	Preview   string    `json:"preview"`
@@ -20,40 +21,79 @@ type Entry struct {
 }
 
 type Report struct {
-	Kind      string  `json:"kind"`
-	Status    string  `json:"status"`
-	SessionID string  `json:"session_id,omitempty"`
-	Total     int     `json:"total"`
-	Showing   int     `json:"showing"`
-	Limit     int     `json:"limit"`
-	Entries   []Entry `json:"entries"`
+	Kind       string  `json:"kind"`
+	Status     string  `json:"status"`
+	SessionID  string  `json:"session_id,omitempty"`
+	Total      int     `json:"total"`
+	Showing    int     `json:"showing"`
+	Limit      int     `json:"limit"`
+	Offset     int     `json:"offset"`
+	HasMore    bool    `json:"has_more"`
+	NextOffset *int    `json:"next_offset,omitempty"`
+	Entries    []Entry `json:"entries"`
+}
+
+type BuildOptions struct {
+	Limit     int
+	Offset    int
+	UseOffset bool
 }
 
 func Build(sessionID string, entries []session.PromptEntry, limit int) Report {
+	return BuildWithOptions(sessionID, entries, BuildOptions{Limit: limit})
+}
+
+func BuildWithOptions(sessionID string, entries []session.PromptEntry, options BuildOptions) Report {
+	limit := options.Limit
 	if limit <= 0 {
 		limit = DefaultLimit
 	}
 	start := 0
-	if len(entries) > limit {
+	if options.UseOffset {
+		start = options.Offset
+		if start < 0 {
+			start = 0
+		}
+		if start > len(entries) {
+			start = len(entries)
+		}
+	} else if len(entries) > limit {
 		start = len(entries) - limit
 	}
+	end := start + limit
+	if end > len(entries) {
+		end = len(entries)
+	}
+	nextOffset := (*int)(nil)
+	if end < len(entries) {
+		next := end
+		nextOffset = &next
+	}
 	report := Report{
-		Kind:      "prompt_history",
-		Status:    "ok",
-		SessionID: sessionID,
-		Total:     len(entries),
-		Showing:   len(entries) - start,
-		Limit:     limit,
-		Entries:   make([]Entry, 0, len(entries)-start),
+		Kind:       "prompt_history",
+		Status:     "ok",
+		SessionID:  sessionID,
+		Total:      len(entries),
+		Showing:    end - start,
+		Limit:      limit,
+		Offset:     start,
+		HasMore:    nextOffset != nil,
+		NextOffset: nextOffset,
+		Entries:    make([]Entry, 0, end-start),
 	}
 	if len(entries) == 0 {
 		report.Status = "empty"
 		return report
 	}
-	for _, entry := range entries[start:] {
+	for _, entry := range entries[start:end] {
 		text := strings.TrimSpace(entry.Text)
+		role := strings.TrimSpace(entry.Role)
+		if role == "" {
+			role = "user"
+		}
 		report.Entries = append(report.Entries, Entry{
 			Index:     entry.Index,
+			Role:      role,
 			Time:      entry.Time,
 			Text:      text,
 			Preview:   Preview(text, 80),
@@ -70,7 +110,11 @@ func RenderText(w io.Writer, report Report) {
 		return
 	}
 	fmt.Fprintf(w, "  Total            %d\n", report.Total)
-	fmt.Fprintf(w, "  Showing          %d most recent\n", report.Showing)
+	if report.HasMore {
+		fmt.Fprintf(w, "  Showing          %d from offset %d (next offset %d)\n", report.Showing, report.Offset, *report.NextOffset)
+	} else {
+		fmt.Fprintf(w, "  Showing          %d most recent\n", report.Showing)
+	}
 	fmt.Fprintf(w, "  Reverse search   Ctrl-R in the REPL\n")
 	fmt.Fprintln(w)
 	for _, entry := range report.Entries {

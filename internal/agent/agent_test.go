@@ -17529,10 +17529,33 @@ func TestHistoryCommandAndSlash(t *testing.T) {
 	require.NotContains(t, out.String(), "first prompt")
 	out.Reset()
 
-	require.NoError(t, app.History([]string{"--session=source", "--json"}, config.FlagOverrides{}))
-	require.Contains(t, out.String(), `"kind": "prompt_history"`)
-	require.Contains(t, out.String(), `"total": 2`)
-	require.Contains(t, out.String(), `"text": "first prompt"`)
+	require.NoError(t, app.History([]string{"--session=source", "--json", "--offset", "0", "--limit", "1"}, config.FlagOverrides{}))
+	var historyReport struct {
+		Kind       string `json:"kind"`
+		Total      int    `json:"total"`
+		Showing    int    `json:"showing"`
+		Limit      int    `json:"limit"`
+		Offset     int    `json:"offset"`
+		HasMore    bool   `json:"has_more"`
+		NextOffset int    `json:"next_offset"`
+		Entries    []struct {
+			Index int    `json:"index"`
+			Role  string `json:"role"`
+			Text  string `json:"text"`
+		} `json:"entries"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &historyReport))
+	require.Equal(t, "prompt_history", historyReport.Kind)
+	require.Equal(t, 2, historyReport.Total)
+	require.Equal(t, 1, historyReport.Showing)
+	require.Equal(t, 1, historyReport.Limit)
+	require.Equal(t, 0, historyReport.Offset)
+	require.True(t, historyReport.HasMore)
+	require.Equal(t, 1, historyReport.NextOffset)
+	require.Len(t, historyReport.Entries, 1)
+	require.Equal(t, 1, historyReport.Entries[0].Index)
+	require.Equal(t, "user", historyReport.Entries[0].Role)
+	require.Equal(t, "first prompt", historyReport.Entries[0].Text)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/history 1", &session.Session{ID: "source"}))
