@@ -52486,7 +52486,7 @@ func buildMCPUsageReport(unexpected string) mcpUsageReport {
 		ok = false
 		value := "unknown_mcp_action"
 		errorKind = &value
-		hintValue := "Use: list|ls, show SERVER, tools [SERVER], auth [--refresh|refresh|--clear|clear|logout] [SERVER], call SERVER TOOL JSON, resources [SERVER], resource-templates [SERVER], read SERVER URI, prompts [SERVER], prompt SERVER NAME [JSON], or help"
+		hintValue := "Use: list|ls, serve, self, show SERVER, add NAME COMMAND [ARG...], add NAME --url URL, remove SERVER, tools [SERVER], auth [--refresh|refresh|--clear|clear|logout] [SERVER], call SERVER TOOL JSON, resources [SERVER], resource-templates [SERVER], read SERVER URI, prompts [SERVER], prompt SERVER NAME [JSON], or help"
 		hint = &hintValue
 		unexpectedValue = &unexpected
 	}
@@ -52504,8 +52504,8 @@ func buildMCPUsageReport(unexpected string) mcpUsageReport {
 
 func mcpGeneralUsageBlock() mcpUsageBlock {
 	return mcpUsageBlock{
-		SlashCommand: "/mcp [list|ls|show SERVER|tools [SERVER]|auth [--refresh|refresh|--clear|clear|logout] [SERVER]|call SERVER TOOL JSON|resources [SERVER]|resource-templates [SERVER]|read SERVER URI|prompts [SERVER]|prompt SERVER NAME [JSON]|help]",
-		DirectCLI:    "codog mcp [list|ls|show SERVER|tools [SERVER]|auth [--refresh|refresh|--clear|clear|logout] [SERVER]|call SERVER TOOL JSON|resources [SERVER]|resource-templates [SERVER]|read SERVER URI|prompts [SERVER]|prompt SERVER NAME [JSON]|help]",
+		SlashCommand: "/mcp [list|ls|serve|self|show SERVER|add NAME COMMAND [ARG...]|add NAME --url URL|remove SERVER|tools [SERVER]|auth [--refresh|refresh|--clear|clear|logout] [SERVER]|call SERVER TOOL JSON|resources [SERVER]|resource-templates [SERVER]|read SERVER URI|prompts [SERVER]|prompt SERVER NAME [JSON]|help]",
+		DirectCLI:    "codog mcp [list|ls|serve|self|show SERVER|add NAME COMMAND [ARG...]|add NAME --url URL|remove SERVER|tools [SERVER]|auth [--refresh|refresh|--clear|clear|logout] [SERVER]|call SERVER TOOL JSON|resources [SERVER]|resource-templates [SERVER]|read SERVER URI|prompts [SERVER]|prompt SERVER NAME [JSON]|help]",
 		Sources:      []string{".codog.json", ".codog.local.json", "user config"},
 	}
 }
