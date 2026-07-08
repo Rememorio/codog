@@ -22344,6 +22344,13 @@ type passesRequest struct {
 	Open        bool
 	Docs        bool
 	ReferralURL string
+	BaseURL     string
+	OrgUUID     string
+	Token       string
+	Campaign    string
+	Redemptions bool
+	SaveURL     bool
+	TimeoutMS   int
 }
 
 type passesReport struct {
@@ -22360,6 +22367,15 @@ type passesReport struct {
 	VisitCount         int    `json:"visit_count"`
 	Path               string `json:"path,omitempty"`
 	Message            string `json:"message,omitempty"`
+	RequestSent        bool   `json:"request_sent,omitempty"`
+	OrganizationUUID   string `json:"organization_uuid,omitempty"`
+	Campaign           string `json:"campaign,omitempty"`
+	Eligible           *bool  `json:"eligible,omitempty"`
+	RemainingPasses    *int   `json:"remaining_passes,omitempty"`
+	Limit              *int   `json:"limit,omitempty"`
+	Redeemed           *int   `json:"redeemed,omitempty"`
+	AvailablePasses    *int   `json:"available_passes,omitempty"`
+	SavedReferralURL   bool   `json:"saved_referral_url,omitempty"`
 }
 
 const slackAppURL = "https://slack.com/marketplace/A08SF47R6P4-claude"
@@ -22369,7 +22385,7 @@ const extraUsageAdminURL = "https://claude.ai/admin-settings/usage"
 const guestPassDocsURL = "https://support.claude.com/en/articles/12875061-claude-code-guest-passes"
 const installSlackAppUsage = "codog install-slack-app [status|list] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
 const stickersUsage = "codog stickers [status|list] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
-const passesUsage = "codog passes [status|list|show|open|set-url URL|clear-url] [--docs] [--referral-url URL] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
+const passesUsage = "codog passes [status|list|show|open|fetch|set-url URL|clear-url] [--docs] [--referral-url URL] [--org UUID] [--token TOKEN] [--base-url URL] [--campaign NAME] [--redemptions] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
 
 var openExternalURL = openSystemURL
 
@@ -23723,6 +23739,44 @@ func (a *App) Passes(args []string) error {
 	switch req.Action {
 	case "status":
 		report.Message = "Guest pass status loaded."
+	case "fetch":
+		fetchCtx, cancel := context.WithTimeout(context.Background(), passesFetchTimeout(req.TimeoutMS))
+		defer cancel()
+		fetched, err := a.fetchGuestPasses(fetchCtx, req)
+		if err != nil {
+			return err
+		}
+		report.RequestSent = true
+		report.OrganizationUUID = fetched.OrganizationUUID
+		report.Campaign = fetched.Campaign
+		report.Eligible = &fetched.Eligible
+		report.ReferralURL = firstNonEmpty(fetched.ReferralURL, report.ReferralURL)
+		report.ReferralConfigured = strings.TrimSpace(report.ReferralURL) != ""
+		report.URL, report.URLSource = passesURLWithSource(report.ReferralURL, req.Docs)
+		if fetched.RemainingPasses != nil {
+			report.RemainingPasses = fetched.RemainingPasses
+		}
+		if fetched.Limit != nil {
+			report.Limit = fetched.Limit
+		}
+		if fetched.Redeemed != nil {
+			report.Redeemed = fetched.Redeemed
+		}
+		if fetched.AvailablePasses != nil {
+			report.AvailablePasses = fetched.AvailablePasses
+		}
+		if req.SaveURL && strings.TrimSpace(fetched.ReferralURL) != "" {
+			if err := setCompatibilityValue(path, "compatibility.guest_pass_referral_url", legacyGuestPassReferralURLKey, fetched.ReferralURL); err != nil {
+				return err
+			}
+			a.Config.Future.GuestPassReferralURL = fetched.ReferralURL
+			report.SavedReferralURL = true
+		}
+		if fetched.Eligible {
+			report.Message = "Guest pass eligibility fetched."
+		} else {
+			report.Message = "Guest passes are not currently available for this organization."
+		}
 	case "set-url":
 		if err := validateHTTPURL(req.ReferralURL, "guest pass referral URL"); err != nil {
 			return err
@@ -23785,7 +23839,7 @@ func (a *App) Passes(args []string) error {
 }
 
 func parsePassesArgs(args []string) (passesRequest, error) {
-	req := passesRequest{Action: "open", Format: "text", Target: "user", Open: true}
+	req := passesRequest{Action: "open", Format: "text", Target: "user", Open: true, BaseURL: "https://api.anthropic.com", Campaign: "claude_code_guest_pass", SaveURL: true, TimeoutMS: 5000}
 	var rest []string
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -23830,6 +23884,66 @@ func parsePassesArgs(args []string) (passesRequest, error) {
 			req.ReferralURL = args[index]
 		case strings.HasPrefix(arg, "--referral-url="):
 			req.ReferralURL = strings.TrimPrefix(arg, "--referral-url=")
+		case arg == "--org" || arg == "--organization" || arg == "--organization-uuid":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
+			}
+			req.OrgUUID = strings.TrimSpace(args[index])
+		case strings.HasPrefix(arg, "--org="):
+			req.OrgUUID = strings.TrimSpace(strings.TrimPrefix(arg, "--org="))
+		case strings.HasPrefix(arg, "--organization="):
+			req.OrgUUID = strings.TrimSpace(strings.TrimPrefix(arg, "--organization="))
+		case strings.HasPrefix(arg, "--organization-uuid="):
+			req.OrgUUID = strings.TrimSpace(strings.TrimPrefix(arg, "--organization-uuid="))
+		case arg == "--token" || arg == "--auth-token":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
+			}
+			req.Token = strings.TrimSpace(args[index])
+		case strings.HasPrefix(arg, "--token="):
+			req.Token = strings.TrimSpace(strings.TrimPrefix(arg, "--token="))
+		case strings.HasPrefix(arg, "--auth-token="):
+			req.Token = strings.TrimSpace(strings.TrimPrefix(arg, "--auth-token="))
+		case arg == "--base-url":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
+			}
+			req.BaseURL = strings.TrimSpace(args[index])
+		case strings.HasPrefix(arg, "--base-url="):
+			req.BaseURL = strings.TrimSpace(strings.TrimPrefix(arg, "--base-url="))
+		case arg == "--campaign":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
+			}
+			req.Campaign = strings.TrimSpace(args[index])
+		case strings.HasPrefix(arg, "--campaign="):
+			req.Campaign = strings.TrimSpace(strings.TrimPrefix(arg, "--campaign="))
+		case arg == "--redemptions":
+			req.Redemptions = true
+		case arg == "--save-url":
+			req.SaveURL = true
+		case arg == "--no-save-url":
+			req.SaveURL = false
+		case arg == "--timeout-ms":
+			index++
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
+			}
+			timeoutMS, err := strconv.Atoi(args[index])
+			if err != nil {
+				return req, fmt.Errorf("passes timeout-ms must be an integer: %w", err)
+			}
+			req.TimeoutMS = timeoutMS
+		case strings.HasPrefix(arg, "--timeout-ms="):
+			timeoutMS, err := strconv.Atoi(strings.TrimPrefix(arg, "--timeout-ms="))
+			if err != nil {
+				return req, fmt.Errorf("passes timeout-ms must be an integer: %w", err)
+			}
+			req.TimeoutMS = timeoutMS
 		default:
 			rest = append(rest, arg)
 		}
@@ -23851,6 +23965,9 @@ func parsePassesArgs(args []string) (passesRequest, error) {
 		req.Open = false
 	case "open":
 		req.Action = "open"
+	case "fetch", "refresh", "sync":
+		req.Action = "fetch"
+		req.Open = false
 	case "set-url", "set", "url":
 		req.Action = "set-url"
 		if req.ReferralURL == "" && len(rest) > 1 {
@@ -23867,13 +23984,157 @@ func parsePassesArgs(args []string) (passesRequest, error) {
 		}
 		return req, unexpectedExtraArgsError{Command: "passes", Args: []string{rest[0]}, Usage: passesUsage}
 	}
-	if (req.Action == "show" || req.Action == "open" || req.Action == "clear-url") && len(rest) > 1 {
+	if (req.Action == "show" || req.Action == "open" || req.Action == "fetch" || req.Action == "clear-url") && len(rest) > 1 {
 		return req, unexpectedExtraArgsError{Command: "passes " + req.Action, Args: rest[1:], Usage: passesUsage}
 	}
 	if req.Action == "set-url" && len(rest) > 2 {
 		return req, unexpectedExtraArgsError{Command: "passes set-url", Args: rest[2:], Usage: passesUsage}
 	}
 	return req, nil
+}
+
+type guestPassesFetchResult struct {
+	OrganizationUUID string
+	Campaign         string
+	Eligible         bool
+	ReferralURL      string
+	RemainingPasses  *int
+	Limit            *int
+	Redeemed         *int
+	AvailablePasses  *int
+}
+
+type guestPassesEligibilityResponse struct {
+	Eligible            bool `json:"eligible"`
+	RemainingPasses     *int `json:"remaining_passes"`
+	ReferralCodeDetails *struct {
+		ReferralLink string `json:"referral_link"`
+		Campaign     string `json:"campaign"`
+	} `json:"referral_code_details"`
+}
+
+type guestPassesRedemptionsResponse struct {
+	Redemptions []json.RawMessage `json:"redemptions"`
+	Limit       int               `json:"limit"`
+}
+
+func (a *App) fetchGuestPasses(ctx context.Context, req passesRequest) (guestPassesFetchResult, error) {
+	orgUUID := strings.TrimSpace(firstNonEmpty(req.OrgUUID, a.Config.ForceLoginOrgUUID))
+	if orgUUID == "" {
+		return guestPassesFetchResult{}, requiredArgumentError{Command: "passes fetch", Argument: "--org UUID", Usage: passesUsage}
+	}
+	token := strings.TrimSpace(firstNonEmpty(req.Token, a.Config.AuthToken))
+	if token == "" && strings.TrimSpace(a.Config.ConfigHome) != "" {
+		if stored, err := oauth.LoadToken(a.Config.ConfigHome); err == nil {
+			token = strings.TrimSpace(stored.AccessToken)
+		}
+	}
+	if token == "" {
+		return guestPassesFetchResult{}, requiredArgumentError{Command: "passes fetch", Argument: "--token TOKEN", Usage: passesUsage}
+	}
+	baseURL, err := normalizedPassesBaseURL(req.BaseURL)
+	if err != nil {
+		return guestPassesFetchResult{}, err
+	}
+	campaign := strings.TrimSpace(req.Campaign)
+	if campaign == "" {
+		campaign = "claude_code_guest_pass"
+	}
+	eligibilityURL := baseURL + "/api/oauth/organizations/" + url.PathEscape(orgUUID) + "/referral/eligibility"
+	var eligibility guestPassesEligibilityResponse
+	if err := fetchGuestPassesJSON(ctx, eligibilityURL, token, orgUUID, campaign, &eligibility); err != nil {
+		return guestPassesFetchResult{}, err
+	}
+	if eligibility.ReferralCodeDetails != nil && strings.TrimSpace(eligibility.ReferralCodeDetails.Campaign) != "" {
+		campaign = strings.TrimSpace(eligibility.ReferralCodeDetails.Campaign)
+	}
+	result := guestPassesFetchResult{
+		OrganizationUUID: orgUUID,
+		Campaign:         campaign,
+		Eligible:         eligibility.Eligible,
+		RemainingPasses:  eligibility.RemainingPasses,
+	}
+	if eligibility.ReferralCodeDetails != nil {
+		result.ReferralURL = strings.TrimSpace(eligibility.ReferralCodeDetails.ReferralLink)
+	}
+	if req.Redemptions {
+		redemptionsURL := baseURL + "/api/oauth/organizations/" + url.PathEscape(orgUUID) + "/referral/redemptions"
+		var redemptions guestPassesRedemptionsResponse
+		if err := fetchGuestPassesJSON(ctx, redemptionsURL, token, orgUUID, campaign, &redemptions); err != nil {
+			return guestPassesFetchResult{}, err
+		}
+		limit := redemptions.Limit
+		if limit == 0 {
+			limit = 3
+		}
+		redeemed := len(redemptions.Redemptions)
+		available := limit - redeemed
+		if available < 0 {
+			available = 0
+		}
+		result.Limit = &limit
+		result.Redeemed = &redeemed
+		result.AvailablePasses = &available
+	}
+	return result, nil
+}
+
+func normalizedPassesBaseURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = "https://api.anthropic.com"
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", errors.New("passes base URL must be a valid URL")
+	}
+	switch parsed.Scheme {
+	case "http", "https":
+	default:
+		return "", errors.New("passes base URL must use http or https")
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
+func passesFetchTimeout(timeoutMS int) time.Duration {
+	if timeoutMS <= 0 {
+		timeoutMS = 5000
+	}
+	return time.Duration(timeoutMS) * time.Millisecond
+}
+
+func fetchGuestPassesJSON(ctx context.Context, endpoint string, token string, orgUUID string, campaign string, target any) error {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return err
+	}
+	query := parsed.Query()
+	query.Set("campaign", campaign)
+	parsed.RawQuery = query.Encode()
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("x-organization-uuid", orgUUID)
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("passes API request failed: %s", resp.Status)
+	}
+	if err := json.Unmarshal(body, target); err != nil {
+		return err
+	}
+	return nil
 }
 
 func passesURL(referralURL string, docs bool) string {
@@ -23913,6 +24174,30 @@ func renderPassesReport(out io.Writer, report passesReport) {
 	fmt.Fprintf(out, "  Referral set     %t\n", report.ReferralConfigured)
 	if report.ReferralURL != "" {
 		fmt.Fprintf(out, "  Referral URL     %s\n", report.ReferralURL)
+	}
+	if report.OrganizationUUID != "" {
+		fmt.Fprintf(out, "  Organization     %s\n", report.OrganizationUUID)
+	}
+	if report.Campaign != "" {
+		fmt.Fprintf(out, "  Campaign         %s\n", report.Campaign)
+	}
+	if report.Eligible != nil {
+		fmt.Fprintf(out, "  Eligible         %t\n", *report.Eligible)
+	}
+	if report.RemainingPasses != nil {
+		fmt.Fprintf(out, "  Remaining        %d\n", *report.RemainingPasses)
+	}
+	if report.Limit != nil {
+		fmt.Fprintf(out, "  Limit            %d\n", *report.Limit)
+	}
+	if report.Redeemed != nil {
+		fmt.Fprintf(out, "  Redeemed         %d\n", *report.Redeemed)
+	}
+	if report.AvailablePasses != nil {
+		fmt.Fprintf(out, "  Available        %d\n", *report.AvailablePasses)
+	}
+	if report.SavedReferralURL {
+		fmt.Fprintln(out, "  Saved referral   true")
 	}
 	fmt.Fprintf(out, "  Opened           %t\n", report.Opened)
 	if report.Opener != "" {

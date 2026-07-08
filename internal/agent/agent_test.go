@@ -23564,6 +23564,68 @@ func TestPassesCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), `"guest_pass_visit_count": 2`)
 }
 
+func TestPassesFetchesEligibilityAndRedemptions(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	seen := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "Bearer fetch-token", r.Header.Get("Authorization"))
+		require.Equal(t, "org-123", r.Header.Get("x-organization-uuid"))
+		require.Equal(t, "claude_code_guest_pass", r.URL.Query().Get("campaign"))
+		seen = append(seen, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/oauth/organizations/org-123/referral/eligibility":
+			fmt.Fprintln(w, `{"eligible":true,"remaining_passes":2,"referral_code_details":{"referral_link":"https://example.test/pass","campaign":"claude_code_guest_pass"}}`)
+		case "/api/oauth/organizations/org-123/referral/redemptions":
+			fmt.Fprintln(w, `{"limit":3,"redemptions":[{"email":"used@example.test"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:        configHome,
+			AuthToken:         "fetch-token",
+			ForceLoginOrgUUID: "org-123",
+		},
+		Workspace: t.TempDir(),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+	require.NoError(t, app.Passes([]string{"fetch", "--base-url", server.URL, "--redemptions", "--json"}))
+	var report passesReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "passes", report.Kind)
+	require.Equal(t, "fetch", report.Action)
+	require.True(t, report.RequestSent)
+	require.Equal(t, "org-123", report.OrganizationUUID)
+	require.Equal(t, "claude_code_guest_pass", report.Campaign)
+	require.NotNil(t, report.Eligible)
+	require.True(t, *report.Eligible)
+	require.NotNil(t, report.RemainingPasses)
+	require.Equal(t, 2, *report.RemainingPasses)
+	require.NotNil(t, report.Limit)
+	require.Equal(t, 3, *report.Limit)
+	require.NotNil(t, report.Redeemed)
+	require.Equal(t, 1, *report.Redeemed)
+	require.NotNil(t, report.AvailablePasses)
+	require.Equal(t, 2, *report.AvailablePasses)
+	require.Equal(t, "https://example.test/pass", report.ReferralURL)
+	require.True(t, report.SavedReferralURL)
+	require.NotContains(t, out.String(), "fetch-token")
+	require.Equal(t, []string{
+		"/api/oauth/organizations/org-123/referral/eligibility",
+		"/api/oauth/organizations/org-123/referral/redemptions",
+	}, seen)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"guest_pass_referral_url": "https://example.test/pass"`)
+}
+
 func TestExtraUsageCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(configHome, "config.json")
