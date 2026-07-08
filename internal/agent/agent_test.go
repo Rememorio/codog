@@ -25134,6 +25134,24 @@ func TestMCPRemoteActionErrorsAreStructured(t *testing.T) {
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "json", report.Argument)
 	require.Contains(t, report.Message, "tool input JSON")
+	out.Reset()
+
+	require.ErrorContains(t, app.MCP(context.Background(), []string{"call", "configured", "echo", "{bad", "--json"}), "invalid_json")
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "call", report.Action)
+	require.Equal(t, "invalid_json", report.ErrorKind)
+	require.Equal(t, "json", report.Argument)
+	require.Contains(t, report.Message, "JSON object")
+	require.Contains(t, report.Hint, "codog mcp call SERVER TOOL JSON")
+	out.Reset()
+
+	require.ErrorContains(t, app.MCP(context.Background(), []string{"prompt", "configured", "review", "[]", "--json"}), "invalid_json")
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "prompt", report.Action)
+	require.Equal(t, "invalid_json", report.ErrorKind)
+	require.Equal(t, "json", report.Argument)
+	require.Contains(t, report.Message, "JSON object")
+	require.Contains(t, report.Hint, "codog mcp prompt SERVER NAME [JSON]")
 }
 
 func TestMCPHelpCommand(t *testing.T) {

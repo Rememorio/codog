@@ -51929,7 +51929,11 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		if len(args) < 4 {
 			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(requestedArgs, " "), "json"))
 		}
-		payload = mcp.CallTool(ctx, serverName, server, args[2], json.RawMessage(args[3]))
+		arguments, err := parseMCPObjectArgument(args[3])
+		if err != nil {
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteInvalidJSONReport(args[0], strings.Join(requestedArgs, " "), err))
+		}
+		payload = mcp.CallTool(ctx, serverName, server, args[2], arguments)
 	case "resources":
 		payload = mcp.ListResources(ctx, serverName, server)
 	case "resource-templates":
@@ -51947,7 +51951,11 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		}
 		var arguments json.RawMessage
 		if len(args) > 3 {
-			arguments = json.RawMessage(args[3])
+			var err error
+			arguments, err = parseMCPObjectArgument(args[3])
+			if err != nil {
+				return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteInvalidJSONReport(args[0], strings.Join(requestedArgs, " "), err))
+			}
 		}
 		payload = mcp.GetPrompt(ctx, serverName, server, args[2], arguments)
 	default:
@@ -51963,6 +51971,18 @@ func firstArg(args []string) string {
 		return ""
 	}
 	return args[0]
+}
+
+func parseMCPObjectArgument(raw string) (json.RawMessage, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, errors.New("JSON object is required")
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil, fmt.Errorf("invalid JSON object: %w", err)
+	}
+	return json.RawMessage(raw), nil
 }
 
 func normalizeMCPAction(action string) string {
@@ -52364,6 +52384,22 @@ func buildMCPRemoteMissingArgumentReport(action string, requestedAction string, 
 		Argument:        argument,
 		Message:         fmt.Sprintf("mcp %s requires %s.", action, mcpRemoteArgumentLabel(argument)),
 		Hint:            "Usage: " + mcpRemoteUsage(action).DirectCLI + ".",
+		Usage:           mcpRemoteUsage(action),
+	}
+}
+
+func buildMCPRemoteInvalidJSONReport(action string, requestedAction string, err error) mcpRemoteActionErrorReport {
+	action = strings.TrimSpace(action)
+	return mcpRemoteActionErrorReport{
+		Kind:            "mcp",
+		Action:          action,
+		OK:              false,
+		Status:          "error",
+		ErrorKind:       "invalid_json",
+		RequestedAction: strings.TrimSpace(requestedAction),
+		Argument:        "json",
+		Message:         "mcp " + action + " requires a JSON object argument: " + strings.TrimSpace(err.Error()),
+		Hint:            "Pass a JSON object such as `{}` or `{\"key\":\"value\"}`. Usage: " + mcpRemoteUsage(action).DirectCLI + ".",
 		Usage:           mcpRemoteUsage(action),
 	}
 }
