@@ -31,6 +31,49 @@ func TestCheck(t *testing.T) {
 	require.Equal(t, "0.2.0", result.LatestVersion)
 }
 
+func TestCheckSignedVerifiesManifestSignature(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		manifest := Manifest{
+			Version:   "0.2.0",
+			Downloads: map[string]string{"test": "https://example.invalid/codog"},
+		}
+		payload, err := canonicalManifest(manifest)
+		require.NoError(t, err)
+		manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))
+		require.NoError(t, json.NewEncoder(w).Encode(manifest))
+	}))
+	defer server.Close()
+
+	result, err := CheckSigned(context.Background(), "0.1.0", server.URL, base64.StdEncoding.EncodeToString(publicKey))
+	require.NoError(t, err)
+	require.True(t, result.UpdateAvailable)
+	require.True(t, result.SignatureValid)
+	require.Equal(t, "0.2.0", result.LatestVersion)
+}
+
+func TestCheckSignedRejectsInvalidSignature(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		manifest := Manifest{
+			Version:   "0.2.0",
+			Downloads: map[string]string{"test": "https://example.invalid/codog"},
+		}
+		payload, err := canonicalManifest(manifest)
+		require.NoError(t, err)
+		manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))
+		manifest.Version = "0.3.0"
+		require.NoError(t, json.NewEncoder(w).Encode(manifest))
+	}))
+	defer server.Close()
+
+	_, err = CheckSigned(context.Background(), "0.1.0", server.URL, base64.StdEncoding.EncodeToString(publicKey))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "verification failed")
+}
+
 func TestDownloadVerifiesChecksum(t *testing.T) {
 	payload := []byte("codog binary")
 	sum := sha256.Sum256(payload)
@@ -96,6 +139,44 @@ func TestDownloadRejectsChecksumMismatch(t *testing.T) {
 	_, err := Download(context.Background(), server.URL+"/manifest.json", "test", t.TempDir())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "checksum mismatch")
+}
+
+func TestDownloadManifestSelectsPlatformFallback(t *testing.T) {
+	payload := []byte("codog linux binary")
+	sum := sha256.Sum256(payload)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/codog-linux" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	manifest := Manifest{
+		Version:   "0.4.0",
+		Source:    server.URL + "/manifest.json",
+		Downloads: map[string]string{"linux": "codog-linux"},
+		Checksums: map[string]string{"linux": hex.EncodeToString(sum[:])},
+	}
+
+	result, err := DownloadManifest(context.Background(), manifest, "linux-arm64", t.TempDir())
+	require.NoError(t, err)
+	require.Equal(t, "linux", result.Platform)
+	require.Equal(t, server.URL+"/codog-linux", result.URL)
+	require.True(t, result.Verified)
+}
+
+func TestDownloadManifestRejectsMissingPlatformAndRelativeURLWithoutSource(t *testing.T) {
+	_, err := DownloadManifest(context.Background(), Manifest{Version: "0.4.0"}, "test", t.TempDir())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no download for platform")
+
+	_, err = DownloadManifest(context.Background(), Manifest{
+		Version:   "0.4.0",
+		Downloads: map[string]string{"test": "codog-test"},
+	}, "test", t.TempDir())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires manifest source URL")
 }
 
 func TestVerifyManifest(t *testing.T) {
@@ -221,4 +302,8 @@ func TestListArtifacts(t *testing.T) {
 	missing, err := ListArtifacts(filepath.Join(dir, "missing"))
 	require.NoError(t, err)
 	require.Empty(t, missing)
+}
+
+func TestPlatformKeyUsesRuntimePair(t *testing.T) {
+	require.Equal(t, runtime.GOOS+"-"+runtime.GOARCH, PlatformKey())
 }
