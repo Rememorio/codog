@@ -35134,6 +35134,7 @@ func (a *App) Doctor(args []string) error {
 		BaseURL:               a.Config.BaseURL,
 		APIKey:                a.Config.APIKey,
 		AuthToken:             a.Config.AuthToken,
+		OAuthProfile:          a.Config.OAuthProfile,
 		PermissionMode:        a.Config.PermissionMode,
 		PermissionModeRaw:     a.Config.PermissionModeRaw,
 		PermissionModeSource:  a.Config.PermissionModeSource,

@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/modelrouting"
+	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/sandbox"
 	localstatus "github.com/Rememorio/codog/internal/status"
 	"github.com/stretchr/testify/require"
@@ -160,6 +162,72 @@ func TestRunWarnsWhenAnthropicAPIKeyAndBearerAreBothConfigured(t *testing.T) {
 	require.Equal(t, true, auth.Data["both_anthropic_auth_env_vars_present"])
 	require.Equal(t, true, auth.Data["selected_provider_both_auth_present"])
 	require.Contains(t, strings.Join(auth.Details, "\n"), "Headers sent: x-api-key, authorization_bearer")
+}
+
+func TestRunTreatsSavedOAuthTokenAsAnthropicCredential(t *testing.T) {
+	clearProviderAuthEnv(t)
+	configHome := t.TempDir()
+	now := time.Now().UTC()
+	_, err := oauth.SaveToken(configHome, oauth.Token{
+		AccessToken: "saved-access-token",
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(time.Hour),
+	})
+	require.NoError(t, err)
+
+	report := Run(Options{
+		Workspace:      t.TempDir(),
+		ConfigHome:     configHome,
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	auth := findCheck(t, report, "Auth")
+	require.Equal(t, StatusOK, auth.Status)
+	require.Contains(t, auth.Summary, "Anthropic credentials")
+	require.Equal(t, true, auth.Data["selected_provider_auth_token_present"])
+	require.Equal(t, true, auth.Data["selected_provider_auth_present"])
+	require.Equal(t, "saved_oauth_token", auth.Data["effective_auth_source"])
+	require.Equal(t, true, auth.Data["saved_oauth_token_present"])
+	require.Equal(t, true, auth.Data["saved_oauth_token_ready"])
+	require.Contains(t, strings.Join(auth.Details, "\n"), "Saved OAuth token ready: true")
+}
+
+func TestRunDoesNotUseSavedOAuthTokenForOpenAIProvider(t *testing.T) {
+	clearProviderAuthEnv(t)
+	configHome := t.TempDir()
+	now := time.Now().UTC()
+	_, err := oauth.SaveToken(configHome, oauth.Token{
+		AccessToken: "saved-access-token",
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(time.Hour),
+	})
+	require.NoError(t, err)
+
+	report := Run(Options{
+		Workspace:       t.TempDir(),
+		ConfigHome:      configHome,
+		Model:           "openai/gpt-4.1-mini",
+		RuntimeProvider: "openai",
+		BaseURL:         "https://api.openai.com/v1",
+		PermissionMode:  "workspace-write",
+		ToolCount:       6,
+		SessionCount:    0,
+		SandboxDefault:  "test-sandbox",
+		SandboxOK:       true,
+	})
+
+	auth := findCheck(t, report, "Auth")
+	require.Equal(t, StatusWarn, auth.Status)
+	require.Contains(t, auth.Summary, "No OpenAI-compatible credentials")
+	require.Equal(t, false, auth.Data["selected_provider_auth_present"])
+	require.Equal(t, true, auth.Data["saved_oauth_token_present"])
+	require.Equal(t, true, auth.Data["saved_oauth_token_ready"])
 }
 
 func TestRunTreatsOllamaRouteAsCredentialOptional(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/modelrouting"
+	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/providerdiag"
 	"github.com/Rememorio/codog/internal/sandbox"
 	localstatus "github.com/Rememorio/codog/internal/status"
@@ -40,6 +41,7 @@ type Options struct {
 	BaseURL               string
 	APIKey                string
 	AuthToken             string
+	OAuthProfile          string
 	PermissionMode        string
 	PermissionModeRaw     string
 	PermissionModeSource  string
@@ -325,14 +327,21 @@ func checkConfigLoad(opts Options) Check {
 }
 
 func checkAuth(opts Options) Check {
-	auth := providerdiag.AnalyzeAuth(providerdiag.AuthOptions{
+	authOptions := providerdiag.AuthOptions{
 		Model:                 opts.Model,
 		RuntimeProvider:       opts.RuntimeProvider,
 		RuntimeProviderSource: opts.RuntimeProviderSource,
 		BaseURL:               opts.BaseURL,
 		APIKey:                opts.APIKey,
 		AuthToken:             opts.AuthToken,
-	})
+	}
+	auth := providerdiag.AnalyzeAuth(authOptions)
+	savedOAuth := inspectSavedOAuth(opts)
+	if savedOAuth.Ready && auth.SelectedProvider == modelrouting.ProviderAnthropic && !auth.SelectedProviderAuthPresent {
+		authOptions.AuthToken = "saved-oauth-token"
+		auth = providerdiag.AnalyzeAuth(authOptions)
+		auth.EffectiveAuthSource = "saved_oauth_token"
+	}
 	details := []string{
 		"Selected provider: " + auth.SelectedProvider,
 		fmt.Sprintf("API key configured: %t", auth.SelectedProviderAPIKeyPresent),
@@ -351,7 +360,17 @@ func checkAuth(opts Options) Check {
 	if len(auth.HeadersSent) != 0 {
 		details = append(details, "Headers sent: "+strings.Join(auth.HeadersSent, ", "))
 	}
+	if strings.TrimSpace(opts.ConfigHome) != "" {
+		details = append(details,
+			fmt.Sprintf("Saved OAuth token present: %t", savedOAuth.TokenPresent),
+			fmt.Sprintf("Saved OAuth token ready: %t", savedOAuth.Ready),
+		)
+		if savedOAuth.ProfileName != "" {
+			details = append(details, "OAuth profile: "+savedOAuth.ProfileName)
+		}
+	}
 	data := auth.Data()
+	addSavedOAuthData(data, savedOAuth)
 	if auth.SelectedProviderAuthPresent {
 		if auth.Warning != "" {
 			return Check{Name: "Auth", Status: StatusWarn, Summary: auth.Warning + ".", Details: details, Hint: auth.Hint, Data: data}
@@ -369,6 +388,25 @@ func checkAuth(opts Options) Check {
 		Details: details,
 		Hint:    providerAuthHint(auth.SelectedProvider, auth.RequiredAPIKeyEnv, auth.RequiredAuthEnvs),
 		Data:    data,
+	}
+}
+
+func inspectSavedOAuth(opts Options) oauth.Status {
+	if strings.TrimSpace(opts.ConfigHome) == "" {
+		return oauth.Status{Kind: "oauth", Action: "status", Status: "unknown"}
+	}
+	return oauth.InspectStatus(opts.ConfigHome, opts.OAuthProfile, time.Now().UTC())
+}
+
+func addSavedOAuthData(data map[string]any, status oauth.Status) {
+	data["saved_oauth_token_present"] = status.TokenPresent
+	data["saved_oauth_token_ready"] = status.Ready
+	data["saved_oauth_token_expired"] = status.Expired
+	data["saved_oauth_token_can_refresh"] = status.CanRefresh
+	data["oauth_profile_configured"] = status.ProfileConfigured
+	data["oauth_profile_name"] = status.ProfileName
+	if status.Issue != "" {
+		data["saved_oauth_issue"] = status.Issue
 	}
 }
 
