@@ -37,6 +37,40 @@ type DiscoveryRoot struct {
 	Exists bool   `json:"exists"`
 }
 
+type InstallReport struct {
+	Kind   string `json:"kind"`
+	Action string `json:"action"`
+	Status string `json:"status"`
+	Name   string `json:"name"`
+	Source string `json:"source"`
+	Path   string `json:"path"`
+	Target string `json:"target"`
+}
+
+type UninstallReport struct {
+	Kind    string `json:"kind"`
+	Action  string `json:"action"`
+	Status  string `json:"status"`
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Removed bool   `json:"removed"`
+}
+
+type SourceNotFoundError struct {
+	Source string
+	Err    error
+}
+
+func (e SourceNotFoundError) Error() string {
+	return fmt.Sprintf("template source %q was not found", e.Source)
+}
+
+func (e SourceNotFoundError) Unwrap() error {
+	return e.Err
+}
+
+var ErrNotFound = errors.New("template not found")
+
 var variableRe = regexp.MustCompile(`\{\{\s*\.?([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 
 func Load(configHome, workspace string) ([]Template, error) {
@@ -150,7 +184,94 @@ func Find(configHome, workspace, name string) (Template, error) {
 			Active:  true,
 		}, nil
 	}
-	return Template{}, fmt.Errorf("template %q not found", name)
+	return Template{}, fmt.Errorf("%w: %s", ErrNotFound, name)
+}
+
+func Install(source string, targetRoot string, explicitName string, targetLabel string) (InstallReport, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return InstallReport{}, errors.New("template install source is required")
+	}
+	targetRoot = strings.TrimSpace(targetRoot)
+	if targetRoot == "" {
+		return InstallReport{}, errors.New("template install target is required")
+	}
+	absSource, err := filepath.Abs(source)
+	if err != nil {
+		return InstallReport{}, err
+	}
+	resolvedSource, err := filepath.EvalSymlinks(absSource)
+	if err != nil {
+		return InstallReport{}, SourceNotFoundError{Source: source, Err: err}
+	}
+	info, err := os.Stat(resolvedSource)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return InstallReport{}, SourceNotFoundError{Source: source, Err: err}
+		}
+		return InstallReport{}, err
+	}
+	if info.IsDir() || !strings.EqualFold(filepath.Ext(resolvedSource), ".md") {
+		return InstallReport{}, fmt.Errorf("template source %q must be a markdown file", source)
+	}
+	name := strings.TrimSpace(explicitName)
+	if name == "" {
+		name = strings.TrimSuffix(filepath.Base(resolvedSource), filepath.Ext(resolvedSource))
+	}
+	if err := validateTemplateName(name); err != nil {
+		return InstallReport{}, err
+	}
+	if err := os.MkdirAll(targetRoot, 0o755); err != nil {
+		return InstallReport{}, err
+	}
+	dest := filepath.Join(targetRoot, name+".md")
+	if err := copyFile(resolvedSource, dest, 0o644); err != nil {
+		return InstallReport{}, err
+	}
+	return InstallReport{
+		Kind:   "templates",
+		Action: "install",
+		Status: "ok",
+		Name:   name,
+		Source: resolvedSource,
+		Path:   dest,
+		Target: targetLabel,
+	}, nil
+}
+
+func Uninstall(name string, roots []string) (UninstallReport, error) {
+	name = strings.TrimSpace(strings.TrimSuffix(name, ".md"))
+	if name == "" {
+		return UninstallReport{}, errors.New("template name is required")
+	}
+	if err := validateTemplateName(name); err != nil {
+		return UninstallReport{}, err
+	}
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		candidate := filepath.Join(root, name+".md")
+		if _, err := os.Stat(candidate); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return UninstallReport{}, err
+		}
+		if err := os.Remove(candidate); err != nil {
+			return UninstallReport{}, err
+		}
+		return UninstallReport{
+			Kind:    "templates",
+			Action:  "uninstall",
+			Status:  "ok",
+			Name:    name,
+			Path:    candidate,
+			Removed: true,
+		}, nil
+	}
+	return UninstallReport{}, fmt.Errorf("%w: %s", ErrNotFound, name)
 }
 
 func Render(template Template, vars map[string]string) (Rendered, error) {
@@ -219,6 +340,14 @@ func sourceRank(source string) int {
 	}
 }
 
+func validateTemplateName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.Contains(name, "..") || strings.ContainsAny(name, `/\:`) || name == "." {
+		return fmt.Errorf("invalid template name %q", name)
+	}
+	return nil
+}
+
 func preview(body string) string {
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
@@ -235,4 +364,15 @@ func cloneMap(values map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+func copyFile(source string, dest string, mode os.FileMode) error {
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(dest, data, mode)
 }

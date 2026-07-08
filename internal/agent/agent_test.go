@@ -27079,6 +27079,52 @@ func TestTemplatesAuditReportsShadowedEntries(t *testing.T) {
 	require.NotEmpty(t, userReview.ShadowedByPath)
 }
 
+func TestTemplatesInstallAndUninstall(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	sourceRoot := t.TempDir()
+	sourceFile := filepath.Join(sourceRoot, "review.md")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("Review {{target}}."), 0o644))
+
+	var out bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: configHome}, Workspace: workspace, Out: &out, Err: io.Discard}
+
+	require.NoError(t, app.Templates([]string{"install", sourceFile, "--json"}))
+	var install prompttemplates.InstallReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &install))
+	require.Equal(t, "templates", install.Kind)
+	require.Equal(t, "install", install.Action)
+	require.Equal(t, "review", install.Name)
+	require.Equal(t, "user", install.Target)
+	require.FileExists(t, filepath.Join(configHome, "templates", "review.md"))
+	out.Reset()
+
+	require.NoError(t, app.Templates([]string{"add", "--project", "--name", "brief", sourceFile, "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &install))
+	require.Equal(t, "brief", install.Name)
+	require.Equal(t, "workspace", install.Target)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "templates", "brief.md"))
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/templates install --project "+sourceFile+" --json", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), `"target": "workspace"`)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "templates", "review.md"))
+	out.Reset()
+
+	require.NoError(t, app.Templates([]string{"uninstall", "review", "--project", "--json"}))
+	var uninstall prompttemplates.UninstallReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &uninstall))
+	require.Equal(t, "templates", uninstall.Kind)
+	require.Equal(t, "uninstall", uninstall.Action)
+	require.True(t, uninstall.Removed)
+	require.NoFileExists(t, filepath.Join(workspace, ".codog", "templates", "review.md"))
+	out.Reset()
+
+	require.NoError(t, app.Templates([]string{"rm", "brief", "--project"}))
+	require.Contains(t, out.String(), "Template Uninstalled")
+	require.NoFileExists(t, filepath.Join(workspace, ".codog", "templates", "brief.md"))
+}
+
 func templateReportEntry(all []prompttemplates.Template, name string, source string) prompttemplates.Template {
 	for _, tmpl := range all {
 		if tmpl.Name == name && tmpl.Source == source {
@@ -27399,6 +27445,20 @@ func TestResourceCatalogErrorsHonorGlobalJSONFormat(t *testing.T) {
 			kind:      "templates",
 			errorKind: "missing_argument",
 			contains:  []string{`"action": "search"`, `"argument": "query"`},
+		},
+		{
+			name:      "templates install missing source",
+			args:      []string{"templates", "install"},
+			kind:      "templates",
+			errorKind: "missing_argument",
+			contains:  []string{`"action": "install"`, `"argument": "install_source"`},
+		},
+		{
+			name:      "templates uninstall missing name",
+			args:      []string{"templates", "uninstall"},
+			kind:      "templates",
+			errorKind: "missing_argument",
+			contains:  []string{`"action": "uninstall"`, `"argument": "template_name"`},
 		},
 		{
 			name:      "commands sources extra",

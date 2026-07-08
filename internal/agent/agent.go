@@ -50515,11 +50515,57 @@ func (a *App) Templates(args []string) error {
 		if !strings.HasSuffix(rendered.Rendered, "\n") {
 			fmt.Fprintln(a.Out)
 		}
+	case "install":
+		req, err := parseTemplateInstallArgs(rest)
+		if err != nil {
+			if errors.Is(err, errTemplateInstallMissingSource) {
+				return renderTemplateInstallMissingSource(a.Out, req.Format)
+			}
+			return err
+		}
+		targetRoot, targetLabel, err := a.templateTargetRoot(req.Target)
+		if err != nil {
+			return err
+		}
+		report, err := prompttemplates.Install(req.Source, targetRoot, req.Name, targetLabel)
+		if err != nil {
+			return renderTemplateLookupError(a.Out, "install", req.Source, err, req.Format)
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprintln(a.Out, "Template Installed")
+		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
+		fmt.Fprintf(a.Out, "  Target           %s\n", report.Target)
+		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
+	case "uninstall":
+		req, err := parseTemplateUninstallArgs(rest)
+		if err != nil {
+			if errors.Is(err, errTemplateUninstallMissingName) {
+				return renderMissingActionArgument(a.Out, "templates", "uninstall", "template_name", "templates uninstall requires a template name", "Usage: codog templates uninstall NAME [--project|--user] [--json|--output-format text|json]. Run `codog templates list` to see installed templates.", req.Format)
+			}
+			return err
+		}
+		roots := a.templateUninstallRoots(req.Target)
+		report, err := prompttemplates.Uninstall(req.Name, roots)
+		if err != nil {
+			return renderTemplateLookupError(a.Out, "uninstall", req.Name, err, req.Format)
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprintln(a.Out, "Template Uninstalled")
+		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
+		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
 	default:
 		return unexpectedExtraArgsError{
 			Command: "templates",
 			Args:    []string{action},
-			Usage:   "codog templates [list|search|audit|sources|show|apply] [ARGS...] [--json|--output-format text|json]",
+			Usage:   "codog templates [list|search|audit|sources|show|apply|install|uninstall] [ARGS...] [--json|--output-format text|json]",
 		}
 	}
 	return nil
@@ -50539,6 +50585,10 @@ func normalizeTemplatesAction(action string) string {
 		return "show"
 	case "apply", "render", "run", "exec", "execute", "call", "invoke":
 		return "apply"
+	case "install", "add":
+		return "install"
+	case "uninstall", "remove", "delete", "rm", "del":
+		return "uninstall"
 	default:
 		return strings.ToLower(strings.TrimSpace(action))
 	}
@@ -50710,7 +50760,24 @@ type templateApplyRequest struct {
 	Format string
 }
 
-var errTemplateApplyMissingName = errors.New("templates apply missing name")
+type templateInstallRequest struct {
+	Format string
+	Target string
+	Name   string
+	Source string
+}
+
+type templateUninstallRequest struct {
+	Format string
+	Target string
+	Name   string
+}
+
+var (
+	errTemplateApplyMissingName     = errors.New("templates apply missing name")
+	errTemplateInstallMissingSource = errors.New("templates install source is required")
+	errTemplateUninstallMissingName = errors.New("templates uninstall name is required")
+)
 
 func parseTemplateOutputArgs(command string, args []string) (string, []string, error) {
 	format := "text"
@@ -50800,6 +50867,180 @@ func addTemplateVar(vars map[string]string, value string) error {
 	}
 	vars[key] = val
 	return nil
+}
+
+func parseTemplateInstallArgs(args []string) (templateInstallRequest, error) {
+	req := templateInstallRequest{Format: "text", Target: "user"}
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("templates install output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--project" || arg == "--workspace":
+			req.Target = "project"
+		case arg == "--user":
+			req.Target = "user"
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("templates install target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--name":
+			index++
+			if index >= len(args) {
+				return req, errors.New("templates install name is required")
+			}
+			req.Name = args[index]
+		case strings.HasPrefix(arg, "--name="):
+			req.Name = strings.TrimPrefix(arg, "--name=")
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "templates install"); err != nil {
+		return req, err
+	}
+	if len(positionals) == 0 {
+		return req, errTemplateInstallMissingSource
+	}
+	if len(positionals) != 1 {
+		return req, errors.New("usage: codog templates install [--project|--user] [--name NAME] SOURCE [--json]")
+	}
+	req.Source = positionals[0]
+	return req, nil
+}
+
+func parseTemplateUninstallArgs(args []string) (templateUninstallRequest, error) {
+	req := templateUninstallRequest{Format: "text"}
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("templates uninstall output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--project" || arg == "--workspace":
+			req.Target = "project"
+		case arg == "--user":
+			req.Target = "user"
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("templates uninstall target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "templates uninstall"); err != nil {
+		return req, err
+	}
+	if len(positionals) == 0 {
+		return req, errTemplateUninstallMissingName
+	}
+	if len(positionals) != 1 {
+		return req, errors.New("usage: codog templates uninstall NAME [--project|--user] [--json]")
+	}
+	req.Name = positionals[0]
+	return req, nil
+}
+
+func (a *App) templateTargetRoot(target string) (string, string, error) {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "", "user":
+		return filepath.Join(a.Config.ConfigHome, "templates"), "user", nil
+	case "project", "workspace":
+		return filepath.Join(a.Workspace, ".codog", "templates"), "workspace", nil
+	default:
+		return "", "", fmt.Errorf("unknown templates target %q", target)
+	}
+}
+
+func (a *App) templateUninstallRoots(target string) []string {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "user":
+		return []string{filepath.Join(a.Config.ConfigHome, "templates")}
+	case "project", "workspace":
+		return []string{filepath.Join(a.Workspace, ".codog", "templates")}
+	default:
+		return []string{
+			filepath.Join(a.Workspace, ".codog", "templates"),
+			filepath.Join(a.Config.ConfigHome, "templates"),
+		}
+	}
+}
+
+func renderTemplateLookupError(out io.Writer, action string, subject string, err error, format string) error {
+	if errors.Is(err, prompttemplates.ErrNotFound) {
+		return renderTemplateNotFound(out, action, subject, format)
+	}
+	var sourceMissing prompttemplates.SourceNotFoundError
+	if errors.As(err, &sourceMissing) {
+		source := strings.TrimSpace(sourceMissing.Source)
+		if source == "" {
+			source = subject
+		}
+		return renderTemplateNotFound(out, action, source, format)
+	}
+	return err
+}
+
+func renderTemplateNotFound(out io.Writer, action string, subject string, format string) error {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		action = "show"
+	}
+	subject = strings.TrimSpace(subject)
+	message := "template was not found"
+	if subject != "" {
+		if action == "install" {
+			message = fmt.Sprintf("template source %q was not found", subject)
+		} else {
+			message = fmt.Sprintf("template %q was not found", subject)
+		}
+	}
+	return renderActionError(out, actionErrorReport{
+		Kind:      "templates",
+		Action:    action,
+		Status:    "error",
+		ErrorKind: "template_not_found",
+		Message:   message,
+		Hint:      "Run `codog templates list` to see available templates, or `codog templates add <path>` / `codog templates install <path>` to install one.",
+	}, format)
+}
+
+func renderTemplateInstallMissingSource(out io.Writer, format string) error {
+	return renderActionError(out, actionErrorReport{
+		Kind:      "templates",
+		Action:    "install",
+		Status:    "error",
+		ErrorKind: "missing_argument",
+		Argument:  "install_source",
+		Message:   "templates install requires a source",
+		Hint:      "Usage: codog templates install [--project|--user] [--name NAME] SOURCE [--json|--output-format text|json].",
+	}, format)
 }
 
 func (a *App) MCP(ctx context.Context, args []string) error {
@@ -59420,8 +59661,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"templates",
 			"templates",
-			"codog templates [list|ls|search|find|audit|doctor|sources|roots|show|view|apply|render|run]",
-			"Templates\n\nUsage:\n  codog templates [list|ls|search|find|audit|doctor|sources|roots|show|view|apply|render|run]\n  codog templates search QUERY [--output-format text|json]\n  codog templates audit [--output-format text|json]\n\nLists, searches, audits sources, shows, or renders parameterized prompt templates. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter templates by name, source, preview, or body; `audit`, `doctor`, `check`, and `validate` report source health plus active and shadowed templates; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `run`, `exec`, `execute`, `call`, and `invoke` are aliases for `apply`.\n",
+			"codog templates [list|ls|search|find|audit|doctor|sources|roots|show|view|apply|render|run|add|install|uninstall|remove|rm]",
+			"Templates\n\nUsage:\n  codog templates [list|ls|search|find|audit|doctor|sources|roots|show|view|apply|render|run|add|install|uninstall|remove|rm]\n  codog templates search QUERY [--output-format text|json]\n  codog templates audit [--output-format text|json]\n  codog templates install [--project|--user] [--name NAME] SOURCE [--output-format text|json]\n\nLists, searches, audits sources, shows, renders, installs, or removes parameterized prompt templates. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter templates by name, source, preview, or body; `audit`, `doctor`, `check`, and `validate` report source health plus active and shadowed templates; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `run`, `exec`, `execute`, `call`, and `invoke` are aliases for `apply`; `add` is an alias for `install`; `remove`, `rm`, and `del` are aliases for `uninstall`.\n",
 			[]string{"templates", "roots", "sources", "query", "name", "path", "body", "active", "shadowed_by"},
 			[]string{"ok", "error"},
 			false,
@@ -59629,7 +59870,7 @@ Usage:
   %s [flags] pin|unpin [message-index|last] [--session ID] [--json|--output-format text|json]
   %s [flags] skill|skills [list|ls|search|find|audit|doctor|sources|roots|status|enable|disable|show|info|describe|invoke|add|install|uninstall]
   %s [flags] commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec|add|install|uninstall|remove|rm]
-  %s [flags] templates [list|ls|search|find|audit|doctor|sources|roots|show|view|apply|render|run]
+  %s [flags] templates [list|ls|search|find|audit|doctor|sources|roots|show|view|apply|render|run|add|install|uninstall|remove|rm]
   %s [flags] hooks [list|health EVENT|run EVENT|watch-paths list|check] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|ls|status|show|view|set|use|clear|off] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME] | models [list|ls|aliases|routes|search|find QUERY|show|view [MODEL]|current|help] [--json|--output-format text|json]

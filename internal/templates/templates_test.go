@@ -52,6 +52,40 @@ func TestRenderReportsMissingVariables(t *testing.T) {
 	require.Contains(t, rendered.Rendered, "{{owner}}")
 }
 
+func TestInstallAndUninstallTemplates(t *testing.T) {
+	configHome := t.TempDir()
+	sourceRoot := t.TempDir()
+	sourceFile := filepath.Join(sourceRoot, "review.md")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("Review {{target}}."), 0o644))
+
+	report, err := Install(sourceFile, filepath.Join(configHome, "templates"), "", "user")
+	require.NoError(t, err)
+	require.Equal(t, "templates", report.Kind)
+	require.Equal(t, "install", report.Action)
+	require.Equal(t, "review", report.Name)
+	require.Equal(t, "user", report.Target)
+	require.FileExists(t, filepath.Join(configHome, "templates", "review.md"))
+
+	named, err := Install(sourceFile, filepath.Join(configHome, "templates"), "brief", "user")
+	require.NoError(t, err)
+	require.Equal(t, "brief", named.Name)
+	require.FileExists(t, filepath.Join(configHome, "templates", "brief.md"))
+
+	removed, err := Uninstall("brief", []string{filepath.Join(configHome, "templates")})
+	require.NoError(t, err)
+	require.Equal(t, "uninstall", removed.Action)
+	require.True(t, removed.Removed)
+	require.NoFileExists(t, filepath.Join(configHome, "templates", "brief.md"))
+
+	_, err = Install(filepath.Join(sourceRoot, "missing.md"), filepath.Join(configHome, "templates"), "", "user")
+	var missing SourceNotFoundError
+	require.ErrorAs(t, err, &missing)
+
+	_, err = Install(sourceRoot, filepath.Join(configHome, "templates"), "", "user")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "markdown file")
+}
+
 func templateByNameAndSource(all []Template, name string, source string) Template {
 	for _, tmpl := range all {
 		if tmpl.Name == name && tmpl.Source == source {
