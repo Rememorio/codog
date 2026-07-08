@@ -26365,6 +26365,26 @@ Mismatch body.`), 0o644))
 	require.Equal(t, userDebug.Path, bundledDebug.ShadowedByPath)
 	out.Reset()
 
+	require.NoError(t, app.Skills([]string{"audit", "--json"}))
+	var audit skillAuditReport
+	require.NoError(t, json.Unmarshal([]byte(out.String()), &audit))
+	require.Equal(t, "skills", audit.Kind)
+	require.Equal(t, "audit", audit.Action)
+	require.Equal(t, "degraded", audit.Status)
+	require.GreaterOrEqual(t, audit.SkillCount, 2)
+	require.GreaterOrEqual(t, audit.ActiveSkillCount, 1)
+	require.GreaterOrEqual(t, audit.ShadowedSkillCount, 1)
+	require.GreaterOrEqual(t, audit.SourceCount, 1)
+	require.Equal(t, 1, audit.MetadataDriftCount)
+	require.Contains(t, audit.MetadataDrift, skills.MetadataDrift{
+		InvocationName:  "mismatch",
+		FrontmatterName: "external-review",
+		Path:            filepath.Join(configHome, "skills", "mismatch", "SKILL.md"),
+		Source:          "user",
+	})
+	require.Contains(t, audit.Message, "metadata drift")
+	out.Reset()
+
 	require.NoError(t, app.Skills([]string{"list"}))
 	require.Contains(t, out.String(), "debug\tuser\tskills_dir\tactive")
 	require.Contains(t, out.String(), "debug\tbundled\tskills_dir\tshadowed by user")
@@ -26623,8 +26643,14 @@ func TestSkillsCommandActionAliases(t *testing.T) {
 
 func TestSkillsActivationCommandsAndUnsupportedAction(t *testing.T) {
 	configHome := t.TempDir()
+	workspace := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", "")
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	data, err := json.Marshal(map[string]string{
+		"config_home": configHome,
+		"workspace":   workspace,
+	})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(configPath, data, 0o644))
 	sourceFile := filepath.Join(t.TempDir(), "review.md")
@@ -26671,6 +26697,20 @@ func TestSkillsActivationCommandsAndUnsupportedAction(t *testing.T) {
 	require.Equal(t, []string{"review"}, status.EnabledSkills)
 	require.Equal(t, []string{"review"}, status.ResolvedSkills)
 	require.GreaterOrEqual(t, status.AvailableSkillCount, 1)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "doctor", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var audit skillAuditReport
+	require.NoError(t, json.Unmarshal([]byte(out), &audit))
+	require.Equal(t, "skills", audit.Kind)
+	require.Equal(t, "audit", audit.Action)
+	require.Equal(t, "ok", audit.Status)
+	require.Equal(t, []string{"review"}, audit.EnabledSkills)
+	require.Equal(t, []string{"review"}, audit.ResolvedSkills)
+	require.Empty(t, audit.MissingSkills)
+	require.Contains(t, audit.Message, "passed")
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "enable", "review", "--path", configPath, "--json"}, config.FlagOverrides{})
@@ -26729,6 +26769,7 @@ func TestSkillsActivationCommandsAndUnsupportedAction(t *testing.T) {
 	require.Equal(t, "unsupported_skills_action", report.ErrorKind)
 	require.Contains(t, report.Message, "unsupported skills action")
 	require.Contains(t, report.Hint, "codog skills list")
+	require.Contains(t, report.Hint, "codog skills audit")
 	require.Contains(t, report.Hint, "codog skills status")
 	require.Contains(t, report.Hint, "codog skills enable")
 	require.Contains(t, report.Hint, "codog skills disable")
@@ -26768,6 +26809,8 @@ func TestSkillsActivationCommandsAndUnsupportedAction(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &help))
 	require.Equal(t, "skills", help.Topic)
 	require.Equal(t, "skills", help.Command)
+	require.Contains(t, help.Usage, "audit")
+	require.Contains(t, help.Usage, "doctor")
 	require.Contains(t, help.Usage, "sources")
 	require.Contains(t, help.Usage, "status")
 	require.Contains(t, help.Usage, "enable")
@@ -26776,6 +26819,7 @@ func TestSkillsActivationCommandsAndUnsupportedAction(t *testing.T) {
 	require.Contains(t, help.Usage, "describe")
 	require.Contains(t, help.Usage, "help")
 	require.Contains(t, help.Help, "roots")
+	require.Contains(t, help.Help, "metadata drift")
 	require.Contains(t, help.Help, "aliases for `show`")
 	require.Contains(t, help.Help, "aliases for `enable` and `disable`")
 	require.Contains(t, help.Help, "codog skills help")

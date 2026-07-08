@@ -48933,6 +48933,8 @@ func (a *App) Skills(args []string) error {
 			return renderMissingActionArgument(a.Out, "skills", "search", "query", "skills search requires a query", "Usage: codog skills search QUERY [--json|--output-format text|json].", format)
 		}
 		return a.listSkillsWithAction([]string{query, "--output-format", format}, "search", query)
+	case "audit":
+		return a.skillAudit(rest)
 	case "sources":
 		return a.skillSources(rest)
 	case "help":
@@ -49059,6 +49061,8 @@ func normalizeSkillsAction(action string) string {
 		return "list"
 	case "search", "find", "query", "lookup":
 		return "search"
+	case "audit", "doctor", "check", "validate":
+		return "audit"
 	case "source", "sources", "root", "roots":
 		return "sources"
 	case "show", "info", "describe", "get", "view", "cat":
@@ -49144,7 +49148,7 @@ func renderUnsupportedSkillsAction(out io.Writer, action string, format string) 
 		Status:    "error",
 		ErrorKind: "unsupported_skills_action",
 		Message:   fmt.Sprintf("unsupported skills action %q", action),
-		Hint:      "Supported: `codog skills list|ls [FILTER]`, `codog skills search|find QUERY`, `codog skills sources|roots`, `codog skills status`, `codog skills enable|on NAME`, `codog skills disable|off NAME`, `codog skills show|info|describe|view NAME`, `codog skills invoke|run|exec NAME [ARGS...]`, `codog skills add|install SOURCE`, `codog skills uninstall|remove|rm NAME`, or `codog skills help`.",
+		Hint:      "Supported: `codog skills list|ls [FILTER]`, `codog skills search|find QUERY`, `codog skills audit|doctor`, `codog skills sources|roots`, `codog skills status`, `codog skills enable|on NAME`, `codog skills disable|off NAME`, `codog skills show|info|describe|view NAME`, `codog skills invoke|run|exec NAME [ARGS...]`, `codog skills add|install SOURCE`, `codog skills uninstall|remove|rm NAME`, or `codog skills help`.",
 	}, format)
 }
 
@@ -49188,6 +49192,24 @@ type skillActivationReport struct {
 	ResolvedSkills      []string `json:"resolved_skills,omitempty"`
 	MissingSkills       []string `json:"missing_skills,omitempty"`
 	Message             string   `json:"message,omitempty"`
+}
+
+type skillAuditReport struct {
+	Kind                string                 `json:"kind"`
+	Action              string                 `json:"action"`
+	Status              string                 `json:"status"`
+	SkillCount          int                    `json:"skill_count"`
+	ActiveSkillCount    int                    `json:"active_skill_count"`
+	ShadowedSkillCount  int                    `json:"shadowed_skill_count"`
+	EnabledSkills       []string               `json:"enabled_skills"`
+	ResolvedSkills      []string               `json:"resolved_skills,omitempty"`
+	MissingSkills       []string               `json:"missing_skills,omitempty"`
+	SourceCount         int                    `json:"source_count"`
+	Sources             []skills.DiscoveryRoot `json:"sources"`
+	MetadataDriftCount  int                    `json:"metadata_drift_count"`
+	MetadataDrift       []skills.MetadataDrift `json:"metadata_drift,omitempty"`
+	AvailableSkillCount int                    `json:"available_skill_count"`
+	Message             string                 `json:"message"`
 }
 
 func (a *App) skillActivation(action string, args []string) error {
@@ -49504,6 +49526,90 @@ func skillStatusMessage(enabled []string, missing []string) string {
 		return "Some enabled skills could not be resolved."
 	}
 	return "All enabled skills resolved."
+}
+
+func (a *App) skillAudit(args []string) error {
+	format, err := parseSimpleOutputFormat("skills audit", args)
+	if err != nil {
+		return err
+	}
+	all, err := skills.Load(a.Config.ConfigHome, a.Workspace)
+	if err != nil {
+		return err
+	}
+	roots := skills.Sources(a.Config.ConfigHome, a.Workspace)
+	drifts := skills.MetadataDrifts(all)
+	enabled := normalizeEnabledSkillNames(a.Config.EnabledSkills)
+	available := activeSkillNames(all)
+	resolved, missing := resolveEnabledSkillNames(enabled, available)
+	activeCount := 0
+	for _, skill := range all {
+		if skill.Active {
+			activeCount++
+		}
+	}
+	report := skillAuditReport{
+		Kind:                "skills",
+		Action:              "audit",
+		Status:              "ok",
+		SkillCount:          len(all),
+		ActiveSkillCount:    activeCount,
+		ShadowedSkillCount:  len(all) - activeCount,
+		EnabledSkills:       enabled,
+		ResolvedSkills:      resolved,
+		MissingSkills:       missing,
+		SourceCount:         len(roots),
+		Sources:             roots,
+		MetadataDriftCount:  len(drifts),
+		MetadataDrift:       drifts,
+		AvailableSkillCount: len(available),
+	}
+	if len(drifts) != 0 || len(missing) != 0 {
+		report.Status = "degraded"
+	}
+	report.Message = skillAuditMessage(report)
+	return renderSkillAuditReport(a.Out, format, report)
+}
+
+func skillAuditMessage(report skillAuditReport) string {
+	var issues []string
+	if report.MetadataDriftCount != 0 {
+		issues = append(issues, fmt.Sprintf("%d metadata drift", report.MetadataDriftCount))
+	}
+	if len(report.MissingSkills) != 0 {
+		issues = append(issues, fmt.Sprintf("%d missing enabled skill", len(report.MissingSkills)))
+	}
+	if len(issues) == 0 {
+		return "Skills audit passed."
+	}
+	return "Skills audit found " + strings.Join(issues, " and ") + "."
+}
+
+func renderSkillAuditReport(out io.Writer, format string, report skillAuditReport) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Skill Audit")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Skills           %d\n", report.SkillCount)
+	fmt.Fprintf(out, "  Active           %d\n", report.ActiveSkillCount)
+	fmt.Fprintf(out, "  Shadowed         %d\n", report.ShadowedSkillCount)
+	fmt.Fprintf(out, "  Sources          %d\n", report.SourceCount)
+	if len(report.EnabledSkills) == 0 {
+		fmt.Fprintln(out, "  Enabled skills   none")
+	} else {
+		fmt.Fprintf(out, "  Enabled skills   %s\n", strings.Join(report.EnabledSkills, ", "))
+	}
+	if len(report.MissingSkills) != 0 {
+		fmt.Fprintf(out, "  Missing skills   %s\n", strings.Join(report.MissingSkills, ", "))
+	}
+	fmt.Fprintf(out, "  Metadata drift   %d\n", report.MetadataDriftCount)
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+	return nil
 }
 
 func parseSkillInstallArgs(args []string) (skillInstallRequest, error) {
@@ -58764,17 +58870,17 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec := localCommandHelpSpec(
 			"skills",
 			"skills",
-			"codog skill|skills [list|ls|search|find|sources|roots|status|enable|disable|show|info|describe|view|invoke|run|exec|add|install|uninstall|remove|rm|help]",
-			"Skills\n\nUsage:\n  codog skills [list|ls|search|find|sources|roots|status|enable|disable|show|info|describe|view|invoke|run|exec|add|install|uninstall|remove|rm|help]\n  codog skills search QUERY [--output-format text|json]\n  codog skill [same actions]\n\nLists, searches, audits sources, enables, disables, renders, invokes, installs, or removes bundled, user, workspace, plugin, compatible Claude Markdown skills, and legacy `/commands` Markdown exposed as skill-like compatibility entries. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter skills by name, display name, or description; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `run`, `exec`, `execute`, and `call` are aliases for `invoke`; `add` is an alias for `install`; `remove`, `rm`, and `del` are aliases for `uninstall`; `on` and `off` are aliases for `enable` and `disable`. Run `codog skills help` for this local command reference.\n",
-			[]string{"skills", "roots", "name", "path", "body", "origin", "active", "shadowed_by", "metadata_drift", "metadata_drift_count"},
-			[]string{"ok", "error"},
+			"codog skill|skills [list|ls|search|find|audit|doctor|sources|roots|status|enable|disable|show|info|describe|view|invoke|run|exec|add|install|uninstall|remove|rm|help]",
+			"Skills\n\nUsage:\n  codog skills [list|ls|search|find|audit|doctor|sources|roots|status|enable|disable|show|info|describe|view|invoke|run|exec|add|install|uninstall|remove|rm|help]\n  codog skills search QUERY [--output-format text|json]\n  codog skills audit [--output-format text|json]\n  codog skill [same actions]\n\nLists, searches, audits sources, enables, disables, renders, invokes, installs, or removes bundled, user, workspace, plugin, compatible Claude Markdown skills, and legacy `/commands` Markdown exposed as skill-like compatibility entries. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter skills by name, display name, or description; `audit`, `doctor`, `check`, and `validate` report source health, enabled skill resolution, shadowing, and metadata drift; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `run`, `exec`, `execute`, and `call` are aliases for `invoke`; `add` is an alias for `install`; `remove`, `rm`, and `del` are aliases for `uninstall`; `on` and `off` are aliases for `enable` and `disable`. Run `codog skills help` for this local command reference.\n",
+			[]string{"skills", "roots", "sources", "enabled_skills", "resolved_skills", "missing_skills", "name", "path", "body", "origin", "active", "shadowed_by", "metadata_drift", "metadata_drift_count"},
+			[]string{"ok", "degraded", "error"},
 			true,
 		)
 		spec.Aliases = []string{"skill"}
 		if strings.EqualFold(strings.TrimSpace(topic), "skill") {
 			spec.Topic = "skill"
 			spec.Command = "skill"
-			spec.Usage = "codog skill [list|ls|search|find|sources|roots|status|enable|disable|show|view|invoke|run|exec|add|install|uninstall|remove|rm|help]"
+			spec.Usage = "codog skill [list|ls|search|find|audit|doctor|sources|roots|status|enable|disable|show|view|invoke|run|exec|add|install|uninstall|remove|rm|help]"
 			spec.Aliases = []string{"skills"}
 		}
 		return spec, true
@@ -58999,7 +59105,7 @@ Usage:
   %s [flags] todos [list|ls|add|new|start|doing|done|complete|pending|reopen|clear|reset] [ARGS...] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID] | paste [--print|--json] [--session ID]
   %s [flags] pin|unpin [message-index|last] [--session ID] [--json|--output-format text|json]
-  %s [flags] skill|skills [list|sources|show|info|describe|invoke|add|install|uninstall]
+  %s [flags] skill|skills [list|ls|search|find|audit|doctor|sources|roots|status|enable|disable|show|info|describe|invoke|add|install|uninstall]
   %s [flags] commands [list|ls|sources|roots|show|view|run|render|exec]
   %s [flags] templates [list|ls|show|view|apply|render|run]
   %s [flags] hooks [list|health EVENT|run EVENT|watch-paths list|check] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
