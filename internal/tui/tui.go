@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -75,6 +76,7 @@ type model struct {
 	searchOpen bool
 	searchHits []string
 	searchPos  int
+	turnCancel context.CancelFunc
 }
 
 type transcriptEntry struct {
@@ -201,7 +203,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case turnDoneMsg:
 		m.busy = false
-		if msg.Err != nil {
+		if m.turnCancel != nil {
+			m.turnCancel()
+			m.turnCancel = nil
+		}
+		if msg.Interrupted || errors.Is(msg.Err, context.Canceled) {
+			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Interrupted by user."})
+			m.status = "interrupted"
+		} else if msg.Err != nil {
 			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
 			m.status = "error"
 		} else if strings.TrimSpace(msg.Output) != "" {
@@ -220,6 +229,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":
+			if m.busy {
+				m.interruptTurn()
+				return m, nil
+			}
 			if m.searchOpen {
 				m.closeHistorySearch(false)
 				return m, nil
@@ -354,9 +367,10 @@ func (m model) View() string {
 }
 
 type turnDoneMsg struct {
-	Role   string
-	Output string
-	Err    error
+	Role        string
+	Output      string
+	Err         error
+	Interrupted bool
 }
 
 func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
@@ -377,6 +391,8 @@ func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if strings.HasPrefix(value, "/") && m.slash != nil {
+		ctx, cancel := context.WithCancel(m.ctx)
+		m.turnCancel = cancel
 		m.appendHistory(value)
 		m.textarea.SetValue("")
 		m.matches = nil
@@ -387,13 +403,15 @@ func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
 		m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: value})
 		m.refreshViewport()
 		m.viewport.GotoBottom()
-		return m, runSlashCommand(m.ctx, m.slash, value)
+		return m, runSlashCommand(ctx, m.slash, value)
 	}
 	if m.submit == nil {
 		m.result = Result{Submitted: true, Prompt: value}
 		return m, tea.Quit
 	}
 	m.appendHistory(value)
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.turnCancel = cancel
 	m.textarea.SetValue("")
 	m.matches = nil
 	m.selected = 0
@@ -403,13 +421,13 @@ func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
 	m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: value})
 	m.refreshViewport()
 	m.viewport.GotoBottom()
-	return m, runSubmitCommand(m.ctx, m.submit, value)
+	return m, runSubmitCommand(ctx, m.submit, value)
 }
 
 func runSubmitCommand(ctx context.Context, submit SubmitFunc, prompt string) tea.Cmd {
 	return func() tea.Msg {
 		output, err := submit(ctx, prompt)
-		return turnDoneMsg{Role: "assistant", Output: output, Err: err}
+		return turnDoneMsg{Role: "assistant", Output: output, Err: err, Interrupted: errors.Is(err, context.Canceled)}
 	}
 }
 
@@ -422,8 +440,18 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 		if handled && err == nil && strings.TrimSpace(output) == "" {
 			output = "Done."
 		}
-		return turnDoneMsg{Role: "system", Output: output, Err: err}
+		return turnDoneMsg{Role: "system", Output: output, Err: err, Interrupted: errors.Is(err, context.Canceled)}
 	}
+}
+
+func (m *model) interruptTurn() {
+	if !m.busy {
+		return
+	}
+	if m.turnCancel != nil {
+		m.turnCancel()
+	}
+	m.status = "interrupting"
 }
 
 func (m model) completeSlashCommand() model {
@@ -519,6 +547,16 @@ func statusBarText(status string, width int) string {
 	if status == "" {
 		status = "ready"
 	}
+	if isBusyStatus(status) {
+		switch {
+		case width > 0 && width < 70:
+			return fmt.Sprintf("%s · Esc cancel", status)
+		case width > 0 && width < 90:
+			return fmt.Sprintf("%s · Esc/Ctrl-C cancel current turn", status)
+		default:
+			return fmt.Sprintf("%s · Esc/Ctrl-C cancel current turn · wait for tools to stop", status)
+		}
+	}
 	switch {
 	case width > 0 && width < 70:
 		return fmt.Sprintf("%s · Enter · Tab · Ctrl-R · Esc", status)
@@ -526,6 +564,15 @@ func statusBarText(status string, width int) string {
 		return fmt.Sprintf("%s · Enter send · Alt+Enter newline · Tab · Ctrl-R · Esc", status)
 	default:
 		return fmt.Sprintf("%s · Enter send · Alt+Enter newline · Tab complete · Ctrl-R history · ? help · Esc quit", status)
+	}
+}
+
+func isBusyStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running", "running slash", "interrupting":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -843,7 +890,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+J      insert newline",
 		"  PgUp/PgDn   scroll transcript",
 		"  ?           toggle this help panel",
-		"  Esc         close help or quit",
+		"  Esc         cancel a running turn, close help, or quit",
 	}
 	if len(candidates) > 0 {
 		sections = append(sections, "", "Completions")

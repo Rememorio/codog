@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -94,6 +95,15 @@ func TestStatusBarUsesCompactHintsAtTerminalWidth(t *testing.T) {
 	require.Contains(t, text, "Esc")
 	require.Contains(t, text, "Ctrl-R")
 	require.NotContains(t, text, "Tab complete")
+	require.LessOrEqual(t, len([]rune(text)), 80)
+}
+
+func TestStatusBarShowsCancelHintWhileRunning(t *testing.T) {
+	text := statusBarText("running", 80)
+
+	require.Contains(t, text, "cancel")
+	require.Contains(t, text, "Esc")
+	require.NotContains(t, text, "Enter send")
 	require.LessOrEqual(t, len([]rune(text)), 80)
 }
 
@@ -238,6 +248,51 @@ func TestSubmittingPromptAppendsTUIHistory(t *testing.T) {
 
 	require.Contains(t, m.history, "new prompt")
 	require.Equal(t, -1, m.historyPos)
+}
+
+func TestEscapeCancelsBusyTurnWithoutQuitting(t *testing.T) {
+	ta := newPromptTextarea("long running prompt")
+	m := newModel(context.Background(), ta, nil, nil)
+	var seen context.Context
+	m.submit = func(ctx context.Context, prompt string) (string, error) {
+		seen = ctx
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.True(t, m.busy)
+	require.NotNil(t, m.turnCancel)
+	require.NotNil(t, cmd)
+
+	updated, quit := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.Nil(t, quit)
+	require.True(t, m.busy)
+	require.Equal(t, "interrupting", m.status)
+
+	msg := cmd().(turnDoneMsg)
+	require.True(t, msg.Interrupted)
+	require.ErrorIs(t, msg.Err, context.Canceled)
+	require.ErrorIs(t, seen.Err(), context.Canceled)
+
+	updated, _ = m.Update(msg)
+	m = updated.(model)
+	require.False(t, m.busy)
+	require.Nil(t, m.turnCancel)
+	require.Equal(t, "interrupted", m.status)
+	require.Contains(t, m.View(), "Interrupted by user.")
+}
+
+func TestCanceledSlashCommandRendersInterrupted(t *testing.T) {
+	cmd := runSlashCommand(context.Background(), func(context.Context, string) (string, bool, error) {
+		return "", true, context.Canceled
+	}, "/status")
+	msg := cmd().(turnDoneMsg)
+
+	require.True(t, msg.Interrupted)
+	require.True(t, errors.Is(msg.Err, context.Canceled))
 }
 
 func TestPreviewQuestionMarkOpensHelpWhenComposerEmpty(t *testing.T) {
