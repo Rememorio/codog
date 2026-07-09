@@ -10251,7 +10251,7 @@ func (SkillTool) Definition() anthropic.ToolDefinition {
 			"properties": map[string]any{
 				"action": map[string]any{
 					"type":        "string",
-					"enum":        []string{"list", "show", "invoke"},
+					"enum":        []string{"list", "ls", "search", "find", "show", "info", "describe", "view", "inspect", "read", "invoke", "run", "use", "load", "activate"},
 					"description": "Action to run. Defaults to invoke when skill is set, otherwise list.",
 				},
 				"skill": map[string]any{
@@ -10352,9 +10352,11 @@ func normalizeSkillToolAction(action string, skill string) string {
 			return "list"
 		}
 		return "invoke"
-	case "run", "use", "load":
+	case "ls", "search", "find":
+		return "list"
+	case "run", "use", "load", "activate":
 		return "invoke"
-	case "info", "describe":
+	case "info", "describe", "view", "inspect", "read":
 		return "show"
 	default:
 		return action

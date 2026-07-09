@@ -3878,6 +3878,10 @@ func TestSkillToolLoadsAndRendersSkill(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "skills", "internal", "SKILL.md"), []byte("---\ndescription: Internal only.\nuser-invocable: false\n---\nInternal body"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "deploy.md"), []byte("Deploy command body"), 0o644))
 	tool := SkillTool{Workspace: workspace, ConfigHome: configHome}
+	definition := tool.Definition()
+	actionSchema, ok := definition.InputSchema["properties"].(map[string]any)["action"].(map[string]any)
+	require.True(t, ok)
+	require.ElementsMatch(t, []string{"list", "ls", "search", "find", "show", "info", "describe", "view", "inspect", "read", "invoke", "run", "use", "load", "activate"}, actionSchema["enum"])
 
 	out, err := tool.Execute(context.Background(), []byte(`{"max_results":100}`))
 	require.NoError(t, err)
@@ -3894,11 +3898,23 @@ func TestSkillToolLoadsAndRendersSkill(t *testing.T) {
 	require.Contains(t, out, `"name": "internal"`)
 	require.NotContains(t, out, `"name": "review"`)
 
+	out, err = tool.Execute(context.Background(), []byte(`{"action":"find","query":"review","max_results":5}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"action": "list"`)
+	require.Contains(t, out, `"query": "review"`)
+	require.Contains(t, out, `"name": "review"`)
+	require.NotContains(t, out, `"name": "internal"`)
+
 	out, err = tool.Execute(context.Background(), []byte(`{"action":"show","skill":"internal"}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `"action": "show"`)
 	require.Contains(t, out, `"skill": "internal"`)
 	require.Contains(t, out, "Internal body")
+
+	out, err = tool.Execute(context.Background(), []byte(`{"action":"view","skill":"internal"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"action": "show"`)
+	require.Contains(t, out, `"skill": "internal"`)
 
 	out, err = tool.Execute(context.Background(), []byte(`{"skill":"$review","args":"check auth"}`))
 	require.NoError(t, err)
@@ -3909,6 +3925,12 @@ func TestSkillToolLoadsAndRendersSkill(t *testing.T) {
 	require.Contains(t, out, `"description": "Review code changes."`)
 	require.Contains(t, out, "Review skill body")
 	require.Contains(t, out, "User request: check auth")
+
+	out, err = tool.Execute(context.Background(), []byte(`{"action":"activate","skill":"review","args":"check deploy"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"action": "invoke"`)
+	require.Contains(t, out, `"args": "check deploy"`)
+	require.Contains(t, out, "User request: check deploy")
 
 	out, err = tool.Execute(context.Background(), []byte(`{"skill":"/deploy","args":"production"}`))
 	require.NoError(t, err)
