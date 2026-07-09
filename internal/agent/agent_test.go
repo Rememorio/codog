@@ -11082,6 +11082,7 @@ func TestLocalSubcommandErrorContracts(t *testing.T) {
 		action    string
 		errorKind string
 		hintPart  string
+		target    string
 	}{
 		{
 			name:      "agents unknown",
@@ -11109,11 +11110,12 @@ func TestLocalSubcommandErrorContracts(t *testing.T) {
 		},
 		{
 			name:      "mcp unknown",
-			args:      []string{"--config", configPath, "--output-format", "json", "mcp", "bogus"},
+			args:      []string{"--config", configPath, "--output-format", "json", "mcp", "sho"},
 			kind:      "mcp",
 			action:    "error",
 			errorKind: "unsupported_action",
-			hintPart:  "codog mcp",
+			hintPart:  "Did you mean `codog mcp show`?",
+			target:    "sho",
 		},
 		{
 			name:      "mcp show missing",
@@ -11143,8 +11145,8 @@ func TestLocalSubcommandErrorContracts(t *testing.T) {
 			require.Equal(t, "parse_args", report.Error.Operation)
 			if report.Argument != "" {
 				require.Equal(t, report.Argument, report.Error.Target)
-			} else if tc.kind == "mcp" && tc.errorKind == "unsupported_action" {
-				require.Equal(t, "bogus", report.Error.Target)
+			} else if tc.target != "" {
+				require.Equal(t, tc.target, report.Error.Target)
 			} else {
 				require.Equal(t, report.Kind, report.Error.Target)
 			}

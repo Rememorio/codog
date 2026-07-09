@@ -53300,7 +53300,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	}
 	if !mcpRemoteAction(args[0]) {
 		verb := strings.TrimSpace(firstNonEmpty(firstArg(requestedArgs), args[0]))
-		return renderMCPUnsupportedAction(a.Out, format, strings.Join(requestedArgs, " "), fmt.Sprintf("`%s` is not a supported MCP sub-action; run `codog mcp help`.", verb))
+		return renderMCPUnsupportedAction(a.Out, format, strings.Join(requestedArgs, " "), unknownMCPActionHint(verb))
 	}
 	if len(a.Config.MCPServers) == 0 {
 		return renderMCPRemoteActionError(a.Out, format, mcpRemoteActionErrorReport{
@@ -53506,6 +53506,27 @@ func normalizeMCPAction(action string) string {
 		return "prompt"
 	default:
 		return strings.ToLower(strings.TrimSpace(action))
+	}
+}
+
+var mcpActionCandidates = []string{
+	"help", "list", "ls", "serve", "self", "self-test", "doctor", "show", "info",
+	"describe", "inspect", "get", "add", "remove", "delete", "rm", "del", "tools",
+	"tool", "list-tools", "auth", "oauth", "call", "invoke", "run", "resources",
+	"resource", "resource-templates", "resources-templates", "resource-template",
+	"resources-template", "templates", "template", "read", "read-resource",
+	"get-resource", "prompts", "list-prompts", "prompt", "get-prompt", "render-prompt",
+}
+
+func unknownMCPActionHint(action string) string {
+	suggestions := toolnames.Suggestions(action, mcpActionCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		return fmt.Sprintf("Did you mean `codog mcp %s`? Use `codog mcp help` to list supported actions.", suggestions[0])
+	case 0:
+		return fmt.Sprintf("`%s` is not a supported MCP sub-action; use `codog mcp list`, `codog mcp show SERVER`, `codog mcp add NAME COMMAND [ARG...]`, `codog mcp tools [SERVER]`, `codog mcp call SERVER TOOL JSON`, or `codog mcp help`.", strings.TrimSpace(action))
+	default:
+		return fmt.Sprintf("Did you mean one of: %s? Use `codog mcp help` to list supported actions.", strings.Join(suggestions, ", "))
 	}
 }
 
