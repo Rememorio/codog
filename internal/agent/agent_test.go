@@ -18499,27 +18499,31 @@ func TestMemoryCommandJSONErrors(t *testing.T) {
 	}
 
 	err := app.Memory([]string{"show", "--json"})
-	requireStructuredMemoryError(t, err, out.Bytes(), "show", "no_memory_files", "")
+	requireStructuredMemoryError(t, err, out.Bytes(), "show", "no_memory_files", "", "")
 	out.Reset()
 
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Memory first line\n"), 0o644))
 	err = app.Memory([]string{"show", "missing.md", "--json"})
-	requireStructuredMemoryError(t, err, out.Bytes(), "show", "memory_file_not_found", "path")
+	requireStructuredMemoryError(t, err, out.Bytes(), "show", "memory_file_not_found", "path", "")
 	out.Reset()
 
 	err = app.Memory([]string{"path", "../outside.md", "--json"})
-	requireStructuredMemoryError(t, err, out.Bytes(), "path", "invalid_memory_path", "path")
+	requireStructuredMemoryError(t, err, out.Bytes(), "path", "invalid_memory_path", "path", "")
+	out.Reset()
+
+	err = app.Memory([]string{"serch", "Memory", "--json"})
+	requireStructuredMemoryError(t, err, out.Bytes(), "serch", "unsupported_memory_action", "", "Did you mean `codog memory search`?")
 	out.Reset()
 
 	err = app.Memory([]string{"--json", "reset"})
-	requireStructuredMemoryError(t, err, out.Bytes(), "reset", "confirmation_required", "")
+	requireStructuredMemoryError(t, err, out.Bytes(), "reset", "confirmation_required", "", "")
 	out.Reset()
 
 	err = app.Memory([]string{"reset", "--output-format", "json"})
-	requireStructuredMemoryError(t, err, out.Bytes(), "reset", "confirmation_required", "")
+	requireStructuredMemoryError(t, err, out.Bytes(), "reset", "confirmation_required", "", "")
 }
 
-func requireStructuredMemoryError(t *testing.T, err error, data []byte, action string, errorKind string, argument string) {
+func requireStructuredMemoryError(t *testing.T, err error, data []byte, action string, errorKind string, argument string, hintPart string) {
 	t.Helper()
 	require.Error(t, err)
 	var exitErr *ExitError
@@ -18537,6 +18541,9 @@ func requireStructuredMemoryError(t *testing.T, err error, data []byte, action s
 	}
 	require.NotEmpty(t, report.Message)
 	require.NotEmpty(t, report.Hint)
+	if hintPart != "" {
+		require.Contains(t, report.Hint, hintPart)
+	}
 }
 
 func TestFocusCommandAndSlashInjectsSystemPrompt(t *testing.T) {

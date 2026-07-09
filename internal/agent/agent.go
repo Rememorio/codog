@@ -26829,7 +26829,7 @@ func buildMemoryErrorReport(action string, err error) actionErrorReport {
 		report.Hint = "Run `codog memory reset PATH --confirm` to clear one memory file, or `codog memory reset --all --confirm` to clear all discovered memory files."
 	case strings.Contains(message, "unknown memory action"):
 		report.ErrorKind = "unsupported_memory_action"
-		report.Hint = "Supported memory actions are list, select, show, search, relevant, add, path, ensure, edit, and reset. Common aliases include view, find, append, file, init, choose, and clear."
+		report.Hint = unknownMemoryActionHint(action)
 	case strings.Contains(message, "unknown memory flag"):
 		report.ErrorKind = "unknown_option"
 		report.Hint = "Usage: codog memory [list|select|show|search|relevant|add|path|ensure|edit|reset] [ARGS...] [--all] [--confirm] [--limit N] [--editor COMMAND] [--no-open] [--json|--output-format text|json]."
@@ -26954,6 +26954,24 @@ func normalizeMemoryAction(action string) string {
 		return "reset"
 	default:
 		return strings.ToLower(strings.TrimSpace(action))
+	}
+}
+
+var memoryActionCandidates = []string{
+	"list", "ls", "select", "choose", "use", "show", "view", "cat", "read",
+	"add", "append", "search", "find", "relevant", "path", "file", "ensure",
+	"init", "create", "touch", "edit", "open", "reset", "clear",
+}
+
+func unknownMemoryActionHint(action string) string {
+	suggestions := toolnames.Suggestions(action, memoryActionCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		return fmt.Sprintf("Did you mean `codog memory %s`? Use `codog memory list --json` to inspect project memory files.", suggestions[0])
+	case 0:
+		return "Supported memory actions are list, select, show, search, relevant, add, path, ensure, edit, and reset. Common aliases include view, find, append, file, init, choose, and clear."
+	default:
+		return fmt.Sprintf("Did you mean one of: %s? Use `codog memory list --json` to inspect project memory files.", strings.Join(suggestions, ", "))
 	}
 }
 
