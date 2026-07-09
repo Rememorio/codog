@@ -2663,6 +2663,9 @@ func TestMCPAuthToolReportsRecoveryActions(t *testing.T) {
 	tool := MCPAuthTool{Servers: map[string]config.MCPServerConfig{}, ConfigHome: configHome, OAuthProfile: "work"}
 	properties := tool.Definition().InputSchema["properties"].(map[string]any)
 	require.Contains(t, properties, "action")
+	actionSchema := properties["action"].(map[string]any)
+	require.Contains(t, actionSchema["enum"], "login")
+	require.Contains(t, actionSchema["enum"], "signout")
 
 	out, err := tool.Execute(context.Background(), []byte(`{"server":"missing"}`))
 	require.NoError(t, err)
@@ -2671,6 +2674,16 @@ func TestMCPAuthToolReportsRecoveryActions(t *testing.T) {
 	require.Contains(t, out, `"oauth_profile": "work"`)
 	require.Contains(t, out, `"profile_configured": false`)
 	require.Contains(t, out, `"command": "codog oauth provider save work ISSUER_URL CLIENT_ID [SCOPE...]"`)
+
+	out, err = tool.Execute(context.Background(), []byte(`{"server":"missing","action":"login"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"server": "missing"`)
+	require.Contains(t, out, `"refresh_error": "no oauth token saved"`)
+
+	out, err = tool.Execute(context.Background(), []byte(`{"server":"missing","action":"signout"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"server": "missing"`)
+	require.Contains(t, out, `"cleared": true`)
 
 	_, err = tool.Execute(context.Background(), []byte(`{"server":"missing","action":"bogus"}`))
 	require.Error(t, err)

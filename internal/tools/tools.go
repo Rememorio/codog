@@ -1396,8 +1396,8 @@ func (MCPAuthTool) Definition() anthropic.ToolDefinition {
 				},
 				"action": map[string]any{
 					"type":        "string",
-					"enum":        []string{"status", "refresh", "clear", "logout"},
-					"description": "status inspects readiness; refresh refreshes a saved OAuth token when possible; clear/logout revokes when possible and deletes the saved token.",
+					"enum":        []string{"status", "refresh", "login", "signin", "authenticate", "clear", "logout", "signout", "disconnect", "revoke"},
+					"description": "status inspects readiness; refresh/login/signin/authenticate refresh a saved OAuth token when possible; clear/logout/signout/disconnect/revoke revoke when possible and delete the saved token.",
 				},
 			},
 			"required": []string{"server"},
@@ -1417,10 +1417,7 @@ func (t MCPAuthTool) Execute(ctx context.Context, input json.RawMessage) (string
 	if strings.TrimSpace(payload.Server) == "" {
 		return "", errors.New("server is required")
 	}
-	action := strings.ToLower(strings.TrimSpace(payload.Action))
-	if action == "" {
-		action = "status"
-	}
+	action := normalizeMCPAuthAction(payload.Action)
 	if action != "status" && action != "refresh" && action != "clear" && action != "logout" {
 		return "", fmt.Errorf("unsupported mcp_auth action %q", payload.Action)
 	}
@@ -1447,6 +1444,19 @@ func (t MCPAuthTool) Execute(ctx context.Context, input json.RawMessage) (string
 		return pretty(mcpauthdiag.Clear(ctx, result, t.ConfigHome, t.OAuthProfile, now)), nil
 	}
 	return pretty(mcpauthdiag.Build(result, t.ConfigHome, t.OAuthProfile, now)), nil
+}
+
+func normalizeMCPAuthAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "":
+		return "status"
+	case "login", "log-in", "signin", "sign-in", "authenticate", "auth", "reauth", "reauthenticate":
+		return "refresh"
+	case "signout", "sign-out", "disconnect", "revoke", "reset":
+		return "clear"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
 }
 
 // ListMCPResourcesTool lists resources exposed by configured MCP servers.
