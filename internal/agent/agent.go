@@ -51430,8 +51430,28 @@ func renderUnsupportedSkillsAction(out io.Writer, action string, format string) 
 		Status:    "error",
 		ErrorKind: "unsupported_skills_action",
 		Message:   fmt.Sprintf("unsupported skills action %q", action),
-		Hint:      "Supported: `codog skills list|ls [FILTER]`, `codog skills search|find QUERY`, `codog skills audit|doctor`, `codog skills sources|roots`, `codog skills status`, `codog skills enable|on NAME`, `codog skills disable|off NAME`, `codog skills show|info|describe|view NAME`, `codog skills invoke|run|exec NAME [ARGS...]`, `codog skills add|install SOURCE`, `codog skills uninstall|remove|rm NAME`, or `codog skills help`.",
+		Hint:      unknownSkillsActionHint(action),
 	}, format)
+}
+
+var skillsActionCandidates = []string{
+	"list", "ls", "search", "find", "query", "lookup", "audit", "doctor", "check",
+	"validate", "source", "sources", "root", "roots", "show", "info", "describe",
+	"get", "view", "cat", "invoke", "run", "exec", "execute", "call", "install",
+	"add", "uninstall", "remove", "delete", "rm", "del", "enable", "on", "disable",
+	"off", "status", "enabled", "help",
+}
+
+func unknownSkillsActionHint(action string) string {
+	suggestions := toolnames.Suggestions(action, skillsActionCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		return fmt.Sprintf("Did you mean `codog skills %s`? Use `codog skills list` to see available skills.", suggestions[0])
+	case 0:
+		return "Supported: `codog skills list|ls [FILTER]`, `codog skills search|find QUERY`, `codog skills audit|doctor`, `codog skills sources|roots`, `codog skills status`, `codog skills enable|on NAME`, `codog skills disable|off NAME`, `codog skills show|info|describe|view NAME`, `codog skills invoke|run|exec NAME [ARGS...]`, `codog skills add|install SOURCE`, `codog skills uninstall|remove|rm NAME`, or `codog skills help`."
+	default:
+		return fmt.Sprintf("Did you mean one of: %s? Use `codog skills list` to see available skills.", strings.Join(suggestions, ", "))
+	}
 }
 
 type skillInstallRequest struct {

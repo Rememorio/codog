@@ -28542,7 +28542,7 @@ func TestSkillsActivationCommandsAndUnsupportedAction(t *testing.T) {
 	require.Contains(t, missing.Hint, "codog skills enable NAME")
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "skills", "bogus"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "skills", "serch"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
 	require.ErrorAs(t, err, &exitErr)
@@ -28551,18 +28551,11 @@ func TestSkillsActivationCommandsAndUnsupportedAction(t *testing.T) {
 	var report actionErrorReport
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "skills", report.Kind)
-	require.Equal(t, "bogus", report.Action)
+	require.Equal(t, "serch", report.Action)
 	require.Equal(t, "error", report.Status)
 	require.Equal(t, "unsupported_skills_action", report.ErrorKind)
 	require.Contains(t, report.Message, "unsupported skills action")
-	require.Contains(t, report.Hint, "codog skills list")
-	require.Contains(t, report.Hint, "codog skills audit")
-	require.Contains(t, report.Hint, "codog skills status")
-	require.Contains(t, report.Hint, "codog skills enable")
-	require.Contains(t, report.Hint, "codog skills disable")
-	require.Contains(t, report.Hint, "show|info|describe")
-	require.Contains(t, report.Hint, "codog skills add")
-	require.Contains(t, report.Hint, "codog skills help")
+	require.Contains(t, report.Hint, "Did you mean `codog skills search`?")
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "skills", "search"}, config.FlagOverrides{})
