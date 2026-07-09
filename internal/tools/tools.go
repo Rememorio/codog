@@ -2044,6 +2044,18 @@ func unknownToolActionError(tool string, action string, candidates []string) err
 	}
 }
 
+func suggestedValueError(prefix string, value string, candidates []string) error {
+	suggestions := toolnames.Suggestions(value, candidates, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("%s %q", prefix, value)
+	case 1:
+		return fmt.Errorf("%s %q; did you mean %q?", prefix, value, suggestions[0])
+	default:
+		return fmt.Errorf("%s %q; suggestions: %s", prefix, value, strings.Join(suggestions, ", "))
+	}
+}
+
 type GitStatusTool struct {
 	Workspace string
 }
@@ -2264,6 +2276,8 @@ type GitShowTool struct {
 	Workspace string
 }
 
+var gitShowFormatNames = []string{"patch", "stat", "metadata"}
+
 func (GitShowTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "git_show",
@@ -2275,7 +2289,7 @@ func (GitShowTool) Definition() anthropic.ToolDefinition {
 				"commit": map[string]any{"type": "string"},
 				"path":   map[string]any{"type": "string"},
 				"stat":   map[string]any{"type": "boolean"},
-				"format": map[string]any{"type": "string", "enum": []string{"patch", "stat", "metadata"}},
+				"format": map[string]any{"type": "string", "enum": append([]string(nil), gitShowFormatNames...)},
 			},
 			"required": []string{"commit"},
 		},
@@ -2299,7 +2313,7 @@ func (t GitShowTool) Execute(_ context.Context, input json.RawMessage) (string, 
 		return "", err
 	}
 	args := []string{"show"}
-	switch strings.TrimSpace(payload.Format) {
+	switch strings.ToLower(strings.TrimSpace(payload.Format)) {
 	case "metadata":
 		if strings.TrimSpace(payload.Path) != "" {
 			return "", errors.New(`git_show format "metadata" cannot be combined with path`)
@@ -2312,7 +2326,7 @@ func (t GitShowTool) Execute(_ context.Context, input json.RawMessage) (string, 
 			args = append(args, "--stat")
 		}
 	default:
-		return "", fmt.Errorf("unknown git_show format %q", payload.Format)
+		return "", suggestedValueError("unknown git_show format", payload.Format, gitShowFormatNames)
 	}
 	if strings.TrimSpace(payload.Path) != "" {
 		path, err := gitPathArg(t.Workspace, payload.Path, true)
@@ -4287,6 +4301,8 @@ type GrepTool struct {
 	RespectGitignore bool
 }
 
+var grepOutputModeNames = []string{"content", "matches", "lines", "files_with_matches", "files", "paths", "filenames", "names", "count", "counts"}
+
 func (GrepTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "grep",
@@ -4297,7 +4313,7 @@ func (GrepTool) Definition() anthropic.ToolDefinition {
 				"pattern":     map[string]any{"type": "string"},
 				"path":        map[string]any{"type": "string"},
 				"glob":        map[string]any{"type": "string"},
-				"output_mode": map[string]any{"type": "string", "enum": []string{"content", "matches", "lines", "files_with_matches", "files", "paths", "filenames", "names", "count", "counts"}},
+				"output_mode": map[string]any{"type": "string", "enum": append([]string(nil), grepOutputModeNames...)},
 				"-B":          map[string]any{"type": "integer", "minimum": 0},
 				"-A":          map[string]any{"type": "integer", "minimum": 0},
 				"-C":          map[string]any{"type": "integer", "minimum": 0},
@@ -4369,7 +4385,7 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	}
 	mode := normalizeGrepOutputMode(payload.OutputMode)
 	if mode == "" {
-		return "", fmt.Errorf("unsupported grep output_mode %q", payload.OutputMode)
+		return "", suggestedValueError("unsupported grep output_mode", payload.OutputMode, grepOutputModeNames)
 	}
 	limit, unlimited := grepLimit(payload.HeadLimit, payload.Limit)
 	offset := max(payload.Offset, 0)
@@ -5659,6 +5675,14 @@ func validateRemoteTriggerURL(raw string) (*url.URL, error) {
 
 type PermissionCheckTool struct{}
 
+var permissionValueNames = []string{
+	string(PermissionReadOnly),
+	string(PermissionWorkspace),
+	string(PermissionDanger),
+	string(PermissionPrompt),
+	string(PermissionAllow),
+}
+
 func (PermissionCheckTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "permission_check",
@@ -5671,7 +5695,7 @@ func (PermissionCheckTool) Definition() anthropic.ToolDefinition {
 				"tool":        map[string]any{"type": "string"},
 				"required_permission": map[string]any{
 					"type": "string",
-					"enum": []string{string(PermissionReadOnly), string(PermissionWorkspace), string(PermissionDanger), string(PermissionPrompt), string(PermissionAllow)},
+					"enum": append([]string(nil), permissionValueNames...),
 				},
 				"input":  map[string]any{"type": "object", "additionalProperties": true},
 				"action": map[string]any{"type": "string", "description": "Deprecated compatibility alias used as the target label when target_tool is omitted."},
@@ -5720,7 +5744,7 @@ func (r *Registry) executePermissionCheck(input json.RawMessage, prompter *Promp
 	permissionSource := "request_override"
 	if required != "" {
 		if !validPermission(required) {
-			return "", fmt.Errorf("unsupported required_permission %q", required)
+			return "", suggestedValueError("unsupported required_permission", string(required), permissionValueNames)
 		}
 	} else if found {
 		required = targetTool.Permission()
@@ -6711,7 +6735,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			}
 			return pretty(staticLSPToolReport(action, fallback, map[string]any{"command": command, "symbols": symbols, "total": len(symbols)})), nil
 		default:
-			return "", fmt.Errorf("unsupported static execute command %q", payload.Query)
+			return "", suggestedValueError("unsupported static execute command", payload.Query, staticExecuteCommandNames)
 		}
 	case "diagnostics":
 		patterns := []string{}
@@ -6750,6 +6774,22 @@ var staticCodeActionNames = []string{
 	"organize-imports",
 	"fix-all",
 	"diagnostics",
+}
+
+var staticExecuteCommandNames = []string{
+	"format",
+	"gofmt",
+	"source.format",
+	"organize_imports",
+	"organize-imports",
+	"source.organizeimports",
+	"fix_all",
+	"fix-all",
+	"source.fixall",
+	"diagnostics",
+	"go.diagnostics",
+	"symbols",
+	"workspace.symbols",
 }
 
 func normalizeStaticCodeActionTitle(title string) string {
@@ -10112,6 +10152,8 @@ type briefAttachment struct {
 	IsImage bool   `json:"is_image"`
 }
 
+var briefStatusNames = []string{"normal", "proactive"}
+
 func (BriefTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "brief",
@@ -10124,7 +10166,7 @@ func (BriefTool) Definition() anthropic.ToolDefinition {
 					"type":  "array",
 					"items": map[string]any{"type": "string"},
 				},
-				"status": map[string]any{"type": "string", "enum": []string{"normal", "proactive"}},
+				"status": map[string]any{"type": "string", "enum": append([]string(nil), briefStatusNames...)},
 			},
 			"required":             []string{"message", "status"},
 			"additionalProperties": false,
@@ -10151,7 +10193,7 @@ func (t BriefTool) Execute(_ context.Context, input json.RawMessage) (string, er
 	switch status {
 	case "normal", "proactive":
 	default:
-		return "", fmt.Errorf("unknown brief status %q", payload.Status)
+		return "", suggestedValueError("unknown brief status", payload.Status, briefStatusNames)
 	}
 	attachments := make([]briefAttachment, 0, len(payload.Attachments))
 	for _, attachment := range payload.Attachments {
@@ -10194,7 +10236,7 @@ func (SendUserMessageTool) Definition() anthropic.ToolDefinition {
 					"type":  "array",
 					"items": map[string]any{"type": "string"},
 				},
-				"status": map[string]any{"type": "string", "enum": []string{"normal", "proactive"}},
+				"status": map[string]any{"type": "string", "enum": append([]string(nil), briefStatusNames...)},
 			},
 			"required":             []string{"message", "status"},
 			"additionalProperties": false,
@@ -10296,6 +10338,8 @@ type REPLTool struct {
 	ConfigEnv map[string]string
 }
 
+var replLanguageNames = []string{"sh", "shell", "bash", "python", "python3", "py", "javascript", "js", "node"}
+
 func (REPLTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "repl",
@@ -10304,7 +10348,7 @@ func (REPLTool) Definition() anthropic.ToolDefinition {
 			"type": "object",
 			"properties": map[string]any{
 				"code":       map[string]any{"type": "string"},
-				"language":   map[string]any{"type": "string"},
+				"language":   map[string]any{"type": "string", "enum": append([]string(nil), replLanguageNames...)},
 				"timeout_ms": map[string]any{"type": "integer", "minimum": 1},
 			},
 			"required":             []string{"code", "language"},
@@ -10376,7 +10420,7 @@ func replCommand(language string, code string) ([]string, error) {
 	case "javascript", "js", "node":
 		return []string{"node", "-e", code}, nil
 	default:
-		return nil, fmt.Errorf("unsupported repl language %q", language)
+		return nil, suggestedValueError("unsupported repl language", language, replLanguageNames)
 	}
 }
 

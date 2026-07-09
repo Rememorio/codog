@@ -916,6 +916,11 @@ func TestNormalizeGrepOutputMode(t *testing.T) {
 	for input, want := range cases {
 		require.Equal(t, want, normalizeGrepOutputMode(input), input)
 	}
+
+	_, err := GrepTool{Workspace: t.TempDir()}.Execute(context.Background(), []byte(`{"pattern":"needle","output_mode":"contnet"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unsupported grep output_mode "contnet"`)
+	require.Contains(t, err.Error(), `did you mean "content"?`)
 }
 
 func TestGrepToolReportsDurationAndRealTruncation(t *testing.T) {
@@ -2708,6 +2713,11 @@ func TestPermissionCheckToolReturnsReceipt(t *testing.T) {
 	require.Contains(t, out, `"required_permission": "read-only"`)
 	require.Contains(t, out, `"permission_source": "request_override"`)
 
+	_, err = registry.Execute(context.Background(), "TestingPermission", []byte(`{"target_tool":"unknown-tool","required_permission":"workspace-wirte"}`), prompter)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unsupported required_permission "workspace-wirte"`)
+	require.Contains(t, err.Error(), `did you mean "workspace-write"?`)
+
 	out, err = registry.Execute(context.Background(), "permission_check", []byte(`{"target_tool":"write_fil"}`), prompter)
 	require.NoError(t, err)
 	require.Contains(t, out, `"known_tool": false`)
@@ -2968,6 +2978,12 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), `unknown static code action "Formt Go file"`)
 	require.Contains(t, err.Error(), `did you mean "Format Go file"?`)
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"execute_command","query":"formt"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unsupported static execute command "formt"`)
+	require.Contains(t, err.Error(), `suggestions:`)
+	require.Contains(t, err.Error(), `format`)
 
 	gotoDefinitionOut, err := tool.Execute(context.Background(), []byte(`{"action":"goto_definition","query":"Widget"}`))
 	require.NoError(t, err)
@@ -3613,6 +3629,11 @@ func TestGitToolsReadRepositoryState(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, showOut, "initial notes")
 
+	_, err = GitShowTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"commit":"HEAD","format":"metdata"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown git_show format "metdata"`)
+	require.Contains(t, err.Error(), `did you mean "metadata"?`)
+
 	blameOut, err := GitBlameTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"path":"notes.txt","start_line":1,"end_line":1}`))
 	require.NoError(t, err)
 	require.Contains(t, blameOut, "alpha")
@@ -3942,6 +3963,11 @@ func TestBriefToolReturnsAttachmentMetadata(t *testing.T) {
 	require.Contains(t, out, `"message": "Heads up"`)
 	require.Contains(t, out, `"status": "proactive"`)
 	require.Contains(t, out, `"is_image": true`)
+
+	_, err = BriefTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"message":"Review ready","status":"proactiv"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown brief status "proactiv"`)
+	require.Contains(t, err.Error(), `did you mean "proactive"?`)
 }
 
 func TestStructuredOutputToolReturnsPayload(t *testing.T) {
@@ -3969,6 +3995,11 @@ func TestREPLToolExecutesShellCode(t *testing.T) {
 
 	_, err = REPLTool{Workspace: t.TempDir()}.Execute(context.Background(), []byte(`{"language":"unknown","code":"x"}`))
 	require.Error(t, err)
+
+	_, err = REPLTool{Workspace: t.TempDir()}.Execute(context.Background(), []byte(`{"language":"pyhton","code":"x"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unsupported repl language "pyhton"`)
+	require.Contains(t, err.Error(), `python`)
 }
 
 func TestREPLToolLoadsConfiguredEnvironment(t *testing.T) {
