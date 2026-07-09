@@ -1486,7 +1486,12 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, expected, actual)
 	}
-	_, err := NormalizeLSPAction("unknown")
+	_, err := NormalizeLSPAction("preparename")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown lsp action "preparename"`)
+	require.Contains(t, err.Error(), `did you mean "prepare-rename"`)
+
+	_, err = NormalizeLSPAction("unknown")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "supported actions")
 	require.NotEmpty(t, SupportedLSPActions())

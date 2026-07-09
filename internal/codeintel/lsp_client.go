@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 // LSPQueryRequest describes one language-server query against a document.
@@ -568,7 +570,7 @@ func NormalizeLSPAction(action string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("unknown lsp action %q; supported actions: %s", action, strings.Join(supportedLSPActionNames(), ", "))
+	return "", lspActionError("unknown", action)
 }
 
 // LSPActionRequiresDocument reports whether an action must open a document.
@@ -599,6 +601,19 @@ func supportedLSPActionNames() []string {
 		names = append(names, info.Name)
 	}
 	return names
+}
+
+func lspActionError(kind, action string) error {
+	names := supportedLSPActionNames()
+	suggestions := toolnames.Suggestions(action, names, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("%s lsp action %q; supported actions: %s", kind, action, strings.Join(names, ", "))
+	case 1:
+		return fmt.Errorf("%s lsp action %q; did you mean %q?", kind, action, suggestions[0])
+	default:
+		return fmt.Errorf("%s lsp action %q; suggestions: %s", kind, action, strings.Join(suggestions, ", "))
+	}
 }
 
 func normalizeLSPActionToken(action string) string {
@@ -1754,7 +1769,7 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 	case "will-save":
 		return "textDocument/willSaveWaitUntil", map[string]any{"textDocument": textDocument, "reason": 1}, nil
 	default:
-		return "", nil, fmt.Errorf("unsupported lsp action %q", action)
+		return "", nil, lspActionError("unsupported", action)
 	}
 }
 
