@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -193,6 +194,112 @@ func TestRealBinaryRunLoopExecutesWorkspaceTools(t *testing.T) {
 	mu.Unlock()
 }
 
+func TestRealBinaryPermissionPromptApproveAndDeny(t *testing.T) {
+	bin := buildCodogBinary(t)
+	for _, tc := range []struct {
+		name           string
+		answer         string
+		command        string
+		finalText      string
+		expectFile     bool
+		expectStderr   string
+		expectNoStderr string
+	}{
+		{
+			name:         "approve",
+			answer:       "y\n",
+			command:      "printf approved > permission.txt",
+			finalText:    "permission approved smoke ok",
+			expectFile:   true,
+			expectStderr: "Allow? [y/N/a=always for session]",
+		},
+		{
+			name:           "deny",
+			answer:         "n\n",
+			command:        "printf denied > permission.txt",
+			finalText:      "permission denied smoke ok",
+			expectFile:     false,
+			expectStderr:   "Allow? [y/N/a=always for session]",
+			expectNoStderr: "approved",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			configHome := t.TempDir()
+			server := httptest.NewServer(mockanthropic.Server{
+				Turns: []mockanthropic.Turn{
+					{ToolUses: []mockanthropic.ToolUse{{
+						ID:    "tool-bash",
+						Name:  "bash",
+						Input: json.RawMessage(`{"command":` + strconv.Quote(tc.command) + `,"timeout":1000}`),
+					}}},
+					{Text: tc.finalText},
+				},
+			}.Handler())
+			defer server.Close()
+
+			result := runCodogWithExtraEnv(t, bin, workspace, configHome, []string{
+				"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+				"ANTHROPIC_BASE_URL=" + server.URL,
+			}, []byte(tc.answer), "--permission-mode", "workspace-write", "--model", "claude-sonnet-4-5", "-p", "permission prompt smoke", "--max-turns", "4")
+
+			require.Equal(t, 0, result.Code, result.Combined())
+			require.Contains(t, result.Stdout, tc.finalText)
+			require.Contains(t, result.Stderr, tc.expectStderr)
+			if tc.expectNoStderr != "" {
+				require.NotContains(t, result.Stderr, tc.expectNoStderr)
+			}
+			_, err := os.Stat(filepath.Join(workspace, "permission.txt"))
+			if tc.expectFile {
+				require.NoError(t, err)
+			} else {
+				require.True(t, os.IsNotExist(err), "denied command should not create file: %v", err)
+			}
+		})
+	}
+}
+
+func TestRealBinaryPromptResumeSendsPriorSessionHistory(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	var mu sync.Mutex
+	requestBodies := []string{}
+	server := httptest.NewServer(mockanthropic.Server{
+		Turns: []mockanthropic.Turn{
+			{Text: "first answer marker"},
+			{Text: "second answer marker"},
+		},
+		OnRequest: func(body json.RawMessage) {
+			mu.Lock()
+			requestBodies = append(requestBodies, string(body))
+			mu.Unlock()
+		},
+	}.Handler())
+	defer server.Close()
+	extraEnv := []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}
+
+	first := runCodogWithExtraEnv(t, bin, workspace, configHome, extraEnv, nil, "--model", "claude-sonnet-4-5", "-p", "first prompt marker", "--max-turns", "2")
+	require.Equal(t, 0, first.Code, first.Combined())
+	require.Contains(t, first.Stdout, "first answer marker")
+	sessionID := extractSessionID(t, first.Stderr)
+
+	second := runCodogWithExtraEnv(t, bin, workspace, configHome, extraEnv, nil, "--resume", sessionID, "--model", "claude-sonnet-4-5", "-p", "second prompt marker", "--max-turns", "2")
+	require.Equal(t, 0, second.Code, second.Combined())
+	require.Contains(t, second.Stdout, "second answer marker")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.GreaterOrEqual(t, len(requestBodies), 2)
+	resumedRequest := requestBodies[len(requestBodies)-1]
+	require.Contains(t, resumedRequest, "first prompt marker")
+	require.Contains(t, resumedRequest, "first answer marker")
+	require.Contains(t, resumedRequest, "second prompt marker")
+}
+
 type commandResult struct {
 	Code   int
 	Stdout string
@@ -292,6 +399,19 @@ func errorAs(err error, target any) bool {
 		return false
 	}
 	return false
+}
+
+func extractSessionID(t *testing.T, stderr string) string {
+	t.Helper()
+	for _, line := range strings.Split(stderr, "\n") {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), "session: "); ok {
+			value = strings.TrimSpace(value)
+			require.NotEmpty(t, value)
+			return value
+		}
+	}
+	t.Fatalf("session id not found in stderr: %s", stderr)
+	return ""
 }
 
 func TestAcceptanceHarnessUsesRealBinary(t *testing.T) {
