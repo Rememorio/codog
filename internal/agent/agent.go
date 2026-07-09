@@ -3662,11 +3662,19 @@ func parseRemoteEnvArgs(args []string) (remoteEnvRequest, error) {
 		case "clear", "reset", "unset":
 			req.Action = "clear"
 		default:
-			return req, unexpectedExtraArgsError{Command: "remote-env", Args: []string{rest[0]}, Usage: usage}
+			return req, unknownActionError{
+				Command:     "remote-env",
+				Action:      rest[0],
+				Expected:    append([]string(nil), remoteEnvActionCandidates...),
+				Suggestions: toolnames.Suggestions(rest[0], remoteEnvActionCandidates, 4),
+				Usage:       usage,
+			}
 		}
 	}
 	return req, nil
 }
+
+var remoteEnvActionCandidates = []string{"show", "status", "set", "clear", "reset", "unset"}
 
 func parseRemoteSetupArgs(args []string, overrides config.FlagOverrides) (remoteSetupRequest, error) {
 	const usage = "codog remote-setup [status|enable|disable|clear] [--addr ADDR] [--target user|project|local] [--path PATH] [--auth-token TOKEN] [--clear-auth-token] [--lease-seconds N] [--session ID|--resume ID] [--json|--output-format text|json]"

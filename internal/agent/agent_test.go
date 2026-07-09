@@ -31412,6 +31412,12 @@ func TestLongTailCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
 			contains: []string{`"option": "--lease-seconds"`, `"value": "many"`},
 		},
 		{
+			name:     "remote env typo action",
+			args:     []string{"remote-env", "statuz"},
+			kind:     "unknown_action",
+			contains: []string{`"command": "remote-env"`, "Did you mean `remote-env status`?"},
+		},
+		{
 			name:     "remote setup missing addr",
 			args:     []string{"remote-setup", "--addr"},
 			kind:     "missing_flag_value",
