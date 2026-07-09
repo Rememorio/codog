@@ -16580,6 +16580,7 @@ func TestConfigInspectionReportsFilePrecedence(t *testing.T) {
 	require.Len(t, report.Files, 4)
 
 	require.Equal(t, "loaded", report.Files[0].Status)
+	require.Equal(t, "explicit", report.Files[0].Source)
 	require.True(t, report.Files[0].Loaded)
 	require.Equal(t, 1, report.Files[0].PrecedenceRank)
 	require.ElementsMatch(t, []string{"env", "hooks", "model"}, report.Files[0].Keys)
@@ -16588,17 +16589,20 @@ func TestConfigInspectionReportsFilePrecedence(t *testing.T) {
 	require.ElementsMatch(t, []string{"env.A", "model"}, report.Files[0].ShadowedKeys)
 
 	require.Equal(t, "not_found", report.Files[1].Status)
+	require.Equal(t, "explicit", report.Files[1].Source)
 	require.Equal(t, "not_found", report.Files[1].Reason)
 	require.False(t, report.Files[1].Present)
 	require.Equal(t, 2, report.Files[1].PrecedenceRank)
 
 	require.Equal(t, "load_error", report.Files[2].Status)
+	require.Equal(t, "explicit", report.Files[2].Source)
 	require.True(t, report.Files[2].Present)
 	require.Equal(t, "parse_error", report.Files[2].Reason)
 	require.Contains(t, report.Files[2].Detail, "unexpected end of JSON input")
 	require.Equal(t, "parse_error", report.Files[2].ErrorKind)
 
 	require.Equal(t, "loaded", report.Files[3].Status)
+	require.Equal(t, "explicit", report.Files[3].Source)
 	require.ElementsMatch(t, []string{"env", "mcpServers", "model"}, report.Files[3].Keys)
 	require.ElementsMatch(t, []string{"env.A", "mcpServers", "model"}, report.Files[3].KeyPaths)
 	require.ElementsMatch(t, []string{"env.A", "mcpServers", "model"}, report.Files[3].WinsForKeys)
@@ -16617,6 +16621,25 @@ func TestConfigInspectionReportsFilePrecedence(t *testing.T) {
 	require.Equal(t, []string{userPath, projectPath}, pathsReport.Paths)
 	require.Len(t, pathsReport.Files, 2)
 	require.ElementsMatch(t, []string{"env.A", "model"}, pathsReport.Files[0].ShadowedKeys)
+
+	sourceReports := inspectConfigFiles([]string{
+		filepath.Join(dir, "config.json"),
+		".claude/settings.json",
+		".claude/settings.local.json",
+		".claw/config.json",
+		".omc/settings.local.json",
+		".codog.json",
+		".codog.local.json",
+		"custom.json",
+	})
+	require.Equal(t, "user", sourceReports[0].Source)
+	require.Equal(t, "project", sourceReports[1].Source)
+	require.Equal(t, "local", sourceReports[2].Source)
+	require.Equal(t, "project", sourceReports[3].Source)
+	require.Equal(t, "local", sourceReports[4].Source)
+	require.Equal(t, "project", sourceReports[5].Source)
+	require.Equal(t, "local", sourceReports[6].Source)
+	require.Equal(t, "explicit", sourceReports[7].Source)
 }
 
 func TestConfigValidateReportsDiagnostics(t *testing.T) {

@@ -43245,6 +43245,7 @@ func configPathsInspectionEnvelope(paths []string) map[string]any {
 
 type configFileInspectionReport struct {
 	Path           string   `json:"path"`
+	Source         string   `json:"source"`
 	PrecedenceRank int      `json:"precedence_rank"`
 	Status         string   `json:"status"`
 	Present        bool     `json:"present"`
@@ -43270,6 +43271,7 @@ func inspectConfigFiles(paths []string) []configFileInspectionReport {
 		}
 		report := configFileInspectionReport{
 			Path:           path,
+			Source:         configFileInspectionSource(path, len(paths)),
 			PrecedenceRank: index + 1,
 			Status:         "not_found",
 			Reason:         "not_found",
@@ -43324,6 +43326,37 @@ func inspectConfigFiles(paths []string) []configFileInspectionReport {
 		}
 	}
 	return reports
+}
+
+func configFileInspectionSource(path string, pathCount int) string {
+	if pathCount == 1 {
+		return "explicit"
+	}
+	clean := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+	switch {
+	case clean == ".codog.local.json",
+		strings.HasSuffix(clean, "/.codog.local.json"),
+		configPathInDir(clean, ".claude", "settings.local.json"),
+		configPathInDir(clean, ".claw", "settings.local.json"),
+		configPathInDir(clean, ".omc", "settings.local.json"):
+		return "local"
+	case clean == ".codog.json",
+		strings.HasSuffix(clean, "/.codog.json"),
+		configPathInDir(clean, ".claude", "settings.json"),
+		configPathInDir(clean, ".claw", "settings.json"),
+		configPathInDir(clean, ".omc", "settings.json"),
+		configPathInDir(clean, ".claw", "config.json"),
+		configPathInDir(clean, ".omc", "config.json"):
+		return "project"
+	case filepath.IsAbs(path) && strings.HasSuffix(clean, "/config.json"):
+		return "user"
+	}
+	return "explicit"
+}
+
+func configPathInDir(clean, dir, name string) bool {
+	target := dir + "/" + name
+	return clean == target || strings.HasSuffix(clean, "/"+target)
 }
 
 func collectConfigKeyPaths(values map[string]json.RawMessage) []string {
