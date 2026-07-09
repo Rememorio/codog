@@ -13228,6 +13228,26 @@ func TestSessionsListJSONPaginates(t *testing.T) {
 	require.NotContains(t, secondPage.Sessions, firstID)
 }
 
+func TestSessionsExistsMissingIDReportsStructuredError(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "sessions", "exists"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var report cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "missing_argument", report.Kind)
+	require.Equal(t, "missing_argument", report.ErrorKind)
+	require.Equal(t, "sessions exists", report.Command)
+	require.Equal(t, "ID", report.Argument)
+	require.Contains(t, report.Hint, "codog sessions exists ID")
+}
+
 func TestSessionsSearchJSONIncludesIdentityAndMessageMatches(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	_, err := store.CreateWithIdentity("alpha", session.SessionIdentity{
@@ -14243,7 +14263,10 @@ func TestResumedSessionExistsJSONMarksActiveAndRequiresTarget(t *testing.T) {
 
 	err := app.runResumedSessionSlash([]string{"exists", "--json"}, config.FlagOverrides{Resume: "active"})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "usage: codog sessions exists ID")
+	var requiredErr requiredArgumentError
+	require.ErrorAs(t, err, &requiredErr)
+	require.Equal(t, "sessions exists", requiredErr.Command)
+	require.Equal(t, "ID", requiredErr.Argument)
 }
 
 func TestResumedSessionListJSONMarksActiveSession(t *testing.T) {

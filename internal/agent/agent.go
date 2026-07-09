@@ -48763,16 +48763,20 @@ type sessionExistsReport struct {
 }
 
 func (a *App) SessionExists(args []string, activeID string) error {
+	const usage = "codog sessions exists ID [--json|--output-format text|json]"
 	format, remaining, err := parseTemplateOutputArgs("sessions exists", args)
 	if err != nil {
 		return err
 	}
-	if len(remaining) != 1 {
-		return errors.New("usage: codog sessions exists ID [--json|--output-format text|json]")
+	if len(remaining) == 0 {
+		return requiredArgumentError{Command: "sessions exists", Argument: "ID", Usage: usage}
+	}
+	if len(remaining) > 1 {
+		return unexpectedExtraArgsError{Command: "sessions exists", Args: append([]string(nil), remaining[1:]...), Usage: usage}
 	}
 	requested := strings.TrimSpace(remaining[0])
 	if requested == "" {
-		return errors.New("usage: codog sessions exists ID [--json|--output-format text|json]")
+		return requiredArgumentError{Command: "sessions exists", Argument: "ID", Usage: usage}
 	}
 	report, err := a.buildSessionExistsReport(requested, activeID)
 	if err != nil {
