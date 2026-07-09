@@ -1371,7 +1371,7 @@ func (t MCPDispatchTool) Execute(ctx context.Context, input json.RawMessage) (st
 	}
 	server, ok := t.Servers[payload.Server]
 	if !ok {
-		return "", fmt.Errorf("unknown MCP server %q", payload.Server)
+		return "", unknownMCPServerError(payload.Server, t.Servers)
 	}
 	if len(payload.Arguments) == 0 {
 		payload.Arguments = json.RawMessage(`{}`)
@@ -1516,7 +1516,7 @@ func (t ListMCPResourcesTool) Execute(ctx context.Context, input json.RawMessage
 	if payload.Server != "" {
 		server, ok := t.Servers[payload.Server]
 		if !ok {
-			return "", fmt.Errorf("unknown MCP server %q", payload.Server)
+			return "", unknownMCPServerError(payload.Server, t.Servers)
 		}
 		result := mcp.ListResources(ctx, payload.Server, server)
 		if result.Error != "" {
@@ -1586,7 +1586,7 @@ func (t ReadMCPResourceTool) Execute(ctx context.Context, input json.RawMessage)
 	}
 	server, ok := t.Servers[payload.Server]
 	if !ok {
-		return "", fmt.Errorf("unknown MCP server %q", payload.Server)
+		return "", unknownMCPServerError(payload.Server, t.Servers)
 	}
 	result := mcp.ReadResource(ctx, payload.Server, server, payload.URI)
 	if result.Error != "" {
@@ -1630,7 +1630,7 @@ func (t ListMCPResourceTemplatesTool) Execute(ctx context.Context, input json.Ra
 	if payload.Server != "" {
 		server, ok := t.Servers[payload.Server]
 		if !ok {
-			return "", fmt.Errorf("unknown MCP server %q", payload.Server)
+			return "", unknownMCPServerError(payload.Server, t.Servers)
 		}
 		result := mcp.ListResourceTemplates(ctx, payload.Server, server)
 		if result.Error != "" {
@@ -1680,7 +1680,7 @@ func (t ListMCPPromptsTool) Execute(ctx context.Context, input json.RawMessage) 
 	if payload.Server != "" {
 		server, ok := t.Servers[payload.Server]
 		if !ok {
-			return "", fmt.Errorf("unknown MCP server %q", payload.Server)
+			return "", unknownMCPServerError(payload.Server, t.Servers)
 		}
 		result := mcp.ListPrompts(ctx, payload.Server, server)
 		if result.Error != "" {
@@ -1737,7 +1737,7 @@ func (t GetMCPPromptTool) Execute(ctx context.Context, input json.RawMessage) (s
 	}
 	server, ok := t.Servers[payload.Server]
 	if !ok {
-		return "", fmt.Errorf("unknown MCP server %q", payload.Server)
+		return "", unknownMCPServerError(payload.Server, t.Servers)
 	}
 	result := mcp.GetPrompt(ctx, payload.Server, server, payload.Prompt, payload.Arguments)
 	if result.Error != "" {
@@ -1986,6 +1986,18 @@ func sortedMCPServerNames(servers map[string]config.MCPServerConfig) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func unknownMCPServerError(name string, servers map[string]config.MCPServerConfig) error {
+	suggestions := toolnames.Suggestions(name, sortedMCPServerNames(servers), 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unknown MCP server %q", name)
+	case 1:
+		return fmt.Errorf("unknown MCP server %q; did you mean %q?", name, suggestions[0])
+	default:
+		return fmt.Errorf("unknown MCP server %q; suggestions: %s", name, strings.Join(suggestions, ", "))
+	}
 }
 
 type GitStatusTool struct {

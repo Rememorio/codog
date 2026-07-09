@@ -5391,9 +5391,10 @@ func TestMCPToolCallsRemoteTool(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, `"text":"echo"`)
 
-	_, err = MCPDispatchTool{Servers: map[string]config.MCPServerConfig{"test": server}}.Execute(context.Background(), []byte(`{"server":"missing","tool":"echo"}`))
+	_, err = MCPDispatchTool{Servers: map[string]config.MCPServerConfig{"test": server}}.Execute(context.Background(), []byte(`{"server":"tes","tool":"echo"}`))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "unknown MCP server")
+	require.Contains(t, err.Error(), `unknown MCP server "tes"`)
+	require.Contains(t, err.Error(), `did you mean "test"`)
 
 	authOut, err := MCPAuthTool{Servers: map[string]config.MCPServerConfig{"test": server}}.Execute(context.Background(), []byte(`{"server":"test"}`))
 	require.NoError(t, err)
@@ -5512,9 +5513,10 @@ func TestMCPResourceToolsListAndReadRemoteResources(t *testing.T) {
 	require.Contains(t, readOut, `"uri": "codog://note"`)
 	require.Contains(t, readOut, "note body")
 
-	_, err = ReadMCPResourceTool{Servers: servers}.Execute(context.Background(), []byte(`{"server":"missing","uri":"codog://note"}`))
+	_, err = ReadMCPResourceTool{Servers: servers}.Execute(context.Background(), []byte(`{"server":"tes","uri":"codog://note"}`))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "unknown MCP server")
+	require.Contains(t, err.Error(), `unknown MCP server "tes"`)
+	require.Contains(t, err.Error(), `did you mean "test"`)
 }
 
 func TestMCPPromptAndTemplateTools(t *testing.T) {
