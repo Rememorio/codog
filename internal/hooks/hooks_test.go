@@ -16,6 +16,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestNormalizeHookEventSuggestsKnownEvents(t *testing.T) {
+	event, err := NormalizeHookEvent("filechanged")
+	require.NoError(t, err)
+	require.Equal(t, "file_changed", event)
+
+	event, err = NormalizeHookEvent("PRE-TOOL-USE")
+	require.NoError(t, err)
+	require.Equal(t, "pre_tool_use", event)
+
+	_, err = NormalizeHookEvent("filechange")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown hook event "filechange"`)
+	require.Contains(t, err.Error(), `did you mean "file_changed"`)
+}
+
 func TestRunPayloadCapturesHookOutput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

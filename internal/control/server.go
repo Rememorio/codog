@@ -1782,56 +1782,7 @@ func summarizeHookCommands(commands []config.HookCommand) []hookCommandSummary {
 }
 
 func normalizeHookHealthEvent(value string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "pre", "pre_tool_use", "pre-tool-use":
-		return "pre_tool_use", nil
-	case "post", "post_tool_use", "post-tool-use":
-		return "post_tool_use", nil
-	case "post-failure", "postfailure", "post_tool_use_failure", "post-tool-use-failure":
-		return "post_tool_use_failure", nil
-	case "permission-request", "permissionrequest", "permission_request":
-		return "permission_request", nil
-	case "permission-denied", "permissiondenied", "permission_denied":
-		return "permission_denied", nil
-	case "prompt", "userpromptsubmit", "user_prompt_submit", "user-prompt-submit":
-		return "user_prompt_submit", nil
-	case "session", "sessionstart", "session_start", "session-start":
-		return "session_start", nil
-	case "session-end", "sessionend", "session_end":
-		return "session_end", nil
-	case "setup":
-		return "setup", nil
-	case "stop":
-		return "stop", nil
-	case "stop-failure", "stopfailure", "stop_failure":
-		return "stop_failure", nil
-	case "compact", "precompact", "pre_compact", "pre-compact":
-		return "pre_compact", nil
-	case "postcompact", "post_compact", "post-compact":
-		return "post_compact", nil
-	case "notification", "notify":
-		return "notification", nil
-	case "subagent-start", "subagentstart", "subagent_start":
-		return "subagent_start", nil
-	case "subagent-stop", "subagentstop", "subagent_stop":
-		return "subagent_stop", nil
-	case "worktree-create", "worktreecreate", "worktree_create":
-		return "worktree_create", nil
-	case "worktree-remove", "worktreeremove", "worktree_remove":
-		return "worktree_remove", nil
-	case "cwd-changed", "cwdchanged", "cwd_changed":
-		return "cwd_changed", nil
-	case "task-created", "taskcreated", "task_created":
-		return "task_created", nil
-	case "task-completed", "taskcompleted", "task_completed":
-		return "task_completed", nil
-	case "instructions-loaded", "instructionsloaded", "instructions_loaded":
-		return "instructions_loaded", nil
-	case "file-changed", "filechanged", "file_changed":
-		return "file_changed", nil
-	default:
-		return "", fmt.Errorf("unknown hook event %q", value)
-	}
+	return hooks.NormalizeHookEvent(value)
 }
 
 func (s Server) goDiagnostics(w http.ResponseWriter, r *http.Request) {
