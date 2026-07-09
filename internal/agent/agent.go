@@ -100,6 +100,7 @@ import (
 	localstatus "github.com/Rememorio/codog/internal/status"
 	"github.com/Rememorio/codog/internal/team"
 	prompttemplates "github.com/Rememorio/codog/internal/templates"
+	"github.com/Rememorio/codog/internal/terminalparity"
 	"github.com/Rememorio/codog/internal/terminalsetup"
 	"github.com/Rememorio/codog/internal/thinkback"
 	"github.com/Rememorio/codog/internal/todos"
@@ -29879,28 +29880,29 @@ func hookValidationIssue(event string, index int, hook config.HookCommand, kind 
 }
 
 type capabilitiesReport struct {
-	Kind                    string            `json:"kind"`
-	Action                  string            `json:"action"`
-	Status                  string            `json:"status"`
-	Version                 string            `json:"version"`
-	Workspace               string            `json:"workspace"`
-	Model                   string            `json:"model"`
-	PermissionMode          string            `json:"permission_mode"`
-	CommandCount            int               `json:"command_count"`
-	Commands                []string          `json:"commands"`
-	SlashCommandCount       int               `json:"slash_command_count"`
-	SlashCommands           []capabilitySlash `json:"slash_commands"`
-	ResumeSafeSlashCount    int               `json:"resume_safe_slash_count"`
-	ResumeSafeSlashCommands []string          `json:"resume_safe_slash_commands"`
-	ToolCount               int               `json:"tool_count"`
-	Tools                   []capabilityTool  `json:"tools"`
-	ToolAliasCount          int               `json:"tool_alias_count"`
-	ToolAliases             map[string]string `json:"tool_aliases,omitempty"`
-	MCP                     capabilityMCP     `json:"mcp"`
-	MockParity              harness.Manifest  `json:"mock_parity"`
-	Features                []string          `json:"features"`
-	Protocols               []string          `json:"protocols"`
-	OutputFormats           []string          `json:"output_formats"`
+	Kind                    string                `json:"kind"`
+	Action                  string                `json:"action"`
+	Status                  string                `json:"status"`
+	Version                 string                `json:"version"`
+	Workspace               string                `json:"workspace"`
+	Model                   string                `json:"model"`
+	PermissionMode          string                `json:"permission_mode"`
+	CommandCount            int                   `json:"command_count"`
+	Commands                []string              `json:"commands"`
+	SlashCommandCount       int                   `json:"slash_command_count"`
+	SlashCommands           []capabilitySlash     `json:"slash_commands"`
+	ResumeSafeSlashCount    int                   `json:"resume_safe_slash_count"`
+	ResumeSafeSlashCommands []string              `json:"resume_safe_slash_commands"`
+	ToolCount               int                   `json:"tool_count"`
+	Tools                   []capabilityTool      `json:"tools"`
+	ToolAliasCount          int                   `json:"tool_alias_count"`
+	ToolAliases             map[string]string     `json:"tool_aliases,omitempty"`
+	MCP                     capabilityMCP         `json:"mcp"`
+	MockParity              harness.Manifest      `json:"mock_parity"`
+	Terminal                terminalparity.Report `json:"terminal"`
+	Features                []string              `json:"features"`
+	Protocols               []string              `json:"protocols"`
+	OutputFormats           []string              `json:"output_formats"`
 }
 
 type capabilityResolveReport struct {
@@ -30199,6 +30201,7 @@ func (a *App) capabilitiesReport() capabilitiesReport {
 			ExposedToolCount:       len(exposed),
 		},
 		MockParity:    harness.ScenarioManifest(),
+		Terminal:      terminalparity.Build(),
 		Features:      codogCapabilityFeatures(),
 		Protocols:     codogCapabilityProtocols(),
 		OutputFormats: []string{"text", "json", "stream-json"},
@@ -31050,6 +31053,7 @@ func renderCapabilitiesText(out io.Writer, report capabilitiesReport) {
 	fmt.Fprintf(out, "  MCP servers       %d configured\n", report.MCP.ConfiguredServerCount)
 	fmt.Fprintf(out, "  MCP local data    %d resources, %d templates, %d prompts\n", report.MCP.LocalResourceCount, report.MCP.LocalTemplateCount, report.MCP.LocalPromptCount)
 	fmt.Fprintf(out, "  Mock parity       %d scenarios, %d categories\n", report.MockParity.ScenarioCount, len(report.MockParity.Categories))
+	fmt.Fprintf(out, "  Terminal parity   %s (%d required commands, %d resume-safe)\n", report.Terminal.Status, report.Terminal.RequiredCommandCount, report.Terminal.ResumeSafeSlashCount)
 	fmt.Fprintln(out, "  Features")
 	for _, feature := range report.Features {
 		fmt.Fprintf(out, "    - %s\n", feature)
