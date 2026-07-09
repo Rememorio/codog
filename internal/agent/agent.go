@@ -43028,16 +43028,17 @@ func (a *App) runtimeConfigPayload(args []string) (any, error) {
 }
 
 type configLoadReport struct {
-	Kind                string        `json:"kind"`
-	Action              string        `json:"action"`
-	Status              string        `json:"status"`
-	ErrorKind           string        `json:"error_kind"`
-	Message             string        `json:"message"`
-	Hint                string        `json:"hint"`
-	ConfigLoadError     string        `json:"config_load_error"`
-	ConfigLoadErrorKind string        `json:"config_load_error_kind"`
-	Paths               []string      `json:"paths"`
-	Config              config.Config `json:"config"`
+	Kind                string                       `json:"kind"`
+	Action              string                       `json:"action"`
+	Status              string                       `json:"status"`
+	ErrorKind           string                       `json:"error_kind"`
+	Message             string                       `json:"message"`
+	Hint                string                       `json:"hint"`
+	ConfigLoadError     string                       `json:"config_load_error"`
+	ConfigLoadErrorKind string                       `json:"config_load_error_kind"`
+	Paths               []string                     `json:"paths"`
+	Files               []configFileInspectionReport `json:"files,omitempty"`
+	Config              config.Config                `json:"config"`
 }
 
 func buildConfigLoadReport(cfg config.Config, paths []string, command string, args []string, loadErr error) configLoadReport {
@@ -43066,6 +43067,7 @@ func buildConfigLoadReport(cfg config.Config, paths []string, command string, ar
 		ConfigLoadError:     message,
 		ConfigLoadErrorKind: kind,
 		Paths:               append([]string(nil), paths...),
+		Files:               inspectConfigFiles(paths),
 		Config:              cfg,
 	}
 }
@@ -43142,7 +43144,7 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 		return renderConfigInspectionPayload(out, req.Format, report)
 	}
 	if strings.EqualFold(args[0], "paths") {
-		return renderConfigInspectionPayload(out, req.Format, map[string]any{"paths": paths})
+		return renderConfigInspectionPayload(out, req.Format, configPathsInspectionEnvelope(paths))
 	}
 	if strings.EqualFold(args[0], "validate") {
 		report, err := buildConfigValidationReport(paths, args[1:])
@@ -43225,9 +43227,103 @@ func configInspectionEnvelope(action string, cfg config.Config, paths []string) 
 		"status":          status,
 		"config":          cfg,
 		"paths":           append([]string(nil), paths...),
+		"files":           inspectConfigFiles(paths),
 		"mcp_validation":  mcpValidation,
 		"hook_validation": hookValidation,
 	}
+}
+
+func configPathsInspectionEnvelope(paths []string) map[string]any {
+	return map[string]any{
+		"kind":   "config",
+		"action": "paths",
+		"status": "ok",
+		"paths":  append([]string(nil), paths...),
+		"files":  inspectConfigFiles(paths),
+	}
+}
+
+type configFileInspectionReport struct {
+	Path           string   `json:"path"`
+	PrecedenceRank int      `json:"precedence_rank"`
+	Status         string   `json:"status"`
+	Present        bool     `json:"present"`
+	Loaded         bool     `json:"loaded"`
+	KeyCount       int      `json:"key_count,omitempty"`
+	Keys           []string `json:"keys,omitempty"`
+	WinsForKeys    []string `json:"wins_for_keys,omitempty"`
+	ShadowedKeys   []string `json:"shadowed_keys,omitempty"`
+	ErrorKind      string   `json:"error_kind,omitempty"`
+	Error          string   `json:"error,omitempty"`
+}
+
+func inspectConfigFiles(paths []string) []configFileInspectionReport {
+	reports := make([]configFileInspectionReport, 0, len(paths))
+	lastKeyOwner := map[string]int{}
+	for index, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		report := configFileInspectionReport{
+			Path:           path,
+			PrecedenceRank: index + 1,
+			Status:         "not_found",
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				reports = append(reports, report)
+				continue
+			}
+			report.Status = "error"
+			report.Present = true
+			report.ErrorKind = "read_error"
+			report.Error = err.Error()
+			reports = append(reports, report)
+			continue
+		}
+		report.Present = true
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(data, &raw); err != nil {
+			report.Status = "error"
+			report.ErrorKind = "parse_error"
+			report.Error = err.Error()
+			reports = append(reports, report)
+			continue
+		}
+		report.Status = "loaded"
+		report.Loaded = true
+		report.Keys = sortedMapKeys(raw)
+		report.KeyCount = len(report.Keys)
+		reports = append(reports, report)
+		reportIndex := len(reports) - 1
+		for _, key := range report.Keys {
+			lastKeyOwner[key] = reportIndex
+		}
+	}
+	for index := range reports {
+		if !reports[index].Loaded {
+			continue
+		}
+		for _, key := range reports[index].Keys {
+			if lastKeyOwner[key] == index {
+				reports[index].WinsForKeys = append(reports[index].WinsForKeys, key)
+			} else {
+				reports[index].ShadowedKeys = append(reports[index].ShadowedKeys, key)
+			}
+		}
+	}
+	return reports
+}
+
+func sortedMapKeys[V any](values map[string]V) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 type configHelpReport struct {

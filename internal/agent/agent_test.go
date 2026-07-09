@@ -11020,16 +11020,17 @@ func TestConfigDegradesOnMalformedConfigFile(t *testing.T) {
 	require.ErrorAs(t, err, &exitErr)
 	require.True(t, exitErr.Silent)
 	var report struct {
-		Kind                string        `json:"kind"`
-		Action              string        `json:"action"`
-		Status              string        `json:"status"`
-		ErrorKind           string        `json:"error_kind"`
-		Message             string        `json:"message"`
-		Hint                string        `json:"hint"`
-		ConfigLoadError     string        `json:"config_load_error"`
-		ConfigLoadErrorKind string        `json:"config_load_error_kind"`
-		Paths               []string      `json:"paths"`
-		Config              config.Config `json:"config"`
+		Kind                string                       `json:"kind"`
+		Action              string                       `json:"action"`
+		Status              string                       `json:"status"`
+		ErrorKind           string                       `json:"error_kind"`
+		Message             string                       `json:"message"`
+		Hint                string                       `json:"hint"`
+		ConfigLoadError     string                       `json:"config_load_error"`
+		ConfigLoadErrorKind string                       `json:"config_load_error_kind"`
+		Paths               []string                     `json:"paths"`
+		Files               []configFileInspectionReport `json:"files"`
+		Config              config.Config                `json:"config"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "config", report.Kind)
@@ -11041,6 +11042,10 @@ func TestConfigDegradesOnMalformedConfigFile(t *testing.T) {
 	require.Contains(t, report.Message, "unexpected end of JSON input")
 	require.Contains(t, report.Hint, "codog doctor")
 	require.Contains(t, report.Paths, configPath)
+	require.Len(t, report.Files, 1)
+	require.Equal(t, configPath, report.Files[0].Path)
+	require.Equal(t, "error", report.Files[0].Status)
+	require.Equal(t, "parse_error", report.Files[0].ErrorKind)
 	require.NotEmpty(t, report.Config.Model)
 	require.NotEmpty(t, report.Config.PermissionMode)
 
@@ -16542,6 +16547,69 @@ func TestSettingsAliasRunsConfigInspection(t *testing.T) {
 	var report map[string]any
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.NotEmpty(t, report["paths"])
+}
+
+func TestConfigInspectionReportsFilePrecedence(t *testing.T) {
+	dir := t.TempDir()
+	userPath := filepath.Join(dir, "user.json")
+	missingPath := filepath.Join(dir, "missing.json")
+	badPath := filepath.Join(dir, "bad.json")
+	projectPath := filepath.Join(dir, "project.json")
+	require.NoError(t, os.WriteFile(userPath, []byte(`{"model":"haiku","hooks":{"PreToolUse":[]}}`), 0o644))
+	require.NoError(t, os.WriteFile(badPath, []byte(`{`), 0o644))
+	require.NoError(t, os.WriteFile(projectPath, []byte(`{"model":"sonnet","mcpServers":{}}`), 0o644))
+
+	cfg := redactedConfig(config.Config{Model: "sonnet", PermissionMode: "workspace-write"})
+	var out bytes.Buffer
+	require.NoError(t, renderConfigInspection(&out, cfg, []string{userPath, missingPath, badPath, projectPath}, []string{"inspect", "--json"}))
+
+	var report struct {
+		Kind   string                       `json:"kind"`
+		Action string                       `json:"action"`
+		Status string                       `json:"status"`
+		Paths  []string                     `json:"paths"`
+		Files  []configFileInspectionReport `json:"files"`
+		Config config.Config                `json:"config"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "config", report.Kind)
+	require.Equal(t, "inspect", report.Action)
+	require.Equal(t, []string{userPath, missingPath, badPath, projectPath}, report.Paths)
+	require.Len(t, report.Files, 4)
+
+	require.Equal(t, "loaded", report.Files[0].Status)
+	require.True(t, report.Files[0].Loaded)
+	require.Equal(t, 1, report.Files[0].PrecedenceRank)
+	require.ElementsMatch(t, []string{"hooks", "model"}, report.Files[0].Keys)
+	require.ElementsMatch(t, []string{"hooks"}, report.Files[0].WinsForKeys)
+	require.ElementsMatch(t, []string{"model"}, report.Files[0].ShadowedKeys)
+
+	require.Equal(t, "not_found", report.Files[1].Status)
+	require.False(t, report.Files[1].Present)
+	require.Equal(t, 2, report.Files[1].PrecedenceRank)
+
+	require.Equal(t, "error", report.Files[2].Status)
+	require.True(t, report.Files[2].Present)
+	require.Equal(t, "parse_error", report.Files[2].ErrorKind)
+
+	require.Equal(t, "loaded", report.Files[3].Status)
+	require.ElementsMatch(t, []string{"mcpServers", "model"}, report.Files[3].Keys)
+	require.ElementsMatch(t, []string{"mcpServers", "model"}, report.Files[3].WinsForKeys)
+	require.Empty(t, report.Files[3].ShadowedKeys)
+
+	out.Reset()
+	require.NoError(t, renderConfigInspection(&out, cfg, []string{userPath, projectPath}, []string{"paths", "--json"}))
+	var pathsReport struct {
+		Kind   string                       `json:"kind"`
+		Action string                       `json:"action"`
+		Paths  []string                     `json:"paths"`
+		Files  []configFileInspectionReport `json:"files"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &pathsReport))
+	require.Equal(t, "paths", pathsReport.Action)
+	require.Equal(t, []string{userPath, projectPath}, pathsReport.Paths)
+	require.Len(t, pathsReport.Files, 2)
+	require.ElementsMatch(t, []string{"model"}, pathsReport.Files[0].ShadowedKeys)
 }
 
 func TestConfigValidateReportsDiagnostics(t *testing.T) {
