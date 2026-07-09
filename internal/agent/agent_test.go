@@ -31120,20 +31120,22 @@ func TestManagementCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
 		name     string
 		args     []string
 		command  string
+		kind     string
 		expected string
 	}{
-		{name: "hooks unknown action", args: []string{"hooks", "bogus"}, command: "hooks", expected: `"bogus"`},
-		{name: "cron unknown action", args: []string{"cron", "bogus"}, command: "cron", expected: `"bogus"`},
-		{name: "cron list extra", args: []string{"cron", "list", "bogus"}, command: "cron list", expected: `"bogus"`},
-		{name: "team unknown action", args: []string{"team", "bogus"}, command: "team", expected: `"bogus"`},
-		{name: "team list extra", args: []string{"team", "list", "bogus"}, command: "team list", expected: `"bogus"`},
+		{name: "hooks unknown action", args: []string{"hooks", "bogus"}, command: "hooks", kind: "unexpected_extra_args", expected: `"bogus"`},
+		{name: "cron unknown action", args: []string{"cron", "bogus"}, command: "cron", kind: "unknown_action", expected: `"bogus"`},
+		{name: "cron typo action", args: []string{"cron", "creat"}, command: "cron", kind: "unknown_action", expected: "Did you mean `cron create`?"},
+		{name: "cron list extra", args: []string{"cron", "list", "bogus"}, command: "cron list", kind: "unexpected_extra_args", expected: `"bogus"`},
+		{name: "team unknown action", args: []string{"team", "bogus"}, command: "team", kind: "unexpected_extra_args", expected: `"bogus"`},
+		{name: "team list extra", args: []string{"team", "list", "bogus"}, command: "team list", kind: "unexpected_extra_args", expected: `"bogus"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := captureStdout(t, func() error {
 				args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
 				return RunCLI(context.Background(), args, config.FlagOverrides{})
 			})
-			requireStructuredCLIError(t, err, []byte(out), "unexpected_extra_args", "unexpected_extra_args")
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.kind)
 			require.Contains(t, out, fmt.Sprintf(`"command": "%s"`, tc.command))
 			require.Contains(t, out, tc.expected)
 		})

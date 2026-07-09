@@ -103,6 +103,7 @@ import (
 	"github.com/Rememorio/codog/internal/terminalsetup"
 	"github.com/Rememorio/codog/internal/thinkback"
 	"github.com/Rememorio/codog/internal/todos"
+	"github.com/Rememorio/codog/internal/toolnames"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/trustresolver"
 	"github.com/Rememorio/codog/internal/tui"
@@ -6275,6 +6276,14 @@ func parseCronArgsWithDefault(args []string, defaultFormat string) (cronRequest,
 		case !actionSet && isCronAction(arg):
 			req.Action = normalizeCronAction(arg)
 			actionSet = true
+		case !actionSet:
+			return req, unknownActionError{
+				Command:     "cron",
+				Action:      arg,
+				Expected:    append([]string(nil), cronActionCandidates...),
+				Suggestions: toolnames.Suggestions(arg, cronActionCandidates, 4),
+				Usage:       cronUsage,
+			}
 		default:
 			positionals = append(positionals, arg)
 		}
@@ -6326,6 +6335,8 @@ func parseCronArgsWithDefault(args []string, defaultFormat string) (cronRequest,
 }
 
 const cronUsage = "codog cron [list|ls|create|add|new|delete|remove|rm|due|mark-run|mark|touch|run-due|run] [ARGS...] [--json|--output-format text|json]"
+
+var cronActionCandidates = []string{"list", "ls", "create", "add", "new", "delete", "remove", "rm", "due", "mark-run", "mark", "touch", "run-due", "run"}
 
 func isCronAction(value string) bool {
 	switch normalizeCronAction(value) {
@@ -31724,6 +31735,22 @@ func (e unexpectedExtraArgsError) Error() string {
 	return fmt.Sprintf("unexpected_extra_args: %s got unexpected arguments: %s", e.Command, strings.Join(e.Args, " "))
 }
 
+type unknownActionError struct {
+	Command     string
+	Action      string
+	Expected    []string
+	Suggestions []string
+	Usage       string
+}
+
+func (e unknownActionError) Error() string {
+	command := strings.TrimSpace(e.Command)
+	if command == "" {
+		command = "command"
+	}
+	return fmt.Sprintf("unknown_action: unknown %s command %q", command, strings.TrimSpace(e.Action))
+}
+
 type exportFilesystemError struct {
 	Operation string
 	Path      string
@@ -32519,6 +32546,42 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Args:      args,
 			Message:   fmt.Sprintf("%s does not accept extra arguments: %s", command, strings.Join(args, " ")),
 			Hint:      "Usage: " + usage,
+		})
+	}
+	var actionErr unknownActionError
+	if errors.As(err, &actionErr) {
+		command := strings.TrimSpace(actionErr.Command)
+		if command == "" {
+			command = "command"
+		}
+		action := strings.TrimSpace(actionErr.Action)
+		expected := append([]string(nil), actionErr.Expected...)
+		suggestions := append([]string(nil), actionErr.Suggestions...)
+		usage := strings.TrimSpace(actionErr.Usage)
+		hint := "Use a supported command."
+		switch len(suggestions) {
+		case 1:
+			hint = fmt.Sprintf("Did you mean `%s %s`?", command, suggestions[0])
+		case 0:
+			if len(expected) > 0 {
+				hint = "Use one of: " + strings.Join(expected, ", ") + "."
+			}
+		default:
+			hint = "Did you mean one of: " + strings.Join(suggestions, ", ") + "?"
+		}
+		if usage != "" {
+			hint += " Usage: " + usage
+		}
+		return finish(cliErrorReport{
+			Kind:      "unknown_action",
+			ErrorKind: "unknown_action",
+			Status:    "error",
+			Command:   command,
+			Action:    action,
+			Value:     action,
+			Expected:  expected,
+			Message:   fmt.Sprintf("unknown %s command %q", command, action),
+			Hint:      hint,
 		})
 	}
 	var resumeArgErr invalidResumeArgumentError
