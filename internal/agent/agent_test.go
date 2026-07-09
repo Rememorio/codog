@@ -554,6 +554,16 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Help, "serve|listen|start")
 
 	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"ssh", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "ssh", report.Topic)
+	require.Contains(t, report.Usage, "-p|--print [PROMPT]")
+	require.Contains(t, report.Help, "headless one-shot")
+	require.NotContains(t, report.Help, "not supported with `ssh`")
+	require.Contains(t, report.OutputFields, "print")
+	require.Contains(t, report.OutputFields, "prompt_configured")
+
+	out.Reset()
 	require.NoError(t, renderHelpCommand(&out, []string{"mock-limits", "--output-format", "json"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "mock-limits", report.Topic)
