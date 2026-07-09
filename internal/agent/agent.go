@@ -13112,12 +13112,16 @@ func renderProfileReport(out io.Writer, report profileReport) {
 }
 
 type providerPreset struct {
-	Name         string   `json:"name"`
-	Protocol     string   `json:"protocol"`
-	BaseURL      string   `json:"base_url,omitempty"`
-	DefaultModel string   `json:"default_model,omitempty"`
-	AuthEnv      []string `json:"auth_env,omitempty"`
-	Description  string   `json:"description,omitempty"`
+	Name                                  string   `json:"name"`
+	Protocol                              string   `json:"protocol"`
+	BaseURL                               string   `json:"base_url,omitempty"`
+	DefaultModel                          string   `json:"default_model,omitempty"`
+	AuthEnv                               []string `json:"auth_env,omitempty"`
+	OpenAICompatible                      bool     `json:"openai_compatible"`
+	SupportsExtraBodyParams               bool     `json:"supports_extra_body_params"`
+	PreservesSlashModelIDsOnCustomBaseURL bool     `json:"preserves_slash_model_ids_on_custom_base_url,omitempty"`
+	ProtectedExtraBodyKeys                []string `json:"protected_extra_body_keys,omitempty"`
+	Description                           string   `json:"description,omitempty"`
 }
 
 type providerAuthReport struct {
@@ -13130,15 +13134,20 @@ type providerAuthReport struct {
 }
 
 type activeProviderReport struct {
-	Name                string             `json:"name"`
-	Protocol            string             `json:"protocol"`
-	BaseURL             string             `json:"base_url"`
-	Model               string             `json:"model"`
-	MaxTokens           int                `json:"max_tokens"`
-	MaxTurns            int                `json:"max_turns"`
-	Auth                providerAuthReport `json:"auth"`
-	ConfigLoadError     *string            `json:"config_load_error,omitempty"`
-	ConfigLoadErrorKind string             `json:"config_load_error_kind,omitempty"`
+	Name                                  string             `json:"name"`
+	Protocol                              string             `json:"protocol"`
+	BaseURL                               string             `json:"base_url"`
+	Model                                 string             `json:"model"`
+	MaxTokens                             int                `json:"max_tokens"`
+	MaxTurns                              int                `json:"max_turns"`
+	OpenAICompatible                      bool               `json:"openai_compatible"`
+	SupportsExtraBodyParams               bool               `json:"supports_extra_body_params"`
+	ExtraBodyConfigured                   bool               `json:"extra_body_configured"`
+	PreservesSlashModelIDsOnCustomBaseURL bool               `json:"preserves_slash_model_ids_on_custom_base_url,omitempty"`
+	ProtectedExtraBodyKeys                []string           `json:"protected_extra_body_keys,omitempty"`
+	Auth                                  providerAuthReport `json:"auth"`
+	ConfigLoadError                       *string            `json:"config_load_error,omitempty"`
+	ConfigLoadErrorKind                   string             `json:"config_load_error_kind,omitempty"`
 }
 
 type oauthProviderSummary struct {
@@ -13424,14 +13433,20 @@ func activeProvider(cfg config.Config) activeProviderReport {
 		name = "dashscope"
 		protocol = "openai-compatible"
 	}
+	openAICompatible := providerProtocolOpenAICompatible(protocol)
 	return activeProviderReport{
-		Name:      name,
-		Protocol:  protocol,
-		BaseURL:   cfg.BaseURL,
-		Model:     cfg.Model,
-		MaxTokens: cfg.MaxTokens,
-		MaxTurns:  cfg.MaxTurns,
-		Auth:      providerAuthStatus(cfg),
+		Name:                                  name,
+		Protocol:                              protocol,
+		BaseURL:                               cfg.BaseURL,
+		Model:                                 cfg.Model,
+		MaxTokens:                             cfg.MaxTokens,
+		MaxTurns:                              cfg.MaxTurns,
+		OpenAICompatible:                      openAICompatible,
+		SupportsExtraBodyParams:               openAICompatible,
+		ExtraBodyConfigured:                   len(cfg.ExtraBody) != 0,
+		PreservesSlashModelIDsOnCustomBaseURL: name == "openai",
+		ProtectedExtraBodyKeys:                providerProtectedExtraBodyKeys(openAICompatible),
+		Auth:                                  providerAuthStatus(cfg),
 	}
 }
 
@@ -13481,28 +13496,38 @@ func providerPresets() []providerPreset {
 			Description:  "Anthropic Messages API.",
 		},
 		{
-			Name:         "openai",
-			Protocol:     "openai-compatible",
-			BaseURL:      modelrouting.DefaultOpenAIBaseURL,
-			DefaultModel: "openai/gpt-4o-mini",
-			AuthEnv:      []string{"CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_API_KEY"},
-			Description:  "OpenAI-compatible Chat Completions API selected by the openai/ model prefix.",
+			Name:                                  "openai",
+			Protocol:                              "openai-compatible",
+			BaseURL:                               modelrouting.DefaultOpenAIBaseURL,
+			DefaultModel:                          "openai/gpt-4o-mini",
+			AuthEnv:                               []string{"CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_API_KEY"},
+			OpenAICompatible:                      true,
+			SupportsExtraBodyParams:               true,
+			PreservesSlashModelIDsOnCustomBaseURL: true,
+			ProtectedExtraBodyKeys:                providerProtectedExtraBodyKeys(true),
+			Description:                           "OpenAI-compatible Chat Completions API selected by the openai/ model prefix.",
 		},
 		{
-			Name:         "xai",
-			Protocol:     "openai-compatible",
-			BaseURL:      modelrouting.DefaultXAIBaseURL,
-			DefaultModel: "grok",
-			AuthEnv:      []string{"XAI_API_KEY"},
-			Description:  "xAI Chat Completions API selected by Grok model aliases or the xai/ model prefix.",
+			Name:                    "xai",
+			Protocol:                "openai-compatible",
+			BaseURL:                 modelrouting.DefaultXAIBaseURL,
+			DefaultModel:            "grok",
+			AuthEnv:                 []string{"XAI_API_KEY"},
+			OpenAICompatible:        true,
+			SupportsExtraBodyParams: true,
+			ProtectedExtraBodyKeys:  providerProtectedExtraBodyKeys(true),
+			Description:             "xAI Chat Completions API selected by Grok model aliases or the xai/ model prefix.",
 		},
 		{
-			Name:         "dashscope",
-			Protocol:     "openai-compatible",
-			BaseURL:      modelrouting.DefaultDashScopeBaseURL,
-			DefaultModel: "qwen-plus",
-			AuthEnv:      []string{"DASHSCOPE_API_KEY"},
-			Description:  "Alibaba DashScope compatible mode selected by Qwen and Kimi model aliases or prefixes.",
+			Name:                    "dashscope",
+			Protocol:                "openai-compatible",
+			BaseURL:                 modelrouting.DefaultDashScopeBaseURL,
+			DefaultModel:            "qwen-plus",
+			AuthEnv:                 []string{"DASHSCOPE_API_KEY"},
+			OpenAICompatible:        true,
+			SupportsExtraBodyParams: true,
+			ProtectedExtraBodyKeys:  providerProtectedExtraBodyKeys(true),
+			Description:             "Alibaba DashScope compatible mode selected by Qwen and Kimi model aliases or prefixes.",
 		},
 		{
 			Name:        "custom",
@@ -13511,6 +13536,17 @@ func providerPresets() []providerPreset {
 			Description: "Any endpoint that implements the Anthropic Messages API.",
 		},
 	}
+}
+
+func providerProtocolOpenAICompatible(protocol string) bool {
+	return strings.EqualFold(strings.TrimSpace(protocol), "openai-compatible")
+}
+
+func providerProtectedExtraBodyKeys(enabled bool) []string {
+	if !enabled {
+		return nil
+	}
+	return []string{"model", "messages", "stream", "tools", "tool_choice", "max_tokens", "max_completion_tokens"}
 }
 
 func providerShowPayload(report providersReport, name string) (any, error) {
@@ -13660,6 +13696,15 @@ func renderProvidersText(out io.Writer, report providersReport) {
 	fmt.Fprintf(out, "Provider: %s (%s)\n", active.Name, active.Protocol)
 	fmt.Fprintf(out, "Model: %s\n", active.Model)
 	fmt.Fprintf(out, "Base URL: %s\n", active.BaseURL)
+	if active.SupportsExtraBodyParams {
+		extraBody := "supported"
+		if active.ExtraBodyConfigured {
+			extraBody = "configured"
+		}
+		fmt.Fprintf(out, "Extra body: %s\n", extraBody)
+	} else {
+		fmt.Fprintln(out, "Extra body: unsupported")
+	}
 	auth := "not configured"
 	if active.Auth.Configured {
 		auth = strings.Join(active.Auth.Sources, ", ")

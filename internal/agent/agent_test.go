@@ -32209,6 +32209,8 @@ func TestProvidersStatusRedactsAuth(t *testing.T) {
 	require.Contains(t, out.String(), `"name": "anthropic"`)
 	require.Contains(t, out.String(), `"name": "xai"`)
 	require.Contains(t, out.String(), `"base_url": "https://api.x.ai/v1"`)
+	require.Contains(t, out.String(), `"supports_extra_body_params": true`)
+	require.Contains(t, out.String(), `"protected_extra_body_keys"`)
 	require.Contains(t, out.String(), `"name": "dashscope"`)
 	require.Contains(t, out.String(), `"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"`)
 	require.Contains(t, out.String(), `"stored_oauth"`)
@@ -32352,22 +32354,31 @@ func TestProvidersShowCurrent(t *testing.T) {
 	require.Contains(t, out.String(), `"name": "custom"`)
 	require.Contains(t, out.String(), `"base_url": "https://provider.example"`)
 	require.Contains(t, out.String(), `"model": "claude-compatible"`)
+	require.Contains(t, out.String(), `"supports_extra_body_params": false`)
 	out.Reset()
 
 	app.Config.BaseURL = "https://api.openai.com/v1"
 	app.Config.Model = "openai/gpt-4o-mini"
+	app.Config.ExtraBody = map[string]any{"parallel_tool_calls": false}
 	require.NoError(t, app.Providers([]string{"show", "current", "--json"}))
 	require.Contains(t, out.String(), `"name": "openai"`)
 	require.Contains(t, out.String(), `"protocol": "openai-compatible"`)
 	require.Contains(t, out.String(), `"model": "openai/gpt-4o-mini"`)
+	require.Contains(t, out.String(), `"supports_extra_body_params": true`)
+	require.Contains(t, out.String(), `"extra_body_configured": true`)
+	require.Contains(t, out.String(), `"preserves_slash_model_ids_on_custom_base_url": true`)
+	require.Contains(t, out.String(), `"tool_choice"`)
 	out.Reset()
 
 	app.Config.BaseURL = "https://api.x.ai/v1"
 	app.Config.Model = "grok"
+	app.Config.ExtraBody = nil
 	require.NoError(t, app.Providers([]string{"show", "current", "--json"}))
 	require.Contains(t, out.String(), `"name": "xai"`)
 	require.Contains(t, out.String(), `"protocol": "openai-compatible"`)
 	require.Contains(t, out.String(), `"model": "grok"`)
+	require.Contains(t, out.String(), `"supports_extra_body_params": true`)
+	require.Contains(t, out.String(), `"extra_body_configured": false`)
 	out.Reset()
 
 	app.Config.BaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -32376,6 +32387,7 @@ func TestProvidersShowCurrent(t *testing.T) {
 	require.Contains(t, out.String(), `"name": "dashscope"`)
 	require.Contains(t, out.String(), `"protocol": "openai-compatible"`)
 	require.Contains(t, out.String(), `"model": "qwen-plus"`)
+	require.Contains(t, out.String(), `"supports_extra_body_params": true`)
 }
 
 func TestRuntimeConfigErrorsHonorGlobalJSONFormat(t *testing.T) {
