@@ -263,6 +263,7 @@ var scenarioOrder = []string{
 	"report_backpressure_roundtrip",
 	"agent_markdown_definition_roundtrip",
 	"background_agent_run_roundtrip",
+	"ssh_print_plan_roundtrip",
 	"remote_trigger_roundtrip",
 	"remote_api_listener_roundtrip",
 	"remote_bridge_workspace_roundtrip",
@@ -831,6 +832,7 @@ func Run(ctx context.Context) (Report, error) {
 		reportBackpressureScenario(),
 		agentMarkdownDefinitionScenario(),
 		backgroundAgentRunScenario(),
+		sshPrintPlanScenario(),
 		remoteTriggerScenario(),
 		remoteAPIListenerScenario(),
 		remoteBridgeWorkspaceScenario(),
@@ -1766,6 +1768,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "background-agents",
 		Description: "Loads Claude Code-style Markdown agent definitions through the real agents CLI.",
 		ParityRefs:  []string{"Agent definitions", "Markdown agents", "Claude Code migration", "Agent runs"},
+	},
+	"ssh_print_plan_roundtrip": {
+		Category:    "remote-control",
+		Description: "Builds a redacted SSH headless print plan and verifies the remote entrypoint uses prompt mode.",
+		ParityRefs:  []string{"SSH remote sessions", "Headless print mode", "Remote sessions", "Claude Code migration"},
 	},
 	"remote_trigger_roundtrip": {
 		Category:    "remote-control",
@@ -10680,6 +10687,60 @@ func backgroundAgentRunScenario() scenario {
 				Output:       string(data),
 				FinalMessage: "background agent run harness ok",
 				RequestCount: 7,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+func sshPrintPlanScenario() scenario {
+	return scenario{
+		name: "ssh_print_plan_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			output, err := runHarnessCodog(ctx, workspace,
+				"--output-format", "json",
+				"ssh",
+				"--local",
+				"localhost",
+				workspace,
+				"--print=ssh harness prompt",
+				"--permission-mode", "read-only",
+			)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var report struct {
+				Kind             string   `json:"kind"`
+				Status           string   `json:"status"`
+				Local            bool     `json:"local"`
+				Print            bool     `json:"print"`
+				PromptConfigured bool     `json:"prompt_configured"`
+				Command          []string `json:"command"`
+				RemoteShell      string   `json:"remote_shell"`
+				Message          string   `json:"message"`
+			}
+			if err := json.Unmarshal([]byte(output), &report); err != nil {
+				return localScenarioResult{}, err
+			}
+			if report.Kind != "ssh" || report.Status != "planned" || !report.Local || !report.Print || !report.PromptConfigured {
+				return localScenarioResult{}, fmt.Errorf("unexpected ssh print plan: %#v", report)
+			}
+			command := strings.Join(report.Command, " ")
+			for _, expected := range []string{"--permission-mode", "read-only", "prompt", "ssh harness prompt"} {
+				if !strings.Contains(command, expected) {
+					return localScenarioResult{}, fmt.Errorf("ssh print command missing %q: %s", expected, command)
+				}
+			}
+			if strings.Contains(command, " repl") {
+				return localScenarioResult{}, fmt.Errorf("ssh print command unexpectedly uses repl: %s", command)
+			}
+			if strings.TrimSpace(report.RemoteShell) != "" {
+				return localScenarioResult{}, fmt.Errorf("local ssh print plan should not include remote shell: %q", report.RemoteShell)
+			}
+			return localScenarioResult{
+				Output:       output,
+				FinalMessage: "ssh print plan harness ok",
+				RequestCount: 1,
 				MessageCount: 1,
 			}, nil
 		},
