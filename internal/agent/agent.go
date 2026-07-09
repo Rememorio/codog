@@ -40348,7 +40348,7 @@ func (a *App) Models(args []string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_models_action",
 			Message:   fmt.Sprintf("unsupported models action %q", req.Action),
-			Hint:      modelsUsage,
+			Hint:      unknownModelsActionHint(req.Action),
 		}, req.Format)
 	}
 }
@@ -40668,6 +40668,9 @@ func parseModelsArgs(args []string) (modelsRequest, error) {
 		}
 		return req, nil
 	}
+	if !supportedModelsAction(req.Action) {
+		return req, nil
+	}
 	if len(positionals) > 1 {
 		return req, unexpectedExtraArgsError{
 			Command: "models " + req.Action,
@@ -40676,6 +40679,15 @@ func parseModelsArgs(args []string) (modelsRequest, error) {
 		}
 	}
 	return req, nil
+}
+
+func supportedModelsAction(action string) bool {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "list", "aliases", "routes", "search", "show", "set", "clear", "help":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeModelsAction(action string) string {
@@ -40698,6 +40710,26 @@ func normalizeModelsAction(action string) string {
 		return "help"
 	default:
 		return strings.ToLower(strings.TrimSpace(action))
+	}
+}
+
+var modelsActionCandidates = []string{
+	"list", "ls", "catalog", "inventory", "available", "alias", "aliases", "shortcut",
+	"shortcuts", "route", "routes", "routing", "map", "maps", "mapping", "mappings",
+	"show", "info", "describe", "resolve", "current", "get", "view", "inspect",
+	"search", "find", "lookup", "query", "set", "select", "use", "clear", "reset",
+	"unset", "default", "help",
+}
+
+func unknownModelsActionHint(action string) string {
+	suggestions := toolnames.Suggestions(action, modelsActionCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		return fmt.Sprintf("Did you mean `codog models %s`? Use `codog models help` to list supported actions.", suggestions[0])
+	case 0:
+		return modelsUsage
+	default:
+		return fmt.Sprintf("Did you mean one of: %s? Use `codog models help` to list supported actions.", strings.Join(suggestions, ", "))
 	}
 }
 

@@ -3858,18 +3858,15 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.False(t, *modelHelp.RequiresProviderRequest)
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "models", "bogus"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "models", "serch", "claude"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
 	var modelsError actionErrorReport
 	require.NoError(t, json.Unmarshal([]byte(out), &modelsError))
 	require.Equal(t, "models", modelsError.Kind)
-	require.Equal(t, "bogus", modelsError.Action)
+	require.Equal(t, "serch", modelsError.Action)
 	require.Equal(t, "unsupported_models_action", modelsError.ErrorKind)
-	require.Contains(t, modelsError.Hint, "aliases")
-	require.Contains(t, modelsError.Hint, "routes")
-	require.Contains(t, modelsError.Hint, "search")
-	require.Contains(t, modelsError.Hint, "show")
+	require.Contains(t, modelsError.Hint, "Did you mean `codog models search`?")
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/max-tokens"}, config.FlagOverrides{})
