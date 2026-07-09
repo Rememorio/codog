@@ -45,6 +45,7 @@ func TestRouteSpecsDescribeServedRemoteAPI(t *testing.T) {
 
 	require.True(t, byPath["/health"].Public)
 	require.Equal(t, []string{http.MethodGet}, byPath["/health"].Methods)
+	require.Equal(t, []string{http.MethodGet}, byPath["/capabilities"].Methods)
 	require.Equal(t, []string{http.MethodGet}, byPath["/routes"].Methods)
 	require.Equal(t, []string{http.MethodGet, http.MethodPost}, byPath["/state"].Methods)
 	require.Equal(t, []string{http.MethodGet, http.MethodDelete}, byPath["/sessions/{id}"].Methods)
@@ -143,6 +144,68 @@ func TestControlRoutesEndpoint(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, authServer.URL+"/routes", nil)
 	require.NoError(t, err)
 	req.Header.Set("authorization", "Bearer secret-token")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestControlCapabilitiesEndpoint(t *testing.T) {
+	server := httptest.NewServer(Server{
+		Sessions:    &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")},
+		MaxSessions: 3,
+		LeaseTTL:    2 * time.Minute,
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/capabilities")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var report struct {
+		Kind                  string      `json:"kind"`
+		Action                string      `json:"action"`
+		Status                string      `json:"status"`
+		RouteCount            int         `json:"route_count"`
+		Routes                []RouteSpec `json:"routes"`
+		BridgeCapabilityCount int         `json:"bridge_capability_count"`
+		BridgeCapabilities    []string    `json:"bridge_capabilities"`
+		MaxSessions           int         `json:"max_sessions"`
+		MaxSessionsEnforced   bool        `json:"max_sessions_enforced"`
+		LeaseTTLMS            int64       `json:"lease_ttl_ms"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&report))
+	require.Equal(t, "control_capabilities", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, RouteSpecs(), report.Routes)
+	require.Equal(t, len(report.Routes), report.RouteCount)
+	require.Equal(t, bridge.Capabilities(), report.BridgeCapabilities)
+	require.Equal(t, len(report.BridgeCapabilities), report.BridgeCapabilityCount)
+	require.Equal(t, 3, report.MaxSessions)
+	require.True(t, report.MaxSessionsEnforced)
+	require.Equal(t, int64(120000), report.LeaseTTLMS)
+	require.Contains(t, report.BridgeCapabilities, "sessions/list")
+	require.Contains(t, report.BridgeCapabilities, "mcp/resources")
+
+	resp, err = http.Post(server.URL+"/capabilities", "application/json", bytes.NewBufferString(`{}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+
+	authServer := httptest.NewServer(Server{
+		Sessions:  &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")},
+		AuthToken: "secret-token",
+	}.Handler())
+	defer authServer.Close()
+	resp, err = http.Get(authServer.URL + "/capabilities")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	req, err := http.NewRequest(http.MethodGet, authServer.URL+"/capabilities", nil)
+	require.NoError(t, err)
+	req.Header.Set("x-codog-token", "secret-token")
 	resp, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()

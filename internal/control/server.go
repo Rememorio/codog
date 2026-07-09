@@ -57,6 +57,7 @@ type RouteSpec struct {
 func RouteSpecs() []RouteSpec {
 	return []RouteSpec{
 		{Path: "/health", Methods: []string{http.MethodGet}, Description: "Health check.", Public: true},
+		{Path: "/capabilities", Methods: []string{http.MethodGet}, Description: "Describe control API and bridge capabilities."},
 		{Path: "/routes", Methods: []string{http.MethodGet}, Description: "List control API routes and accepted methods."},
 		{Path: "/state", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read or update remote client heartbeat, failure, and lease state."},
 		{Path: "/sessions", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List sessions or create a new session."},
@@ -219,6 +220,7 @@ type hookCommandSummary struct {
 func (s Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.health)
+	mux.HandleFunc("/capabilities", s.capabilities)
 	mux.HandleFunc("/routes", s.routes)
 	mux.HandleFunc("/state", s.state)
 	mux.HandleFunc("/sessions", s.sessions)
@@ -281,6 +283,27 @@ func (s Server) Handler() http.Handler {
 
 func (s Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (s Server) capabilities(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	routes := RouteSpecs()
+	bridgeCapabilities := bridge.Capabilities()
+	writeJSON(w, map[string]any{
+		"kind":                    "control_capabilities",
+		"action":                  "show",
+		"status":                  "ok",
+		"route_count":             len(routes),
+		"routes":                  routes,
+		"bridge_capability_count": len(bridgeCapabilities),
+		"bridge_capabilities":     bridgeCapabilities,
+		"max_sessions":            s.MaxSessions,
+		"max_sessions_enforced":   s.MaxSessions > 0,
+		"lease_ttl_ms":            s.LeaseTTL.Milliseconds(),
+	})
 }
 
 func (s Server) routes(w http.ResponseWriter, r *http.Request) {
