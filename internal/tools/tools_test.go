@@ -2698,6 +2698,13 @@ func TestPermissionCheckToolReturnsReceipt(t *testing.T) {
 	require.Contains(t, out, `"required_permission": "read-only"`)
 	require.Contains(t, out, `"permission_source": "request_override"`)
 
+	out, err = registry.Execute(context.Background(), "permission_check", []byte(`{"target_tool":"write_fil"}`), prompter)
+	require.NoError(t, err)
+	require.Contains(t, out, `"known_tool": false`)
+	require.Contains(t, out, `"permission_source": "unknown_tool_default"`)
+	require.Contains(t, out, `"suggestions": [`)
+	require.Contains(t, out, `"write_file"`)
+
 	out, err = registry.Execute(context.Background(), "permission_check", []byte(`{"target_tool":"unknown-tool"}`), prompter)
 	require.NoError(t, err)
 	require.Contains(t, out, `"known_tool": false`)

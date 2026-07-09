@@ -5660,6 +5660,10 @@ func (r *Registry) executePermissionCheck(input json.RawMessage, prompter *Promp
 		required = PermissionDanger
 		permissionSource = "unknown_tool_default"
 	}
+	suggestions := []string(nil)
+	if !found {
+		suggestions = r.toolNameSuggestions(target, 4)
+	}
 	targetInput := payload.Input
 	if len(targetInput) == 0 || string(targetInput) == "null" {
 		targetInput = json.RawMessage(`{}`)
@@ -5668,7 +5672,7 @@ func (r *Registry) executePermissionCheck(input json.RawMessage, prompter *Promp
 		prompter = &Prompter{Mode: PermissionWorkspace}
 	}
 	decision := prompter.Decide(canonicalOrTarget(canonical, target), required, targetInput)
-	return pretty(map[string]any{
+	report := map[string]any{
 		"kind":                "permission_check",
 		"source":              "registry_permission_policy",
 		"requested_tool":      target,
@@ -5693,7 +5697,11 @@ func (r *Registry) executePermissionCheck(input json.RawMessage, prompter *Promp
 			"reason":              decision.Reason,
 			"message":             decision.Message,
 		},
-	}), nil
+	}
+	if len(suggestions) > 0 {
+		report["suggestions"] = suggestions
+	}
+	return pretty(report), nil
 }
 
 func (r *Registry) toolByName(name string) (Tool, string, bool) {
@@ -5709,6 +5717,118 @@ func canonicalOrTarget(canonical string, target string) string {
 		return canonical
 	}
 	return target
+}
+
+func (r *Registry) toolNameSuggestions(name string, limit int) []string {
+	query := toolSuggestionKey(name)
+	if query == "" || limit <= 0 {
+		return nil
+	}
+	type scoredSuggestion struct {
+		Name  string
+		Score int
+	}
+	candidates := map[string]struct{}{}
+	for name := range r.tools {
+		candidates[name] = struct{}{}
+	}
+	for _, canonical := range claudeToolAliases {
+		if _, ok := r.tools[canonical]; ok {
+			candidates[canonical] = struct{}{}
+		}
+	}
+	scored := make([]scoredSuggestion, 0, len(candidates))
+	for candidate := range candidates {
+		key := toolSuggestionKey(candidate)
+		if key == "" || key == query {
+			continue
+		}
+		score := toolSuggestionDistance(query, key)
+		if strings.Contains(key, query) || strings.Contains(query, key) {
+			score--
+		}
+		if score <= toolSuggestionThreshold(query, key) {
+			scored = append(scored, scoredSuggestion{Name: candidate, Score: score})
+		}
+	}
+	sort.Slice(scored, func(i, j int) bool {
+		if scored[i].Score != scored[j].Score {
+			return scored[i].Score < scored[j].Score
+		}
+		return scored[i].Name < scored[j].Name
+	})
+	out := make([]string, 0, min(limit, len(scored)))
+	seen := map[string]struct{}{}
+	for _, candidate := range scored {
+		if _, ok := seen[candidate.Name]; ok {
+			continue
+		}
+		seen[candidate.Name] = struct{}{}
+		out = append(out, candidate.Name)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func toolSuggestionKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func toolSuggestionThreshold(a string, b string) int {
+	longest := max(len(a), len(b))
+	switch {
+	case longest <= 4:
+		return 1
+	case longest <= 10:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func toolSuggestionDistance(a string, b string) int {
+	if a == b {
+		return 0
+	}
+	if a == "" {
+		return len(b)
+	}
+	if b == "" {
+		return len(a)
+	}
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 0
+			if a[i-1] != b[j-1] {
+				cost = 1
+			}
+			curr[j] = min(
+				prev[j]+1,
+				curr[j-1]+1,
+				prev[j-1]+cost,
+			)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(b)]
 }
 
 func validPermission(permission Permission) bool {
