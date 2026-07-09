@@ -392,6 +392,69 @@ func TestRealBinaryPermissionPromptApproveAndDeny(t *testing.T) {
 	}
 }
 
+func TestRealBinaryPermissionPromptApproveAndDenyWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	for _, tc := range []struct {
+		name       string
+		answer     string
+		command    string
+		finalText  string
+		expectFile bool
+	}{
+		{
+			name:       "approve",
+			answer:     "y",
+			command:    "printf approved-tty > permission.txt",
+			finalText:  "permission tty approved ok",
+			expectFile: true,
+		},
+		{
+			name:       "deny",
+			answer:     "n",
+			command:    "printf denied-tty > permission.txt",
+			finalText:  "permission tty denied ok",
+			expectFile: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			configHome := t.TempDir()
+			server := httptest.NewServer(mockanthropic.Server{
+				Turns: []mockanthropic.Turn{
+					{ToolUses: []mockanthropic.ToolUse{{
+						ID:    "tool-bash",
+						Name:  "bash",
+						Input: json.RawMessage(`{"command":` + strconv.Quote(tc.command) + `,"timeout":1000}`),
+					}}},
+					{Text: tc.finalText},
+				},
+			}.Handler())
+			defer server.Close()
+
+			output := runExpectCodog(t, bin, workspace, configHome, []string{
+				"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+				"ANTHROPIC_BASE_URL=" + server.URL,
+			}, `
+set timeout 30
+spawn -noecho $env(CODOG_TEST_BIN) --permission-mode workspace-write --model claude-sonnet-4-5 -p "permission tty smoke" --max-turns 4
+expect -exact {Allow? [y/N/a=always for session]}
+send "`+tc.answer+`\r"
+expect "`+tc.finalText+`"
+expect eof
+`)
+
+			require.Contains(t, output, "Allow?")
+			require.Contains(t, output, tc.finalText)
+			_, err := os.Stat(filepath.Join(workspace, "permission.txt"))
+			if tc.expectFile {
+				require.NoError(t, err)
+			} else {
+				require.True(t, os.IsNotExist(err), "denied command should not create file: %v", err)
+			}
+		})
+	}
+}
+
 func TestRealBinaryPromptResumeSendsPriorSessionHistory(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()
