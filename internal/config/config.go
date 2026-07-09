@@ -18,6 +18,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/envfile"
 	"github.com/Rememorio/codog/internal/modelrouting"
+	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/signing"
 )
 
@@ -3810,12 +3811,10 @@ func validateSandboxConfig(cfg SandboxConfig) error {
 	if mode == "" {
 		return nil
 	}
-	switch mode {
-	case "off", "workspace-only", "allow-list":
-		return nil
-	default:
-		return fmt.Errorf("invalid_sandbox_config: unsupported filesystem mode %q", cfg.FilesystemMode)
+	if _, err := sandbox.ParseFilesystemIsolationMode(mode); err != nil {
+		return fmt.Errorf("invalid_sandbox_config: %w", err)
 	}
+	return nil
 }
 
 func validateAPITimeoutConfig(cfg APITimeoutConfig) error {

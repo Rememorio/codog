@@ -2650,11 +2650,13 @@ func TestLoadSandboxStrategyCompatibility(t *testing.T) {
 func TestLoadRejectsInvalidSandboxFilesystemMode(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(configPath, []byte(`{"future":{"sandbox":{"filesystemMode":"invalid"}}}`), 0o644))
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"future":{"sandbox":{"filesystemMode":"workspaceonly"}}}`), 0o644))
 
 	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid_sandbox_config")
+	require.Contains(t, err.Error(), `unsupported filesystem isolation mode "workspaceonly"`)
+	require.Contains(t, err.Error(), `did you mean "workspace-only"`)
 }
 
 func TestLoadProjectLocalOverridesSharedConfig(t *testing.T) {
