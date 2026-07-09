@@ -32343,12 +32343,13 @@ func TestProvidersShowCurrent(t *testing.T) {
 	var out bytes.Buffer
 	app := &App{
 		Config: config.Config{
-			ConfigHome: t.TempDir(),
-			BaseURL:    "https://provider.example",
-			Model:      "claude-compatible",
-			MaxTokens:  2048,
-			MaxTurns:   4,
-			ExtraBody:  map[string]any{"metadata": map[string]any{"source": "test"}},
+			ConfigHome:      t.TempDir(),
+			BaseURL:         "https://provider.example",
+			Model:           "claude-compatible",
+			MaxTokens:       2048,
+			MaxTurns:        4,
+			ExtraBody:       map[string]any{"metadata": map[string]any{"source": "test"}},
+			ReasoningEffort: "high",
 		},
 		Out: &out,
 	}
@@ -32361,11 +32362,15 @@ func TestProvidersShowCurrent(t *testing.T) {
 	var customActive activeProviderReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &customActive))
 	require.ElementsMatch(t, []string{"metadata"}, customActive.ExtraBodyIgnoredKeys)
+	require.Contains(t, providerDiagnosticCodes(customActive.Diagnostics), "reasoning_effort_unsupported")
+	require.Contains(t, providerDiagnosticCodes(customActive.Diagnostics), "extra_body_keys_ignored")
 	out.Reset()
 
 	app.Config.BaseURL = "https://api.openai.com/v1"
 	app.Config.Model = "openai/o4-mini"
 	app.Config.ExtraBody = map[string]any{"parallel_tool_calls": false, "model": "bad-override"}
+	temperature := 0.3
+	app.Config.Temperature = &temperature
 	require.NoError(t, app.Providers([]string{"show", "current", "--json"}))
 	require.Contains(t, out.String(), `"name": "openai"`)
 	require.Contains(t, out.String(), `"protocol": "openai-compatible"`)
@@ -32383,11 +32388,16 @@ func TestProvidersShowCurrent(t *testing.T) {
 	require.ElementsMatch(t, []string{"model", "parallel_tool_calls"}, openAIActive.ExtraBodyKeys)
 	require.ElementsMatch(t, []string{"parallel_tool_calls"}, openAIActive.ExtraBodyForwardedKeys)
 	require.ElementsMatch(t, []string{"model"}, openAIActive.ExtraBodyIgnoredKeys)
+	require.Contains(t, providerDiagnosticCodes(openAIActive.Diagnostics), "reasoning_model_fixed_sampling")
+	require.Contains(t, providerDiagnosticCodes(openAIActive.Diagnostics), "extra_body_keys_ignored")
+	require.NotContains(t, providerDiagnosticCodes(openAIActive.Diagnostics), "reasoning_effort_unsupported")
 	out.Reset()
 
 	app.Config.BaseURL = "https://api.x.ai/v1"
 	app.Config.Model = "grok"
 	app.Config.ExtraBody = nil
+	app.Config.Temperature = nil
+	app.Config.ReasoningEffort = ""
 	require.NoError(t, app.Providers([]string{"show", "current", "--json"}))
 	require.Contains(t, out.String(), `"name": "xai"`)
 	require.Contains(t, out.String(), `"protocol": "openai-compatible"`)
@@ -32405,6 +32415,14 @@ func TestProvidersShowCurrent(t *testing.T) {
 	require.Contains(t, out.String(), `"model": "qwen-plus"`)
 	require.Contains(t, out.String(), `"supports_extra_body_params": true`)
 	require.Contains(t, out.String(), `"supports_stream_usage": true`)
+}
+
+func providerDiagnosticCodes(diagnostics []providerDiagnosticReport) []string {
+	codes := make([]string, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		codes = append(codes, diagnostic.Code)
+	}
+	return codes
 }
 
 func TestRuntimeConfigErrorsHonorGlobalJSONFormat(t *testing.T) {

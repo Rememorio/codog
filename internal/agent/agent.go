@@ -13138,29 +13138,37 @@ type providerAuthReport struct {
 	PreferredToken string   `json:"preferred_token,omitempty"`
 }
 
+type providerDiagnosticReport struct {
+	Code     string `json:"code"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+	Action   string `json:"action,omitempty"`
+}
+
 type activeProviderReport struct {
-	Name                                  string             `json:"name"`
-	Protocol                              string             `json:"protocol"`
-	BaseURL                               string             `json:"base_url"`
-	Model                                 string             `json:"model"`
-	MaxTokens                             int                `json:"max_tokens"`
-	MaxTurns                              int                `json:"max_turns"`
-	OpenAICompatible                      bool               `json:"openai_compatible"`
-	ReasoningModel                        bool               `json:"reasoning_model"`
-	PreservesReasoningContentInHistory    bool               `json:"preserves_reasoning_content_in_history"`
-	StripsTuningParams                    bool               `json:"strips_tuning_params"`
-	SupportsStreamUsage                   bool               `json:"supports_stream_usage"`
-	HonorsProxyEnv                        bool               `json:"honors_proxy_env"`
-	SupportsExtraBodyParams               bool               `json:"supports_extra_body_params"`
-	ExtraBodyConfigured                   bool               `json:"extra_body_configured"`
-	ExtraBodyKeys                         []string           `json:"extra_body_keys,omitempty"`
-	ExtraBodyForwardedKeys                []string           `json:"extra_body_forwarded_keys,omitempty"`
-	ExtraBodyIgnoredKeys                  []string           `json:"extra_body_ignored_keys,omitempty"`
-	PreservesSlashModelIDsOnCustomBaseURL bool               `json:"preserves_slash_model_ids_on_custom_base_url,omitempty"`
-	ProtectedExtraBodyKeys                []string           `json:"protected_extra_body_keys,omitempty"`
-	Auth                                  providerAuthReport `json:"auth"`
-	ConfigLoadError                       *string            `json:"config_load_error,omitempty"`
-	ConfigLoadErrorKind                   string             `json:"config_load_error_kind,omitempty"`
+	Name                                  string                     `json:"name"`
+	Protocol                              string                     `json:"protocol"`
+	BaseURL                               string                     `json:"base_url"`
+	Model                                 string                     `json:"model"`
+	MaxTokens                             int                        `json:"max_tokens"`
+	MaxTurns                              int                        `json:"max_turns"`
+	OpenAICompatible                      bool                       `json:"openai_compatible"`
+	ReasoningModel                        bool                       `json:"reasoning_model"`
+	PreservesReasoningContentInHistory    bool                       `json:"preserves_reasoning_content_in_history"`
+	StripsTuningParams                    bool                       `json:"strips_tuning_params"`
+	SupportsStreamUsage                   bool                       `json:"supports_stream_usage"`
+	HonorsProxyEnv                        bool                       `json:"honors_proxy_env"`
+	SupportsExtraBodyParams               bool                       `json:"supports_extra_body_params"`
+	ExtraBodyConfigured                   bool                       `json:"extra_body_configured"`
+	ExtraBodyKeys                         []string                   `json:"extra_body_keys,omitempty"`
+	ExtraBodyForwardedKeys                []string                   `json:"extra_body_forwarded_keys,omitempty"`
+	ExtraBodyIgnoredKeys                  []string                   `json:"extra_body_ignored_keys,omitempty"`
+	PreservesSlashModelIDsOnCustomBaseURL bool                       `json:"preserves_slash_model_ids_on_custom_base_url,omitempty"`
+	ProtectedExtraBodyKeys                []string                   `json:"protected_extra_body_keys,omitempty"`
+	Diagnostics                           []providerDiagnosticReport `json:"diagnostics,omitempty"`
+	Auth                                  providerAuthReport         `json:"auth"`
+	ConfigLoadError                       *string                    `json:"config_load_error,omitempty"`
+	ConfigLoadErrorKind                   string                     `json:"config_load_error_kind,omitempty"`
 }
 
 type oauthProviderSummary struct {
@@ -13453,6 +13461,9 @@ func activeProvider(cfg config.Config) activeProviderReport {
 		wireModel = modelrouting.WireModelForBaseURL(wireModel, cfg.BaseURL)
 	}
 	reasoningModel := openAICompatible && modelrouting.IsReasoningModel(wireModel)
+	preservesReasoningContent := openAICompatible && modelrouting.RequiresReasoningContentHistory(wireModel)
+	stripsTuningParams := reasoningModel
+	supportsStreamUsage := providerSupportsStreamUsage(name, openAICompatible)
 	return activeProviderReport{
 		Name:                                  name,
 		Protocol:                              protocol,
@@ -13462,9 +13473,9 @@ func activeProvider(cfg config.Config) activeProviderReport {
 		MaxTurns:                              cfg.MaxTurns,
 		OpenAICompatible:                      openAICompatible,
 		ReasoningModel:                        reasoningModel,
-		PreservesReasoningContentInHistory:    openAICompatible && modelrouting.RequiresReasoningContentHistory(wireModel),
-		StripsTuningParams:                    reasoningModel,
-		SupportsStreamUsage:                   providerSupportsStreamUsage(name, openAICompatible),
+		PreservesReasoningContentInHistory:    preservesReasoningContent,
+		StripsTuningParams:                    stripsTuningParams,
+		SupportsStreamUsage:                   supportsStreamUsage,
 		HonorsProxyEnv:                        true,
 		SupportsExtraBodyParams:               openAICompatible,
 		ExtraBodyConfigured:                   len(cfg.ExtraBody) != 0,
@@ -13473,8 +13484,46 @@ func activeProvider(cfg config.Config) activeProviderReport {
 		ExtraBodyIgnoredKeys:                  extraBodyIgnoredKeys,
 		PreservesSlashModelIDsOnCustomBaseURL: name == "openai",
 		ProtectedExtraBodyKeys:                providerProtectedExtraBodyKeys(openAICompatible),
+		Diagnostics:                           providerDiagnosticsForActiveConfig(cfg, name, wireModel, reasoningModel, preservesReasoningContent, stripsTuningParams, extraBodyIgnoredKeys),
 		Auth:                                  providerAuthStatus(cfg),
 	}
+}
+
+func providerDiagnosticsForActiveConfig(cfg config.Config, providerName string, wireModel string, reasoningModel bool, preservesReasoningContent bool, stripsTuningParams bool, ignoredExtraBodyKeys []string) []providerDiagnosticReport {
+	diagnostics := []providerDiagnosticReport{}
+	if strings.TrimSpace(cfg.ReasoningEffort) != "" && !(strings.EqualFold(providerName, "openai") && reasoningModel) {
+		diagnostics = append(diagnostics, providerDiagnosticReport{
+			Code:     "reasoning_effort_unsupported",
+			Severity: "warning",
+			Message:  fmt.Sprintf("%s does not map reasoning_effort for model %q.", providerName, cfg.Model),
+			Action:   "Remove reasoning_effort or route to an OpenAI-compatible reasoning model such as openai/o4-mini.",
+		})
+	}
+	if stripsTuningParams && cfg.Temperature != nil {
+		diagnostics = append(diagnostics, providerDiagnosticReport{
+			Code:     "reasoning_model_fixed_sampling",
+			Severity: "info",
+			Message:  fmt.Sprintf("Model %q is treated as a fixed-sampling reasoning model; tuning parameters are omitted before the provider call.", cfg.Model),
+			Action:   "Leave temperature unset for reasoning models to match provider validation rules.",
+		})
+	}
+	if preservesReasoningContent {
+		diagnostics = append(diagnostics, providerDiagnosticReport{
+			Code:     "reasoning_history_required",
+			Severity: "info",
+			Message:  fmt.Sprintf("Model %q requires assistant thinking history to be echoed as reasoning_content.", wireModel),
+			Action:   "Keep prior assistant thinking blocks in history; Codog will serialize them as reasoning_content.",
+		})
+	}
+	if len(ignoredExtraBodyKeys) != 0 {
+		diagnostics = append(diagnostics, providerDiagnosticReport{
+			Code:     "extra_body_keys_ignored",
+			Severity: "info",
+			Message:  fmt.Sprintf("Extra body keys ignored before the provider call: %s.", strings.Join(ignoredExtraBodyKeys, ", ")),
+			Action:   "Remove protected keys from extra_body or set the corresponding first-class Codog option.",
+		})
+	}
+	return diagnostics
 }
 
 func providerExtraBodyKeyDiagnostics(extraBody map[string]any, supported bool) ([]string, []string, []string) {
@@ -13779,6 +13828,9 @@ func renderProvidersText(out io.Writer, report providersReport) {
 	}
 	if len(active.ExtraBodyIgnoredKeys) != 0 {
 		fmt.Fprintf(out, "Extra body ignored: %s\n", strings.Join(active.ExtraBodyIgnoredKeys, ", "))
+	}
+	for _, diagnostic := range active.Diagnostics {
+		fmt.Fprintf(out, "Diagnostic: %s %s\n", diagnostic.Severity, diagnostic.Code)
 	}
 	auth := "not configured"
 	if active.Auth.Configured {
