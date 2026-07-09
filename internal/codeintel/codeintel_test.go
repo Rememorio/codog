@@ -309,6 +309,7 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, preparedRename.Found)
 	require.Equal(t, "Runner", preparedRename.Symbol)
+	require.Equal(t, "Runner", preparedRename.CurrentName)
 	require.Equal(t, "Runner", preparedRename.Placeholder)
 	require.Equal(t, LSPRange{Start: LSPPosition{Line: 2, Character: 5}, End: LSPPosition{Line: 2, Character: 11}}, preparedRename.Range)
 

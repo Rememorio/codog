@@ -206,6 +206,7 @@ type RenamePrepareResult struct {
 	Path        string   `json:"path,omitempty"`
 	Symbol      string   `json:"symbol,omitempty"`
 	Found       bool     `json:"found"`
+	CurrentName string   `json:"current_name,omitempty"`
 	Placeholder string   `json:"placeholder,omitempty"`
 	Range       LSPRange `json:"range,omitempty"`
 }
@@ -1712,7 +1713,7 @@ func PrepareRenameAtPosition(workspace string, relPath string, line int, charact
 	} else if !found {
 		return RenamePrepareResult{Path: rel, Symbol: symbol, Found: false, Range: rng}, nil
 	}
-	return RenamePrepareResult{Path: rel, Symbol: symbol, Found: true, Placeholder: symbol, Range: rng}, nil
+	return RenamePrepareResult{Path: rel, Symbol: symbol, Found: true, CurrentName: symbol, Placeholder: symbol, Range: rng}, nil
 }
 
 // RenameSymbol returns a static workspace rename preview for a Go identifier.

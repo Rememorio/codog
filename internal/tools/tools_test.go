@@ -3111,6 +3111,7 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, prepareRenameOut, `"source": "static"`)
 	require.Contains(t, prepareRenameOut, `"found": true`)
 	require.Contains(t, prepareRenameOut, `"symbol": "Widget"`)
+	require.Contains(t, prepareRenameOut, `"current_name": "Widget"`)
 	require.Contains(t, prepareRenameOut, `"placeholder": "Widget"`)
 
 	renameOut, err := tool.Execute(context.Background(), []byte(`{"action":"rename","query":"Widget","new_name":"Gadget","limit":20}`))

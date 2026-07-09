@@ -268,7 +268,7 @@ var lspActionInfos = []LSPActionInfo{
 		Aliases:          []string{"prepare_rename", "prepareRename", "rename_prepare", "rename-prepare"},
 		RequiresDocument: true,
 		RequiresPosition: true,
-		Description:      "Check whether a symbol position can be renamed and return the rename range or placeholder.",
+		Description:      "Check whether a symbol position can be renamed and return the rename range and current symbol name.",
 	},
 	{
 		Name:             "code-action",
