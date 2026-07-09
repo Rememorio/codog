@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 type StrategyStatus struct {
@@ -53,6 +55,23 @@ const (
 	FilesystemIsolationOff           FilesystemIsolationMode = "off"
 	FilesystemIsolationWorkspaceOnly FilesystemIsolationMode = "workspace-only"
 	FilesystemIsolationAllowList     FilesystemIsolationMode = "allow-list"
+)
+
+var (
+	sandboxStrategyNames = []string{
+		"off",
+		"none",
+		"detect",
+		"sandbox-exec",
+		"bwrap",
+		"unshare",
+		"restricted-token",
+	}
+	filesystemIsolationModeNames = []string{
+		string(FilesystemIsolationOff),
+		string(FilesystemIsolationWorkspaceOnly),
+		string(FilesystemIsolationAllowList),
+	}
 )
 
 type SandboxRequest struct {
@@ -288,7 +307,7 @@ func ParseFilesystemIsolationMode(value string) (FilesystemIsolationMode, error)
 	case FilesystemIsolationOff, FilesystemIsolationWorkspaceOnly, FilesystemIsolationAllowList:
 		return FilesystemIsolationMode(value), nil
 	default:
-		return "", fmt.Errorf("unsupported filesystem isolation mode %q", value)
+		return "", unsupportedSandboxValueError("filesystem isolation mode", value, filesystemIsolationModeNames)
 	}
 }
 
@@ -402,7 +421,7 @@ func BuildShellCommand(strategy, workspace, command string) (string, []string, e
 	case "restricted-token":
 		return BuildWindowsRestrictedTokenCommand(absWorkspace, command, "")
 	default:
-		return "", nil, fmt.Errorf("unsupported sandbox strategy %q", strategy)
+		return "", nil, unsupportedSandboxValueError("sandbox strategy", strategy, sandboxStrategyNames)
 	}
 }
 
@@ -443,7 +462,19 @@ func BuildShellCommandWithStatus(strategy, workspace, command string, status San
 	case "restricted-token":
 		return BuildWindowsRestrictedTokenCommand(absWorkspace, command, "")
 	default:
-		return "", nil, fmt.Errorf("unsupported sandbox strategy %q", strategy)
+		return "", nil, unsupportedSandboxValueError("sandbox strategy", strategy, sandboxStrategyNames)
+	}
+}
+
+func unsupportedSandboxValueError(kind, value string, candidates []string) error {
+	suggestions := toolnames.Suggestions(value, candidates, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unsupported %s %q", kind, value)
+	case 1:
+		return fmt.Errorf("unsupported %s %q; did you mean %q?", kind, value, suggestions[0])
+	default:
+		return fmt.Errorf("unsupported %s %q; suggestions: %s", kind, value, strings.Join(suggestions, ", "))
 	}
 }
 

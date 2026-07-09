@@ -58,6 +58,20 @@ func TestBuildShellCommandRestrictedToken(t *testing.T) {
 	require.Contains(t, args[1], "echo ''hi''")
 }
 
+func TestParseFilesystemIsolationModeSuggestsKnownModes(t *testing.T) {
+	_, err := ParseFilesystemIsolationMode("workspaceonly")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unsupported filesystem isolation mode "workspaceonly"`)
+	require.Contains(t, err.Error(), `did you mean "workspace-only"`)
+}
+
+func TestBuildShellCommandSuggestsKnownStrategies(t *testing.T) {
+	_, _, err := BuildShellCommand("sandbx-exec", t.TempDir(), "pwd")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unsupported sandbox strategy "sandbx-exec"`)
+	require.Contains(t, err.Error(), `did you mean "sandbox-exec"`)
+}
+
 func TestDetectForReportsContainerAndStrategyDetails(t *testing.T) {
 	status := DetectFor(DetectionInputs{
 		OS:                 "linux",
