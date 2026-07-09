@@ -1067,17 +1067,22 @@ func TestRepairSessionIdentities(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, store.Append(explicit.ID, anthropic.TextMessage("user", "do not overwrite")))
+	_, err = store.CreateWithIdentity("empty-placeholder", SessionIdentity{})
+	require.NoError(t, err)
 
 	report, err := store.RepairSessionIdentities()
 	require.NoError(t, err)
 	require.Equal(t, "backfill_sessions", report.Kind)
 	require.Equal(t, "identity_repair", report.Action)
-	require.Equal(t, 2, report.SessionsScanned)
+	require.Equal(t, 3, report.SessionsScanned)
 	require.Equal(t, 1, report.SessionsUpdated)
 	require.Equal(t, 1, report.IdentityUpdates)
 	require.Len(t, report.BackfilledSessions, 1)
 	require.Equal(t, "legacy-input", report.BackfilledSessions[0].ID)
 	require.True(t, report.BackfilledSessions[0].IdentityUpdated)
+	require.Len(t, report.SkippedSessionDetails, 1)
+	require.Equal(t, "empty-placeholder", report.SkippedSessionDetails[0].ID)
+	require.Equal(t, "no_user_prompt", report.SkippedSessionDetails[0].Reason)
 
 	repaired, err := store.Open("legacy-input")
 	require.NoError(t, err)
@@ -1094,6 +1099,8 @@ func TestRepairSessionIdentities(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, report.SessionsUpdated)
 	require.Equal(t, 0, report.IdentityUpdates)
+	require.Len(t, report.SkippedSessionDetails, 1)
+	require.Equal(t, "empty-placeholder", report.SkippedSessionDetails[0].ID)
 }
 
 func TestExportMarkdownJSONJSONLAndHTML(t *testing.T) {

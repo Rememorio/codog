@@ -50266,6 +50266,12 @@ func renderBackfillSessions(out io.Writer, report session.BackfillReport) {
 	fmt.Fprintf(out, "  Identity updates  %d\n", report.IdentityUpdates)
 	fmt.Fprintf(out, "  Skipped existing  %d\n", report.SkippedWithInputs)
 	fmt.Fprintf(out, "  Skipped disabled  %d\n", report.SkippedDisabled)
+	if len(report.SkippedSessionDetails) > 0 {
+		fmt.Fprintln(out, "  Skipped sessions")
+		for _, skipped := range report.SkippedSessionDetails {
+			fmt.Fprintf(out, "    - %s %s\n", skipped.ID, skipped.Reason)
+		}
+	}
 }
 
 type sessionListReport struct {

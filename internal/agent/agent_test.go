@@ -13935,6 +13935,8 @@ func TestSessionsRepairCommandAndSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, created.Identity.Placeholders)
 	require.NoError(t, store.Append(created.ID, anthropic.TextMessage("user", "repair identity from saved prompt")))
+	_, err = store.CreateWithIdentity("empty-placeholder", session.SessionIdentity{})
+	require.NoError(t, err)
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{Sessions: store, Out: &out, Err: &errOut}
@@ -13944,9 +13946,12 @@ func TestSessionsRepairCommandAndSlash(t *testing.T) {
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "backfill_sessions", report.Kind)
 	require.Equal(t, "identity_repair", report.Action)
-	require.Equal(t, 1, report.SessionsScanned)
+	require.Equal(t, 2, report.SessionsScanned)
 	require.Equal(t, 1, report.SessionsUpdated)
 	require.Equal(t, 1, report.IdentityUpdates)
+	require.Len(t, report.SkippedSessionDetails, 1)
+	require.Equal(t, "empty-placeholder", report.SkippedSessionDetails[0].ID)
+	require.Equal(t, "no_user_prompt", report.SkippedSessionDetails[0].Reason)
 	repaired, err := store.Open(created.ID)
 	require.NoError(t, err)
 	require.Equal(t, "repair identity from saved prompt", repaired.Identity.Title)
@@ -13957,6 +13962,8 @@ func TestSessionsRepairCommandAndSlash(t *testing.T) {
 	require.NoError(t, app.SessionsCommand([]string{"fix", "--output-format", "text"}))
 	require.Contains(t, out.String(), "Repair Sessions")
 	require.Contains(t, out.String(), "Sessions updated 0")
+	require.Contains(t, out.String(), "Skipped sessions")
+	require.Contains(t, out.String(), "empty-placeholder no_user_prompt")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/session repair --json", &session.Session{ID: created.ID}))

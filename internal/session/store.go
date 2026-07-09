@@ -1383,6 +1383,9 @@ func (s *Store) RepairSessionIdentities() (BackfillReport, error) {
 		}
 		identityRecord, identityUpdated := sessionIdentityBackfillRecord(sess.ID, s.Workspace, records)
 		if !identityUpdated {
+			if reason := identityRepairSkipReason(sess.ID, s.Workspace, records); reason != "" {
+				report.SkippedSessionDetails = append(report.SkippedSessionDetails, BackfillSkippedSession{ID: sess.ID, Reason: reason})
+			}
 			continue
 		}
 		records = append(records, identityRecord)
@@ -1398,6 +1401,17 @@ func (s *Store) RepairSessionIdentities() (BackfillReport, error) {
 		})
 	}
 	return report, nil
+}
+
+func identityRepairSkipReason(id string, workspace string, records []Record) string {
+	identity := identityFromRecords(id, workspace, records)
+	if len(identity.Placeholders) == 0 {
+		return ""
+	}
+	if firstPromptTextFromRecords(records) == "" {
+		return "no_user_prompt"
+	}
+	return "no_repairable_identity_fields"
 }
 
 func (s *Store) Rewind(id string, removeMessages int) (RewindResult, error) {
