@@ -9070,7 +9070,7 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 			Status:    "error",
 			ErrorKind: "unknown_agents_subcommand",
 			Message:   fmt.Sprintf("unknown agents command %q", args[0]),
-			Hint:      "Use `codog agents list`, `codog agents show|info|describe NAME`, `codog agents create NAME`, `codog agents run NAME PROMPT`, `codog agents runs`, `codog agents board`, `codog agents status RUN_ID`, or `codog agents worktrees`.",
+			Hint:      unknownAgentsCommandHint(args[0]),
 		}, format)
 	}
 	req, err := parseAgentRunArgs(args[1:])
@@ -9226,6 +9226,25 @@ func normalizeAgentsAction(action string) string {
 		return "worktree-remove"
 	default:
 		return strings.ToLower(strings.TrimSpace(action))
+	}
+}
+
+var agentsActionCandidates = []string{
+	"help", "list", "ls", "show", "info", "describe", "details", "create", "new", "add",
+	"run", "runs", "tasks", "board", "lane-board", "lanes", "status", "run-status",
+	"heartbeat", "stop", "update", "message", "output", "logs", "prune", "run-remove",
+	"run-rm", "worktrees", "worktree-remove", "worktree-rm",
+}
+
+func unknownAgentsCommandHint(action string) string {
+	suggestions := toolnames.Suggestions(action, agentsActionCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		return fmt.Sprintf("Did you mean `codog agents %s`? Use `codog agents help` to list supported commands.", suggestions[0])
+	case 0:
+		return "Use `codog agents list`, `codog agents show|info|describe NAME`, `codog agents create NAME`, `codog agents run NAME PROMPT`, `codog agents runs`, `codog agents board`, `codog agents status RUN_ID`, or `codog agents worktrees`."
+	default:
+		return fmt.Sprintf("Did you mean one of: %s? Use `codog agents help` to list supported commands.", strings.Join(suggestions, ", "))
 	}
 }
 

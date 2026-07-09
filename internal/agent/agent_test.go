@@ -11085,11 +11085,11 @@ func TestLocalSubcommandErrorContracts(t *testing.T) {
 	}{
 		{
 			name:      "agents unknown",
-			args:      []string{"--config", configPath, "--output-format", "json", "agents", "bogus"},
+			args:      []string{"--config", configPath, "--output-format", "json", "agents", "creat"},
 			kind:      "agents",
-			action:    "bogus",
+			action:    "creat",
 			errorKind: "unknown_agents_subcommand",
-			hintPart:  "agents list",
+			hintPart:  "Did you mean `codog agents create`?",
 		},
 		{
 			name:      "plugins unknown",
