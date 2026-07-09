@@ -171,7 +171,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, "permissions", permissionScope.Category)
 	require.Equal(t, 3, permissionScope.ToolCalls)
 	require.Equal(t, 2, permissionScope.ToolErrorCount)
-	require.Equal(t, []string{"testing_permission", "bash", "read_file"}, permissionScope.ToolUses)
+	require.Equal(t, []string{"permission_check", "bash", "read_file"}, permissionScope.ToolUses)
 	require.Equal(t, "permission scope denial harness ok", permissionScope.FinalMessage)
 	require.Contains(t, permissionScope.Output, `"kind":"permission_scope_denial"`)
 	require.Contains(t, permissionScope.Output, `"reason":"bash_validation"`)

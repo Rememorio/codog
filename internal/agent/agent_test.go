@@ -5947,17 +5947,17 @@ func risky(value any) {
 	require.Contains(t, resumedDebugPolicyEvaluate.Output, `"kind": "merge_forward"`)
 	require.Contains(t, resumedDebugPolicyEvaluate.Output, `"kind": "closeout_lane"`)
 
-	out, err = runResumedJSON("/debug-tool-call", "TestingPermission", `{"target_tool":"Bash","input":{"command":"pwd"}}`)
+	out, err = runResumedJSON("/debug-tool-call", "PermissionCheck", `{"target_tool":"Bash","input":{"command":"pwd"}}`)
 	require.NoError(t, err)
-	var resumedDebugTestingPermission debugToolCallReport
-	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugTestingPermission))
-	require.Equal(t, "debug_tool_call", resumedDebugTestingPermission.Kind)
-	require.Equal(t, "testing_permission", resumedDebugTestingPermission.Tool)
-	require.Equal(t, tools.PermissionReadOnly, resumedDebugTestingPermission.Permission)
-	require.True(t, resumedDebugTestingPermission.Success)
-	require.Contains(t, resumedDebugTestingPermission.Output, `"kind": "permission_check"`)
-	require.Contains(t, resumedDebugTestingPermission.Output, `"canonical_tool": "bash"`)
-	require.Contains(t, resumedDebugTestingPermission.Output, `"allowed": true`)
+	var resumedDebugPermissionCheck debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugPermissionCheck))
+	require.Equal(t, "debug_tool_call", resumedDebugPermissionCheck.Kind)
+	require.Equal(t, "permission_check", resumedDebugPermissionCheck.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugPermissionCheck.Permission)
+	require.True(t, resumedDebugPermissionCheck.Success)
+	require.Contains(t, resumedDebugPermissionCheck.Output, `"kind": "permission_check"`)
+	require.Contains(t, resumedDebugPermissionCheck.Output, `"canonical_tool": "bash"`)
+	require.Contains(t, resumedDebugPermissionCheck.Output, `"allowed": true`)
 
 	out, err = runResumedJSON("/debug-tool-call", "ApprovalTokenTool", `{"action":"grant","scope":{"policy":"resume-debug","action":"inspect","repository":"codog","branch":"main"},"approving_actor":"reviewer","approved_executor":"codog","max_uses":1}`)
 	require.NoError(t, err)

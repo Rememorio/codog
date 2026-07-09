@@ -6528,7 +6528,7 @@ func permissionScopeDenialScenario() scenario {
 			registry := tools.NewRegistry(workspace)
 			prompter := &tools.Prompter{Mode: tools.PermissionReadOnly, Workspace: workspace}
 			command := "cat " + harnessShellQuote(secretPath)
-			permissionOut, err := registry.Execute(ctx, "testing_permission", json.RawMessage(`{
+			permissionOut, err := registry.Execute(ctx, "permission_check", json.RawMessage(`{
 				"target_tool": "BashTool",
 				"input": {"command": `+strconv.Quote(command)+`}
 			}`), prompter)
@@ -6630,7 +6630,7 @@ func permissionScopeDenialScenario() scenario {
 				RequestCount:   3,
 				MessageCount:   1,
 				ToolCalls:      3,
-				ToolUses:       []string{"testing_permission", "bash", "read_file"},
+				ToolUses:       []string{"permission_check", "bash", "read_file"},
 				ToolErrorCount: 2,
 			}, nil
 		},

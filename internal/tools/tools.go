@@ -249,6 +249,8 @@ var claudeToolAliases = map[string]string{
 	"notebookedittool":             "notebook_edit",
 	"notebookread":                 "notebook_read",
 	"notebookreadtool":             "notebook_read",
+	"permissioncheck":              "permission_check",
+	"permissionchecktool":          "permission_check",
 	"powershell":                   "powershell",
 	"powershelltool":               "powershell",
 	"policyevaluate":               "policy_evaluate",
@@ -312,8 +314,8 @@ var claudeToolAliases = map[string]string{
 	"teamgettool":                  "team_get",
 	"teamlist":                     "team_list",
 	"teamlisttool":                 "team_list",
-	"testingpermission":            "testing_permission",
-	"testingpermissiontool":        "testing_permission",
+	"testingpermission":            "permission_check",
+	"testingpermissiontool":        "permission_check",
 	"todowrite":                    "todo_write",
 	"todowritetool":                "todo_write",
 	"todoread":                     "todo_read",
@@ -439,6 +441,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"NotebookEditTool":             "notebook_edit",
 	"NotebookRead":                 "notebook_read",
 	"NotebookReadTool":             "notebook_read",
+	"PermissionCheck":              "permission_check",
+	"PermissionCheckTool":          "permission_check",
 	"Nudge":                        "nudge",
 	"NudgeTool":                    "nudge",
 	"ProvisionalStatus":            "provisional_status",
@@ -512,8 +516,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"TeamGetTool":                  "team_get",
 	"TeamList":                     "team_list",
 	"TeamListTool":                 "team_list",
-	"TestingPermission":            "testing_permission",
-	"TestingPermissionTool":        "testing_permission",
+	"TestingPermission":            "permission_check",
+	"TestingPermissionTool":        "permission_check",
 	"TodoRead":                     "todo_read",
 	"TodoReadTool":                 "todo_read",
 	"TodoWrite":                    "todo_write",
@@ -670,7 +674,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 		})
 	}
 	r.Register(RemoteTriggerTool{})
-	r.Register(TestingPermissionTool{})
+	r.Register(PermissionCheckTool{})
 	r.Register(NotebookReadTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs, ConfigHome: opts.ConfigHome})
@@ -866,8 +870,8 @@ func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessa
 	if !ok {
 		return "", fmt.Errorf("unknown tool %q", name)
 	}
-	if strings.EqualFold(canonical, "testing_permission") {
-		return r.executeTestingPermission(input, prompter)
+	if strings.EqualFold(canonical, "permission_check") {
+		return r.executePermissionCheck(input, prompter)
 	}
 	if prompter != nil {
 		if err := prompter.Authorize(canonical, tool.Permission(), input); err != nil {
@@ -5584,11 +5588,11 @@ func validateRemoteTriggerURL(raw string) (*url.URL, error) {
 	return parsed, nil
 }
 
-type TestingPermissionTool struct{}
+type PermissionCheckTool struct{}
 
-func (TestingPermissionTool) Definition() anthropic.ToolDefinition {
+func (PermissionCheckTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
-		Name:        "testing_permission",
+		Name:        "permission_check",
 		Description: "Dry-run the current permission policy for a target tool without executing that tool.",
 		InputSchema: map[string]any{
 			"type":                 "object",
@@ -5607,11 +5611,15 @@ func (TestingPermissionTool) Definition() anthropic.ToolDefinition {
 	}
 }
 
-func (TestingPermissionTool) Permission() Permission { return PermissionReadOnly }
+func (PermissionCheckTool) Permission() Permission { return PermissionReadOnly }
 
-func (TestingPermissionTool) Execute(_ context.Context, _ json.RawMessage) (string, error) {
-	return "", errors.New("testing_permission must be executed through the tool registry")
+func (PermissionCheckTool) Execute(_ context.Context, _ json.RawMessage) (string, error) {
+	return "", errors.New("permission_check must be executed through the tool registry")
 }
+
+// TestingPermissionTool is a compatibility alias for older transcripts and
+// archived Claude-style tool names.
+type TestingPermissionTool = PermissionCheckTool
 
 type testingPermissionInput struct {
 	TargetTool         string          `json:"target_tool"`
@@ -5621,7 +5629,7 @@ type testingPermissionInput struct {
 	Action             string          `json:"action"`
 }
 
-func (r *Registry) executeTestingPermission(input json.RawMessage, prompter *Prompter) (string, error) {
+func (r *Registry) executePermissionCheck(input json.RawMessage, prompter *Prompter) (string, error) {
 	var payload testingPermissionInput
 	if len(input) != 0 {
 		if err := json.Unmarshal(input, &payload); err != nil {

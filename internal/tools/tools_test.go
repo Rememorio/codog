@@ -1207,6 +1207,7 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "tool_search", CanonicalToolName("ToolSearch"))
 	require.Equal(t, "sleep", CanonicalToolName("SleepTool"))
 	require.Equal(t, "repl", CanonicalToolName("REPLTool"))
+	require.Equal(t, "permission_check", CanonicalToolName("PermissionCheckTool"))
 	require.Equal(t, "git_diff", CanonicalToolName("GitDiffTool"))
 	require.Equal(t, "git_log", CanonicalToolName("GitLogTool"))
 	require.Equal(t, "mcp__server__tool", CanonicalToolName("mcp__server__tool"))
@@ -1232,7 +1233,8 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "report_backpressure", aliases["ReportBackpressureTool"])
 	require.Equal(t, "report_schema", aliases["ReportSchemaTool"])
 	require.Equal(t, "provisional_status", aliases["ProvisionalStatusTool"])
-	require.Equal(t, "testing_permission", aliases["TestingPermission"])
+	require.Equal(t, "permission_check", aliases["PermissionCheck"])
+	require.Equal(t, "permission_check", aliases["TestingPermission"])
 	require.Equal(t, "tool_search", aliases["ToolSearch"])
 	require.Equal(t, "sleep", aliases["SleepTool"])
 	require.Equal(t, "repl", aliases["REPLTool"])
@@ -1271,6 +1273,7 @@ func TestClaudeToolAliasesCoverArchivedToolEntries(t *testing.T) {
 		"MCPTool",
 		"McpAuthTool",
 		"NotebookEditTool",
+		"PermissionCheckTool",
 		"PowerShellTool",
 		"ReadMcpResourceTool",
 		"RemoteTriggerTool",
@@ -1638,9 +1641,12 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("remote_trigger")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
-	info, ok = registry.Info("testing_permission")
+	info, ok = registry.Info("permission_check")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("testing_permission")
+	require.True(t, ok)
+	require.Equal(t, "permission_check", info.Name)
 	info, ok = registry.Info("skill")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
@@ -1987,8 +1993,10 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"TeamGetTool":                  "team_get",
 		"TeamList":                     "team_list",
 		"TeamListTool":                 "team_list",
-		"TestingPermission":            "testing_permission",
-		"TestingPermissionTool":        "testing_permission",
+		"PermissionCheck":              "permission_check",
+		"PermissionCheckTool":          "permission_check",
+		"TestingPermission":            "permission_check",
+		"TestingPermissionTool":        "permission_check",
 		"TodoReadTool":                 "todo_read",
 		"TodoWriteTool":                "todo_write",
 		"ToolSearch":                   "tool_search",
@@ -2031,7 +2039,7 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		require.Equal(t, canonical, info.Name, alias)
 	}
 
-	out, err = registry.Execute(context.Background(), "TestingPermission", []byte(`{"target_tool":"Bash","input":{"command":"pwd"}}`), nil)
+	out, err = registry.Execute(context.Background(), "PermissionCheck", []byte(`{"target_tool":"Bash","input":{"command":"pwd"}}`), nil)
 	require.NoError(t, err)
 	require.Contains(t, out, `"target_tool": "bash"`)
 	require.Contains(t, out, `"known_tool": true`)
@@ -2635,12 +2643,12 @@ func TestRemoteTriggerToolCallsWebhook(t *testing.T) {
 	require.Contains(t, err.Error(), "http or https")
 }
 
-func TestTestingPermissionToolReturnsReceipt(t *testing.T) {
+func TestPermissionCheckToolReturnsReceipt(t *testing.T) {
 	workspace := t.TempDir()
 	registry := NewRegistry(workspace)
 	prompter := &Prompter{Mode: PermissionReadOnly}
 
-	out, err := registry.Execute(context.Background(), "testing_permission", []byte(`{"target_tool":"bash","input":{"command":"pwd"}}`), prompter)
+	out, err := registry.Execute(context.Background(), "permission_check", []byte(`{"target_tool":"bash","input":{"command":"pwd"}}`), prompter)
 	require.NoError(t, err)
 	require.Contains(t, out, `"kind": "permission_check"`)
 	require.Contains(t, out, `"source": "registry_permission_policy"`)
@@ -2653,7 +2661,7 @@ func TestTestingPermissionToolReturnsReceipt(t *testing.T) {
 	require.Contains(t, out, `"input_json": {`)
 	require.Contains(t, out, `"decision": {`)
 
-	out, err = registry.Execute(context.Background(), "testing_permission", []byte(`{"target_tool":"bash","input":{"command":"pwd && touch created.txt"}}`), prompter)
+	out, err = registry.Execute(context.Background(), "permission_check", []byte(`{"target_tool":"bash","input":{"command":"pwd && touch created.txt"}}`), prompter)
 	require.NoError(t, err)
 	require.Contains(t, out, `"allowed": false`)
 	require.Contains(t, out, `"reason": "bash_validation"`)
@@ -2662,20 +2670,20 @@ func TestTestingPermissionToolReturnsReceipt(t *testing.T) {
 	outside := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o644))
 	prompter.Workspace = workspace
-	out, err = registry.Execute(context.Background(), "testing_permission", []byte(`{"target_tool":"bash","input":{"command":"cat `+filepath.Join(outside, "secret.txt")+`"}}`), prompter)
+	out, err = registry.Execute(context.Background(), "permission_check", []byte(`{"target_tool":"bash","input":{"command":"cat `+filepath.Join(outside, "secret.txt")+`"}}`), prompter)
 	require.NoError(t, err)
 	require.Contains(t, out, `"allowed": false`)
 	require.Contains(t, out, `"reason": "bash_validation"`)
 	require.Contains(t, out, `"message": "path resolves outside workspace scope"`)
 
 	prompter.AdditionalDirs = []string{outside}
-	out, err = registry.Execute(context.Background(), "testing_permission", []byte(`{"target_tool":"bash","input":{"command":"cat `+filepath.Join(outside, "secret.txt")+`"}}`), prompter)
+	out, err = registry.Execute(context.Background(), "permission_check", []byte(`{"target_tool":"bash","input":{"command":"cat `+filepath.Join(outside, "secret.txt")+`"}}`), prompter)
 	require.NoError(t, err)
 	require.Contains(t, out, `"allowed": true`)
 	require.Contains(t, out, `"reason": "bash_validation_read_only"`)
 
 	prompter = &Prompter{Mode: PermissionAllow, DeniedTools: []string{"write_file"}}
-	out, err = registry.Execute(context.Background(), "testing_permission", []byte(`{"target_tool":"write_file","input":{"path":"a.txt","content":"x"}}`), prompter)
+	out, err = registry.Execute(context.Background(), "permission_check", []byte(`{"target_tool":"write_file","input":{"path":"a.txt","content":"x"}}`), prompter)
 	require.NoError(t, err)
 	require.Contains(t, out, `"known_tool": true`)
 	require.Contains(t, out, `"required_permission": "workspace-write"`)
@@ -2690,7 +2698,7 @@ func TestTestingPermissionToolReturnsReceipt(t *testing.T) {
 	require.Contains(t, out, `"required_permission": "read-only"`)
 	require.Contains(t, out, `"permission_source": "request_override"`)
 
-	out, err = registry.Execute(context.Background(), "testing_permission", []byte(`{"target_tool":"unknown-tool"}`), prompter)
+	out, err = registry.Execute(context.Background(), "permission_check", []byte(`{"target_tool":"unknown-tool"}`), prompter)
 	require.NoError(t, err)
 	require.Contains(t, out, `"known_tool": false`)
 	require.Contains(t, out, `"required_permission": "danger-full-access"`)
@@ -2698,7 +2706,7 @@ func TestTestingPermissionToolReturnsReceipt(t *testing.T) {
 
 	_, err = TestingPermissionTool{}.Execute(context.Background(), []byte(`{"target_tool":"bash"}`))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "through the tool registry")
+	require.Contains(t, err.Error(), "permission_check")
 }
 
 func TestMCPAuthToolReportsRecoveryActions(t *testing.T) {
