@@ -13248,6 +13248,26 @@ func TestSessionsExistsMissingIDReportsStructuredError(t *testing.T) {
 	require.Contains(t, report.Hint, "codog sessions exists ID")
 }
 
+func TestSessionsShowMissingIDReportsStructuredError(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "sessions", "show"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var report cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "missing_argument", report.Kind)
+	require.Equal(t, "missing_argument", report.ErrorKind)
+	require.Equal(t, "sessions show", report.Command)
+	require.Equal(t, "ID", report.Argument)
+	require.Contains(t, report.Hint, "codog sessions show ID")
+}
+
 func TestSessionsSearchJSONIncludesIdentityAndMessageMatches(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	_, err := store.CreateWithIdentity("alpha", session.SessionIdentity{
@@ -14234,6 +14254,12 @@ func TestResumedSessionShowJSONDefaultsToActiveSession(t *testing.T) {
 	require.Equal(t, "active", report.SessionID)
 	require.Equal(t, 1, report.MessageCount)
 	require.Len(t, report.Messages, 1)
+
+	err := app.runResumedSessionSlash([]string{"show", "active", "extra", "--json"}, config.FlagOverrides{Resume: "active"})
+	require.Error(t, err)
+	var extraErr unexpectedExtraArgsError
+	require.ErrorAs(t, err, &extraErr)
+	require.Equal(t, "sessions show", extraErr.Command)
 }
 
 func TestResumedSessionExistsJSONMarksActiveAndRequiresTarget(t *testing.T) {

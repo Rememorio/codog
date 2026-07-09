@@ -48086,12 +48086,16 @@ type sessionShowReport struct {
 }
 
 func (a *App) SessionShow(args []string) error {
+	const usage = "codog sessions show ID [--json|--output-format text|json]"
 	format, remaining, err := parseTemplateOutputArgs("sessions show", args)
 	if err != nil {
 		return err
 	}
-	if len(remaining) != 1 {
-		return errors.New("usage: codog sessions show ID [--json|--output-format text|json]")
+	if len(remaining) == 0 {
+		return requiredArgumentError{Command: "sessions show", Argument: "ID", Usage: usage}
+	}
+	if len(remaining) > 1 {
+		return unexpectedExtraArgsError{Command: "sessions show", Args: append([]string(nil), remaining[1:]...), Usage: usage}
 	}
 	report, err := a.buildSessionShowReport(remaining[0])
 	if err != nil {
