@@ -42693,6 +42693,7 @@ func parsePermissionsArgs(args []string) (permissionsRequest, error) {
 			Flag:    "mode",
 			Value:   req.Mode,
 			Message: fmt.Sprintf("unknown permission mode: %s", req.Mode),
+			Hint:    unknownPermissionModeHint(req.Mode),
 			Usage:   "codog permissions [show|MODE|set MODE|clear] [--target user|project|local] [--json|--output-format text|json]",
 		}
 	}
@@ -44020,6 +44021,20 @@ func redactStringMapValues(values map[string]string) map[string]string {
 func validPermissionMode(mode string) bool {
 	_, ok := config.NormalizePermissionModeLabel(mode)
 	return ok
+}
+
+var permissionModeCandidates = []string{"read-only", "workspace-write", "danger-full-access", "prompt", "allow"}
+
+func unknownPermissionModeHint(mode string) string {
+	suggestions := toolnames.Suggestions(mode, permissionModeCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		return fmt.Sprintf("Did you mean `codog permissions set %s`? Use `codog permissions` to inspect available modes.", suggestions[0])
+	case 0:
+		return "Use one of: read-only, workspace-write, danger-full-access, prompt, allow."
+	default:
+		return fmt.Sprintf("Did you mean one of: %s? Use `codog permissions` to inspect available modes.", strings.Join(suggestions, ", "))
+	}
 }
 
 func (a *App) Git(args []string) error {

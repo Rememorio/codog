@@ -32555,17 +32555,17 @@ func TestRuntimeConfigErrorsHonorGlobalJSONFormat(t *testing.T) {
 	}{
 		{
 			name:      "permissions invalid mode",
-			args:      []string{"permissions", "bogus"},
+			args:      []string{"permissions", "workspce-write"},
 			kind:      "invalid_flag_value",
 			errorKind: "invalid_flag_value",
-			contains:  []string{`"option": "mode"`, `"value": "bogus"`},
+			contains:  []string{`"option": "mode"`, `"value": "workspce-write"`, "Did you mean `codog permissions set workspace-write`?"},
 		},
 		{
 			name:      "permissions set invalid mode",
-			args:      []string{"permissions", "set", "bogus"},
+			args:      []string{"permissions", "set", "workspce-write"},
 			kind:      "invalid_flag_value",
 			errorKind: "invalid_flag_value",
-			contains:  []string{`"option": "mode"`, `"value": "bogus"`},
+			contains:  []string{`"option": "mode"`, `"value": "workspce-write"`, "Did you mean `codog permissions set workspace-write`?"},
 		},
 		{
 			name:      "sandbox-toggle invalid strategy",
