@@ -38243,6 +38243,7 @@ type turnOptions struct {
 	MaxBudgetUSD           float64
 	PriorCostUSD           float64
 	Out                    io.Writer
+	OnToolUse              func(runloop.ToolCall)
 }
 
 type promptCLIRequest struct {
@@ -38846,6 +38847,14 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		return err
 	}
 	effectiveConfig := a.effectiveConfig()
+	onToolUse := a.onToolUse(sess.ID)
+	if opts.OnToolUse != nil {
+		baseOnToolUse := onToolUse
+		onToolUse = func(call runloop.ToolCall) {
+			baseOnToolUse(call)
+			opts.OnToolUse(call)
+		}
+	}
 	runner := runloop.Runner{
 		Config:           effectiveConfig,
 		Client:           a.Client,
@@ -38856,7 +38865,7 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		SessionID:        sess.ID,
 		Out:              firstWriter(opts.Out, a.Out),
 		System:           a.systemPromptForInput(input),
-		OnToolUse:        a.onToolUse(sess.ID),
+		OnToolUse:        onToolUse,
 		MaxBudgetUSD:     opts.MaxBudgetUSD,
 		PriorCostUSD:     opts.PriorCostUSD,
 	}
@@ -39029,10 +39038,19 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 	}
 	submit := func(ctx context.Context, prompt string) (string, error) {
 		var out bytes.Buffer
-		err := a.runSessionTurnWithOptions(ctx, "tui", sess, prompt, "idle", turnOptions{Out: &out})
+		toolCalls := []runloop.ToolCall{}
+		err := a.runSessionTurnWithOptions(ctx, "tui", sess, prompt, "idle", turnOptions{
+			Out: &out,
+			OnToolUse: func(call runloop.ToolCall) {
+				toolCalls = append(toolCalls, call)
+			},
+		})
 		response := strings.TrimSpace(out.String())
 		if response == "" {
 			response = strings.TrimSpace(lastAssistantText(sess.Messages))
+		}
+		if toolSummary := renderTUIToolSummary(toolCalls); toolSummary != "" {
+			response = strings.TrimSpace(strings.Join([]string{toolSummary, response}, "\n\n"))
 		}
 		return response, err
 	}
@@ -39054,6 +39072,87 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		Slash:      slashHandler,
 	})
 	return a.finishREPL(ctx, sess, loopErr)
+}
+
+func renderTUIToolSummary(calls []runloop.ToolCall) string {
+	if len(calls) == 0 {
+		return ""
+	}
+	lines := []string{"Tools"}
+	for _, call := range calls {
+		name := strings.TrimSpace(call.Name)
+		if name == "" {
+			name = "tool"
+		}
+		status := "ok"
+		if call.IsError {
+			status = "error"
+		}
+		line := fmt.Sprintf("- %s %s", name, status)
+		if detail := toolSummaryDetail(call.Output); detail != "" {
+			line += ": " + detail
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func toolSummaryDetail(output string) string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return ""
+	}
+	if detail := structuredToolSummaryDetail(output); detail != "" {
+		return detail
+	}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return truncateForReport(line, 180)
+		}
+	}
+	return ""
+}
+
+func structuredToolSummaryDetail(output string) string {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(output), &payload); err != nil || len(payload) == 0 {
+		return ""
+	}
+	for _, key := range []string{"stdout", "stderr", "output", "message", "error"} {
+		if value := cleanToolSummaryValue(payload[key]); value != "" {
+			return value
+		}
+	}
+	kind := cleanToolSummaryValue(payload["kind"])
+	if kind == "" {
+		kind = cleanToolSummaryValue(payload["type"])
+	}
+	if bytesValue, ok := payload["bytes"]; ok {
+		if kind != "" {
+			return fmt.Sprintf("%s %v bytes", kind, bytesValue)
+		}
+		return fmt.Sprintf("%v bytes", bytesValue)
+	}
+	return ""
+}
+
+func cleanToolSummaryValue(value any) string {
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return truncateForReport(line, 180)
+		}
+	}
+	return ""
 }
 
 func (a *App) finishREPL(ctx context.Context, sess *session.Session, loopErr error) error {

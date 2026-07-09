@@ -114,6 +114,48 @@ expect eof
 	require.Contains(t, output, "error body")
 }
 
+func TestRealBinaryTUIShowsToolResultsWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	server := httptest.NewServer(mockanthropic.Server{
+		Turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{
+				{ID: "tool-write", Name: "write_file", Input: json.RawMessage(`{"path":"tui-tool.txt","content":"created by tui tool smoke\n"}`)},
+				{ID: "tool-bash", Name: "bash", Input: json.RawMessage(`{"command":"printf tui-tool-visible","timeout":1000}`)},
+			}},
+			{Text: "tui tool final ok"},
+		},
+	}.Handler())
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, `
+set timeout 30
+spawn -noecho $env(CODOG_TEST_BIN) --permission-mode allow --model claude-sonnet-4-5 tui
+expect "Codog TUI"
+send "exercise visible tui tools\r"
+expect "Tools"
+expect "write_file ok"
+expect "bash ok"
+expect "tui-tool-visible"
+expect "tui tool final ok"
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, output, "Tools")
+	require.Contains(t, output, "write_file ok")
+	require.Contains(t, output, "bash ok")
+	require.Contains(t, output, "tui-tool-visible")
+	require.Contains(t, output, "tui tool final ok")
+	created, err := os.ReadFile(filepath.Join(workspace, "tui-tool.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "created by tui tool smoke\n", string(created))
+}
+
 func TestRealBinaryReplSlashHelpAndExit(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()
