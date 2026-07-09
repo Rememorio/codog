@@ -82,7 +82,7 @@ func ProviderForModel(model string) string {
 		return ProviderDashScope
 	case strings.HasPrefix(canonical, "kimi/"), strings.HasPrefix(canonical, "kimi-"):
 		return ProviderDashScope
-	case strings.HasPrefix(canonical, "openai/"), strings.HasPrefix(canonical, "local/"), strings.HasPrefix(canonical, "gpt-"):
+	case strings.HasPrefix(canonical, "openai/"), strings.HasPrefix(canonical, "local/"), strings.HasPrefix(canonical, "gpt-"), strings.HasPrefix(canonical, "glm"):
 		return ProviderOpenAI
 	default:
 		return ProviderAnthropic
@@ -116,7 +116,7 @@ func WireModelForBaseURL(model string, baseURL string) string {
 			return trimmed[pos+1:]
 		}
 		return trimmed
-	case "local", "xai", "grok", "qwen", "kimi":
+	case "local", "xai", "grok", "qwen", "kimi", "glm":
 		return trimmed[pos+1:]
 	default:
 		return trimmed

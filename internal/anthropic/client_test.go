@@ -478,6 +478,11 @@ func TestClientStreamsLocalModelStripsRoutingPrefix(t *testing.T) {
 	assertOpenAICompatibleRequestModel(t, "local/Qwen/Qwen3.6-27B-FP8", "Qwen/Qwen3.6-27B-FP8")
 }
 
+func TestClientStreamsGLMModelThroughOpenAICompatibleRoute(t *testing.T) {
+	assertOpenAICompatibleRequestModel(t, "glm52", "glm52")
+	assertOpenAICompatibleRequestModel(t, "glm/glm52", "glm52")
+}
+
 func TestClientStreamsDashScopeNamespacedModelStripsRoutingPrefix(t *testing.T) {
 	assertOpenAICompatibleRequestModel(t, "qwen/qwen-max", "qwen-max")
 	assertOpenAICompatibleRequestModel(t, "kimi/kimi-k2.5", "kimi-k2.5")

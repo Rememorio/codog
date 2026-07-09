@@ -3772,6 +3772,7 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.NotEmpty(t, models.Routes)
 	require.True(t, modelRouteExists(models.Routes, "openai/", modelrouting.ProviderOpenAI))
 	require.True(t, modelRouteExists(models.Routes, "local/", modelrouting.ProviderOpenAI))
+	require.True(t, modelRouteExists(models.Routes, "glm or glm/", modelrouting.ProviderOpenAI))
 	require.True(t, modelRouteExists(models.Routes, "grok or xai/", modelrouting.ProviderXAI))
 	require.True(t, modelRouteExists(models.Routes, "qwen/ or qwen-", modelrouting.ProviderDashScope))
 	require.True(t, modelRouteExists(models.Routes, "kimi/ or kimi-", modelrouting.ProviderDashScope))
@@ -3803,6 +3804,7 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "routes", routes.Action)
 	require.Equal(t, "ok", routes.Status)
 	require.Equal(t, len(routes.Routes), routes.Count)
+	require.True(t, modelRouteExists(routes.Routes, "glm or glm/", modelrouting.ProviderOpenAI))
 	require.True(t, modelRouteExists(routes.Routes, "qwen/ or qwen-", modelrouting.ProviderDashScope))
 	require.False(t, routes.RequiresProviderRequest)
 
@@ -3822,6 +3824,33 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.NotEmpty(t, search.Models)
 	require.Equal(t, "kimi-k2.5", search.Models[0].ResolvedModel)
 	require.False(t, search.RequiresProviderRequest)
+
+	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:9090/v1")
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "show", "glm52", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var glmDetail modelDetailReport
+	require.NoError(t, json.Unmarshal([]byte(out), &glmDetail))
+	require.Equal(t, "glm52", glmDetail.RequestedModel)
+	require.Equal(t, "glm52", glmDetail.ResolvedModel)
+	require.Equal(t, modelrouting.ProviderOpenAI, glmDetail.Provider)
+	require.Equal(t, "openai_chat_completions", glmDetail.WireProtocol)
+	require.Equal(t, "http://127.0.0.1:9090/v1", glmDetail.BaseURL)
+	require.Equal(t, "glm52", glmDetail.WireModel)
+	require.True(t, glmDetail.OpenAICompatible)
+	require.False(t, glmDetail.RequiresProviderRequest)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "search", "glm52", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var glmSearch modelSearchReport
+	require.NoError(t, json.Unmarshal([]byte(out), &glmSearch))
+	require.Equal(t, "glm52", glmSearch.Query)
+	require.NotEmpty(t, glmSearch.Models)
+	require.Equal(t, "glm52", glmSearch.Models[0].ResolvedModel)
+	require.Equal(t, modelrouting.ProviderOpenAI, glmSearch.Models[0].Provider)
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "models", "search"}, config.FlagOverrides{})
@@ -4287,6 +4316,8 @@ func TestModelsCommandActionAliases(t *testing.T) {
 }
 
 func TestModelsShowReportsProviderDiagnostics(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "")
+	t.Setenv("OPENAI_BASE_URL", modelrouting.DefaultOpenAIBaseURL)
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	data, err := json.Marshal(map[string]any{

@@ -11,6 +11,9 @@ func TestProviderForModelRoutesOpenAICompatiblePrefixes(t *testing.T) {
 		"openai/gpt-4o":              ProviderOpenAI,
 		"gpt-4.1-mini":               ProviderOpenAI,
 		"local/Qwen/Qwen3.6-27B-FP8": ProviderOpenAI,
+		"glm52":                      ProviderOpenAI,
+		"glm-4.5":                    ProviderOpenAI,
+		"glm/glm52":                  ProviderOpenAI,
 		"grok":                       ProviderXAI,
 		"grok-3":                     ProviderXAI,
 		"grok-mini":                  ProviderXAI,
@@ -79,6 +82,8 @@ func TestWireModelForBaseURLStripsRoutingPrefixes(t *testing.T) {
 	require.Equal(t, "qwen2.5-coder:7b", WireModelForBaseURL("openai/qwen2.5-coder:7b", "http://127.0.0.1:11434/v1"))
 	require.Equal(t, "openai/gpt-4.1-mini", WireModelForBaseURL("openai/gpt-4.1-mini", "https://openrouter.ai/api/v1"))
 	require.Equal(t, "Qwen/Qwen3.6-27B-FP8", WireModelForBaseURL("local/Qwen/Qwen3.6-27B-FP8", "http://127.0.0.1:8000/v1"))
+	require.Equal(t, "glm52", WireModelForBaseURL("glm52", "http://127.0.0.1:8000/v1"))
+	require.Equal(t, "glm52", WireModelForBaseURL("glm/glm52", "http://127.0.0.1:8000/v1"))
 	require.Equal(t, "grok-3", WireModelForBaseURL("grok", DefaultXAIBaseURL))
 	require.Equal(t, "grok-3", WireModelForBaseURL("xai/grok-3", DefaultXAIBaseURL))
 	require.Equal(t, "grok-3-mini", WireModelForBaseURL("grok/grok-3-mini", DefaultXAIBaseURL))

@@ -40650,7 +40650,11 @@ func modelSearchLooksLikeModel(query string) bool {
 	if modelAliasName(query) != "" {
 		return true
 	}
-	return strings.ContainsAny(query, "/-.") || strings.HasPrefix(strings.ToLower(query), "gpt") || strings.HasPrefix(strings.ToLower(query), "claude")
+	lower := strings.ToLower(query)
+	return strings.ContainsAny(query, "/-.") ||
+		strings.HasPrefix(lower, "gpt") ||
+		strings.HasPrefix(lower, "glm") ||
+		strings.HasPrefix(lower, "claude")
 }
 
 func (a *App) ResumedModel(args []string) error {
@@ -40934,6 +40938,15 @@ func modelRoutes() []modelRouteReport {
 			Description:    "Forces OpenAI-compatible local routing while preserving slash-containing model IDs after the prefix.",
 		},
 		{
+			Prefix:         "glm or glm/",
+			Provider:       modelrouting.ProviderOpenAI,
+			WireProtocol:   "openai_chat_completions",
+			AuthEnv:        "OPENAI_API_KEY",
+			BaseURLEnv:     "OPENAI_BASE_URL",
+			DefaultBaseURL: modelrouting.DefaultOpenAIBaseURL,
+			Description:    "Routes GLM model names to the OpenAI-compatible backend, including local GLM gateways.",
+		},
+		{
 			Prefix:         "OLLAMA_HOST",
 			Provider:       modelrouting.ProviderOpenAI,
 			WireProtocol:   "openai_chat_completions",
@@ -41048,12 +41061,27 @@ func (a *App) modelDiagnosticsBaseURL(provider string) string {
 	}
 	switch provider {
 	case modelrouting.ProviderOpenAI:
+		if ollamaHost := strings.TrimSpace(os.Getenv("OLLAMA_HOST")); ollamaHost != "" {
+			return strings.TrimRight(ollamaHost, "/") + "/v1"
+		}
+		if baseURL := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")); baseURL != "" {
+			return baseURL
+		}
 		return modelrouting.DefaultOpenAIBaseURL
 	case modelrouting.ProviderXAI:
+		if baseURL := strings.TrimSpace(os.Getenv("XAI_BASE_URL")); baseURL != "" {
+			return baseURL
+		}
 		return modelrouting.DefaultXAIBaseURL
 	case modelrouting.ProviderDashScope:
+		if baseURL := strings.TrimSpace(os.Getenv("DASHSCOPE_BASE_URL")); baseURL != "" {
+			return baseURL
+		}
 		return modelrouting.DefaultDashScopeBaseURL
 	default:
+		if baseURL := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")); baseURL != "" {
+			return baseURL
+		}
 		return config.DefaultBaseURL
 	}
 }
