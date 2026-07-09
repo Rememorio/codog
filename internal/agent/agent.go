@@ -16046,17 +16046,25 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 			case "check", "scan":
 				req.WatchAction = "check"
 			default:
-				return req, fmt.Errorf("unknown hooks watch-paths action %q", positionals[1])
+				return req, unknownActionError{
+					Command:     "hooks watch-paths",
+					Action:      positionals[1],
+					Expected:    append([]string(nil), hooksWatchPathsActionCandidates...),
+					Suggestions: toolnames.Suggestions(positionals[1], hooksWatchPathsActionCandidates, 4),
+					Usage:       "codog hooks watch-paths [list|show|check|scan] [SESSION_ID] [--json|--output-format text|json]",
+				}
 			}
 		}
 		if len(positionals) > 2 {
 			req.SessionID = positionals[2]
 		}
 	default:
-		return req, unexpectedExtraArgsError{
-			Command: "hooks",
-			Args:    []string{positionals[0]},
-			Usage:   "codog hooks [list|health|run|watch-paths] [ARGS...] [--json|--output-format text|json]",
+		return req, unknownActionError{
+			Command:     "hooks",
+			Action:      positionals[0],
+			Expected:    append([]string(nil), hooksActionCandidates...),
+			Suggestions: toolnames.Suggestions(positionals[0], hooksActionCandidates, 4),
+			Usage:       hooksUsage,
 		}
 	}
 	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact" || req.Event == "post_compact" || req.Event == "notification" || req.Event == "subagent_start" || req.Event == "subagent_stop" || req.Event == "file_changed" || req.Event == "instructions_loaded") {
@@ -16080,6 +16088,12 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 func normalizeHookEvent(value string) (string, error) {
 	return hooks.NormalizeHookEvent(value)
 }
+
+const hooksUsage = "codog hooks [list|show|health|status|match|matches|diagnose|run|test|watch-paths|watchpaths|watch] [ARGS...] [--json|--output-format text|json]"
+
+var hooksActionCandidates = []string{"list", "show", "health", "status", "match", "matches", "diagnose", "run", "test", "watch-paths", "watchpaths", "watch"}
+
+var hooksWatchPathsActionCandidates = []string{"list", "show", "check", "scan"}
 
 func summarizeHookCommands(commands []config.HookCommand) []hookCommandSummary {
 	out := make([]hookCommandSummary, 0, len(commands))

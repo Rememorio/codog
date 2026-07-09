@@ -31123,7 +31123,9 @@ func TestManagementCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
 		kind     string
 		expected string
 	}{
-		{name: "hooks unknown action", args: []string{"hooks", "bogus"}, command: "hooks", kind: "unexpected_extra_args", expected: `"bogus"`},
+		{name: "hooks unknown action", args: []string{"hooks", "bogus"}, command: "hooks", kind: "unknown_action", expected: `"bogus"`},
+		{name: "hooks typo action", args: []string{"hooks", "healt"}, command: "hooks", kind: "unknown_action", expected: "Did you mean `hooks health`?"},
+		{name: "hooks watch paths typo action", args: []string{"hooks", "watch-paths", "chek"}, command: "hooks watch-paths", kind: "unknown_action", expected: "Did you mean `hooks watch-paths check`?"},
 		{name: "cron unknown action", args: []string{"cron", "bogus"}, command: "cron", kind: "unknown_action", expected: `"bogus"`},
 		{name: "cron typo action", args: []string{"cron", "creat"}, command: "cron", kind: "unknown_action", expected: "Did you mean `cron create`?"},
 		{name: "cron list extra", args: []string{"cron", "list", "bogus"}, command: "cron list", kind: "unexpected_extra_args", expected: `"bogus"`},
