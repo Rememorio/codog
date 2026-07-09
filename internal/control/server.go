@@ -57,6 +57,7 @@ type RouteSpec struct {
 func RouteSpecs() []RouteSpec {
 	return []RouteSpec{
 		{Path: "/health", Methods: []string{http.MethodGet}, Description: "Health check.", Public: true},
+		{Path: "/routes", Methods: []string{http.MethodGet}, Description: "List control API routes and accepted methods."},
 		{Path: "/state", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read or update remote client heartbeat, failure, and lease state."},
 		{Path: "/sessions", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List sessions or create a new session."},
 		{Path: "/sessions/{id}", Methods: []string{http.MethodGet, http.MethodDelete}, Description: "Read or delete one session."},
@@ -218,6 +219,7 @@ type hookCommandSummary struct {
 func (s Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.health)
+	mux.HandleFunc("/routes", s.routes)
 	mux.HandleFunc("/state", s.state)
 	mux.HandleFunc("/sessions", s.sessions)
 	mux.HandleFunc("/sessions/", s.sessionByID)
@@ -279,6 +281,21 @@ func (s Server) Handler() http.Handler {
 
 func (s Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (s Server) routes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	routes := RouteSpecs()
+	writeJSON(w, map[string]any{
+		"kind":        "control_routes",
+		"action":      "list",
+		"status":      "ok",
+		"route_count": len(routes),
+		"routes":      routes,
+	})
 }
 
 func (s Server) state(w http.ResponseWriter, r *http.Request) {

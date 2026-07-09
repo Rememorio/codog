@@ -45,6 +45,7 @@ func TestRouteSpecsDescribeServedRemoteAPI(t *testing.T) {
 
 	require.True(t, byPath["/health"].Public)
 	require.Equal(t, []string{http.MethodGet}, byPath["/health"].Methods)
+	require.Equal(t, []string{http.MethodGet}, byPath["/routes"].Methods)
 	require.Equal(t, []string{http.MethodGet, http.MethodPost}, byPath["/state"].Methods)
 	require.Equal(t, []string{http.MethodGet, http.MethodDelete}, byPath["/sessions/{id}"].Methods)
 	require.Contains(t, byPath, "/sessions/{id}/history")
@@ -92,6 +93,54 @@ func TestControlAuth(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 	req, err := http.NewRequest(http.MethodGet, server.URL+"/sessions", nil)
+	require.NoError(t, err)
+	req.Header.Set("authorization", "Bearer secret-token")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestControlRoutesEndpoint(t *testing.T) {
+	server := httptest.NewServer(Server{
+		Sessions: &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")},
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/routes")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var report struct {
+		Kind       string      `json:"kind"`
+		Action     string      `json:"action"`
+		Status     string      `json:"status"`
+		RouteCount int         `json:"route_count"`
+		Routes     []RouteSpec `json:"routes"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&report))
+	require.Equal(t, "control_routes", report.Kind)
+	require.Equal(t, "list", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, RouteSpecs(), report.Routes)
+	require.Equal(t, len(report.Routes), report.RouteCount)
+
+	resp, err = http.Post(server.URL+"/routes", "application/json", bytes.NewBufferString(`{}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+
+	authServer := httptest.NewServer(Server{
+		Sessions:  &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")},
+		AuthToken: "secret-token",
+	}.Handler())
+	defer authServer.Close()
+	resp, err = http.Get(authServer.URL + "/routes")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	req, err := http.NewRequest(http.MethodGet, authServer.URL+"/routes", nil)
 	require.NoError(t, err)
 	req.Header.Set("authorization", "Bearer secret-token")
 	resp, err = http.DefaultClient.Do(req)
