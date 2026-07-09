@@ -43244,21 +43244,26 @@ func configPathsInspectionEnvelope(paths []string) map[string]any {
 }
 
 type configFileInspectionReport struct {
-	Path           string   `json:"path"`
-	Source         string   `json:"source"`
-	PrecedenceRank int      `json:"precedence_rank"`
-	Status         string   `json:"status"`
-	Present        bool     `json:"present"`
-	Loaded         bool     `json:"loaded"`
-	Reason         string   `json:"reason,omitempty"`
-	Detail         string   `json:"detail,omitempty"`
-	KeyCount       int      `json:"key_count,omitempty"`
-	Keys           []string `json:"keys,omitempty"`
-	KeyPaths       []string `json:"key_paths,omitempty"`
-	WinsForKeys    []string `json:"wins_for_keys,omitempty"`
-	ShadowedKeys   []string `json:"shadowed_keys,omitempty"`
-	ErrorKind      string   `json:"error_kind,omitempty"`
-	Error          string   `json:"error,omitempty"`
+	Path             string                      `json:"path"`
+	Source           string                      `json:"source"`
+	PrecedenceRank   int                         `json:"precedence_rank"`
+	Status           string                      `json:"status"`
+	Present          bool                        `json:"present"`
+	Loaded           bool                        `json:"loaded"`
+	Reason           string                      `json:"reason,omitempty"`
+	Detail           string                      `json:"detail,omitempty"`
+	KeyCount         int                         `json:"key_count,omitempty"`
+	Keys             []string                    `json:"keys,omitempty"`
+	KeyPaths         []string                    `json:"key_paths,omitempty"`
+	WinsForKeys      []string                    `json:"wins_for_keys,omitempty"`
+	ShadowedKeys     []string                    `json:"shadowed_keys,omitempty"`
+	ValidationStatus string                      `json:"validation_status,omitempty"`
+	ErrorCount       int                         `json:"error_count,omitempty"`
+	WarningCount     int                         `json:"warning_count,omitempty"`
+	Errors           []configvalidate.Diagnostic `json:"errors,omitempty"`
+	Warnings         []configvalidate.Diagnostic `json:"warnings,omitempty"`
+	ErrorKind        string                      `json:"error_kind,omitempty"`
+	Error            string                      `json:"error,omitempty"`
 }
 
 func inspectConfigFiles(paths []string) []configFileInspectionReport {
@@ -43307,6 +43312,12 @@ func inspectConfigFiles(paths []string) []configFileInspectionReport {
 		report.Keys = sortedMapKeys(raw)
 		report.KeyPaths = collectConfigKeyPaths(raw)
 		report.KeyCount = len(report.KeyPaths)
+		validation := configvalidate.ValidateBytes(data, path)
+		report.ValidationStatus = validation.Status
+		report.ErrorCount = validation.ErrorCount
+		report.WarningCount = validation.WarningCount
+		report.Errors = append([]configvalidate.Diagnostic(nil), validation.Errors...)
+		report.Warnings = append([]configvalidate.Diagnostic(nil), validation.Warnings...)
 		reports = append(reports, report)
 		reportIndex := len(reports) - 1
 		for _, key := range report.KeyPaths {
