@@ -39,6 +39,10 @@ type Report struct {
 	DuplicateSlashCommands    []string `json:"duplicate_slash_commands,omitempty"`
 	TUISubmitSupported        bool     `json:"tui_submit_supported"`
 	TUISlashCompletion        bool     `json:"tui_slash_completion"`
+	TUIFullScreenLayout       bool     `json:"tui_full_screen_layout"`
+	TUITranscriptViewport     bool     `json:"tui_transcript_viewport"`
+	TUILocalHelpPanel         bool     `json:"tui_local_help_panel"`
+	TUIStatusBar              bool     `json:"tui_status_bar"`
 	TUIPreviewWidth           int      `json:"tui_preview_width"`
 	TUIPreviewHeight          int      `json:"tui_preview_height"`
 	PermissionCommandsPresent bool     `json:"permission_commands_present"`
@@ -56,6 +60,7 @@ func Build() Report {
 	duplicates := duplicateSlashCommands(specs)
 	submitPreview := tui.PreviewWithCandidates("summarize this repo", nil, 80, 24, false, true)
 	completionPreview := tui.PreviewWithCandidates("/sta", nil, 80, 24, true, false)
+	helpPreview := tui.PreviewWithCandidates("/help", nil, 80, 24, false, false)
 	report := Report{
 		Status:                    "ready",
 		SlashCommandCount:         len(specs),
@@ -65,6 +70,10 @@ func Build() Report {
 		DuplicateSlashCommands:    duplicates,
 		TUISubmitSupported:        submitPreview.Submitted && submitPreview.Prompt == "summarize this repo",
 		TUISlashCompletion:        completionPreview.Value == "/status " || len(completionPreview.Matches) > 0,
+		TUIFullScreenLayout:       strings.Contains(submitPreview.View, "composer") && strings.Contains(submitPreview.View, "Codog TUI"),
+		TUITranscriptViewport:     strings.Contains(submitPreview.View, "system") && strings.Contains(submitPreview.View, "Codog TUI is ready"),
+		TUILocalHelpPanel:         helpPreview.HelpOpen && strings.Contains(helpPreview.View, "Common commands"),
+		TUIStatusBar:              strings.Contains(submitPreview.View, "Ctrl+S submit") && strings.Contains(submitPreview.View, "Esc quit"),
 		TUIPreviewWidth:           80,
 		TUIPreviewHeight:          24,
 		PermissionCommandsPresent: names["/permissions"] && names["/approve"] && names["/deny"],
@@ -75,6 +84,10 @@ func Build() Report {
 		len(report.DuplicateSlashCommands) > 0 ||
 		!report.TUISubmitSupported ||
 		!report.TUISlashCompletion ||
+		!report.TUIFullScreenLayout ||
+		!report.TUITranscriptViewport ||
+		!report.TUILocalHelpPanel ||
+		!report.TUIStatusBar ||
 		!report.PermissionCommandsPresent ||
 		!report.StatusCommandsPresent ||
 		!report.SessionCommandsPresent {

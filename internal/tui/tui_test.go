@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,6 +62,7 @@ func TestPreviewWithCandidatesCompletesAndSubmits(t *testing.T) {
 
 	require.Contains(t, preview.View, "Codog TUI")
 	require.Contains(t, preview.View, "Ctrl+S submit")
+	require.Contains(t, preview.View, "composer")
 	require.Equal(t, "/model claude-test", preview.Prompt)
 	require.Equal(t, "/model claude-test ", preview.Value)
 	require.True(t, preview.Submitted)
@@ -82,4 +84,38 @@ func TestPreviewWithCandidatesRendersMultipleMatches(t *testing.T) {
 	require.Contains(t, preview.View, "/model claude-test")
 	require.ElementsMatch(t, []string{"/model claude-test", "/memory list"}, preview.Matches)
 	require.False(t, preview.Submitted)
+}
+
+func TestPreviewTogglesHelpPanel(t *testing.T) {
+	preview := PreviewWithCandidates("/help", []string{"/status", "/context"}, 100, 24, false, false)
+	require.True(t, preview.HelpOpen)
+	require.Contains(t, preview.View, "Common commands")
+
+	ta := newPromptTextarea("/help")
+	m := newModel(ta, []string{"/status", "/context"})
+	updated, _ := m.Update(teaKey("enter"))
+	next := updated.(model)
+
+	require.True(t, next.helpOpen)
+	require.Empty(t, next.textarea.Value())
+	require.Contains(t, next.View(), "Common commands")
+	require.Contains(t, next.View(), "/status")
+}
+
+func TestPreviewQuestionMarkOpensHelpWhenComposerEmpty(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(ta, []string{"/status"})
+	updated, _ := m.Update(teaKey("?"))
+	next := updated.(model)
+
+	require.True(t, next.helpOpen)
+	require.Contains(t, next.View(), "Keys")
+	require.Contains(t, next.View(), "/status")
+}
+
+func teaKey(value string) tea.KeyMsg {
+	if value == "enter" {
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	}
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(value)}
 }
