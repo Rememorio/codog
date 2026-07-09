@@ -32583,10 +32583,10 @@ func TestRuntimeConfigErrorsHonorGlobalJSONFormat(t *testing.T) {
 		},
 		{
 			name:      "providers unknown provider",
-			args:      []string{"providers", "bogus"},
+			args:      []string{"providers", "opneai"},
 			kind:      "invalid_flag_value",
 			errorKind: "invalid_flag_value",
-			contains:  []string{`"option": "provider"`, `"value": "bogus"`},
+			contains:  []string{`"option": "provider"`, `"value": "opneai"`, "Did you mean `codog providers show openai`?"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

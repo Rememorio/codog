@@ -13770,7 +13770,30 @@ func providerShowPayload(report providersReport, name string) (any, error) {
 		Flag:    "provider",
 		Value:   name,
 		Message: fmt.Sprintf("unknown provider %q", name),
+		Hint:    unknownProviderNameHint(name, "show"),
 		Usage:   "codog providers show NAME [--json|--output-format text|json]",
+	}
+}
+
+var providerNameCandidates = []string{
+	"current", "active", "oauth", "anthropic", "default", "custom", "compatible",
+	"anthropic-compatible", "openai", "openai-compatible", "xai", "grok",
+	"dashscope", "qwen", "kimi",
+}
+
+func unknownProviderNameHint(name string, action string) string {
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action == "" {
+		action = "show"
+	}
+	suggestions := toolnames.Suggestions(name, providerNameCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		return fmt.Sprintf("Did you mean `codog providers %s %s`? Use `codog providers status` to inspect configured providers.", action, suggestions[0])
+	case 0:
+		return "Use `codog providers status` to inspect configured providers, or choose anthropic, openai, xai, dashscope, custom, current, or oauth."
+	default:
+		return fmt.Sprintf("Did you mean one of: %s? Use `codog providers status` to inspect configured providers.", strings.Join(suggestions, ", "))
 	}
 }
 
@@ -13829,6 +13852,7 @@ func setProviderConfig(paths []string, req providerCommandRequest) (providerSetR
 				Flag:    "provider",
 				Value:   req.Name,
 				Message: fmt.Sprintf("unknown provider %q; use anthropic, openai, xai, dashscope, or custom --base-url URL", req.Name),
+				Hint:    unknownProviderNameHint(req.Name, "set"),
 				Usage:   "codog providers set anthropic|openai|xai|dashscope|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]",
 			}
 		}
@@ -31776,6 +31800,7 @@ type invalidFlagValueError struct {
 	Flag    string
 	Value   string
 	Message string
+	Hint    string
 	Usage   string
 }
 
@@ -32572,7 +32597,9 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		}
 		usage := strings.TrimSpace(invalidFlagErr.Usage)
 		hint := "Use a supported flag value."
-		if usage != "" {
+		if strings.TrimSpace(invalidFlagErr.Hint) != "" {
+			hint = strings.TrimSpace(invalidFlagErr.Hint)
+		} else if usage != "" {
 			hint = "Usage: " + usage
 		}
 		return finish(cliErrorReport{
