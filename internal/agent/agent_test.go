@@ -11044,7 +11044,9 @@ func TestConfigDegradesOnMalformedConfigFile(t *testing.T) {
 	require.Contains(t, report.Paths, configPath)
 	require.Len(t, report.Files, 1)
 	require.Equal(t, configPath, report.Files[0].Path)
-	require.Equal(t, "error", report.Files[0].Status)
+	require.Equal(t, "load_error", report.Files[0].Status)
+	require.Equal(t, "parse_error", report.Files[0].Reason)
+	require.Contains(t, report.Files[0].Detail, "unexpected end of JSON input")
 	require.Equal(t, "parse_error", report.Files[0].ErrorKind)
 	require.NotEmpty(t, report.Config.Model)
 	require.NotEmpty(t, report.Config.PermissionMode)
@@ -16586,11 +16588,14 @@ func TestConfigInspectionReportsFilePrecedence(t *testing.T) {
 	require.ElementsMatch(t, []string{"env.A", "model"}, report.Files[0].ShadowedKeys)
 
 	require.Equal(t, "not_found", report.Files[1].Status)
+	require.Equal(t, "not_found", report.Files[1].Reason)
 	require.False(t, report.Files[1].Present)
 	require.Equal(t, 2, report.Files[1].PrecedenceRank)
 
-	require.Equal(t, "error", report.Files[2].Status)
+	require.Equal(t, "load_error", report.Files[2].Status)
 	require.True(t, report.Files[2].Present)
+	require.Equal(t, "parse_error", report.Files[2].Reason)
+	require.Contains(t, report.Files[2].Detail, "unexpected end of JSON input")
 	require.Equal(t, "parse_error", report.Files[2].ErrorKind)
 
 	require.Equal(t, "loaded", report.Files[3].Status)

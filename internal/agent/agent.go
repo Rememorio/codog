@@ -43249,6 +43249,8 @@ type configFileInspectionReport struct {
 	Status         string   `json:"status"`
 	Present        bool     `json:"present"`
 	Loaded         bool     `json:"loaded"`
+	Reason         string   `json:"reason,omitempty"`
+	Detail         string   `json:"detail,omitempty"`
 	KeyCount       int      `json:"key_count,omitempty"`
 	Keys           []string `json:"keys,omitempty"`
 	KeyPaths       []string `json:"key_paths,omitempty"`
@@ -43270,6 +43272,7 @@ func inspectConfigFiles(paths []string) []configFileInspectionReport {
 			Path:           path,
 			PrecedenceRank: index + 1,
 			Status:         "not_found",
+			Reason:         "not_found",
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -43277,8 +43280,10 @@ func inspectConfigFiles(paths []string) []configFileInspectionReport {
 				reports = append(reports, report)
 				continue
 			}
-			report.Status = "error"
+			report.Status = "load_error"
 			report.Present = true
+			report.Reason = "read_error"
+			report.Detail = err.Error()
 			report.ErrorKind = "read_error"
 			report.Error = err.Error()
 			reports = append(reports, report)
@@ -43287,7 +43292,9 @@ func inspectConfigFiles(paths []string) []configFileInspectionReport {
 		report.Present = true
 		var raw map[string]json.RawMessage
 		if err := json.Unmarshal(data, &raw); err != nil {
-			report.Status = "error"
+			report.Status = "load_error"
+			report.Reason = "parse_error"
+			report.Detail = err.Error()
 			report.ErrorKind = "parse_error"
 			report.Error = err.Error()
 			reports = append(reports, report)
