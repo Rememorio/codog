@@ -4268,6 +4268,50 @@ func TestModelsCommandActionAliases(t *testing.T) {
 	require.NotContains(t, string(slashData), `"model"`)
 }
 
+func TestModelsShowReportsProviderDiagnostics(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]any{
+		"config_home":      configHome,
+		"temperature":      0.4,
+		"reasoning_effort": "high",
+		"extra_body": map[string]any{
+			"parallel_tool_calls": false,
+			"model":               "bad-override",
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "show", "openai/o4-mini", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var detail modelDetailReport
+	require.NoError(t, json.Unmarshal([]byte(out), &detail))
+	require.Equal(t, "openai/o4-mini", detail.RequestedModel)
+	require.Equal(t, "o4-mini", detail.WireModel)
+	require.True(t, detail.OpenAICompatible)
+	require.True(t, detail.ReasoningModel)
+	require.True(t, detail.StripsTuningParams)
+	require.True(t, detail.SupportsStreamUsage)
+	require.True(t, detail.SupportsExtraBodyParams)
+	require.ElementsMatch(t, []string{"model", "parallel_tool_calls"}, detail.ExtraBodyKeys)
+	require.ElementsMatch(t, []string{"parallel_tool_calls"}, detail.ExtraBodyForwardedKeys)
+	require.ElementsMatch(t, []string{"model"}, detail.ExtraBodyIgnoredKeys)
+	require.Contains(t, providerDiagnosticCodes(detail.Diagnostics), "reasoning_model_fixed_sampling")
+	require.Contains(t, providerDiagnosticCodes(detail.Diagnostics), "extra_body_keys_ignored")
+	require.NotContains(t, providerDiagnosticCodes(detail.Diagnostics), "reasoning_effort_unsupported")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "show", "openai/deepseek-v4-pro", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &detail))
+	require.True(t, detail.RequiresReasoningContentHistory)
+	require.Contains(t, providerDiagnosticCodes(detail.Diagnostics), "reasoning_history_required")
+}
+
 func TestDirectSlashSuggestsProjectCommands(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

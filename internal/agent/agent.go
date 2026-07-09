@@ -40069,28 +40069,39 @@ type modelSearchReport struct {
 }
 
 type modelDetailReport struct {
-	Kind                            string `json:"kind"`
-	Action                          string `json:"action"`
-	Status                          string `json:"status"`
-	RequestedModel                  string `json:"requested_model"`
-	ResolvedModel                   string `json:"resolved_model"`
-	Alias                           string `json:"alias,omitempty"`
-	Provider                        string `json:"provider"`
-	WireProtocol                    string `json:"wire_protocol"`
-	BaseURL                         string `json:"base_url"`
-	WireModel                       string `json:"wire_model"`
-	AuthEnv                         string `json:"auth_env"`
-	BaseURLEnv                      string `json:"base_url_env"`
-	MaxOutputTokens                 int    `json:"max_output_tokens,omitempty"`
-	ContextWindowTokens             int    `json:"context_window_tokens,omitempty"`
-	OpenAICompatible                bool   `json:"openai_compatible"`
-	ReasoningModel                  bool   `json:"reasoning_model"`
-	UsesMaxCompletionTokens         bool   `json:"uses_max_completion_tokens"`
-	RejectsToolResultIsErrorField   bool   `json:"rejects_tool_result_is_error_field"`
-	RequiresReasoningContentHistory bool   `json:"requires_reasoning_content_history"`
-	LocalOnly                       bool   `json:"local_only"`
-	RequiresProviderRequest         bool   `json:"requires_provider_request"`
-	Message                         string `json:"message"`
+	Kind                                  string                     `json:"kind"`
+	Action                                string                     `json:"action"`
+	Status                                string                     `json:"status"`
+	RequestedModel                        string                     `json:"requested_model"`
+	ResolvedModel                         string                     `json:"resolved_model"`
+	Alias                                 string                     `json:"alias,omitempty"`
+	Provider                              string                     `json:"provider"`
+	WireProtocol                          string                     `json:"wire_protocol"`
+	BaseURL                               string                     `json:"base_url"`
+	WireModel                             string                     `json:"wire_model"`
+	AuthEnv                               string                     `json:"auth_env"`
+	BaseURLEnv                            string                     `json:"base_url_env"`
+	MaxOutputTokens                       int                        `json:"max_output_tokens,omitempty"`
+	ContextWindowTokens                   int                        `json:"context_window_tokens,omitempty"`
+	OpenAICompatible                      bool                       `json:"openai_compatible"`
+	ReasoningModel                        bool                       `json:"reasoning_model"`
+	UsesMaxCompletionTokens               bool                       `json:"uses_max_completion_tokens"`
+	StripsTuningParams                    bool                       `json:"strips_tuning_params"`
+	SupportsStreamUsage                   bool                       `json:"supports_stream_usage"`
+	HonorsProxyEnv                        bool                       `json:"honors_proxy_env"`
+	SupportsExtraBodyParams               bool                       `json:"supports_extra_body_params"`
+	ExtraBodyConfigured                   bool                       `json:"extra_body_configured"`
+	ExtraBodyKeys                         []string                   `json:"extra_body_keys,omitempty"`
+	ExtraBodyForwardedKeys                []string                   `json:"extra_body_forwarded_keys,omitempty"`
+	ExtraBodyIgnoredKeys                  []string                   `json:"extra_body_ignored_keys,omitempty"`
+	PreservesSlashModelIDsOnCustomBaseURL bool                       `json:"preserves_slash_model_ids_on_custom_base_url,omitempty"`
+	ProtectedExtraBodyKeys                []string                   `json:"protected_extra_body_keys,omitempty"`
+	Diagnostics                           []providerDiagnosticReport `json:"diagnostics,omitempty"`
+	RejectsToolResultIsErrorField         bool                       `json:"rejects_tool_result_is_error_field"`
+	RequiresReasoningContentHistory       bool                       `json:"requires_reasoning_content_history"`
+	LocalOnly                             bool                       `json:"local_only"`
+	RequiresProviderRequest               bool                       `json:"requires_provider_request"`
+	Message                               string                     `json:"message"`
 }
 
 func (a *App) Model(args []string) error {
@@ -40655,27 +40666,43 @@ func (a *App) buildModelDetailReport(model string) modelDetailReport {
 	if openAICompatible {
 		wireModel = modelrouting.WireModelForBaseURL(resolved, baseURL)
 	}
+	reasoningModel := openAICompatible && modelrouting.IsReasoningModel(wireModel)
+	requiresReasoningContentHistory := openAICompatible && modelrouting.RequiresReasoningContentHistory(wireModel)
+	extraBodyKeys, extraBodyForwardedKeys, extraBodyIgnoredKeys := providerExtraBodyKeyDiagnostics(a.Config.ExtraBody, openAICompatible)
+	diagnosticConfig := a.Config
+	diagnosticConfig.Model = requested
 	report := modelDetailReport{
-		Kind:                            "models",
-		Action:                          "show",
-		Status:                          "ok",
-		RequestedModel:                  requested,
-		ResolvedModel:                   resolved,
-		Alias:                           modelAliasName(requested),
-		Provider:                        provider,
-		WireProtocol:                    protocol,
-		BaseURL:                         baseURL,
-		WireModel:                       wireModel,
-		AuthEnv:                         authEnv,
-		BaseURLEnv:                      baseURLEnv,
-		OpenAICompatible:                openAICompatible,
-		ReasoningModel:                  modelrouting.IsReasoningModel(resolved),
-		UsesMaxCompletionTokens:         modelrouting.UsesMaxCompletionTokens(resolved),
-		RejectsToolResultIsErrorField:   modelrouting.ModelRejectsIsErrorField(resolved),
-		RequiresReasoningContentHistory: modelrouting.RequiresReasoningContentHistory(resolved),
-		LocalOnly:                       true,
-		RequiresProviderRequest:         false,
-		Message:                         "Model details are resolved locally; no provider request was made.",
+		Kind:                                  "models",
+		Action:                                "show",
+		Status:                                "ok",
+		RequestedModel:                        requested,
+		ResolvedModel:                         resolved,
+		Alias:                                 modelAliasName(requested),
+		Provider:                              provider,
+		WireProtocol:                          protocol,
+		BaseURL:                               baseURL,
+		WireModel:                             wireModel,
+		AuthEnv:                               authEnv,
+		BaseURLEnv:                            baseURLEnv,
+		OpenAICompatible:                      openAICompatible,
+		ReasoningModel:                        reasoningModel,
+		UsesMaxCompletionTokens:               modelrouting.UsesMaxCompletionTokens(wireModel),
+		StripsTuningParams:                    reasoningModel,
+		SupportsStreamUsage:                   providerSupportsStreamUsage(provider, openAICompatible),
+		HonorsProxyEnv:                        true,
+		SupportsExtraBodyParams:               openAICompatible,
+		ExtraBodyConfigured:                   len(a.Config.ExtraBody) != 0,
+		ExtraBodyKeys:                         extraBodyKeys,
+		ExtraBodyForwardedKeys:                extraBodyForwardedKeys,
+		ExtraBodyIgnoredKeys:                  extraBodyIgnoredKeys,
+		PreservesSlashModelIDsOnCustomBaseURL: provider == modelrouting.ProviderOpenAI,
+		ProtectedExtraBodyKeys:                providerProtectedExtraBodyKeys(openAICompatible),
+		Diagnostics:                           providerDiagnosticsForActiveConfig(diagnosticConfig, provider, wireModel, reasoningModel, requiresReasoningContentHistory, reasoningModel, extraBodyIgnoredKeys),
+		RejectsToolResultIsErrorField:         modelrouting.ModelRejectsIsErrorField(resolved),
+		RequiresReasoningContentHistory:       requiresReasoningContentHistory,
+		LocalOnly:                             true,
+		RequiresProviderRequest:               false,
+		Message:                               "Model details are resolved locally; no provider request was made.",
 	}
 	if limit, ok := modelrouting.TokenLimitForModel(resolved); ok {
 		report.MaxOutputTokens = limit.MaxOutputTokens
@@ -40891,6 +40918,15 @@ func renderModelDetailReport(out io.Writer, report modelDetailReport, format str
 	if report.UsesMaxCompletionTokens {
 		flags = append(flags, "max-completion-tokens")
 	}
+	if report.StripsTuningParams {
+		flags = append(flags, "strips-tuning")
+	}
+	if report.SupportsStreamUsage {
+		flags = append(flags, "stream-usage")
+	}
+	if report.SupportsExtraBodyParams {
+		flags = append(flags, "extra-body")
+	}
 	if report.RejectsToolResultIsErrorField {
 		flags = append(flags, "no-tool-is-error")
 	}
@@ -40899,6 +40935,9 @@ func renderModelDetailReport(out io.Writer, report modelDetailReport, format str
 	}
 	if len(flags) != 0 {
 		fmt.Fprintf(out, "  Compatibility    %s\n", strings.Join(flags, ", "))
+	}
+	for _, diagnostic := range report.Diagnostics {
+		fmt.Fprintf(out, "  Diagnostic       %s %s\n", diagnostic.Severity, diagnostic.Code)
 	}
 	return nil
 }
