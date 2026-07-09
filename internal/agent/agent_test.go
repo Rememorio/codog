@@ -16555,9 +16555,9 @@ func TestConfigInspectionReportsFilePrecedence(t *testing.T) {
 	missingPath := filepath.Join(dir, "missing.json")
 	badPath := filepath.Join(dir, "bad.json")
 	projectPath := filepath.Join(dir, "project.json")
-	require.NoError(t, os.WriteFile(userPath, []byte(`{"model":"haiku","hooks":{"PreToolUse":[]}}`), 0o644))
+	require.NoError(t, os.WriteFile(userPath, []byte(`{"model":"haiku","env":{"A":"user","B":"user"},"hooks":{"PreToolUse":[]}}`), 0o644))
 	require.NoError(t, os.WriteFile(badPath, []byte(`{`), 0o644))
-	require.NoError(t, os.WriteFile(projectPath, []byte(`{"model":"sonnet","mcpServers":{}}`), 0o644))
+	require.NoError(t, os.WriteFile(projectPath, []byte(`{"model":"sonnet","env":{"A":"project"},"mcpServers":{}}`), 0o644))
 
 	cfg := redactedConfig(config.Config{Model: "sonnet", PermissionMode: "workspace-write"})
 	var out bytes.Buffer
@@ -16580,9 +16580,10 @@ func TestConfigInspectionReportsFilePrecedence(t *testing.T) {
 	require.Equal(t, "loaded", report.Files[0].Status)
 	require.True(t, report.Files[0].Loaded)
 	require.Equal(t, 1, report.Files[0].PrecedenceRank)
-	require.ElementsMatch(t, []string{"hooks", "model"}, report.Files[0].Keys)
-	require.ElementsMatch(t, []string{"hooks"}, report.Files[0].WinsForKeys)
-	require.ElementsMatch(t, []string{"model"}, report.Files[0].ShadowedKeys)
+	require.ElementsMatch(t, []string{"env", "hooks", "model"}, report.Files[0].Keys)
+	require.ElementsMatch(t, []string{"env.A", "env.B", "hooks.PreToolUse", "model"}, report.Files[0].KeyPaths)
+	require.ElementsMatch(t, []string{"env.B", "hooks.PreToolUse"}, report.Files[0].WinsForKeys)
+	require.ElementsMatch(t, []string{"env.A", "model"}, report.Files[0].ShadowedKeys)
 
 	require.Equal(t, "not_found", report.Files[1].Status)
 	require.False(t, report.Files[1].Present)
@@ -16593,8 +16594,9 @@ func TestConfigInspectionReportsFilePrecedence(t *testing.T) {
 	require.Equal(t, "parse_error", report.Files[2].ErrorKind)
 
 	require.Equal(t, "loaded", report.Files[3].Status)
-	require.ElementsMatch(t, []string{"mcpServers", "model"}, report.Files[3].Keys)
-	require.ElementsMatch(t, []string{"mcpServers", "model"}, report.Files[3].WinsForKeys)
+	require.ElementsMatch(t, []string{"env", "mcpServers", "model"}, report.Files[3].Keys)
+	require.ElementsMatch(t, []string{"env.A", "mcpServers", "model"}, report.Files[3].KeyPaths)
+	require.ElementsMatch(t, []string{"env.A", "mcpServers", "model"}, report.Files[3].WinsForKeys)
 	require.Empty(t, report.Files[3].ShadowedKeys)
 
 	out.Reset()
@@ -16609,7 +16611,7 @@ func TestConfigInspectionReportsFilePrecedence(t *testing.T) {
 	require.Equal(t, "paths", pathsReport.Action)
 	require.Equal(t, []string{userPath, projectPath}, pathsReport.Paths)
 	require.Len(t, pathsReport.Files, 2)
-	require.ElementsMatch(t, []string{"model"}, pathsReport.Files[0].ShadowedKeys)
+	require.ElementsMatch(t, []string{"env.A", "model"}, pathsReport.Files[0].ShadowedKeys)
 }
 
 func TestConfigValidateReportsDiagnostics(t *testing.T) {

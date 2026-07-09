@@ -43251,6 +43251,7 @@ type configFileInspectionReport struct {
 	Loaded         bool     `json:"loaded"`
 	KeyCount       int      `json:"key_count,omitempty"`
 	Keys           []string `json:"keys,omitempty"`
+	KeyPaths       []string `json:"key_paths,omitempty"`
 	WinsForKeys    []string `json:"wins_for_keys,omitempty"`
 	ShadowedKeys   []string `json:"shadowed_keys,omitempty"`
 	ErrorKind      string   `json:"error_kind,omitempty"`
@@ -43295,10 +43296,11 @@ func inspectConfigFiles(paths []string) []configFileInspectionReport {
 		report.Status = "loaded"
 		report.Loaded = true
 		report.Keys = sortedMapKeys(raw)
-		report.KeyCount = len(report.Keys)
+		report.KeyPaths = collectConfigKeyPaths(raw)
+		report.KeyCount = len(report.KeyPaths)
 		reports = append(reports, report)
 		reportIndex := len(reports) - 1
-		for _, key := range report.Keys {
+		for _, key := range report.KeyPaths {
 			lastKeyOwner[key] = reportIndex
 		}
 	}
@@ -43306,7 +43308,7 @@ func inspectConfigFiles(paths []string) []configFileInspectionReport {
 		if !reports[index].Loaded {
 			continue
 		}
-		for _, key := range reports[index].Keys {
+		for _, key := range reports[index].KeyPaths {
 			if lastKeyOwner[key] == index {
 				reports[index].WinsForKeys = append(reports[index].WinsForKeys, key)
 			} else {
@@ -43315,6 +43317,25 @@ func inspectConfigFiles(paths []string) []configFileInspectionReport {
 		}
 	}
 	return reports
+}
+
+func collectConfigKeyPaths(values map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(values))
+	for _, key := range sortedMapKeys(values) {
+		collectConfigKeyPathsForValue(key, values[key], &keys)
+	}
+	return keys
+}
+
+func collectConfigKeyPathsForValue(prefix string, raw json.RawMessage, keys *[]string) {
+	var nested map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &nested); err == nil && len(nested) > 0 {
+		for _, key := range sortedMapKeys(nested) {
+			collectConfigKeyPathsForValue(prefix+"."+key, nested[key], keys)
+		}
+		return
+	}
+	*keys = append(*keys, prefix)
 }
 
 func sortedMapKeys[V any](values map[string]V) []string {
