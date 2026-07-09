@@ -13153,6 +13153,9 @@ type activeProviderReport struct {
 	HonorsProxyEnv                        bool               `json:"honors_proxy_env"`
 	SupportsExtraBodyParams               bool               `json:"supports_extra_body_params"`
 	ExtraBodyConfigured                   bool               `json:"extra_body_configured"`
+	ExtraBodyKeys                         []string           `json:"extra_body_keys,omitempty"`
+	ExtraBodyForwardedKeys                []string           `json:"extra_body_forwarded_keys,omitempty"`
+	ExtraBodyIgnoredKeys                  []string           `json:"extra_body_ignored_keys,omitempty"`
 	PreservesSlashModelIDsOnCustomBaseURL bool               `json:"preserves_slash_model_ids_on_custom_base_url,omitempty"`
 	ProtectedExtraBodyKeys                []string           `json:"protected_extra_body_keys,omitempty"`
 	Auth                                  providerAuthReport `json:"auth"`
@@ -13444,6 +13447,7 @@ func activeProvider(cfg config.Config) activeProviderReport {
 		protocol = "openai-compatible"
 	}
 	openAICompatible := providerProtocolOpenAICompatible(protocol)
+	extraBodyKeys, extraBodyForwardedKeys, extraBodyIgnoredKeys := providerExtraBodyKeyDiagnostics(cfg.ExtraBody, openAICompatible)
 	wireModel := modelrouting.ResolveAlias(cfg.Model)
 	if openAICompatible {
 		wireModel = modelrouting.WireModelForBaseURL(wireModel, cfg.BaseURL)
@@ -13464,10 +13468,39 @@ func activeProvider(cfg config.Config) activeProviderReport {
 		HonorsProxyEnv:                        true,
 		SupportsExtraBodyParams:               openAICompatible,
 		ExtraBodyConfigured:                   len(cfg.ExtraBody) != 0,
+		ExtraBodyKeys:                         extraBodyKeys,
+		ExtraBodyForwardedKeys:                extraBodyForwardedKeys,
+		ExtraBodyIgnoredKeys:                  extraBodyIgnoredKeys,
 		PreservesSlashModelIDsOnCustomBaseURL: name == "openai",
 		ProtectedExtraBodyKeys:                providerProtectedExtraBodyKeys(openAICompatible),
 		Auth:                                  providerAuthStatus(cfg),
 	}
+}
+
+func providerExtraBodyKeyDiagnostics(extraBody map[string]any, supported bool) ([]string, []string, []string) {
+	if len(extraBody) == 0 {
+		return nil, nil, nil
+	}
+	all := []string{}
+	forwarded := []string{}
+	ignored := []string{}
+	protected := map[string]bool{}
+	for _, key := range providerProtectedExtraBodyKeys(supported) {
+		protected[key] = true
+	}
+	for key := range extraBody {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		all = append(all, key)
+		if !supported || protected[key] {
+			ignored = append(ignored, key)
+			continue
+		}
+		forwarded = append(forwarded, key)
+	}
+	return sortedUniqueStrings(all), sortedUniqueStrings(forwarded), sortedUniqueStrings(ignored)
 }
 
 func providerSupportsStreamUsage(name string, openAICompatible bool) bool {
@@ -13740,6 +13773,12 @@ func renderProvidersText(out io.Writer, report providersReport) {
 		fmt.Fprintf(out, "Extra body: %s\n", extraBody)
 	} else {
 		fmt.Fprintln(out, "Extra body: unsupported")
+	}
+	if len(active.ExtraBodyForwardedKeys) != 0 {
+		fmt.Fprintf(out, "Extra body forwarded: %s\n", strings.Join(active.ExtraBodyForwardedKeys, ", "))
+	}
+	if len(active.ExtraBodyIgnoredKeys) != 0 {
+		fmt.Fprintf(out, "Extra body ignored: %s\n", strings.Join(active.ExtraBodyIgnoredKeys, ", "))
 	}
 	auth := "not configured"
 	if active.Auth.Configured {

@@ -32348,6 +32348,7 @@ func TestProvidersShowCurrent(t *testing.T) {
 			Model:      "claude-compatible",
 			MaxTokens:  2048,
 			MaxTurns:   4,
+			ExtraBody:  map[string]any{"metadata": map[string]any{"source": "test"}},
 		},
 		Out: &out,
 	}
@@ -32357,11 +32358,14 @@ func TestProvidersShowCurrent(t *testing.T) {
 	require.Contains(t, out.String(), `"base_url": "https://provider.example"`)
 	require.Contains(t, out.String(), `"model": "claude-compatible"`)
 	require.Contains(t, out.String(), `"supports_extra_body_params": false`)
+	var customActive activeProviderReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &customActive))
+	require.ElementsMatch(t, []string{"metadata"}, customActive.ExtraBodyIgnoredKeys)
 	out.Reset()
 
 	app.Config.BaseURL = "https://api.openai.com/v1"
 	app.Config.Model = "openai/o4-mini"
-	app.Config.ExtraBody = map[string]any{"parallel_tool_calls": false}
+	app.Config.ExtraBody = map[string]any{"parallel_tool_calls": false, "model": "bad-override"}
 	require.NoError(t, app.Providers([]string{"show", "current", "--json"}))
 	require.Contains(t, out.String(), `"name": "openai"`)
 	require.Contains(t, out.String(), `"protocol": "openai-compatible"`)
@@ -32374,6 +32378,11 @@ func TestProvidersShowCurrent(t *testing.T) {
 	require.Contains(t, out.String(), `"extra_body_configured": true`)
 	require.Contains(t, out.String(), `"preserves_slash_model_ids_on_custom_base_url": true`)
 	require.Contains(t, out.String(), `"tool_choice"`)
+	var openAIActive activeProviderReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &openAIActive))
+	require.ElementsMatch(t, []string{"model", "parallel_tool_calls"}, openAIActive.ExtraBodyKeys)
+	require.ElementsMatch(t, []string{"parallel_tool_calls"}, openAIActive.ExtraBodyForwardedKeys)
+	require.ElementsMatch(t, []string{"model"}, openAIActive.ExtraBodyIgnoredKeys)
 	out.Reset()
 
 	app.Config.BaseURL = "https://api.x.ai/v1"
