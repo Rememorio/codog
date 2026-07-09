@@ -9704,7 +9704,7 @@ func (a *App) Marketplace(args []string) error {
 			Status:    "error",
 			ErrorKind: "unknown_plugins_action",
 			Message:   fmt.Sprintf("unknown plugins action %q", args[0]),
-			Hint:      "Use `codog plugins list`, `health`, `show|info|describe`, `validate`, `sources`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`.",
+			Hint:      unknownPluginsActionHint(args[0]),
 		}, format)
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
@@ -10831,6 +10831,26 @@ func normalizePluginAction(raw string) string {
 		return "remote"
 	default:
 		return strings.ToLower(strings.TrimSpace(raw))
+	}
+}
+
+var pluginsActionCandidates = []string{
+	"list", "ls", "health", "healthcheck", "lifecycle", "show", "info", "describe", "details", "detail",
+	"sources", "source", "marketplaces", "manage-marketplaces", "add-marketplace", "remove-marketplace",
+	"delete-marketplace", "settings", "config", "remote", "browse", "discover", "updates", "install",
+	"add", "install-remote", "remote-install", "update", "upgrade", "enable", "on", "disable", "off",
+	"remove", "rm", "delete", "uninstall", "validate", "check",
+}
+
+func unknownPluginsActionHint(action string) string {
+	suggestions := toolnames.Suggestions(action, pluginsActionCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		return fmt.Sprintf("Did you mean `codog plugins %s`? Use `codog plugins list` or `codog plugins help` to inspect supported actions.", suggestions[0])
+	case 0:
+		return "Use `codog plugins list`, `health`, `show|info|describe`, `validate`, `sources`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`."
+	default:
+		return fmt.Sprintf("Did you mean one of: %s? Use `codog plugins list` or `codog plugins help` to inspect supported actions.", strings.Join(suggestions, ", "))
 	}
 }
 

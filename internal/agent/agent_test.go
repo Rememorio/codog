@@ -11093,11 +11093,11 @@ func TestLocalSubcommandErrorContracts(t *testing.T) {
 		},
 		{
 			name:      "plugins unknown",
-			args:      []string{"--config", configPath, "--output-format", "json", "plugins", "bogus"},
+			args:      []string{"--config", configPath, "--output-format", "json", "plugins", "instal"},
 			kind:      "plugins",
-			action:    "bogus",
+			action:    "instal",
 			errorKind: "unknown_plugins_action",
-			hintPart:  "plugins list",
+			hintPart:  "Did you mean one of: install, uninstall?",
 		},
 		{
 			name:      "sessions unknown",
