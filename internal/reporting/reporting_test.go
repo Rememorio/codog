@@ -370,6 +370,17 @@ func TestProjectReportBuildsAudienceViews(t *testing.T) {
 	require.Equal(t, brief.Provenance.SourceContentHash, briefAgain.Provenance.SourceContentHash)
 }
 
+func TestReportingSensitivityRankUsesInternalDefaultAndSuggestions(t *testing.T) {
+	rank, err := reportingSensitivityRank("")
+	require.NoError(t, err)
+	require.Equal(t, 2, rank)
+
+	_, err = reportingSensitivityRank("operatr_only")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown sensitivity "operatr_only"`)
+	require.Contains(t, err.Error(), `did you mean "operator_only"`)
+}
+
 func TestProjectReportRedactsBySensitivityPolicy(t *testing.T) {
 	configHome := t.TempDir()
 	roadmapStore := roadmap.NewStore(configHome)

@@ -1043,20 +1043,10 @@ func redactProjectedItems(raw any, path string, maxRank int, redactions *[]repor
 }
 
 func reportingSensitivityRank(value string) (int, error) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "":
+	if strings.TrimSpace(value) == "" {
 		return 2, nil
-	case reportschema.SensitivityPublic:
-		return 1, nil
-	case reportschema.SensitivityInternal:
-		return 2, nil
-	case reportschema.SensitivityOperatorOnly:
-		return 3, nil
-	case reportschema.SensitivitySecret:
-		return 4, nil
-	default:
-		return 0, fmt.Errorf("unknown sensitivity %q", value)
 	}
+	return reportschema.SensitivityRank(value)
 }
 
 func mustSensitivityRank(value string) int {

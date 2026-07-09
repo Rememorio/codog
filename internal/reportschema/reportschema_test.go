@@ -272,6 +272,17 @@ func TestProjectIsDeterministicAndRecordsRedactionProvenance(t *testing.T) {
 	require.Contains(t, redactionPaths(first.Provenance.Redactions), "claims[2]")
 }
 
+func TestSensitivityRankSuggestsKnownLabels(t *testing.T) {
+	rank, err := SensitivityRank("INTERNAL")
+	require.NoError(t, err)
+	require.Equal(t, 2, rank)
+
+	_, err = SensitivityRank("internl")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown sensitivity "internl"`)
+	require.Contains(t, err.Error(), `did you mean "internal"`)
+}
+
 func TestProjectOmitsUnsupportedFamilies(t *testing.T) {
 	report := fixtureReport(t)
 	capabilities := ConsumerCapabilities{

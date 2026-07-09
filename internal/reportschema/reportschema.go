@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 const (
@@ -44,6 +46,13 @@ const (
 	NegativeNotObservedInCheckedScope = "not_observed_in_checked_scope"
 	NegativeUnknownNotChecked         = "unknown_not_checked"
 )
+
+var sensitivityNames = []string{
+	SensitivityPublic,
+	SensitivityInternal,
+	SensitivityOperatorOnly,
+	SensitivitySecret,
+}
 
 type Claim struct {
 	ID          string   `json:"id"`
@@ -403,7 +412,7 @@ func Project(report CanonicalReport, capabilities ConsumerCapabilities, view str
 	if strings.TrimSpace(capabilities.MaxSensitivity) == "" {
 		capabilities.MaxSensitivity = SensitivityPublic
 	}
-	if _, err := sensitivityRank(capabilities.MaxSensitivity); err != nil {
+	if _, err := SensitivityRank(capabilities.MaxSensitivity); err != nil {
 		return Projection{}, err
 	}
 	if strings.TrimSpace(view) == "" {
@@ -680,11 +689,11 @@ func supportsSchema(capabilities ConsumerCapabilities, schema string) bool {
 }
 
 func redactClaim(index int, claim Claim, capabilities ConsumerCapabilities, redactions *[]RedactionProvenance) (Claim, bool, error) {
-	claimRank, err := sensitivityRank(claim.Sensitivity)
+	claimRank, err := SensitivityRank(claim.Sensitivity)
 	if err != nil {
 		return Claim{}, false, err
 	}
-	maxRank, err := sensitivityRank(capabilities.MaxSensitivity)
+	maxRank, err := SensitivityRank(capabilities.MaxSensitivity)
 	if err != nil {
 		return Claim{}, false, err
 	}
@@ -716,7 +725,8 @@ func redactClaim(index int, claim Claim, capabilities ConsumerCapabilities, reda
 	return redacted, true, nil
 }
 
-func sensitivityRank(value string) (int, error) {
+// SensitivityRank returns the projection ordering for a sensitivity label.
+func SensitivityRank(value string) (int, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case SensitivityPublic:
 		return 1, nil
@@ -727,6 +737,19 @@ func sensitivityRank(value string) (int, error) {
 	case SensitivitySecret:
 		return 4, nil
 	default:
-		return 0, fmt.Errorf("unknown sensitivity %q", value)
+		return 0, unknownSensitivityError(value)
+	}
+}
+
+func unknownSensitivityError(value string) error {
+	value = strings.TrimSpace(value)
+	suggestions := toolnames.Suggestions(value, sensitivityNames, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unknown sensitivity %q", value)
+	case 1:
+		return fmt.Errorf("unknown sensitivity %q; did you mean %q?", value, suggestions[0])
+	default:
+		return fmt.Errorf("unknown sensitivity %q; suggestions: %s", value, strings.Join(suggestions, ", "))
 	}
 }
