@@ -390,6 +390,32 @@ func TestUsageOverviewCommandsHaveDistinctReports(t *testing.T) {
 	require.NoError(t, app.UsageOverview("cost", nil, config.FlagOverrides{SessionID: "usage-session"}))
 	require.Contains(t, out.String(), "Cost")
 	require.Contains(t, out.String(), "Cost USD")
+	out.Reset()
+
+	require.NoError(t, app.RunResumedSlash(context.Background(), "/cost", []string{"--json"}, config.FlagOverrides{Resume: "usage-session"}, "json"))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &cost))
+	require.Equal(t, "cost", cost.Kind)
+	require.Equal(t, "usage-session", cost.SessionID)
+	require.Equal(t, 175, cost.TotalTokens)
+	require.NotNil(t, cost.CostUSD)
+	require.Greater(t, *cost.CostUSD, 0.0)
+	out.Reset()
+
+	require.NoError(t, app.RunResumedSlash(context.Background(), "/stats", []string{"--json"}, config.FlagOverrides{Resume: "usage-session"}, "json"))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &stats))
+	require.Equal(t, "stats", stats.Kind)
+	require.Equal(t, "usage-session", stats.SessionID)
+	require.Equal(t, 175, stats.TotalTokens)
+	require.NotNil(t, stats.ToolUse)
+	require.Equal(t, 1, stats.ToolUse.ToolUses)
+	out.Reset()
+
+	require.NoError(t, app.RunResumedSlash(context.Background(), "/tokens", []string{"--json"}, config.FlagOverrides{Resume: "usage-session"}, "json"))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &tokens))
+	require.Equal(t, "tokens", tokens.Kind)
+	require.Equal(t, "usage-session", tokens.SessionID)
+	require.Equal(t, 175, tokens.TotalTokens)
+	require.Equal(t, 200000, tokens.ContextWindowTokens)
 }
 
 func TestUsageOverviewDirectTokensDispatch(t *testing.T) {
