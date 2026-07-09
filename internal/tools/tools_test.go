@@ -4530,6 +4530,70 @@ func TestRoadmapPinpointToolFilesAndUpdatesLifecycle(t *testing.T) {
 	require.Contains(t, listOut, `"count": 1`)
 }
 
+func TestStateAndReportToolsSuggestUnknownActions(t *testing.T) {
+	configHome := t.TempDir()
+	cases := []struct {
+		name       string
+		run        func() error
+		unknown    string
+		suggestion string
+	}{
+		{
+			name: "nudge",
+			run: func() error {
+				_, err := NudgeTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"action":"acknwoledge","nudge_id":"dogfood","cycle_id":"cycle-1"}`))
+				return err
+			},
+			unknown:    `unknown nudge action "acknwoledge"`,
+			suggestion: `did you mean "acknowledge"?`,
+		},
+		{
+			name: "provisional_status",
+			run: func() error {
+				_, err := ProvisionalStatusTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"action":"stauts","channel":"dogfood"}`))
+				return err
+			},
+			unknown:    `unknown provisional_status action "stauts"`,
+			suggestion: `did you mean "status"?`,
+		},
+		{
+			name: "roadmap",
+			run: func() error {
+				_, err := RoadmapPinpointTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"action":"updte"}`))
+				return err
+			},
+			unknown:    `unknown roadmap action "updte"`,
+			suggestion: `did you mean "update"?`,
+		},
+		{
+			name: "report_schema",
+			run: func() error {
+				_, err := ReportSchemaTool{}.Execute(context.Background(), []byte(`{"action":"regsitry"}`))
+				return err
+			},
+			unknown:    `unknown report_schema action "regsitry"`,
+			suggestion: `did you mean "registry"?`,
+		},
+		{
+			name: "report_backpressure",
+			run: func() error {
+				_, err := ReportBackpressureTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"action":"snapshott"}`))
+				return err
+			},
+			unknown:    `unknown report_backpressure action "snapshott"`,
+			suggestion: `did you mean "snapshot"?`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run()
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.unknown)
+			require.Contains(t, err.Error(), tc.suggestion)
+		})
+	}
+}
+
 func TestReportBackpressureToolCollapsesRepeatedRoadmapReports(t *testing.T) {
 	configHome := t.TempDir()
 	roadmapTool := RoadmapPinpointTool{ConfigHome: configHome}

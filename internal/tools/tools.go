@@ -2032,6 +2032,18 @@ func unknownMCPServerError(name string, servers map[string]config.MCPServerConfi
 	}
 }
 
+func unknownToolActionError(tool string, action string, candidates []string) error {
+	suggestions := toolnames.Suggestions(action, candidates, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unknown %s action %q", tool, action)
+	case 1:
+		return fmt.Errorf("unknown %s action %q; did you mean %q?", tool, action, suggestions[0])
+	default:
+		return fmt.Errorf("unknown %s action %q; suggestions: %s", tool, action, strings.Join(suggestions, ", "))
+	}
+}
+
 type GitStatusTool struct {
 	Workspace string
 }
@@ -9008,6 +9020,8 @@ type NudgeTool struct {
 	ConfigHome string
 }
 
+var nudgeActionNames = []string{"observe", "ack", "acknowledge", "status", "list"}
+
 func (NudgeTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "nudge",
@@ -9015,7 +9029,7 @@ func (NudgeTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":       map[string]any{"type": "string", "enum": []string{"observe", "ack", "acknowledge", "status", "list"}},
+				"action":       map[string]any{"type": "string", "enum": append([]string(nil), nudgeActionNames...)},
 				"nudge_id":     map[string]any{"type": "string"},
 				"cycle_id":     map[string]any{"type": "string"},
 				"prompt":       map[string]any{"type": "string"},
@@ -9078,7 +9092,7 @@ func (t NudgeTool) Execute(_ context.Context, input json.RawMessage) (string, er
 		}
 		return pretty(observation), nil
 	default:
-		return "", fmt.Errorf("unknown nudge action %q", payload.Action)
+		return "", unknownToolActionError("nudge", payload.Action, nudgeActionNames)
 	}
 }
 
@@ -9103,6 +9117,8 @@ type ProvisionalStatusTool struct {
 	ConfigHome string
 }
 
+var provisionalStatusActionNames = []string{"observe", "get", "status", "list"}
+
 func (ProvisionalStatusTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "provisional_status",
@@ -9110,7 +9126,7 @@ func (ProvisionalStatusTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":          map[string]any{"type": "string", "enum": []string{"observe", "get", "status", "list"}},
+				"action":          map[string]any{"type": "string", "enum": append([]string(nil), provisionalStatusActionNames...)},
 				"channel":         map[string]any{"type": "string"},
 				"owner":           map[string]any{"type": "string"},
 				"status":          map[string]any{"type": "string"},
@@ -9177,7 +9193,7 @@ func (t ProvisionalStatusTool) Execute(_ context.Context, input json.RawMessage)
 		}
 		return pretty(observation), nil
 	default:
-		return "", fmt.Errorf("unknown provisional_status action %q", payload.Action)
+		return "", unknownToolActionError("provisional_status", payload.Action, provisionalStatusActionNames)
 	}
 }
 
@@ -9212,6 +9228,8 @@ type RoadmapPinpointTool struct {
 	ConfigHome string
 }
 
+var roadmapPinpointActionNames = []string{"file", "update", "get", "list", "handoff"}
+
 func (RoadmapPinpointTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "roadmap_pinpoint",
@@ -9219,7 +9237,7 @@ func (RoadmapPinpointTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":        map[string]any{"type": "string", "enum": []string{"file", "update", "get", "list", "handoff"}},
+				"action":        map[string]any{"type": "string", "enum": append([]string(nil), roadmapPinpointActionNames...)},
 				"id":            map[string]any{"type": "string"},
 				"title":         map[string]any{"type": "string"},
 				"description":   map[string]any{"type": "string"},
@@ -9404,7 +9422,7 @@ func (t RoadmapPinpointTool) Execute(_ context.Context, input json.RawMessage) (
 		}
 		return pretty(result), nil
 	default:
-		return "", fmt.Errorf("unknown roadmap action %q", payload.Action)
+		return "", unknownToolActionError("roadmap", payload.Action, roadmapPinpointActionNames)
 	}
 }
 
@@ -9474,6 +9492,8 @@ func (s flexibleStrings) Values() []string {
 	return values
 }
 
+var reportSchemaActionNames = []string{"registry", "conformance", "conformance_fixtures"}
+
 func (ReportSchemaTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "report_schema",
@@ -9481,7 +9501,7 @@ func (ReportSchemaTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action": map[string]any{"type": "string", "enum": []string{"registry", "conformance", "conformance_fixtures"}},
+				"action": map[string]any{"type": "string", "enum": append([]string(nil), reportSchemaActionNames...)},
 				"input":  map[string]any{"type": "string"},
 				"report": map[string]any{
 					"oneOf": []any{
@@ -9548,9 +9568,11 @@ func (ReportSchemaTool) Execute(_ context.Context, input json.RawMessage) (strin
 	case "conformance_fixtures":
 		return pretty(map[string]any{"kind": "report_schema", "action": "conformance_fixtures", "status": "ok", "fixture_set": reportconformance.FixtureSetVersion, "cases": reportconformance.RequiredCases()}), nil
 	default:
-		return "", fmt.Errorf("unknown report_schema action %q", payload.Action)
+		return "", unknownToolActionError("report_schema", payload.Action, reportSchemaActionNames)
 	}
 }
+
+var reportBackpressureActionNames = []string{"generate", "snapshot"}
 
 func (ReportBackpressureTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
@@ -9559,7 +9581,7 @@ func (ReportBackpressureTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":     map[string]any{"type": "string", "enum": []string{"generate", "snapshot"}},
+				"action":     map[string]any{"type": "string", "enum": append([]string(nil), reportBackpressureActionNames...)},
 				"channel":    map[string]any{"type": "string"},
 				"trigger_id": map[string]any{"type": "string"},
 				"checked_surfaces": map[string]any{
@@ -9688,7 +9710,7 @@ func (t ReportBackpressureTool) Execute(_ context.Context, input json.RawMessage
 		}
 		return pretty(map[string]any{"kind": "report_backpressure_snapshot", "snapshot": snapshot}), nil
 	default:
-		return "", fmt.Errorf("unknown report_backpressure action %q", payload.Action)
+		return "", unknownToolActionError("report_backpressure", payload.Action, reportBackpressureActionNames)
 	}
 }
 
