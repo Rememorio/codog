@@ -207,13 +207,17 @@ func (r Runner) RunWithUserContent(ctx context.Context, previous []anthropic.Mes
 			if stopReport.Denied {
 				return TurnResult{}, hookDeniedReportError("stop", stopReport)
 			}
-			return TurnResult{
+			result := TurnResult{
 				Messages:         messages,
 				MessageUsages:    messageUsages,
 				ToolCalls:        toolCalls,
 				StopHookFeedback: stopFeedback,
 				Iterations:       turn + 1,
-			}, nil
+			}
+			if err := ValidateTurnResult(result); err != nil {
+				return result, err
+			}
+			return result, nil
 		}
 
 		for _, block := range blocks {

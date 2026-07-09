@@ -118,6 +118,7 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 		{MessageIndex: 1, Usage: anthropic.Usage{InputTokens: 12, OutputTokens: 3}},
 		{MessageIndex: 3, Usage: anthropic.Usage{InputTokens: 15, OutputTokens: 2}},
 	}, result.MessageUsages)
+	require.NoError(t, ValidateTurnResult(result))
 	require.NotNil(t, client.requests[0].Temperature)
 	require.InDelta(t, 0.3, *client.requests[0].Temperature, 0.0001)
 	require.Equal(t, "high", client.requests[0].ReasoningEffort)
@@ -849,6 +850,79 @@ func TestCompactMessagesKeepsRecentContext(t *testing.T) {
 	require.Contains(t, summary, "inspect flaky tests")
 	require.Contains(t, summary, "Tools mentioned: bash")
 	require.Contains(t, summary, "Tool results: 1 result message(s), 1 error result(s).")
+}
+
+func TestValidateTranscriptAcceptsToolUseResultPairs(t *testing.T) {
+	messages := []anthropic.Message{
+		anthropic.TextMessage("user", "list files"),
+		{
+			Role: "assistant",
+			Content: []anthropic.ContentBlock{{
+				Type:  "tool_use",
+				ID:    "tool-1",
+				Name:  "glob",
+				Input: []byte(`{"pattern":"*.go"}`),
+			}},
+		},
+		anthropic.ToolResultMessage("tool-1", "runloop.go", false),
+		anthropic.TextMessage("assistant", "done"),
+	}
+
+	report := ValidateTranscript(messages)
+
+	require.True(t, report.Valid)
+	require.Equal(t, 1, report.ToolUseCount)
+	require.Equal(t, 1, report.ToolResultCount)
+	require.Empty(t, report.Issues)
+}
+
+func TestValidateTranscriptRejectsBrokenToolPairing(t *testing.T) {
+	messages := []anthropic.Message{
+		{
+			Role: "assistant",
+			Content: []anthropic.ContentBlock{{
+				Type: "tool_use",
+				ID:   "dup",
+				Name: "glob",
+			}},
+		},
+		anthropic.TextMessage("assistant", "continued too early"),
+		{
+			Role: "assistant",
+			Content: []anthropic.ContentBlock{{
+				Type: "tool_use",
+				ID:   "dup",
+				Name: "grep",
+			}},
+		},
+		anthropic.ToolResultMessage("missing", "orphan", true),
+	}
+
+	report := ValidateTranscript(messages)
+
+	require.False(t, report.Valid)
+	requireIssueCodes(t, report,
+		"pending_tool_results",
+		"duplicate_tool_use_id",
+		"orphan_tool_result",
+		"unexpected_tool_result",
+		"missing_tool_result",
+	)
+	err := ValidateTurnResult(TurnResult{Messages: messages})
+	require.Error(t, err)
+	var contractErr TranscriptContractError
+	require.ErrorAs(t, err, &contractErr)
+}
+
+func requireIssueCodes(t *testing.T, report TranscriptReport, codes ...string) {
+	t.Helper()
+	seen := make(map[string]bool, len(report.Issues))
+	for _, issue := range report.Issues {
+		seen[issue.Code] = true
+	}
+	for _, code := range codes {
+		require.Truef(t, seen[code], "missing issue code %s in %#v", code, report.Issues)
+	}
 }
 
 func requestHasTool(req anthropic.Request, name string) bool {
