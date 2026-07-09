@@ -3789,7 +3789,13 @@ func parseRemoteSetupArgs(args []string, overrides config.FlagOverrides) (remote
 			case "clear", "reset", "unset":
 				req.Action = "clear"
 			default:
-				return req, unexpectedExtraArgsError{Command: "remote-setup", Args: []string{arg}, Usage: usage}
+				return req, unknownActionError{
+					Command:     "remote-setup",
+					Action:      arg,
+					Expected:    append([]string(nil), remoteSetupActionCandidates...),
+					Suggestions: toolnames.Suggestions(arg, remoteSetupActionCandidates, 4),
+					Usage:       usage,
+				}
 			}
 			actionSet = true
 		}
@@ -3810,6 +3816,8 @@ func parseRemoteSetupArgs(args []string, overrides config.FlagOverrides) (remote
 	}
 	return req, nil
 }
+
+var remoteSetupActionCandidates = []string{"status", "show", "check", "enable", "on", "setup", "disable", "off", "clear", "reset", "unset"}
 
 func (a *App) buildRemoteSetupReport(req remoteSetupRequest, sessionID, addr, remoteURL string) remoteSetupReport {
 	enabled := a.Config.Future.RemoteEnabled

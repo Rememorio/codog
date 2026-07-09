@@ -31424,6 +31424,12 @@ func TestLongTailCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
 			contains: []string{`"command": "remote-setup"`, `"option": "--addr"`},
 		},
 		{
+			name:     "remote setup typo action",
+			args:     []string{"remote-setup", "statuz"},
+			kind:     "unknown_action",
+			contains: []string{`"command": "remote-setup"`, "Did you mean `remote-setup status`?"},
+		},
+		{
 			name:     "ide unknown option",
 			args:     []string{"ide", "--bogus"},
 			kind:     "unknown_option",
