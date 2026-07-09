@@ -42588,15 +42588,16 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 		}
 		return renderConfigValidationReport(out, req.Format, report)
 	}
-	if strings.EqualFold(args[0], "show") {
+	if strings.EqualFold(args[0], "show") || strings.EqualFold(args[0], "inspect") {
 		if len(args) > 1 {
+			action := strings.ToLower(args[0])
 			return renderCLIError(out, unexpectedExtraArgsError{
-				Command: "config show",
+				Command: "config " + action,
 				Args:    append([]string(nil), args[1:]...),
-				Usage:   "codog config show [--json|--output-format text|json]",
+				Usage:   "codog config " + action + " [--json|--output-format text|json]",
 			}, req.Format)
 		}
-		return renderConfigInspectionPayload(out, req.Format, configInspectionEnvelope("show", cfg, paths))
+		return renderConfigInspectionPayload(out, req.Format, configInspectionEnvelope(strings.ToLower(args[0]), cfg, paths))
 	}
 	if strings.EqualFold(args[0], "get") {
 		if len(args) < 2 {
@@ -42684,7 +42685,7 @@ func buildConfigHelpReport() configHelpReport {
 		Section:           "help",
 		AvailableSections: availableConfigSections(),
 		Message:           "Configuration sections available for `codog config get SECTION`.",
-		Hint:              "Use `codog config get SECTION` to inspect one section, or `codog config paths` to inspect config files.",
+		Hint:              "Use `codog config inspect` to inspect effective settings, `codog config get SECTION` to inspect one section, or `codog config paths` to inspect config files.",
 	}
 }
 

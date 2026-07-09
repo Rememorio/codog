@@ -4793,6 +4793,22 @@ func risky(value any) {
 	require.NoError(t, json.Unmarshal([]byte(out), &settingsPaths))
 	require.Equal(t, configPaths.Paths, settingsPaths.Paths)
 
+	out, err = runResumedJSON("/settings", "inspect")
+	require.NoError(t, err)
+	var settingsInspect struct {
+		Kind   string `json:"kind"`
+		Action string `json:"action"`
+		Config struct {
+			APIKey string `json:"api_key"`
+			Model  string `json:"model"`
+		} `json:"config"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &settingsInspect))
+	require.Equal(t, "config", settingsInspect.Kind)
+	require.Equal(t, "inspect", settingsInspect.Action)
+	require.Equal(t, "claude-test", settingsInspect.Config.Model)
+	require.NotContains(t, out, "test-key")
+
 	out, err = runResumedJSON("/session", "list")
 	require.NoError(t, err)
 	var resumedSessionList sessionListReport
@@ -16284,6 +16300,13 @@ func TestRenderConfigInspectionSurfacesValidationMetadata(t *testing.T) {
 	require.Equal(t, "broken", payload.MCPValidation.InvalidServers[0].Name)
 	require.Equal(t, 1, payload.HookValidation.InvalidCount)
 	require.Equal(t, "pre_tool_use", payload.HookValidation.InvalidHooks[0].Event)
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, []string{"user.json"}, []string{"--output-format", "json", "inspect"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &payload))
+	require.Equal(t, "config", payload.Kind)
+	require.Equal(t, "inspect", payload.Action)
+	require.Equal(t, "degraded", payload.Status)
 }
 
 func TestRenderConfigInspectionSurfacesParsedHookDiagnostics(t *testing.T) {
