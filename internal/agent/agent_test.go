@@ -16905,6 +16905,14 @@ func TestAllowedToolsSlashRejectsUnknownToolRules(t *testing.T) {
 	require.Empty(t, out.String())
 	require.Contains(t, errOut.String(), "invalid_tool_name")
 	require.Contains(t, errOut.String(), "teleport")
+
+	out.Reset()
+	errOut.Reset()
+	require.True(t, app.handleSlash(context.Background(), "/allowed-tools ad bash", sess))
+	require.ElementsMatch(t, []string{"read_file"}, app.Config.PermissionRules.Allow)
+	require.Empty(t, out.String())
+	require.Contains(t, errOut.String(), "unknown /allowed-tools action: ad")
+	require.Contains(t, errOut.String(), "Did you mean: /allowed-tools add?")
 }
 
 func TestPlanCommandAndSlashEnforceReadOnlyPlanningMode(t *testing.T) {
@@ -31605,6 +31613,12 @@ func TestRemainingCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
 			args:     []string{"allowed-tools", "add"},
 			kind:     "missing_argument",
 			contains: []string{`"command": "allowed-tools add"`, `"argument": "TOOL"`},
+		},
+		{
+			name:     "allowed tools typo action",
+			args:     []string{"allowed-tools", "ad"},
+			kind:     "unknown_action",
+			contains: []string{`"command": "allowed-tools"`, `"action": "ad"`, "Did you mean `allowed-tools add`?"},
 		},
 		{
 			name:     "clear missing output format",

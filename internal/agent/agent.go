@@ -42803,6 +42803,8 @@ type allowedToolsReport struct {
 	Path   string   `json:"path,omitempty"`
 }
 
+var allowedToolsActionCandidates = []string{"list", "show", "add", "remove", "rm", "delete", "clear"}
+
 func (a *App) AllowedTools(args []string) error {
 	req, err := parseAllowedToolsArgs(args)
 	if err != nil {
@@ -42920,7 +42922,14 @@ func parseAllowedToolsArgs(args []string) (allowedToolsRequest, error) {
 			return req, unexpectedExtraArgsError{Command: "allowed-tools clear", Args: positionals[1:], Usage: usage}
 		}
 	default:
-		return req, unexpectedExtraArgsError{Command: "allowed-tools", Args: []string{positionals[0]}, Usage: usage}
+		action := strings.TrimSpace(positionals[0])
+		return req, unknownActionError{
+			Command:     "allowed-tools",
+			Action:      action,
+			Expected:    append([]string(nil), allowedToolsActionCandidates...),
+			Suggestions: toolnames.Suggestions(action, allowedToolsActionCandidates, 4),
+			Usage:       usage,
+		}
 	}
 	return req, nil
 }
@@ -42962,6 +42971,9 @@ func (a *App) handleAllowedToolsSlash(args []string) {
 		a.Config.PermissionRules.Allow = nil
 	default:
 		fmt.Fprintf(a.Err, "unknown /allowed-tools action: %s\n", args[0])
+		if suggestions := toolnames.Suggestions(args[0], allowedToolsActionCandidates, 4); len(suggestions) > 0 {
+			fmt.Fprintf(a.Err, "Did you mean: /allowed-tools %s?\n", strings.Join(suggestions, ", /allowed-tools "))
+		}
 		return
 	}
 	renderAllowedTools(a.Out, a.Config.PermissionRules.Allow)
