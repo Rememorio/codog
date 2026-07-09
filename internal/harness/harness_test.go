@@ -598,7 +598,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, privacyKeybindings.Output, `"created":true`)
 	require.Contains(t, privacyKeybindings.Output, `"valid":true`)
 	require.Contains(t, privacyKeybindings.Output, `"contexts":4`)
-	require.Contains(t, privacyKeybindings.Output, `"bindings":19`)
+	require.Contains(t, privacyKeybindings.Output, `"bindings":21`)
 	require.Contains(t, privacyKeybindings.Output, `"resolved":true`)
 	require.Contains(t, privacyKeybindings.Output, `"source":"user"`)
 

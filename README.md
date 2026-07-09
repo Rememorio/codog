@@ -1,14 +1,16 @@
 # Codog
 
-Codog is an experimental Go-native coding agent that runs from your terminal.
-It keeps the important parts of an agent runtime in one inspectable binary:
-model streaming, workspace tools, permissions, local sessions, hooks, skills,
-MCP, and interactive shells.
+Codog is a Go-native, single-binary coding agent for real terminal work. It
+keeps the important parts of an agent runtime in one inspectable binary: model
+streaming, workspace tools, permissions, local sessions, hooks, skills, MCP,
+and a full-screen terminal UI.
 
-Codog is inspired by Claude Code, but it is not an Anthropic product and does
-not try to present itself as one. The goal is to build a practical local agent
-while keeping the implementation understandable enough to study, modify, and
-extend.
+Codog references Claude Code's local product shape and coding workflows, but it
+does not copy Claude Code's implementation, does not pretend to be an Anthropic
+product, and does not treat hosted commercial services as part of the local
+closure target. The goal is a practical Go-native equivalent for local
+repositories: verified interaction, tool execution, session state, and
+extension surfaces that can be studied and changed.
 
 Codog is most useful today when you want:
 
@@ -18,7 +20,8 @@ Codog is most useful today when you want:
 - room to experiment with Claude-Code-style workflows without a multi-runtime
   stack.
 
-It is not yet a polished drop-in replacement for commercial coding agents.
+It is not a drop-in replacement for commercial hosted services, official IDE
+extensions, enterprise admin backends, or proprietary account systems.
 
 ## Quick Start
 
@@ -43,11 +46,14 @@ Run it from a repository:
 codog -p "summarize this project"
 ```
 
-For multi-turn work, use an interactive shell:
+For multi-turn work, start Codog from a repository. The default interactive
+command opens the full-screen TUI; the legacy line-oriented shell remains
+available as `repl`.
 
 ```sh
-codog repl
+codog
 codog tui
+codog repl
 ```
 
 Use `codog doctor` to check local configuration and `codog help` for the full
@@ -56,8 +62,9 @@ command reference.
 ## Current State
 
 Codog is usable for local experimentation and ordinary repository workflows.
-Its compatibility surface is measured by deterministic tests instead of
-described as a blanket claim.
+Its compatibility surface is measured by deterministic tests, real binary
+acceptance tests, and machine-readable capability reports instead of described
+as a blanket claim.
 
 The current mock-parity contract covers 90 scenarios across 41 categories and
 31 capability groups. That contract exercises the real run loop, tool runtime,
@@ -68,14 +75,30 @@ Codog is identical to Claude Code.
 
 | Maturity | Scope |
 | --- | --- |
-| Daily local use | One-shot prompts, REPL, streaming output, Anthropic-compatible requests, OpenAI-compatible routing, shell/file/search/edit/git tools, JSONL sessions, resume, usage reporting, compaction, permission modes, workspace boundaries, hooks, and diagnostics. |
-| Experimental | Bubble Tea TUI, slash commands, skills, templates, output styles, Markdown agent definitions, MCP client/server paths, code intelligence, LSP routing, notebook helpers, background tasks, subagents, branch freshness checks, and remote-control surfaces. |
+| Daily local use | One-shot prompts, full-screen Bubble Tea TUI, legacy REPL, streaming output, Anthropic-compatible requests, OpenAI-compatible routing, shell/file/search/edit/git tools, JSONL sessions, resume, usage reporting, compaction, permission modes, workspace boundaries, hooks, and diagnostics. |
+| Experimental | Advanced slash palettes, skills, templates, output styles, Markdown agent definitions, MCP client/server paths, code intelligence, LSP routing, notebook helpers, background tasks, subagents, branch freshness checks, and remote-control surfaces. |
 | Not production-hardened | Hosted remote sessions, remote identity management, organization-wide policy rollout, enterprise administration, plugin signing and distribution, update channels, hostile-repository sandboxing, IDE extensions, and large multi-agent operations. |
 
 The CLI exposes many compatibility commands because they are useful for testing
 and migration work. A command being present does not mean the surrounding
 product workflow is finished. It is not yet a polished drop-in replacement for
 commercial coding agents.
+
+## Closure Standard
+
+Codog treats a local capability as closed only when it has all of the following:
+
+- unit or integration tests for the owning package;
+- real binary acceptance coverage when the behavior is user-visible CLI/TUI;
+- machine-readable status in `codog capabilities --json` when it affects
+  parity or readiness;
+- a smoke path that works in a normal repository without hidden local state;
+- documentation that does not claim more than the implementation verifies.
+
+Commercial hosted surfaces are intentionally out of scope for local closure:
+official Anthropic account flows, hosted remote sessions, official IDE
+extensions, enterprise admin services, proprietary marketplaces, and official
+update channels.
 
 ## Design Principles
 

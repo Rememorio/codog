@@ -1576,7 +1576,7 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 	},
 	"tui_prompt_completion_roundtrip": {
 		Category:    "interactive-ui",
-		Description: "Renders the Bubble Tea prompt model, completes a slash command, and captures Ctrl+S submission state without a live terminal.",
+		Description: "Renders the Bubble Tea prompt model, completes a slash command, and captures Enter submission state without a live terminal.",
 		ParityRefs:  []string{"Bubble Tea TUI", "Interactive rendering", "Slash commands"},
 	},
 	"ask_user_question_roundtrip": {
@@ -3589,7 +3589,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 19 {
+			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 21 {
 				return localScenarioResult{}, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
 			}
 
@@ -5338,7 +5338,7 @@ func tuiPromptCompletionScenario() scenario {
 		name: "tui_prompt_completion_roundtrip",
 		runLocal: func(_ context.Context, _ string) (localScenarioResult, error) {
 			multiple := tui.PreviewWithCandidates("/m", []string{"/memory list", "/model claude-test"}, 96, 24, true, false)
-			for _, expected := range []string{"Codog TUI", "Ctrl+S submit", "/memory list", "/model claude-test"} {
+			for _, expected := range []string{"Codog TUI", "Enter send", "/memory list", "/model claude-test"} {
 				if !strings.Contains(multiple.View, expected) {
 					return localScenarioResult{}, fmt.Errorf("TUI preview missing %s", expected)
 				}
@@ -5363,7 +5363,7 @@ func tuiPromptCompletionScenario() scenario {
 				"matches":          multiple.Matches,
 				"submitted":        submitted.Submitted,
 				"submitted_prompt": submitted.Prompt,
-				"view_contains":    []string{"Codog TUI", "Ctrl+S submit"},
+				"view_contains":    []string{"Codog TUI", "Enter send"},
 			}
 			data, err := json.Marshal(report)
 			if err != nil {

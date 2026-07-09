@@ -20524,7 +20524,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"action": "validate"`)
 	require.Contains(t, out.String(), `"valid": true`)
 	require.Contains(t, out.String(), `"context_count": 4`)
-	require.Contains(t, out.String(), `"binding_count": 19`)
+	require.Contains(t, out.String(), `"binding_count": 21`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+r"`)
 	out.Reset()
 
@@ -20576,7 +20576,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "REPL vim")
 	require.Contains(t, out.String(), "Config exists    true")
 	require.Contains(t, out.String(), "User valid       true")
-	require.Contains(t, out.String(), "User bindings    19")
+	require.Contains(t, out.String(), "User bindings    21")
 	require.Empty(t, errOut.String())
 }
 

@@ -41,6 +41,23 @@ func TestRealBinaryHelpAfterGlobalFlagsShortCircuits(t *testing.T) {
 	require.NotContains(t, result.Combined(), "missing_credentials")
 }
 
+func TestRealBinaryTUIHelpDescribesFullScreenDefaults(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+
+	for _, args := range [][]string{{"tui", "--help"}, {"help", "tui"}} {
+		result := runCodog(t, bin, workspace, configHome, nil, args...)
+
+		require.Equal(t, 0, result.Code, result.Combined())
+		require.Contains(t, result.Stdout, "full-screen Bubble Tea agent session")
+		require.Contains(t, result.Stdout, "Enter sends the prompt")
+		require.Contains(t, result.Stdout, "codog [flags]")
+		require.NotContains(t, result.Stdout, "Ctrl+S")
+		require.NotContains(t, result.Combined(), "missing_credentials")
+	}
+}
+
 func TestRealBinaryReplSlashHelpAndExit(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -61,7 +62,7 @@ func TestPreviewWithCandidatesCompletesAndSubmits(t *testing.T) {
 	preview := PreviewWithCandidates("/mo", []string{"/model claude-test"}, 100, 24, true, true)
 
 	require.Contains(t, preview.View, "Codog TUI")
-	require.Contains(t, preview.View, "Ctrl+S submit")
+	require.Contains(t, preview.View, "Enter send")
 	require.Contains(t, preview.View, "composer")
 	require.Equal(t, "/model claude-test", preview.Prompt)
 	require.Equal(t, "/model claude-test ", preview.Value)
@@ -92,7 +93,7 @@ func TestPreviewTogglesHelpPanel(t *testing.T) {
 	require.Contains(t, preview.View, "Common commands")
 
 	ta := newPromptTextarea("/help")
-	m := newModel(ta, []string{"/status", "/context"})
+	m := newModel(context.Background(), ta, []string{"/status", "/context"}, nil)
 	updated, _ := m.Update(teaKey("enter"))
 	next := updated.(model)
 
@@ -104,7 +105,7 @@ func TestPreviewTogglesHelpPanel(t *testing.T) {
 
 func TestPreviewQuestionMarkOpensHelpWhenComposerEmpty(t *testing.T) {
 	ta := newPromptTextarea("")
-	m := newModel(ta, []string{"/status"})
+	m := newModel(context.Background(), ta, []string{"/status"}, nil)
 	updated, _ := m.Update(teaKey("?"))
 	next := updated.(model)
 
@@ -113,9 +114,26 @@ func TestPreviewQuestionMarkOpensHelpWhenComposerEmpty(t *testing.T) {
 	require.Contains(t, next.View(), "/status")
 }
 
+func TestEnterSubmitsAndCtrlJInsertsNewline(t *testing.T) {
+	ta := newPromptTextarea("first")
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, _ := m.Update(teaKey("ctrl+j"))
+	next := updated.(model)
+	require.Equal(t, "first\n", next.textarea.Value())
+
+	updated, _ = next.Update(teaKey("enter"))
+	next = updated.(model)
+	require.True(t, next.result.Submitted)
+	require.Equal(t, "first", next.result.Prompt)
+}
+
 func teaKey(value string) tea.KeyMsg {
 	if value == "enter" {
 		return tea.KeyMsg{Type: tea.KeyEnter}
+	}
+	if value == "ctrl+j" {
+		return tea.KeyMsg{Type: tea.KeyCtrlJ}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(value)}
 }

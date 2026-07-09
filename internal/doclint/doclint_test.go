@@ -85,9 +85,9 @@ func TestReadmeStatesCompatibilityBoundaries(t *testing.T) {
 	lower := strings.ToLower(readme)
 
 	for _, required := range []string{
-		"experimental Go-native coding agent",
-		"not an Anthropic product",
-		"not yet a polished drop-in replacement",
+		"Go-native, single-binary coding agent",
+		"does not pretend to be an Anthropic",
+		"not a drop-in replacement for commercial hosted services",
 		"not a complete security sandbox",
 	} {
 		require.Contains(t, readme, required)

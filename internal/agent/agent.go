@@ -476,19 +476,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if nonTerminalStdin {
 			return renderInteractiveOnlyWithHint(app.Out, "repl", "codog requires an interactive terminal", "Pipe a prompt with `echo 'task' | codog` or run `codog repl` in an interactive terminal.", requestedOutputFormat(originalArgs))
 		}
-		return app.REPL(ctx, overrides)
+		return app.TUI(ctx, overrides)
 	case "repl":
 		return app.REPL(ctx, overrides)
 	case "tui":
-		app.renderDeepLinkBanner(overrides)
-		result, err := tui.PromptWithCandidatesPrefill(app.slashCompletionCandidates(""), overrides.Prefill)
-		if err != nil {
-			return err
-		}
-		if !result.Submitted || result.Prompt == "" {
-			return nil
-		}
-		return app.Prompt(ctx, result.Prompt, overrides)
+		return app.TUI(ctx, overrides)
 	case "prompt":
 		req, err := parsePromptArgs(rest)
 		if err != nil {
@@ -20805,10 +20797,12 @@ func defaultKeybindingsTemplate() []byte {
 			{
 				Context: "tui",
 				Bindings: map[string]string{
-					"ctrl+s": "submit prompt",
-					"tab":    "complete slash command",
-					"esc":    "quit without submitting",
-					"ctrl+c": "quit",
+					"enter":     "submit prompt",
+					"alt+enter": "insert newline",
+					"ctrl+j":    "insert newline",
+					"tab":       "complete slash command",
+					"esc":       "quit",
+					"ctrl+c":    "quit",
 				},
 			},
 			{
@@ -20868,9 +20862,11 @@ func (a *App) keybindingReport() keybindingReport {
 			{
 				Name: "TUI",
 				Entries: []keybindingEntry{
-					{Key: "Ctrl-S", Action: "submit prompt"},
+					{Key: "Enter", Action: "submit prompt"},
+					{Key: "Alt-Enter", Action: "insert newline"},
+					{Key: "Ctrl-J", Action: "insert newline"},
 					{Key: "Tab", Action: "complete slash command"},
-					{Key: "Esc", Action: "quit without submitting"},
+					{Key: "Esc", Action: "quit"},
 					{Key: "Ctrl-C", Action: "quit"},
 				},
 			},
@@ -39007,6 +39003,57 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 		return a.finishREPL(ctx, sess, a.replReadline(ctx, sess, rl, overrides.Prefill))
 	}
 	return a.finishREPL(ctx, sess, a.replScanner(ctx, sess))
+}
+
+func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
+	if err := a.RegisterMCPTools(ctx); err != nil {
+		return err
+	}
+	sess, err := a.openSession(overrides)
+	if err != nil {
+		return err
+	}
+	if err := a.ensureSessionIdentity(sess, "tui", "", overrides.SessionName); err != nil {
+		return err
+	}
+	if err := a.runSessionStartHook(ctx, sess, sessionStartSource(overrides)); err != nil {
+		return err
+	}
+	a.writeWorkerState("tui", "idle", sess, "")
+	entries := []tui.Entry{{
+		Role: "system",
+		Text: fmt.Sprintf("Session %s is ready. Enter sends, Alt+Enter inserts a newline, /help opens local help.", sess.ID),
+	}}
+	if banner := buildDeepLinkBanner(a.Workspace, overrides, time.Now()); banner != "" {
+		entries = append(entries, tui.Entry{Role: "system", Text: banner})
+	}
+	submit := func(ctx context.Context, prompt string) (string, error) {
+		var out bytes.Buffer
+		err := a.runSessionTurnWithOptions(ctx, "tui", sess, prompt, "idle", turnOptions{Out: &out})
+		response := strings.TrimSpace(out.String())
+		if response == "" {
+			response = strings.TrimSpace(lastAssistantText(sess.Messages))
+		}
+		return response, err
+	}
+	slashHandler := func(ctx context.Context, line string) (string, bool, error) {
+		var out bytes.Buffer
+		oldOut, oldErr := a.Out, a.Err
+		a.Out, a.Err = &out, &out
+		defer func() {
+			a.Out, a.Err = oldOut, oldErr
+		}()
+		handled := a.handleSlash(ctx, line, sess)
+		return strings.TrimSpace(out.String()), handled, nil
+	}
+	loopErr := tui.Shell(ctx, tui.ShellOptions{
+		Candidates: a.slashCompletionCandidates(sess.ID),
+		Prefill:    overrides.Prefill,
+		Entries:    entries,
+		Submit:     submit,
+		Slash:      slashHandler,
+	})
+	return a.finishREPL(ctx, sess, loopErr)
 }
 
 func (a *App) finishREPL(ctx context.Context, sess *session.Session, loopErr error) error {
@@ -61668,7 +61715,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"tui",
 			"tui",
 			"codog [flags] tui",
-			"TUI\n\nUsage:\n  codog [flags] tui\n\nStarts the Bubble Tea prompt composer for an interactive provider-backed Codog session.\n",
+			"TUI\n\nUsage:\n  codog [flags] tui\n  codog [flags]\n\nStarts the full-screen Bubble Tea agent session. Enter sends the prompt, Alt+Enter or Ctrl+J inserts a newline, slash commands run inside the active session, and JSONL resume state is preserved.\n",
 			[]string{"session_id", "message", "tool_calls", "usage"},
 			[]string{"ok", "error"},
 		), true

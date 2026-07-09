@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -16,6 +17,29 @@ type Result struct {
 	Prompt    string
 }
 
+// Entry is one transcript item rendered by the full-screen TUI shell.
+type Entry struct {
+	Role string
+	Text string
+}
+
+// SubmitFunc runs one user prompt and returns assistant output to append to the
+// transcript.
+type SubmitFunc func(context.Context, string) (string, error)
+
+// SlashFunc runs one slash command and returns local command output. handled is
+// true when the command should not be sent to the model.
+type SlashFunc func(context.Context, string) (output string, handled bool, err error)
+
+// ShellOptions configures the full-screen TUI shell.
+type ShellOptions struct {
+	Candidates []string
+	Prefill    string
+	Entries    []Entry
+	Submit     SubmitFunc
+	Slash      SlashFunc
+}
+
 // Preview captures a deterministic TUI model state for tests and parity
 // harnesses without taking over the terminal.
 type Preview struct {
@@ -29,6 +53,7 @@ type Preview struct {
 }
 
 type model struct {
+	ctx        context.Context
 	textarea   textarea.Model
 	viewport   viewport.Model
 	result     Result
@@ -37,8 +62,11 @@ type model struct {
 	matches    []string
 	candidates []string
 	helpOpen   bool
+	busy       bool
 	status     string
 	transcript []transcriptEntry
+	submit     SubmitFunc
+	slash      SlashFunc
 }
 
 type transcriptEntry struct {
@@ -56,7 +84,7 @@ func PromptWithCandidates(candidates []string) (Result, error) {
 
 func PromptWithCandidatesPrefill(candidates []string, prefill string) (Result, error) {
 	ta := newPromptTextarea(prefill)
-	m := newModel(ta, candidates)
+	m := newModel(context.Background(), ta, candidates, nil)
 	final, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	if err != nil {
 		return Result{}, err
@@ -71,7 +99,7 @@ func PromptWithCandidatesPrefill(candidates []string, prefill string) (Result, e
 // optional input, window sizing, tab completion, and submission.
 func PreviewWithCandidates(input string, candidates []string, width int, height int, complete bool, submit bool) Preview {
 	ta := newPromptTextarea(input)
-	m := newModel(ta, candidates)
+	m := newModel(context.Background(), ta, candidates, nil)
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 		if next, ok := updated.(model); ok {
@@ -89,7 +117,7 @@ func PreviewWithCandidates(input string, candidates []string, width int, height 
 		m.refreshViewport()
 	}
 	if submit {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		if next, ok := updated.(model); ok {
 			m = next
 		}
@@ -105,16 +133,40 @@ func PreviewWithCandidates(input string, candidates []string, width int, height 
 	}
 }
 
-func newModel(ta textarea.Model, candidates []string) model {
+// Shell starts the full-screen interactive TUI loop.
+func Shell(ctx context.Context, options ShellOptions) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ta := newPromptTextarea(options.Prefill)
+	entries := make([]transcriptEntry, 0, len(options.Entries))
+	for _, entry := range options.Entries {
+		entries = append(entries, transcriptEntry{Role: entry.Role, Text: entry.Text})
+	}
+	m := newModel(ctx, ta, options.Candidates, entries)
+	m.submit = options.Submit
+	m.slash = options.Slash
+	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	return err
+}
+
+func newModel(ctx context.Context, ta textarea.Model, candidates []string, entries []transcriptEntry) model {
 	vp := viewport.New(80, 12)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if len(entries) == 0 {
+		entries = []transcriptEntry{
+			{Role: "system", Text: "Codog TUI is ready. Compose a prompt, open /help, or use Tab for slash commands."},
+		}
+	}
 	m := model{
+		ctx:        ctx,
 		textarea:   ta,
 		viewport:   vp,
 		candidates: candidates,
 		status:     "ready",
-		transcript: []transcriptEntry{
-			{Role: "system", Text: "Codog TUI is ready. Compose a prompt, open /help, or use Tab for slash commands."},
-		},
+		transcript: entries,
 	}
 	m.refreshViewport()
 	return m
@@ -137,6 +189,20 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case turnDoneMsg:
+		m.busy = false
+		if msg.Err != nil {
+			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
+			m.status = "error"
+		} else if strings.TrimSpace(msg.Output) != "" {
+			m.transcript = append(m.transcript, transcriptEntry{Role: msg.Role, Text: msg.Output})
+			m.status = "ready"
+		} else {
+			m.status = "ready"
+		}
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -151,10 +217,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, tea.Quit
+		case "alt+enter", "ctrl+j":
+			m.textarea.InsertString("\n")
+			return m, nil
 		case "ctrl+s":
-			m.result = Result{Submitted: true, Prompt: strings.TrimSpace(m.textarea.Value())}
-			return m, tea.Quit
+			return m.submitCurrentInput()
 		case "tab":
+			if m.busy {
+				return m, nil
+			}
 			m = m.completeSlashCommand()
 			return m, nil
 		case "?":
@@ -165,6 +236,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "enter":
+			if m.busy {
+				return m, nil
+			}
 			if isLocalHelpInput(m.textarea.Value()) {
 				m.helpOpen = true
 				m.textarea.SetValue("")
@@ -173,6 +247,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.refreshViewport()
 				return m, nil
 			}
+			return m.submitCurrentInput()
 		}
 	}
 	var cmd tea.Cmd
@@ -184,6 +259,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if isLocalHelpInput(m.textarea.Value()) {
 		m.status = "help ready"
+	} else if m.busy {
+		m.status = "running"
 	} else {
 		m.status = m.mode()
 	}
@@ -201,8 +278,71 @@ func (m model) View() string {
 	if len(m.matches) > 0 {
 		composer += "\n" + completionStyle().Render(strings.Join(m.matches, "  "))
 	}
-	status := statusStyle().Width(max(40, m.width)).Render(fmt.Sprintf("%s · Ctrl+S submit · Tab complete · ? help · Esc quit", m.status))
+	status := statusStyle().Width(max(40, m.width)).Render(fmt.Sprintf("%s · Enter send · Alt+Enter newline · Tab complete · ? help · Esc quit", m.status))
 	return strings.Join([]string{title, body, composer, status}, "\n")
+}
+
+type turnDoneMsg struct {
+	Role   string
+	Output string
+	Err    error
+}
+
+func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
+	value := strings.TrimSpace(m.textarea.Value())
+	if value == "" {
+		return m, nil
+	}
+	if isREPLExitInput(value) {
+		return m, tea.Quit
+	}
+	if isLocalHelpInput(value) {
+		m.helpOpen = true
+		m.textarea.SetValue("")
+		m.matches = nil
+		m.status = "help"
+		m.refreshViewport()
+		return m, nil
+	}
+	if strings.HasPrefix(value, "/") && m.slash != nil {
+		m.textarea.SetValue("")
+		m.matches = nil
+		m.busy = true
+		m.status = "running slash"
+		m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: value})
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		return m, runSlashCommand(m.ctx, m.slash, value)
+	}
+	if m.submit == nil {
+		m.result = Result{Submitted: true, Prompt: value}
+		return m, tea.Quit
+	}
+	m.textarea.SetValue("")
+	m.matches = nil
+	m.busy = true
+	m.status = "running"
+	m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: value})
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+	return m, runSubmitCommand(m.ctx, m.submit, value)
+}
+
+func runSubmitCommand(ctx context.Context, submit SubmitFunc, prompt string) tea.Cmd {
+	return func() tea.Msg {
+		output, err := submit(ctx, prompt)
+		return turnDoneMsg{Role: "assistant", Output: output, Err: err}
+	}
+}
+
+func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd {
+	return func() tea.Msg {
+		output, handled, err := slash(ctx, line)
+		if !handled && err == nil {
+			err = fmt.Errorf("unknown slash command: %s", line)
+		}
+		return turnDoneMsg{Role: "system", Output: output, Err: err}
+	}
 }
 
 func (m model) completeSlashCommand() model {
@@ -313,13 +453,15 @@ func helpPanel(candidates []string, width int) string {
 	}
 	sections := []string{
 		panelTitleStyle().Render(" help "),
-		"Type a prompt and press Ctrl+S to submit. Slash commands run locally inside the session.",
+		"Type a prompt and press Enter to submit. Slash commands run locally inside the session.",
 		"",
 		"Keys",
-		"  Ctrl+S  submit composer",
-		"  Tab     complete slash command",
-		"  ?       toggle this help panel",
-		"  Esc     close help or quit",
+		"  Enter       submit composer",
+		"  Alt+Enter   insert newline",
+		"  Ctrl+J      insert newline",
+		"  Tab         complete slash command",
+		"  ?           toggle this help panel",
+		"  Esc         close help or quit",
 		"",
 		"Common commands",
 		"  /status   inspect workspace and runtime",
@@ -335,6 +477,15 @@ func helpPanel(candidates []string, width int) string {
 		}
 	}
 	return lipgloss.NewStyle().Width(max(40, width-2)).Render(strings.Join(sections, "\n"))
+}
+
+func isREPLExitInput(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "/exit", "/quit", "exit", "quit":
+		return true
+	default:
+		return false
+	}
 }
 
 func headerStyle() lipgloss.Style {
