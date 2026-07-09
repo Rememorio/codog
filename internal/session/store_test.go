@@ -1140,6 +1140,23 @@ func TestExportMarkdownJSONJSONLAndHTML(t *testing.T) {
 	require.Equal(t, "summarize-this-repo.html", DefaultExportFilenameForFormat(sess, "html"))
 }
 
+func TestExportFormatSuggestsSupportedFormats(t *testing.T) {
+	_, err := NormalizeExportFormat("markdwon")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unsupported export format "markdwon"`)
+	require.Contains(t, err.Error(), `did you mean "markdown"?`)
+
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.Append("export-session", anthropic.TextMessage("user", "hello export")))
+	data, sess, err := store.Export("export-session", "jso")
+	require.Error(t, err)
+	require.Nil(t, data)
+	require.Nil(t, sess)
+	require.Contains(t, err.Error(), `unsupported export format "jso"`)
+	require.Contains(t, err.Error(), `suggestions:`)
+	require.Contains(t, err.Error(), `json`)
+}
+
 func TestImportJSONLAndExportedJSONSessions(t *testing.T) {
 	sourceHome := t.TempDir()
 	sourceWorkspace := filepath.Join(t.TempDir(), "source")

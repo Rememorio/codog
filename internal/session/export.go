@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Rememorio/codog/internal/anthropic"
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 const (
@@ -20,6 +21,17 @@ const (
 	ExportJSONL    = "jsonl"
 	ExportHTML     = "html"
 )
+
+var exportFormatNames = []string{
+	ExportMarkdown,
+	"md",
+	"text",
+	ExportJSON,
+	ExportJSONL,
+	"raw",
+	ExportHTML,
+	"htm",
+}
 
 type ExportedSession struct {
 	ID       string              `json:"id"`
@@ -57,7 +69,7 @@ func (s *Store) Export(id string, format string) ([]byte, *Session, error) {
 	case ExportHTML:
 		return []byte(RenderHTML(sess)), sess, nil
 	default:
-		return nil, nil, fmt.Errorf("unsupported export format %q", format)
+		return nil, nil, unsupportedExportFormatError(format)
 	}
 }
 
@@ -72,7 +84,19 @@ func NormalizeExportFormat(format string) (string, error) {
 	case "html", "htm":
 		return ExportHTML, nil
 	default:
-		return "", fmt.Errorf("unsupported export format %q", format)
+		return "", unsupportedExportFormatError(format)
+	}
+}
+
+func unsupportedExportFormatError(format string) error {
+	suggestions := toolnames.Suggestions(format, exportFormatNames, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unsupported export format %q", format)
+	case 1:
+		return fmt.Errorf("unsupported export format %q; did you mean %q?", format, suggestions[0])
+	default:
+		return fmt.Errorf("unsupported export format %q; suggestions: %s", format, strings.Join(suggestions, ", "))
 	}
 }
 
