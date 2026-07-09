@@ -11101,11 +11101,11 @@ func TestLocalSubcommandErrorContracts(t *testing.T) {
 		},
 		{
 			name:      "sessions unknown",
-			args:      []string{"--config", configPath, "--output-format", "json", "sessions", "bogus"},
+			args:      []string{"--config", configPath, "--output-format", "json", "sessions", "serch"},
 			kind:      "sessions",
-			action:    "bogus",
+			action:    "serch",
 			errorKind: "unsupported_sessions_action",
-			hintPart:  "sessions list",
+			hintPart:  "Did you mean `codog sessions search`?",
 		},
 		{
 			name:      "mcp unknown",

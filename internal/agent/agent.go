@@ -48478,10 +48478,30 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_sessions_action",
 			Message:   fmt.Sprintf("unsupported sessions action %q", action),
-			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions search QUERY`, `codog sessions audit`, `codog sessions repair`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions switch ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions pin ID [message]`, `codog sessions unpin ID [message]`, `codog sessions prune`, or `codog sessions delete ID`. Common aliases include ls, get, has, find, doctor, fix, clone, checkout, mv, gc, and rm.",
+			Hint:      unknownSessionsActionHint(action),
 		}, format)
 	}
 	return renderCLIError(out, err, format)
+}
+
+var sessionActionCandidates = []string{
+	"list", "ls", "show", "get", "info", "describe", "exists", "has", "search", "find", "grep",
+	"audit", "doctor", "check", "hygiene", "repair", "fix", "heal", "export", "dump", "import",
+	"load", "fork", "clone", "switch", "checkout", "use", "rename", "mv", "move", "prune", "gc",
+	"clean", "pin", "bookmark-message", "keep-message", "unpin", "unbookmark-message",
+	"drop-message", "delete", "del", "remove", "rm",
+}
+
+func unknownSessionsActionHint(action string) string {
+	suggestions := toolnames.Suggestions(action, sessionActionCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		return fmt.Sprintf("Did you mean `codog sessions %s`? Use `codog sessions list` to inspect saved sessions.", suggestions[0])
+	case 0:
+		return "Use `codog sessions list`, `codog sessions show ID`, `codog sessions search QUERY`, `codog sessions audit`, `codog sessions repair`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions switch ID`, `codog sessions rename OLD_ID NEW_ID`, `codog sessions pin ID [message]`, `codog sessions unpin ID [message]`, `codog sessions prune`, or `codog sessions delete ID`. Common aliases include ls, get, has, find, doctor, fix, clone, checkout, mv, gc, and rm."
+	default:
+		return fmt.Sprintf("Did you mean one of: %s? Use `codog sessions list` to inspect saved sessions.", strings.Join(suggestions, ", "))
+	}
 }
 
 type sessionShowReport struct {
