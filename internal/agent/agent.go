@@ -4002,8 +4002,26 @@ func renderUnsupportedBridgeAction(out io.Writer, action string, format string) 
 		Status:    "error",
 		ErrorKind: "unsupported_bridge_action",
 		Message:   fmt.Sprintf("unsupported bridge action %q", action),
-		Hint:      "Supported bridge actions are serve, capabilities, status, clear, and faults. Use `codog bridge capabilities --json`, `codog bridge faults list --json`, or `codog bridge serve`.",
+		Hint:      unknownBridgeActionHint(action),
 	}, format)
+}
+
+var bridgeActionCandidates = []string{
+	"serve", "capabilities", "capability", "caps", "initialize", "init",
+	"status", "show", "state", "clear", "reset", "disconnect",
+	"kick", "fault", "faults", "diagnostic", "diagnostics",
+}
+
+func unknownBridgeActionHint(action string) string {
+	suggestions := toolnames.Suggestions(action, bridgeActionCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		return fmt.Sprintf("Did you mean `codog bridge %s`? Use `codog bridge capabilities --json`, `codog bridge faults list --json`, or `codog bridge serve`.", suggestions[0])
+	case 0:
+		return "Supported bridge actions are serve, capabilities, status, clear, and faults. Use `codog bridge capabilities --json`, `codog bridge faults list --json`, or `codog bridge serve`."
+	default:
+		return fmt.Sprintf("Did you mean one of: %s? Use `codog bridge capabilities --json`, `codog bridge faults list --json`, or `codog bridge serve`.", strings.Join(suggestions, ", "))
+	}
 }
 
 type bridgeCapabilitiesReport struct {

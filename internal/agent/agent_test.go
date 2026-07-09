@@ -26959,13 +26959,13 @@ func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
 	require.Contains(t, out.String(), "Capability       sessions/list")
 	out.Reset()
 
-	require.ErrorContains(t, app.Bridge([]string{"bogus", "--json"}), "unsupported_bridge_action")
+	require.ErrorContains(t, app.Bridge([]string{"serv", "--json"}), "unsupported_bridge_action")
 	var bridgeError actionErrorReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &bridgeError))
 	require.Equal(t, "bridge", bridgeError.Kind)
-	require.Equal(t, "bogus", bridgeError.Action)
+	require.Equal(t, "serv", bridgeError.Action)
 	require.Equal(t, "unsupported_bridge_action", bridgeError.ErrorKind)
-	require.Contains(t, bridgeError.Hint, "codog bridge capabilities --json")
+	require.Contains(t, bridgeError.Hint, "Did you mean `codog bridge serve`?")
 	out.Reset()
 
 	require.ErrorContains(t, app.Bridge([]string{"serve", "extra", "--json"}), "unexpected_argument")
