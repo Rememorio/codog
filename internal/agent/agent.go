@@ -52864,11 +52864,11 @@ func (a *App) Templates(args []string) error {
 		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
 		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
 	default:
-		return unexpectedExtraArgsError{
-			Command: "templates",
-			Args:    []string{action},
-			Usage:   "codog templates [list|search|audit|sources|show|apply|install|uninstall] [ARGS...] [--json|--output-format text|json]",
+		_, format, err := stripJSONOnlyOutputFormat("templates", rest)
+		if err != nil {
+			return renderCLIError(a.Out, err, requestedOutputFormat(append([]string{"templates", action}, rest...)))
 		}
+		return renderUnsupportedTemplatesAction(a.Out, action, format)
 	}
 	return nil
 }
@@ -53343,6 +53343,40 @@ func renderTemplateInstallMissingSource(out io.Writer, format string) error {
 		Message:   "templates install requires a source",
 		Hint:      "Usage: codog templates install [--project|--user] [--name NAME] SOURCE [--json|--output-format text|json].",
 	}, format)
+}
+
+func renderUnsupportedTemplatesAction(out io.Writer, action string, format string) error {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		action = "unknown"
+	}
+	return renderActionError(out, actionErrorReport{
+		Kind:      "templates",
+		Action:    action,
+		Status:    "error",
+		ErrorKind: "unsupported_templates_action",
+		Message:   fmt.Sprintf("unsupported templates action %q", action),
+		Hint:      unknownTemplatesActionHint(action),
+	}, format)
+}
+
+var templatesActionCandidates = []string{
+	"list", "ls", "search", "find", "query", "lookup", "audit", "doctor", "check",
+	"validate", "source", "sources", "root", "roots", "show", "info", "describe",
+	"get", "view", "cat", "apply", "render", "run", "exec", "execute", "call",
+	"invoke", "install", "add", "uninstall", "remove", "delete", "rm", "del",
+}
+
+func unknownTemplatesActionHint(action string) string {
+	suggestions := toolnames.Suggestions(action, templatesActionCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		return fmt.Sprintf("Did you mean `codog templates %s`? Use `codog templates list` to see available templates.", suggestions[0])
+	case 0:
+		return "Supported: `codog templates list|ls`, `codog templates search|find QUERY`, `codog templates audit|doctor`, `codog templates sources|roots`, `codog templates show|info|describe NAME`, `codog templates apply|render NAME [--var key=value]`, `codog templates add|install SOURCE`, or `codog templates uninstall|remove|rm NAME`."
+	default:
+		return fmt.Sprintf("Did you mean one of: %s? Use `codog templates list` to see available templates.", strings.Join(suggestions, ", "))
+	}
 }
 
 func (a *App) MCP(ctx context.Context, args []string) error {
