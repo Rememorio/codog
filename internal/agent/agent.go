@@ -2289,6 +2289,8 @@ type openReport struct {
 type sshRequest struct {
 	Host                       string
 	Directory                  string
+	Print                      bool
+	Prompt                     string
 	ExtraArgs                  []string
 	PermissionMode             string
 	DangerouslySkipPermissions bool
@@ -2304,6 +2306,8 @@ type sshReport struct {
 	Host                       string   `json:"host"`
 	Directory                  string   `json:"directory,omitempty"`
 	Local                      bool     `json:"local"`
+	Print                      bool     `json:"print,omitempty"`
+	PromptConfigured           bool     `json:"prompt_configured,omitempty"`
 	ExtraArgs                  []string `json:"extra_args,omitempty"`
 	PermissionMode             string   `json:"permission_mode,omitempty"`
 	DangerouslySkipPermissions bool     `json:"dangerously_skip_permissions,omitempty"`
@@ -2395,7 +2399,7 @@ func hasCommandBeforeDirectConnectURL(args []string, directURLIndex int) bool {
 }
 
 const openUsage = "codog open <cc-url|http-url> [-p|--print [PROMPT]] [--output-format text|json|stream-json]"
-const sshUsage = "codog ssh <host> [dir] [--continue|-c] [--resume ID|latest] [--model MODEL] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--execute] [--json|--output-format text|json]"
+const sshUsage = "codog ssh <host> [dir] [-p|--print [PROMPT]] [--continue|-c] [--resume ID|latest] [--model MODEL] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--execute] [--json|--output-format text|json]"
 
 func (a *App) Open(ctx context.Context, args []string) error {
 	req, err := parseOpenArgs(args)
@@ -2515,7 +2519,17 @@ func parseSSHArgs(args []string) (sshRequest, error) {
 			}
 			req.ExtraArgs = append(req.ExtraArgs, "--model", value)
 		case arg == "-p" || arg == "--print":
-			return req, errors.New("codog ssh does not support headless -p/--print mode")
+			req.Print = true
+			if index+1 < len(args) && !strings.HasPrefix(args[index+1], "-") {
+				index++
+				req.Prompt = args[index]
+			}
+		case strings.HasPrefix(arg, "-p="):
+			req.Print = true
+			req.Prompt = strings.TrimPrefix(arg, "-p=")
+		case strings.HasPrefix(arg, "--print="):
+			req.Print = true
+			req.Prompt = strings.TrimPrefix(arg, "--print=")
 		case arg == "--dangerously-skip-permissions" || arg == "--skip-permissions":
 			req.DangerouslySkipPermissions = true
 		case arg == "--local":
@@ -2561,6 +2575,8 @@ func (a *App) buildSSHReport(req sshRequest) sshReport {
 		Host:                       req.Host,
 		Directory:                  req.Directory,
 		Local:                      req.Local,
+		Print:                      req.Print,
+		PromptConfigured:           strings.TrimSpace(req.Prompt) != "",
 		ExtraArgs:                  append([]string(nil), req.ExtraArgs...),
 		PermissionMode:             req.PermissionMode,
 		DangerouslySkipPermissions: req.DangerouslySkipPermissions,
@@ -2687,6 +2703,13 @@ func (a *App) sshRemoteCodogArgs(req sshRequest) []string {
 	}
 	if req.DangerouslySkipPermissions {
 		out = append(out, "--dangerously-skip-permissions")
+	}
+	if req.Print {
+		out = append(out, "prompt")
+		if strings.TrimSpace(req.Prompt) != "" {
+			out = append(out, req.Prompt)
+		}
+		return out
 	}
 	out = append(out, "repl")
 	return out

@@ -21816,6 +21816,37 @@ func TestSSHCommandReportsPlan(t *testing.T) {
 	require.Equal(t, []string{"ssh", "devbox", report.RemoteShell}, report.Command)
 }
 
+func TestSSHCommandPrintPlanUsesPromptCommand(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			APIKey: "secret-api-key",
+			Model:  "claude-test",
+		},
+		Out:        &out,
+		Executable: "codog",
+	}
+	require.NoError(t, app.SSH(context.Background(), []string{
+		"devbox",
+		"/workspace/repo",
+		"--print",
+		"summarize this repo",
+		"--permission-mode",
+		"read-only",
+		"--json",
+	}))
+
+	var report sshReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "ssh", report.Kind)
+	require.Equal(t, "planned", report.Status)
+	require.True(t, report.Print)
+	require.True(t, report.PromptConfigured)
+	require.Contains(t, report.RemoteShell, ".cache/codog/remote/devbox/codog --permission-mode read-only prompt 'summarize this repo'")
+	require.NotContains(t, report.RemoteShell, " repl")
+	require.NotContains(t, out.String(), "secret-api-key")
+}
+
 func TestSSHCommandJSONExecuteRunsLocalChild(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script child process test is POSIX-specific")
@@ -21856,6 +21887,46 @@ func TestSSHCommandJSONExecuteRunsLocalChild(t *testing.T) {
 	require.GreaterOrEqual(t, report.DurationMS, int64(0))
 	require.Contains(t, report.Stdout, "cwd="+workspace)
 	require.Contains(t, report.Stdout, "args=--resume latest --permission-mode read-only repl")
+	require.Empty(t, report.Stderr)
+	require.Empty(t, report.Error)
+	require.Empty(t, errOut.String())
+}
+
+func TestSSHCommandJSONExecuteRunsLocalPrintChild(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script child process test is POSIX-specific")
+	}
+	workspace := t.TempDir()
+	script := filepath.Join(t.TempDir(), "codog-child")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'cwd=%s\\n' \"$PWD\"\nprintf 'args=%s\\n' \"$*\"\n"), 0o755))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Out:        &out,
+		Err:        &errOut,
+		In:         strings.NewReader(""),
+		Executable: script,
+	}
+	require.NoError(t, app.SSH(context.Background(), []string{
+		"--local",
+		"localhost",
+		workspace,
+		"--print=explain status",
+		"--permission-mode",
+		"read-only",
+		"--json",
+		"--execute",
+	}))
+
+	var report sshReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "completed", report.Status)
+	require.True(t, report.Local)
+	require.True(t, report.Print)
+	require.True(t, report.PromptConfigured)
+	require.Contains(t, report.Stdout, "cwd="+workspace)
+	require.Contains(t, report.Stdout, "args=--permission-mode read-only prompt explain status")
 	require.Empty(t, report.Stderr)
 	require.Empty(t, report.Error)
 	require.Empty(t, errOut.String())
@@ -21936,14 +22007,16 @@ func TestSSHCommandLocalExecutesChild(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
-func TestSSHCommandRejectsPrintMode(t *testing.T) {
-	_, err := parseSSHArgs([]string{"devbox", "-p"})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "does not support headless")
+func TestSSHCommandAcceptsPrintModeWithoutPrompt(t *testing.T) {
+	req, err := parseSSHArgs([]string{"devbox", "-p"})
+	require.NoError(t, err)
+	require.True(t, req.Print)
+	require.Empty(t, req.Prompt)
 
-	_, err = parseSSHArgs([]string{"devbox", "--print"})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "does not support headless")
+	req, err = parseSSHArgs([]string{"devbox", "--print"})
+	require.NoError(t, err)
+	require.True(t, req.Print)
+	require.Empty(t, req.Prompt)
 }
 
 func TestParseFlagsContinueAliasesResumeLatest(t *testing.T) {
