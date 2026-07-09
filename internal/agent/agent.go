@@ -3880,6 +3880,12 @@ func (a *App) Bridge(args []string) error {
 	}
 	action := strings.ToLower(strings.TrimSpace(args[0]))
 	switch action {
+	case "capabilities", "capability", "caps", "initialize", "init":
+		format, err := parseSimpleOutputFormat("bridge capabilities", args[1:])
+		if err != nil {
+			return renderCLIError(a.Out, err, requestedOutputFormat(args))
+		}
+		return a.renderBridgeCapabilities(format)
 	case "serve":
 		cleanArgs, format, err := stripJSONOnlyOutputFormat("bridge", args)
 		if err != nil {
@@ -3960,8 +3966,49 @@ func renderUnsupportedBridgeAction(out io.Writer, action string, format string) 
 		Status:    "error",
 		ErrorKind: "unsupported_bridge_action",
 		Message:   fmt.Sprintf("unsupported bridge action %q", action),
-		Hint:      "Supported bridge actions are serve, status, clear, and faults. Use `codog bridge faults list --json` for diagnostics or `codog bridge serve` for the stdio bridge.",
+		Hint:      "Supported bridge actions are serve, capabilities, status, clear, and faults. Use `codog bridge capabilities --json`, `codog bridge faults list --json`, or `codog bridge serve`.",
 	}, format)
+}
+
+type bridgeCapabilitiesReport struct {
+	Kind         string   `json:"kind"`
+	Action       string   `json:"action"`
+	Status       string   `json:"status"`
+	Name         string   `json:"name"`
+	Version      string   `json:"version"`
+	Workspace    string   `json:"workspace,omitempty"`
+	Count        int      `json:"count"`
+	Capabilities []string `json:"capabilities"`
+}
+
+func (a *App) renderBridgeCapabilities(format string) error {
+	capabilities := bridge.Capabilities()
+	report := bridgeCapabilitiesReport{
+		Kind:         "bridge_capabilities",
+		Action:       "capabilities",
+		Status:       "ok",
+		Name:         "codog",
+		Version:      version,
+		Workspace:    a.Workspace,
+		Count:        len(capabilities),
+		Capabilities: capabilities,
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, "Bridge Capabilities")
+	fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
+	fmt.Fprintf(a.Out, "  Version          %s\n", report.Version)
+	if report.Workspace != "" {
+		fmt.Fprintf(a.Out, "  Workspace        %s\n", report.Workspace)
+	}
+	fmt.Fprintf(a.Out, "  Count            %d\n", report.Count)
+	for _, capability := range report.Capabilities {
+		fmt.Fprintf(a.Out, "  Capability       %s\n", capability)
+	}
+	return nil
 }
 
 func bridgeStatusArgs(args []string) []string {

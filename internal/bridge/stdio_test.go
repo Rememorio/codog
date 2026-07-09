@@ -89,6 +89,17 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"agent-runs/heartbeat"`)
 	require.Contains(t, out.String(), `"agent-runs/stop"`)
 	require.Contains(t, out.String(), `"agent-runs/prune"`)
+
+	var response struct {
+		Result struct {
+			Capabilities []string `json:"capabilities"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &response))
+	require.Equal(t, Capabilities(), response.Result.Capabilities)
+	copied := Capabilities()
+	copied[0] = "mutated"
+	require.NotEqual(t, copied[0], Capabilities()[0])
 }
 
 func TestBridgeSessionMutations(t *testing.T) {

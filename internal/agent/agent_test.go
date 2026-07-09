@@ -26866,13 +26866,29 @@ func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
 	require.Equal(t, "codog bridge serve", bridgeStatus.Bridge.Command)
 	out.Reset()
 
+	require.NoError(t, app.Bridge([]string{"capabilities", "--json"}))
+	var bridgeCapabilities bridgeCapabilitiesReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &bridgeCapabilities))
+	require.Equal(t, "bridge_capabilities", bridgeCapabilities.Kind)
+	require.Equal(t, "capabilities", bridgeCapabilities.Action)
+	require.Equal(t, "codog", bridgeCapabilities.Name)
+	require.Equal(t, bridgeCapabilities.Count, len(bridgeCapabilities.Capabilities))
+	require.Contains(t, bridgeCapabilities.Capabilities, "sessions/list")
+	require.Contains(t, bridgeCapabilities.Capabilities, "mcp/resources")
+	out.Reset()
+
+	require.NoError(t, app.Bridge([]string{"caps", "--output-format", "text"}))
+	require.Contains(t, out.String(), "Bridge Capabilities")
+	require.Contains(t, out.String(), "Capability       sessions/list")
+	out.Reset()
+
 	require.ErrorContains(t, app.Bridge([]string{"bogus", "--json"}), "unsupported_bridge_action")
 	var bridgeError actionErrorReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &bridgeError))
 	require.Equal(t, "bridge", bridgeError.Kind)
 	require.Equal(t, "bogus", bridgeError.Action)
 	require.Equal(t, "unsupported_bridge_action", bridgeError.ErrorKind)
-	require.Contains(t, bridgeError.Hint, "codog bridge faults list --json")
+	require.Contains(t, bridgeError.Hint, "codog bridge capabilities --json")
 	out.Reset()
 
 	require.ErrorContains(t, app.Bridge([]string{"serve", "extra", "--json"}), "unexpected_argument")
