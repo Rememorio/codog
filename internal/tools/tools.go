@@ -6350,29 +6350,29 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		if err != nil {
 			return "", err
 		}
-		switch strings.ToLower(title) {
-		case "format go file", "format", "gofmt", "gopls.gofmt", "source.format", "source.format.go", "source.format.gofmt":
+		switch normalizeStaticCodeActionTitle(title) {
+		case "format":
 			format, err := codeintel.FormatGoFile(t.Workspace, rel, false)
 			if err != nil {
 				return "", err
 			}
 			resolved := map[string]any{"title": "Format Go file", "kind": "source.format", "path": rel, "edit": format}
 			return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "selected": title, "resolved": resolved})), nil
-		case "organize go imports", "organize imports", "source.organizeimports", "source.organizeimports.go", "source.addmissingimports", "source.addmissingimports.go", "source.removeunusedimports", "source.removeunusedimports.go", "gopls.organize_imports", "gopls.organizeimports":
+		case "organize-imports":
 			organized, err := codeintel.OrganizeGoImports(t.Workspace, rel, false)
 			if err != nil {
 				return "", err
 			}
 			resolved := map[string]any{"title": "Organize Go imports", "kind": "source.organizeImports", "path": rel, "edit": organized}
 			return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "selected": title, "resolved": resolved})), nil
-		case "fix all go source", "fix all", "source.fixall", "source.fixall.go", "source.fixall.gopls", "gopls.fixall":
+		case "fix-all":
 			fixAll, err := codeintel.FixAllGoFile(t.Workspace, rel, false)
 			if err != nil {
 				return "", err
 			}
 			resolved := map[string]any{"title": "Fix all Go source", "kind": "source.fixAll", "path": rel, "edit": fixAll}
 			return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "selected": title, "resolved": resolved})), nil
-		case "review go diagnostics", "diagnostics", "quickfix":
+		case "diagnostics":
 			diagnostics, err := codeintel.GoDiagnostics(ctx, t.Workspace, []string{rel})
 			if err != nil {
 				return "", err
@@ -6611,6 +6611,36 @@ func staticLSPToolReport(action string, fallback any, values map[string]any) map
 		report["fallback"] = fallback
 	}
 	return report
+}
+
+func normalizeStaticCodeActionTitle(title string) string {
+	normalized := strings.ToLower(strings.TrimSpace(title))
+	normalized = strings.TrimPrefix(normalized, "source action:")
+	normalized = strings.TrimPrefix(normalized, "source action")
+	normalized = strings.TrimSpace(normalized)
+	normalized = strings.ReplaceAll(normalized, "_", " ")
+	normalized = strings.ReplaceAll(normalized, "-", " ")
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	dotted := strings.ReplaceAll(normalized, " ", "")
+	switch normalized {
+	case "format go file", "format", "format document", "format file", "gofmt", "gopls gofmt":
+		return "format"
+	case "organize go imports", "organize imports", "add missing imports", "remove unused imports", "sort imports", "go organize imports", "gopls organize imports", "gopls organizeimports":
+		return "organize-imports"
+	case "fix all go source", "fix all", "fix all go", "source fix all", "gopls fixall":
+		return "fix-all"
+	case "review go diagnostics", "diagnostics", "diagnostic", "quickfix", "quick fix", "fix":
+		return "diagnostics"
+	}
+	switch dotted {
+	case "source.format", "source.format.go", "source.format.gofmt", "gopls.gofmt":
+		return "format"
+	case "source.organizeimports", "source.organizeimports.go", "source.addmissingimports", "source.addmissingimports.go", "source.removeunusedimports", "source.removeunusedimports.go", "gopls.organizeimports", "gopls.organize_imports":
+		return "organize-imports"
+	case "source.fixall", "source.fixall.go", "source.fixall.gopls", "gopls.fixall":
+		return "fix-all"
+	}
+	return normalized
 }
 
 func (t LSPTool) lspQuery(query string, path string, line int, character int) (string, error) {

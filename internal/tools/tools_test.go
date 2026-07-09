@@ -3329,6 +3329,21 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, gofmtResolveOut, `"selected": "gofmt"`)
 	require.Contains(t, gofmtResolveOut, `"title": "Format Go file"`)
 
+	formatDocumentOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_action_resolve","path":"messy.go","query":"Format Document"}`))
+	require.NoError(t, err)
+	require.Contains(t, formatDocumentOut, `"selected": "Format Document"`)
+	require.Contains(t, formatDocumentOut, `"title": "Format Go file"`)
+
+	addMissingImportsOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_action_resolve","path":"imports.go","query":"Add missing imports"}`))
+	require.NoError(t, err)
+	require.Contains(t, addMissingImportsOut, `"selected": "Add missing imports"`)
+	require.Contains(t, addMissingImportsOut, `"title": "Organize Go imports"`)
+
+	fixAllSourceActionOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_action_resolve","path":"imports.go","query":"Source Action: Fix All"}`))
+	require.NoError(t, err)
+	require.Contains(t, fixAllSourceActionOut, `"selected": "Source Action: Fix All"`)
+	require.Contains(t, fixAllSourceActionOut, `"title": "Fix all Go source"`)
+
 	inlineValueOut, err := tool.Execute(context.Background(), []byte(`{"action":"inline_value","path":"inline.go","limit":5}`))
 	require.NoError(t, err)
 	require.Contains(t, inlineValueOut, `"action": "inline-value"`)
@@ -3429,6 +3444,23 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, formatOut, `"action": "format"`)
 	require.Contains(t, formatOut, `"changed": true`)
 	require.Contains(t, formatOut, `func messy()`)
+}
+
+func TestNormalizeStaticCodeActionTitle(t *testing.T) {
+	cases := map[string]string{
+		"Format Document":                 "format",
+		"source.format.go":                "format",
+		"Source Action: Organize Imports": "organize-imports",
+		"Add missing imports":             "organize-imports",
+		"source.removeUnusedImports.go":   "organize-imports",
+		"Source Action: Fix All":          "fix-all",
+		"source.fixAll.gopls":             "fix-all",
+		"Quick Fix":                       "diagnostics",
+		"custom action":                   "custom action",
+	}
+	for input, want := range cases {
+		require.Equal(t, want, normalizeStaticCodeActionTitle(input), input)
+	}
 }
 
 func TestWorktreeToolsAllocateAndRemove(t *testing.T) {
