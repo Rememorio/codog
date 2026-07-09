@@ -10111,9 +10111,9 @@ func parsePluginLifecycleRunArgs(args []string) (pluginLifecycleRunRequest, erro
 	if len(rest) == 0 {
 		return req, requiredArgumentError{Command: "plugins lifecycle run", Argument: "init|shutdown", Usage: usage}
 	}
-	phase := pluginsLifecyclePhase(rest[0])
-	if phase == "" {
-		return req, fmt.Errorf("unsupported plugin lifecycle phase %q", rest[0])
+	phase, err := plugins.NormalizeLifecyclePhase(rest[0])
+	if err != nil {
+		return req, err
 	}
 	req.Phase = phase
 	if len(rest) > 1 {
@@ -10123,17 +10123,6 @@ func parsePluginLifecycleRunArgs(args []string) (pluginLifecycleRunRequest, erro
 		return req, unexpectedExtraArgsError{Command: "plugins lifecycle run", Args: append([]string(nil), rest[2:]...), Usage: usage}
 	}
 	return req, nil
-}
-
-func pluginsLifecyclePhase(phase string) string {
-	switch strings.ToLower(strings.TrimSpace(phase)) {
-	case "init", "start", "startup":
-		return "init"
-	case "shutdown", "stop", "teardown":
-		return "shutdown"
-	default:
-		return ""
-	}
 }
 
 func (a *App) buildPluginLifecycleRunReport(ctx context.Context, req pluginLifecycleRunRequest) (pluginLifecycleRunReport, error) {

@@ -9,10 +9,14 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 // LifecycleDefaultTimeout is the per-command timeout used for plugin lifecycle hooks.
 const LifecycleDefaultTimeout = 30 * time.Second
+
+var lifecyclePhaseNames = []string{"init", "start", "startup", "shutdown", "stop", "teardown"}
 
 // LifecycleRunResult summarizes an explicit plugin lifecycle phase execution.
 type LifecycleRunResult struct {
@@ -42,10 +46,14 @@ type LifecycleCommandResult struct {
 
 // LifecycleCommands returns the manifest commands configured for a lifecycle phase.
 func LifecycleCommands(manifest Manifest, phase string) ([]string, bool) {
-	switch strings.ToLower(strings.TrimSpace(phase)) {
-	case "init", "start", "startup":
+	normalizedPhase, err := NormalizeLifecyclePhase(phase)
+	if err != nil {
+		return nil, false
+	}
+	switch normalizedPhase {
+	case "init":
 		return append([]string(nil), manifest.Lifecycle.Init...), true
-	case "shutdown", "stop", "teardown":
+	case "shutdown":
 		return append([]string(nil), manifest.Lifecycle.Shutdown...), true
 	default:
 		return nil, false
@@ -54,7 +62,10 @@ func LifecycleCommands(manifest Manifest, phase string) ([]string, bool) {
 
 // RunLifecycle executes one lifecycle phase for a plugin manifest.
 func RunLifecycle(ctx context.Context, manifest Manifest, phase string, timeout time.Duration) LifecycleRunResult {
-	normalizedPhase := normalizeLifecyclePhase(phase)
+	normalizedPhase, phaseErr := NormalizeLifecyclePhase(phase)
+	if phaseErr != nil {
+		normalizedPhase = strings.ToLower(strings.TrimSpace(phase))
+	}
 	result := LifecycleRunResult{
 		PluginID: manifest.ID,
 		Phase:    normalizedPhase,
@@ -68,7 +79,11 @@ func RunLifecycle(ctx context.Context, manifest Manifest, phase string, timeout 
 	commands, ok := LifecycleCommands(manifest, normalizedPhase)
 	if !ok {
 		result.Status = "failed"
-		result.Message = fmt.Sprintf("unsupported lifecycle phase %q", phase)
+		if phaseErr != nil {
+			result.Message = phaseErr.Error()
+		} else {
+			result.Message = UnsupportedLifecyclePhaseError(phase).Error()
+		}
 		return result
 	}
 	result.CommandCount = len(commands)
@@ -96,14 +111,29 @@ func RunLifecycle(ctx context.Context, manifest Manifest, phase string, timeout 
 	return result
 }
 
-func normalizeLifecyclePhase(phase string) string {
+// NormalizeLifecyclePhase returns the canonical lifecycle phase for a phase alias.
+func NormalizeLifecyclePhase(phase string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(phase)) {
-	case "start", "startup":
-		return "init"
-	case "stop", "teardown":
-		return "shutdown"
+	case "init", "start", "startup":
+		return "init", nil
+	case "shutdown", "stop", "teardown":
+		return "shutdown", nil
 	default:
-		return strings.ToLower(strings.TrimSpace(phase))
+		return "", UnsupportedLifecyclePhaseError(phase)
+	}
+}
+
+// UnsupportedLifecyclePhaseError reports an unsupported lifecycle phase with suggestions.
+func UnsupportedLifecyclePhaseError(phase string) error {
+	phase = strings.TrimSpace(phase)
+	suggestions := toolnames.Suggestions(phase, lifecyclePhaseNames, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unsupported lifecycle phase %q", phase)
+	case 1:
+		return fmt.Errorf("unsupported lifecycle phase %q; did you mean %q?", phase, suggestions[0])
+	default:
+		return fmt.Errorf("unsupported lifecycle phase %q; suggestions: %s", phase, strings.Join(suggestions, ", "))
 	}
 }
 

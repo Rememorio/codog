@@ -33085,6 +33085,19 @@ func TestMarketplacePluginLifecycleRunReportsCommandFailure(t *testing.T) {
 	require.Equal(t, 7, report.Results[0].Commands[0].ExitCode)
 }
 
+func TestMarketplacePluginLifecycleRunSuggestsKnownPhase(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{Workspace: t.TempDir(), Out: &out, Err: io.Discard}
+
+	err := app.Marketplace([]string{"lifecycle", "run", "strtup", "--json"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unsupported lifecycle phase "strtup"`)
+	require.Contains(t, err.Error(), `did you mean "startup"`)
+	require.Contains(t, out.String(), `"status": "error"`)
+	require.Contains(t, out.String(), `unsupported lifecycle phase \"strtup\"`)
+	require.Contains(t, out.String(), `did you mean \"startup\"`)
+}
+
 func pluginHealthcheckByID(checks []pluginHealthcheck, id string) *pluginHealthcheck {
 	for index := range checks {
 		if checks[index].PluginID == id {

@@ -60,3 +60,16 @@ func TestRunLifecycleReportsCommandFailure(t *testing.T) {
 	require.Equal(t, 9, result.Commands[0].ExitCode)
 	require.NotEmpty(t, result.Commands[0].Error)
 }
+
+func TestRunLifecycleSuggestsKnownPhases(t *testing.T) {
+	result := RunLifecycle(context.Background(), Manifest{
+		ID:      "demo",
+		Root:    t.TempDir(),
+		Enabled: true,
+	}, "strtup", 5*time.Second)
+
+	require.Equal(t, "failed", result.Status)
+	require.Equal(t, "strtup", result.Phase)
+	require.Contains(t, result.Message, `unsupported lifecycle phase "strtup"`)
+	require.Contains(t, result.Message, `did you mean "startup"`)
+}
