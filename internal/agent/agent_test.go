@@ -4059,6 +4059,49 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "inspect release", directUltraPlan.State.Plan)
 }
 
+func TestBridgeFaultsAliasRecordsListsAndClearsDiagnostics(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "bridge", "faults", "record", "latency", "250ms", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var recorded bridgeKickReport
+	require.NoError(t, json.Unmarshal([]byte(out), &recorded))
+	require.Equal(t, "bridge_kick", recorded.Kind)
+	require.Equal(t, "latency", recorded.Action)
+	require.NotNil(t, recorded.Recorded)
+	require.Equal(t, "latency", recorded.Recorded.Action)
+	require.Equal(t, []string{"250ms"}, recorded.Recorded.Args)
+	require.Equal(t, "warn", recorded.Recorded.Severity)
+	require.Len(t, recorded.Faults, 1)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "bridge", "faults", "list", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var listed bridgeKickReport
+	require.NoError(t, json.Unmarshal([]byte(out), &listed))
+	require.Equal(t, "status", listed.Action)
+	require.Len(t, listed.Faults, 1)
+	require.Equal(t, "latency", listed.Faults[0].Action)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "bridge", "faults", "clear", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var cleared bridgeKickReport
+	require.NoError(t, json.Unmarshal([]byte(out), &cleared))
+	require.Equal(t, "clear", cleared.Action)
+	require.True(t, cleared.Cleared)
+	require.Empty(t, cleared.Faults)
+	require.NoFileExists(t, filepath.Join(configHome, "bridge", "faults.json"))
+}
+
 func TestSlashCommandNameCanonicalizesAliases(t *testing.T) {
 	for input, expected := range map[string]string{
 		"/app":                 "desktop",
@@ -26819,7 +26862,7 @@ func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
 	require.Equal(t, "bridge", bridgeError.Kind)
 	require.Equal(t, "bogus", bridgeError.Action)
 	require.Equal(t, "unsupported_bridge_action", bridgeError.ErrorKind)
-	require.Contains(t, bridgeError.Hint, "codog bridge status --json")
+	require.Contains(t, bridgeError.Hint, "codog bridge faults list --json")
 	out.Reset()
 
 	require.ErrorContains(t, app.Bridge([]string{"serve", "extra", "--json"}), "unexpected_argument")

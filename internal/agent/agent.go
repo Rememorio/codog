@@ -3892,6 +3892,8 @@ func (a *App) Bridge(args []string) error {
 		return a.IDE(append([]string{"status"}, args[1:]...))
 	case "clear", "reset", "disconnect":
 		return a.IDE(append([]string{"clear"}, args[1:]...))
+	case "kick", "fault", "faults", "diagnostic", "diagnostics":
+		return a.BridgeKick(bridgeFaultAliasArgs(args[1:]))
 	default:
 		return renderUnsupportedBridgeAction(a.Out, args[0], requestedOutputFormat(args))
 	}
@@ -3905,6 +3907,23 @@ func (a *App) Bridge(args []string) error {
 		Executable: executable,
 		MCPServers: a.Config.MCPServers,
 	}.Serve(a.In, a.Out)
+}
+
+func bridgeFaultAliasArgs(args []string) []string {
+	if len(args) == 0 {
+		return nil
+	}
+	action := strings.ToLower(strings.TrimSpace(args[0]))
+	switch action {
+	case "list", "show", "status":
+		return append([]string{"status"}, args[1:]...)
+	case "clear", "reset":
+		return append([]string{"clear"}, args[1:]...)
+	case "record":
+		return append([]string(nil), args[1:]...)
+	default:
+		return append([]string(nil), args...)
+	}
 }
 
 func renderUnexpectedBridgeArguments(out io.Writer, action string, extra []string, format string) error {
@@ -3941,7 +3960,7 @@ func renderUnsupportedBridgeAction(out io.Writer, action string, format string) 
 		Status:    "error",
 		ErrorKind: "unsupported_bridge_action",
 		Message:   fmt.Sprintf("unsupported bridge action %q", action),
-		Hint:      "Supported bridge actions are serve, status, and clear. Use `codog bridge status --json` for bridge state or `codog bridge serve` for the stdio bridge.",
+		Hint:      "Supported bridge actions are serve, status, clear, and faults. Use `codog bridge faults list --json` for diagnostics or `codog bridge serve` for the stdio bridge.",
 	}, format)
 }
 
