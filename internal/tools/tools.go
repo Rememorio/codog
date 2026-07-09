@@ -4224,7 +4224,7 @@ func (GrepTool) Definition() anthropic.ToolDefinition {
 				"pattern":     map[string]any{"type": "string"},
 				"path":        map[string]any{"type": "string"},
 				"glob":        map[string]any{"type": "string"},
-				"output_mode": map[string]any{"type": "string", "enum": []string{"content", "files_with_matches", "count"}},
+				"output_mode": map[string]any{"type": "string", "enum": []string{"content", "matches", "lines", "files_with_matches", "files", "paths", "filenames", "names", "count", "counts"}},
 				"-B":          map[string]any{"type": "integer", "minimum": 0},
 				"-A":          map[string]any{"type": "integer", "minimum": 0},
 				"-C":          map[string]any{"type": "integer", "minimum": 0},
@@ -4294,11 +4294,8 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			return "", err
 		}
 	}
-	mode := strings.TrimSpace(payload.OutputMode)
+	mode := normalizeGrepOutputMode(payload.OutputMode)
 	if mode == "" {
-		mode = "files_with_matches"
-	}
-	if mode != "content" && mode != "files_with_matches" && mode != "count" {
 		return "", fmt.Errorf("unsupported grep output_mode %q", payload.OutputMode)
 	}
 	limit, unlimited := grepLimit(payload.HeadLimit, payload.Limit)
@@ -4572,6 +4569,19 @@ func grepLimit(headLimit *int, legacyLimit int) (int, bool) {
 		return legacyLimit, false
 	}
 	return 250, false
+}
+
+func normalizeGrepOutputMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "files_with_matches", "files-with-matches", "files with matches", "files", "file", "paths", "path", "filenames", "filename", "names", "name", "files_only", "files-only", "file_paths", "file-paths":
+		return "files_with_matches"
+	case "content", "contents", "matches", "match", "lines", "line":
+		return "content"
+	case "count", "counts", "count_matches", "count-matches":
+		return "count"
+	default:
+		return ""
+	}
 }
 
 func grepAppliedLimit(limit int, unlimited bool) any {

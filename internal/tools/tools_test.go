@@ -688,6 +688,11 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "c.go"), []byte("nothing\n"), 0o644))
 
 	registry := NewRegistry(workspace)
+	definition := GrepTool{}.Definition()
+	outputModeSchema, ok := definition.InputSchema["properties"].(map[string]any)["output_mode"].(map[string]any)
+	require.True(t, ok)
+	require.ElementsMatch(t, []string{"content", "matches", "lines", "files_with_matches", "files", "paths", "filenames", "names", "count", "counts"}, outputModeSchema["enum"])
+
 	out, err := registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle"}`), nil)
 	require.NoError(t, err)
 	require.Contains(t, out, `"output_mode": "files_with_matches"`)
@@ -718,6 +723,13 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.Equal(t, 0, filesReport.AppliedOffset)
 	require.GreaterOrEqual(t, filesReport.DurationMS, int64(0))
 	require.Equal(t, filesReport.DurationMS, filesReport.DurationMs)
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"paths"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"output_mode": "files_with_matches"`)
+	require.Contains(t, out, `"mode": "files_with_matches"`)
+	require.Contains(t, out, "a.go")
+	require.Contains(t, out, "b.py")
 
 	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"files_with_matches","type":"go","-i":true,"head_limit":1}`), nil)
 	require.NoError(t, err)
@@ -773,6 +785,11 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.GreaterOrEqual(t, countReport.DurationMS, int64(0))
 	require.Equal(t, countReport.DurationMS, countReport.DurationMs)
 
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"counts","-i":true}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"output_mode": "count"`)
+	require.Contains(t, out, `"mode": "count"`)
+
 	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"content","offset":1,"head_limit":1}`), nil)
 	require.NoError(t, err)
 	require.Contains(t, out, `"output_mode": "content"`)
@@ -800,6 +817,12 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.Equal(t, 1, contentReport.AppliedOffset)
 	require.GreaterOrEqual(t, contentReport.DurationMS, int64(0))
 	require.Equal(t, contentReport.DurationMS, contentReport.DurationMs)
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"matches","head_limit":1}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"output_mode": "content"`)
+	require.Contains(t, out, `"mode": "content"`)
+	require.Contains(t, out, `"matches": [`)
 
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "context.go"), []byte("before one\nmatch target\nafter one\nafter two\nafter three\n"), 0o644))
 	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"target","output_mode":"content","-B":1,"-A":2}`), nil)
@@ -873,6 +896,25 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, "multi.go")
 	require.Contains(t, out, `"count": 1`)
+}
+
+func TestNormalizeGrepOutputMode(t *testing.T) {
+	cases := map[string]string{
+		"":                   "files_with_matches",
+		"files":              "files_with_matches",
+		"paths":              "files_with_matches",
+		"file-paths":         "files_with_matches",
+		"files with matches": "files_with_matches",
+		"matches":            "content",
+		"lines":              "content",
+		"contents":           "content",
+		"counts":             "count",
+		"count-matches":      "count",
+		"bad":                "",
+	}
+	for input, want := range cases {
+		require.Equal(t, want, normalizeGrepOutputMode(input), input)
+	}
 }
 
 func TestGrepToolReportsDurationAndRealTruncation(t *testing.T) {
