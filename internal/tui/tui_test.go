@@ -28,6 +28,7 @@ func TestCompleteSlashCommandShowsMultipleMatches(t *testing.T) {
 	require.NotEmpty(t, m.matches)
 	require.Contains(t, m.matches, "/compact")
 	require.Contains(t, m.matches, "/completion")
+	require.Equal(t, 0, m.selected)
 }
 
 func TestCompleteSlashCommandUsesInjectedCandidates(t *testing.T) {
@@ -58,6 +59,43 @@ func TestCompleteSlashCommandMatchesAfterTrailingSpace(t *testing.T) {
 	require.Equal(t, "/model claude-test ", m.textarea.Value())
 }
 
+func TestCompletionSelectionUsesArrowKeysAndEnter(t *testing.T) {
+	ta := newPromptTextarea("/m")
+	m := newModel(context.Background(), ta, []string{"/model claude-test", "/memory list"}, nil)
+	m = m.completeSlashCommand()
+
+	require.Equal(t, 0, m.selected)
+	require.Len(t, m.matches, 2)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	require.Equal(t, 1, m.selected)
+	selected := m.matches[m.selected]
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Equal(t, completeValue(selected), m.textarea.Value())
+	require.Empty(t, m.matches)
+	require.Equal(t, 0, m.selected)
+}
+
+func TestCompletionListRendersSelectedSuggestion(t *testing.T) {
+	view := renderCompletions([]string{"/model claude-test", "/memory list"}, 1)
+
+	require.Contains(t, view, "suggestions")
+	require.Contains(t, view, "  /model claude-test")
+	require.Contains(t, view, "> /memory list")
+}
+
+func TestStatusBarUsesCompactHintsAtTerminalWidth(t *testing.T) {
+	text := statusBarText("5 completions", 80)
+
+	require.Contains(t, text, "Enter send")
+	require.Contains(t, text, "Tab")
+	require.Contains(t, text, "Esc")
+	require.NotContains(t, text, "Tab complete")
+	require.LessOrEqual(t, len([]rune(text)), 80)
+}
+
 func TestPreviewWithCandidatesCompletesAndSubmits(t *testing.T) {
 	preview := PreviewWithCandidates("/mo", []string{"/model claude-test"}, 100, 24, true, true)
 
@@ -83,6 +121,7 @@ func TestPreviewWithCandidatesRendersMultipleMatches(t *testing.T) {
 
 	require.Contains(t, preview.View, "/memory list")
 	require.Contains(t, preview.View, "/model claude-test")
+	require.Contains(t, preview.View, "suggestions")
 	require.ElementsMatch(t, []string{"/model claude-test", "/memory list"}, preview.Matches)
 	require.False(t, preview.Submitted)
 }
@@ -101,6 +140,16 @@ func TestPreviewTogglesHelpPanel(t *testing.T) {
 	require.Empty(t, next.textarea.Value())
 	require.Contains(t, next.View(), "Common commands")
 	require.Contains(t, next.View(), "/status")
+}
+
+func TestSlashCommandWithEmptyOutputShowsDone(t *testing.T) {
+	cmd := runSlashCommand(context.Background(), func(context.Context, string) (string, bool, error) {
+		return "", true, nil
+	}, "/clear")
+	msg := cmd().(turnDoneMsg)
+
+	require.Equal(t, "Done.", msg.Output)
+	require.NoError(t, msg.Err)
 }
 
 func TestPreviewQuestionMarkOpensHelpWhenComposerEmpty(t *testing.T) {

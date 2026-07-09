@@ -86,6 +86,35 @@ expect eof
 	require.Contains(t, output, "Tools")
 }
 
+func TestRealBinaryTUIShowsSlashSuggestionsWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+
+	output := runExpectCodog(t, bin, workspace, configHome, nil, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model glm52 tui
+expect "Codog TUI"
+send "/stat\t"
+expect "suggestions"
+expect "/status"
+expect "/statusline"
+send "\033"
+expect eof
+spawn -noecho $env(CODOG_TEST_BIN) --model glm52 tui
+expect "Codog TUI"
+send "/doct\t"
+expect "/doctor "
+send "\033"
+expect eof
+`)
+
+	require.Contains(t, output, "suggestions")
+	require.Contains(t, output, "/status")
+	require.Contains(t, output, "/statusline")
+	require.Contains(t, output, "/doctor")
+}
+
 func TestRealBinaryTUIShowsProviderErrorsWithTTY(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()

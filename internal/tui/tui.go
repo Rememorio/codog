@@ -60,6 +60,7 @@ type model struct {
 	width      int
 	height     int
 	matches    []string
+	selected   int
 	candidates []string
 	helpOpen   bool
 	busy       bool
@@ -222,6 +223,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+s":
 			return m.submitCurrentInput()
+		case "pgup":
+			m.viewport.LineUp(max(1, m.viewport.Height/2))
+			return m, nil
+		case "pgdown":
+			m.viewport.LineDown(max(1, m.viewport.Height/2))
+			return m, nil
+		case "up":
+			if len(m.matches) > 0 {
+				m.selected = (m.selected - 1 + len(m.matches)) % len(m.matches)
+				return m, nil
+			}
+		case "down":
+			if len(m.matches) > 0 {
+				m.selected = (m.selected + 1) % len(m.matches)
+				return m, nil
+			}
 		case "tab":
 			if m.busy {
 				return m, nil
@@ -237,6 +254,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if m.busy {
+				return m, nil
+			}
+			if len(m.matches) > 0 {
+				m = m.acceptSelectedCompletion()
 				return m, nil
 			}
 			if isLocalHelpInput(m.textarea.Value()) {
@@ -256,6 +277,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.textarea, cmd = m.textarea.Update(msg)
 	if strings.TrimSpace(m.textarea.Value()) == "" || !strings.HasPrefix(strings.TrimSpace(m.textarea.Value()), "/") {
 		m.matches = nil
+		m.selected = 0
 	}
 	if isLocalHelpInput(m.textarea.Value()) {
 		m.status = "help ready"
@@ -276,9 +298,9 @@ func (m model) View() string {
 	composerTitle := panelTitleStyle().Render(" composer ")
 	composer := composerTitle + "\n" + m.textarea.View()
 	if len(m.matches) > 0 {
-		composer += "\n" + completionStyle().Render(strings.Join(m.matches, "  "))
+		composer += "\n" + renderCompletions(m.matches, m.selected)
 	}
-	status := statusStyle().Width(max(40, m.width)).Render(fmt.Sprintf("%s · Enter send · Alt+Enter newline · Tab complete · ? help · Esc quit", m.status))
+	status := statusStyle().Width(max(40, m.width)).Render(statusBarText(m.status, m.width))
 	return strings.Join([]string{title, body, composer, status}, "\n")
 }
 
@@ -300,6 +322,7 @@ func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
 		m.helpOpen = true
 		m.textarea.SetValue("")
 		m.matches = nil
+		m.selected = 0
 		m.status = "help"
 		m.refreshViewport()
 		return m, nil
@@ -307,6 +330,7 @@ func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
 	if strings.HasPrefix(value, "/") && m.slash != nil {
 		m.textarea.SetValue("")
 		m.matches = nil
+		m.selected = 0
 		m.busy = true
 		m.status = "running slash"
 		m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: value})
@@ -320,6 +344,7 @@ func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
 	}
 	m.textarea.SetValue("")
 	m.matches = nil
+	m.selected = 0
 	m.busy = true
 	m.status = "running"
 	m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: value})
@@ -341,6 +366,9 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 		if !handled && err == nil {
 			err = fmt.Errorf("unknown slash command: %s", line)
 		}
+		if handled && err == nil && strings.TrimSpace(output) == "" {
+			output = "Done."
+		}
 		return turnDoneMsg{Role: "system", Output: output, Err: err}
 	}
 }
@@ -351,15 +379,33 @@ func (m model) completeSlashCommand() model {
 	switch len(candidates) {
 	case 0:
 		m.matches = nil
+		m.selected = 0
 	case 1:
 		m.textarea.SetValue(completeValue(candidates[0]))
 		m.matches = nil
+		m.selected = 0
 	default:
 		if len(candidates) > 8 {
 			candidates = candidates[:8]
 		}
 		m.matches = candidates
+		if m.selected < 0 || m.selected >= len(m.matches) {
+			m.selected = 0
+		}
 	}
+	return m
+}
+
+func (m model) acceptSelectedCompletion() model {
+	if len(m.matches) == 0 {
+		return m
+	}
+	if m.selected < 0 || m.selected >= len(m.matches) {
+		m.selected = 0
+	}
+	m.textarea.SetValue(completeValue(m.matches[m.selected]))
+	m.matches = nil
+	m.selected = 0
 	return m
 }
 
@@ -368,6 +414,41 @@ func completeValue(candidate string) string {
 		return candidate
 	}
 	return candidate + " "
+}
+
+func renderCompletions(matches []string, selected int) string {
+	if len(matches) == 0 {
+		return ""
+	}
+	if selected < 0 || selected >= len(matches) {
+		selected = 0
+	}
+	lines := []string{completionTitleStyle().Render(" suggestions ")}
+	for index, match := range matches {
+		prefix := "  "
+		style := completionStyle()
+		if index == selected {
+			prefix = "> "
+			style = selectedCompletionStyle()
+		}
+		lines = append(lines, style.Render(prefix+match))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func statusBarText(status string, width int) string {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		status = "ready"
+	}
+	switch {
+	case width > 0 && width < 70:
+		return fmt.Sprintf("%s · Enter · Tab · ? · Esc", status)
+	case width > 0 && width < 90:
+		return fmt.Sprintf("%s · Enter send · Alt+Enter newline · Tab · ? help · Esc", status)
+	default:
+		return fmt.Sprintf("%s · Enter send · Alt+Enter newline · Tab complete · ? help · Esc quit", status)
+	}
 }
 
 func (m model) completionCandidates() []string {
@@ -505,20 +586,22 @@ func helpPanel(candidates []string, width int) string {
 		panelTitleStyle().Render(" help "),
 		"Type a prompt and press Enter to submit. Slash commands run locally inside the session.",
 		"",
-		"Keys",
-		"  Enter       submit composer",
-		"  Alt+Enter   insert newline",
-		"  Ctrl+J      insert newline",
-		"  Tab         complete slash command",
-		"  ?           toggle this help panel",
-		"  Esc         close help or quit",
-		"",
 		"Common commands",
 		"  /status   inspect workspace and runtime",
 		"  /context  inspect prompt context",
 		"  /diff     view git changes",
 		"  /review   review current diff",
 		"  /exit     quit",
+		"",
+		"Keys",
+		"  Enter       submit composer",
+		"  Alt+Enter   insert newline",
+		"  Ctrl+J      insert newline",
+		"  Tab         complete slash command",
+		"  Up/Down     choose a shown completion",
+		"  PgUp/PgDn   scroll transcript",
+		"  ?           toggle this help panel",
+		"  Esc         close help or quit",
 	}
 	if len(candidates) > 0 {
 		sections = append(sections, "", "Completions")
@@ -552,6 +635,14 @@ func panelTitleStyle() lipgloss.Style {
 
 func completionStyle() lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+}
+
+func completionTitleStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
+}
+
+func selectedCompletionStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("31"))
 }
 
 func roleStyle(role string) lipgloss.Style {

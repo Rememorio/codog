@@ -73,7 +73,7 @@ func Build() Report {
 		TUIFullScreenLayout:       strings.Contains(submitPreview.View, "composer") && strings.Contains(submitPreview.View, "Codog TUI"),
 		TUITranscriptViewport:     strings.Contains(submitPreview.View, "system") && strings.Contains(submitPreview.View, "Codog TUI is ready"),
 		TUILocalHelpPanel:         helpPreview.HelpOpen && strings.Contains(helpPreview.View, "Common commands"),
-		TUIStatusBar:              strings.Contains(submitPreview.View, "Enter send") && strings.Contains(submitPreview.View, "Esc quit"),
+		TUIStatusBar:              strings.Contains(submitPreview.View, "Enter send") && strings.Contains(submitPreview.View, "Tab") && strings.Contains(submitPreview.View, "Esc"),
 		TUIPreviewWidth:           80,
 		TUIPreviewHeight:          24,
 		PermissionCommandsPresent: names["/permissions"] && names["/approve"] && names["/deny"],
