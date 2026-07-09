@@ -16,6 +16,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/agentruns"
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/stretchr/testify/require"
@@ -60,6 +61,7 @@ func TestRouteSpecsDescribeServedRemoteAPI(t *testing.T) {
 	require.Equal(t, []string{http.MethodPost}, byPath["/mcp/call"].Methods)
 	require.Equal(t, []string{http.MethodGet, http.MethodPost}, byPath["/mcp/read"].Methods)
 	require.Equal(t, []string{http.MethodPost}, byPath["/mcp/prompt"].Methods)
+	require.Equal(t, []string{http.MethodGet}, byPath["/bridge/capabilities"].Methods)
 	require.Equal(t, []string{http.MethodGet}, byPath["/bridge/faults"].Methods)
 	require.Equal(t, []string{http.MethodPost}, byPath["/bridge/faults/record"].Methods)
 	require.Equal(t, []string{http.MethodPost}, byPath["/bridge/faults/clear"].Methods)
@@ -610,6 +612,40 @@ func TestControlBridgeFaults(t *testing.T) {
 	require.Contains(t, string(body), `"cleared":true`)
 	require.Contains(t, string(body), `"total":0`)
 	require.NoFileExists(t, filepath.Join(configHome, "bridge", "faults.json"))
+}
+
+func TestControlBridgeCapabilities(t *testing.T) {
+	server := httptest.NewServer(Server{
+		Sessions: &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")},
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/bridge/capabilities")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var report struct {
+		Kind         string   `json:"kind"`
+		Action       string   `json:"action"`
+		Status       string   `json:"status"`
+		Name         string   `json:"name"`
+		Count        int      `json:"count"`
+		Capabilities []string `json:"capabilities"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&report))
+	require.Equal(t, "bridge_capabilities", report.Kind)
+	require.Equal(t, "capabilities", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "codog", report.Name)
+	require.Equal(t, bridge.Capabilities(), report.Capabilities)
+	require.Equal(t, len(report.Capabilities), report.Count)
+	require.Contains(t, report.Capabilities, "sessions/list")
+	require.Contains(t, report.Capabilities, "mcp/resources")
+
+	resp, err = http.Post(server.URL+"/bridge/capabilities", "application/json", bytes.NewBufferString(`{}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
 }
 
 func TestControlBridgeFaultsRequireConfigHome(t *testing.T) {

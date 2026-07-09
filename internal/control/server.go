@@ -128,6 +128,7 @@ func RouteSpecs() []RouteSpec {
 		{Path: "/editor/state", Methods: []string{http.MethodGet}, Description: "Read editor bridge state."},
 		{Path: "/editor/open", Methods: []string{http.MethodPost}, Description: "Open a file through the editor bridge."},
 		{Path: "/editor/selection", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read or update editor selection."},
+		{Path: "/bridge/capabilities", Methods: []string{http.MethodGet}, Description: "List JSON-RPC bridge capabilities advertised to editor clients."},
 		{Path: "/bridge/faults", Methods: []string{http.MethodGet}, Description: "List recorded editor bridge diagnostic fault events."},
 		{Path: "/bridge/faults/record", Methods: []string{http.MethodPost}, Description: "Record an editor bridge diagnostic fault event."},
 		{Path: "/bridge/faults/clear", Methods: []string{http.MethodPost}, Description: "Clear editor bridge diagnostic fault events."},
@@ -269,6 +270,7 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("/editor/state", s.editorState)
 	mux.HandleFunc("/editor/open", s.editorOpen)
 	mux.HandleFunc("/editor/selection", s.editorSelection)
+	mux.HandleFunc("/bridge/capabilities", s.bridgeCapabilities)
 	mux.HandleFunc("/bridge/faults", s.bridgeFaults)
 	mux.HandleFunc("/bridge/faults/record", s.bridgeFaultRecord)
 	mux.HandleFunc("/bridge/faults/clear", s.bridgeFaultClear)
@@ -2751,6 +2753,22 @@ func (s Server) bridgeFaults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"kind": "bridge_faults", "total": len(events), "events": events})
+}
+
+func (s Server) bridgeCapabilities(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	capabilities := bridge.Capabilities()
+	writeJSON(w, map[string]any{
+		"kind":         "bridge_capabilities",
+		"action":       "capabilities",
+		"status":       "ok",
+		"name":         "codog",
+		"capabilities": capabilities,
+		"count":        len(capabilities),
+	})
 }
 
 func (s Server) bridgeFaultRecord(w http.ResponseWriter, r *http.Request) {
