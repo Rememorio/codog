@@ -529,6 +529,17 @@ func TestNormalizeNotebookEditModeSuggestsKnownModes(t *testing.T) {
 	require.Contains(t, err.Error(), `did you mean "delete"`)
 }
 
+func TestNormalizeNotebookCellTypeSuggestsKnownTypes(t *testing.T) {
+	cellType, err := NormalizeNotebookCellType("MARKDOWN")
+	require.NoError(t, err)
+	require.Equal(t, "markdown", cellType)
+
+	_, err = NormalizeNotebookCellType("makdown")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unsupported cell type "makdown"`)
+	require.Contains(t, err.Error(), `did you mean "markdown"`)
+}
+
 func TestParseGoTestJSONDiagnostics(t *testing.T) {
 	workspace := t.TempDir()
 	data := []byte(`{"Action":"output","Package":"example","Output":"main.go:7:13: undefined: Missing\n"}` + "\n" +

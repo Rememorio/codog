@@ -3021,7 +3021,10 @@ type NotebookEditResult struct {
 	SourceLines int    `json:"source_lines,omitempty"`
 }
 
-var notebookEditModeNames = []string{"replace", "insert", "delete"}
+var (
+	notebookEditModeNames = []string{"replace", "insert", "delete"}
+	notebookCellTypeNames = []string{"code", "markdown", "raw"}
+)
 
 // NormalizeNotebookEditMode returns the canonical notebook edit mode.
 func NormalizeNotebookEditMode(mode string) (string, error) {
@@ -3046,6 +3049,29 @@ func unknownNotebookEditModeError(mode string) error {
 		return fmt.Errorf("unknown notebook edit mode %q; did you mean %q?", mode, suggestions[0])
 	default:
 		return fmt.Errorf("unknown notebook edit mode %q; suggestions: %s", mode, strings.Join(suggestions, ", "))
+	}
+}
+
+// NormalizeNotebookCellType returns the canonical notebook cell type.
+func NormalizeNotebookCellType(cellType string) (string, error) {
+	cellType = strings.ToLower(strings.TrimSpace(cellType))
+	switch cellType {
+	case "code", "markdown", "raw":
+		return cellType, nil
+	default:
+		return "", unsupportedNotebookCellTypeError(cellType)
+	}
+}
+
+func unsupportedNotebookCellTypeError(cellType string) error {
+	suggestions := toolnames.Suggestions(cellType, notebookCellTypeNames, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unsupported cell type %q", cellType)
+	case 1:
+		return fmt.Errorf("unsupported cell type %q; did you mean %q?", cellType, suggestions[0])
+	default:
+		return fmt.Errorf("unsupported cell type %q; suggestions: %s", cellType, strings.Join(suggestions, ", "))
 	}
 }
 
@@ -3197,8 +3223,11 @@ func EditNotebook(path string, options NotebookEditOptions) (NotebookEditResult,
 	if cellType == "" && mode != "delete" {
 		cellType = "code"
 	}
-	if mode != "delete" && !validNotebookCellType(cellType) {
-		return NotebookEditResult{}, fmt.Errorf("unsupported cell type %q", cellType)
+	if mode != "delete" {
+		cellType, err = NormalizeNotebookCellType(cellType)
+		if err != nil {
+			return NotebookEditResult{}, err
+		}
 	}
 	sourceLines := notebookSourceLines(options.Source)
 	cellID := ""
@@ -3224,7 +3253,7 @@ func EditNotebook(path string, options NotebookEditOptions) (NotebookEditResult,
 		cellID = notebookCellID(cells[options.Index])
 		cells = append(cells[:options.Index], cells[options.Index+1:]...)
 	default:
-		return NotebookEditResult{}, fmt.Errorf("unknown notebook edit mode %q", options.Mode)
+		return NotebookEditResult{}, unknownNotebookEditModeError(mode)
 	}
 	notebook["cells"] = mapsToAny(cells)
 	next, err := json.MarshalIndent(notebook, "", "  ")
@@ -3265,15 +3294,6 @@ func notebookCells(notebook map[string]any) ([]map[string]any, error) {
 		cells = append(cells, cell)
 	}
 	return cells, nil
-}
-
-func validNotebookCellType(cellType string) bool {
-	switch cellType {
-	case "code", "markdown", "raw":
-		return true
-	default:
-		return false
-	}
 }
 
 func notebookSourceLines(source string) []any {
