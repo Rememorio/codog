@@ -5035,6 +5035,18 @@ func TestWorkerStartupTimeoutToolRecordsEvidence(t *testing.T) {
 				TrustPromptDetected bool   `json:"trust_prompt_detected"`
 				TransportHealth     string `json:"transport_health"`
 				MCPHealth           string `json:"mcp_health"`
+				Transport           struct {
+					Name    string `json:"name"`
+					Checked bool   `json:"checked"`
+					Status  string `json:"status"`
+					Source  string `json:"source"`
+					Summary string `json:"summary"`
+				} `json:"transport"`
+				MCP struct {
+					Name   string `json:"name"`
+					Status string `json:"status"`
+					Source string `json:"source"`
+				} `json:"mcp"`
 			} `json:"evidence"`
 		} `json:"startup_no_evidence"`
 		Events []struct {
@@ -5053,6 +5065,14 @@ func TestWorkerStartupTimeoutToolRecordsEvidence(t *testing.T) {
 	require.True(t, result.StartupNoEvidence.Evidence.TrustPromptDetected)
 	require.Equal(t, "transport:healthy", result.StartupNoEvidence.Evidence.TransportHealth)
 	require.Equal(t, "mcp:healthy", result.StartupNoEvidence.Evidence.MCPHealth)
+	require.Equal(t, "transport", result.StartupNoEvidence.Evidence.Transport.Name)
+	require.True(t, result.StartupNoEvidence.Evidence.Transport.Checked)
+	require.Equal(t, "healthy", result.StartupNoEvidence.Evidence.Transport.Status)
+	require.Equal(t, "inferred", result.StartupNoEvidence.Evidence.Transport.Source)
+	require.Equal(t, "transport:healthy", result.StartupNoEvidence.Evidence.Transport.Summary)
+	require.Equal(t, "mcp", result.StartupNoEvidence.Evidence.MCP.Name)
+	require.Equal(t, "healthy", result.StartupNoEvidence.Evidence.MCP.Status)
+	require.Equal(t, "inferred", result.StartupNoEvidence.Evidence.MCP.Source)
 	require.NotEmpty(t, result.Events)
 	event := result.Events[len(result.Events)-1]
 	require.Equal(t, "worker.startup_no_evidence", event.Type)

@@ -37,19 +37,30 @@ const (
 )
 
 type StartupEvidence struct {
-	LastLifecycleState    string     `json:"last_lifecycle_state"`
-	LastLifecycleAt       time.Time  `json:"last_lifecycle_at"`
-	PaneCommand           string     `json:"pane_command,omitempty"`
-	PaneObservedAt        time.Time  `json:"pane_observed_at"`
-	CommandStartedAt      time.Time  `json:"command_started_at"`
-	PromptSentAt          *time.Time `json:"prompt_sent_at,omitempty"`
-	PromptAcceptanceState string     `json:"prompt_acceptance_state"`
-	TrustPromptDetected   bool       `json:"trust_prompt_detected"`
-	TransportHealthy      *bool      `json:"transport_healthy,omitempty"`
-	TransportHealth       string     `json:"transport_health"`
-	MCPHealthy            *bool      `json:"mcp_healthy,omitempty"`
-	MCPHealth             string     `json:"mcp_health"`
-	ElapsedSeconds        int64      `json:"elapsed_seconds"`
+	LastLifecycleState    string        `json:"last_lifecycle_state"`
+	LastLifecycleAt       time.Time     `json:"last_lifecycle_at"`
+	PaneCommand           string        `json:"pane_command,omitempty"`
+	PaneObservedAt        time.Time     `json:"pane_observed_at"`
+	CommandStartedAt      time.Time     `json:"command_started_at"`
+	PromptSentAt          *time.Time    `json:"prompt_sent_at,omitempty"`
+	PromptAcceptanceState string        `json:"prompt_acceptance_state"`
+	TrustPromptDetected   bool          `json:"trust_prompt_detected"`
+	TransportHealthy      *bool         `json:"transport_healthy,omitempty"`
+	TransportHealth       string        `json:"transport_health"`
+	Transport             StartupHealth `json:"transport"`
+	MCPHealthy            *bool         `json:"mcp_healthy,omitempty"`
+	MCPHealth             string        `json:"mcp_health"`
+	MCP                   StartupHealth `json:"mcp"`
+	ElapsedSeconds        int64         `json:"elapsed_seconds"`
+}
+
+type StartupHealth struct {
+	Name    string `json:"name"`
+	Checked bool   `json:"checked"`
+	Healthy *bool  `json:"healthy,omitempty"`
+	Status  string `json:"status"`
+	Source  string `json:"source"`
+	Summary string `json:"summary"`
 }
 
 type StartupNoEvidenceReport struct {
@@ -396,8 +407,10 @@ func normalizeStartupEvidence(worker Worker, evidence StartupEvidence, now time.
 	if !evidence.TrustPromptDetected {
 		evidence.TrustPromptDetected = trustPromptDetected(worker)
 	}
-	evidence.TransportHealth = normalizeHealthSummary("transport", evidence.TransportHealth, evidence.TransportHealthy)
-	evidence.MCPHealth = normalizeHealthSummary("mcp", evidence.MCPHealth, evidence.MCPHealthy)
+	evidence.Transport = normalizeStartupHealth("transport", evidence.TransportHealth, evidence.TransportHealthy)
+	evidence.TransportHealth = evidence.Transport.Summary
+	evidence.MCP = normalizeStartupHealth("mcp", evidence.MCPHealth, evidence.MCPHealthy)
+	evidence.MCPHealth = evidence.MCP.Summary
 	if evidence.ElapsedSeconds <= 0 && !evidence.CommandStartedAt.IsZero() {
 		evidence.ElapsedSeconds = int64(evidence.PaneObservedAt.Sub(evidence.CommandStartedAt).Seconds())
 		if evidence.ElapsedSeconds < 0 {
@@ -445,18 +458,52 @@ func trustPromptDetected(worker Worker) bool {
 	return false
 }
 
-func normalizeHealthSummary(name string, value string, healthy *bool) string {
+func normalizeStartupHealth(name string, value string, healthy *bool) StartupHealth {
 	value = strings.TrimSpace(value)
-	if value != "" {
-		return value
+	status := healthStatusFromSummary(name, value)
+	source := "summary"
+	if value == "" {
+		source = "inferred"
+		switch {
+		case healthy == nil:
+			status = "not_checked"
+			value = name + ":not_checked"
+		case *healthy:
+			status = "healthy"
+			value = name + ":healthy"
+		default:
+			status = "unhealthy"
+			value = name + ":unhealthy"
+		}
 	}
-	if healthy == nil {
-		return name + ":not_checked"
+	return StartupHealth{
+		Name:    name,
+		Checked: healthy != nil || status != "not_checked",
+		Healthy: healthy,
+		Status:  status,
+		Source:  source,
+		Summary: value,
 	}
-	if *healthy {
-		return name + ":healthy"
+}
+
+func healthStatusFromSummary(name string, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "not_checked"
 	}
-	return name + ":unhealthy"
+	normalized := normalizeState(value)
+	prefix := normalizeState(name) + "_"
+	normalized = strings.TrimPrefix(normalized, prefix)
+	switch {
+	case healthLooksDead(value):
+		return "unhealthy"
+	case strings.Contains(normalized, "healthy"), strings.Contains(normalized, "ok"), strings.Contains(normalized, "ready"), strings.Contains(normalized, "alive"):
+		return "healthy"
+	case strings.Contains(normalized, "not_checked"), strings.Contains(normalized, "unknown"):
+		return "not_checked"
+	default:
+		return normalized
+	}
 }
 
 func startupEvidenceMap(evidence StartupEvidence) map[string]any {

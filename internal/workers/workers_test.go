@@ -120,6 +120,12 @@ func TestStoreRecordsStartupNoEvidenceReport(t *testing.T) {
 	require.Equal(t, "trust_prompt", worker.StartupNoEvidence.Evidence.LastLifecycleState)
 	require.Equal(t, "codog repl", worker.StartupNoEvidence.Evidence.PaneCommand)
 	require.True(t, worker.StartupNoEvidence.Evidence.TrustPromptDetected)
+	require.Equal(t, "transport", worker.StartupNoEvidence.Evidence.Transport.Name)
+	require.Equal(t, "healthy", worker.StartupNoEvidence.Evidence.Transport.Status)
+	require.Equal(t, "summary", worker.StartupNoEvidence.Evidence.Transport.Source)
+	require.Equal(t, "transport:healthy", worker.StartupNoEvidence.Evidence.Transport.Summary)
+	require.Equal(t, "mcp", worker.StartupNoEvidence.Evidence.MCP.Name)
+	require.Equal(t, "healthy", worker.StartupNoEvidence.Evidence.MCP.Status)
 
 	event := worker.Events[len(worker.Events)-1]
 	require.Equal(t, "worker.startup_no_evidence", event.Type)
@@ -152,6 +158,38 @@ func TestStoreStartupNoEvidenceUsesPromptSentTimestamp(t *testing.T) {
 	require.NotNil(t, worker.StartupNoEvidence.Evidence.PromptSentAt)
 	require.True(t, promptSentAt.Equal(*worker.StartupNoEvidence.Evidence.PromptSentAt))
 	require.Equal(t, "pending", worker.StartupNoEvidence.Evidence.PromptAcceptanceState)
+	require.Equal(t, "summary", worker.StartupNoEvidence.Evidence.Transport.Source)
+	require.Equal(t, "healthy", worker.StartupNoEvidence.Evidence.Transport.Status)
+}
+
+func TestStoreStartupNoEvidenceInfersStructuredHealth(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "config"))
+	worker, err := store.Create(t.TempDir(), nil, true)
+	require.NoError(t, err)
+	unhealthy := false
+
+	worker, err = store.ObserveStartupTimeout(worker.ID, StartupEvidence{
+		TransportHealthy: &unhealthy,
+	})
+	require.NoError(t, err)
+	require.Equal(t, StartupTransportDead, worker.StartupNoEvidence.Classification)
+	require.Equal(t, "transport:unhealthy", worker.StartupNoEvidence.Evidence.TransportHealth)
+	require.Equal(t, "transport", worker.StartupNoEvidence.Evidence.Transport.Name)
+	require.True(t, worker.StartupNoEvidence.Evidence.Transport.Checked)
+	require.NotNil(t, worker.StartupNoEvidence.Evidence.Transport.Healthy)
+	require.False(t, *worker.StartupNoEvidence.Evidence.Transport.Healthy)
+	require.Equal(t, "unhealthy", worker.StartupNoEvidence.Evidence.Transport.Status)
+	require.Equal(t, "inferred", worker.StartupNoEvidence.Evidence.Transport.Source)
+	require.Equal(t, "transport:unhealthy", worker.StartupNoEvidence.Evidence.Transport.Summary)
+	require.Equal(t, "mcp:not_checked", worker.StartupNoEvidence.Evidence.MCPHealth)
+	require.Equal(t, "not_checked", worker.StartupNoEvidence.Evidence.MCP.Status)
+	require.False(t, worker.StartupNoEvidence.Evidence.MCP.Checked)
+
+	event := worker.Events[len(worker.Events)-1]
+	transport, ok := event.Evidence["transport"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "unhealthy", transport["status"])
+	require.Equal(t, "inferred", transport["source"])
 }
 
 func TestClassifyStartupNoEvidence(t *testing.T) {
