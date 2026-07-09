@@ -773,6 +773,9 @@ func permissionRuleDetails(kind string, entries []localstatus.PermissionRuleStat
 		if entry.UnknownTool {
 			detail += " unknown_tool=true"
 		}
+		if len(entry.Suggestions) > 0 {
+			detail += " suggestions=" + strings.Join(entry.Suggestions, ",")
+		}
 		out = append(out, detail)
 	}
 	return out

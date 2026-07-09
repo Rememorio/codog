@@ -619,7 +619,7 @@ func TestRunWarnsUnknownPermissionRules(t *testing.T) {
 		PermissionRules: localstatus.PermissionRulesStatus{
 			Deny: []localstatus.PermissionRuleStatus{
 				{Raw: "Bash(rm:*)", Tool: "Bash", ResolvedToolName: "bash", Matcher: "rm"},
-				{Raw: "Bsh(echo:*)", Tool: "Bsh", Matcher: "echo", UnknownTool: true},
+				{Raw: "Bsh(echo:*)", Tool: "Bsh", Matcher: "echo", UnknownTool: true, Suggestions: []string{"bash"}},
 			},
 			UnknownCount: 1,
 		},
@@ -637,6 +637,7 @@ func TestRunWarnsUnknownPermissionRules(t *testing.T) {
 	require.Contains(t, check.Summary, "1 permission rule")
 	require.Contains(t, strings.Join(check.Details, "\n"), "Bsh(echo:*)")
 	require.Contains(t, strings.Join(check.Details, "\n"), "unknown_tool=true")
+	require.Contains(t, strings.Join(check.Details, "\n"), "suggestions=bash")
 	require.Equal(t, 1, check.Data["unknown_count"])
 }
 

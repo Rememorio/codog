@@ -127,6 +127,7 @@ func TestBuildParsesGitStatus(t *testing.T) {
 	require.Equal(t, "bash", snapshot.Config.PermissionRules.Deny[0].ResolvedToolName)
 	require.Equal(t, "rm", snapshot.Config.PermissionRules.Deny[0].Matcher)
 	require.True(t, snapshot.Config.PermissionRules.Deny[1].UnknownTool)
+	require.Equal(t, []string{"bash"}, snapshot.Config.PermissionRules.Deny[1].Suggestions)
 	require.Equal(t, 1, snapshot.Config.PermissionRules.UnknownCount)
 	require.Equal(t, "web_fetch", snapshot.Config.PermissionRules.Ask[0].ResolvedToolName)
 	require.Equal(t, "write_file", snapshot.Config.PermissionRules.DeniedTools[0].ResolvedToolName)

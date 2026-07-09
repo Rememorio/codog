@@ -14,6 +14,7 @@ import (
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/providerdiag"
+	"github.com/Rememorio/codog/internal/toolnames"
 	"github.com/Rememorio/codog/internal/trustresolver"
 )
 
@@ -226,11 +227,12 @@ type PermissionRulesStatus struct {
 
 // PermissionRuleStatus describes one configured permission rule.
 type PermissionRuleStatus struct {
-	Raw              string `json:"raw"`
-	Tool             string `json:"tool,omitempty"`
-	ResolvedToolName string `json:"resolved_tool_name,omitempty"`
-	Matcher          string `json:"matcher,omitempty"`
-	UnknownTool      bool   `json:"unknown_tool,omitempty"`
+	Raw              string   `json:"raw"`
+	Tool             string   `json:"tool,omitempty"`
+	ResolvedToolName string   `json:"resolved_tool_name,omitempty"`
+	Matcher          string   `json:"matcher,omitempty"`
+	UnknownTool      bool     `json:"unknown_tool,omitempty"`
+	Suggestions      []string `json:"suggestions,omitempty"`
 }
 
 // SessionStatus summarizes the active session and saved session ledger.
@@ -883,9 +885,10 @@ func buildPermissionRuleEntries(rules []string, opts Options) []PermissionRuleSt
 		aliases[alias] = canonical
 		aliases[strings.ToLower(alias)] = canonical
 	}
+	suggestionCandidates := permissionRuleSuggestionCandidates(available, aliases)
 	out := make([]PermissionRuleStatus, 0, len(rules))
 	for _, raw := range rules {
-		entry := buildPermissionRuleEntry(raw, available, aliases)
+		entry := buildPermissionRuleEntry(raw, available, aliases, suggestionCandidates)
 		if strings.TrimSpace(entry.Raw) != "" {
 			out = append(out, entry)
 		}
@@ -893,7 +896,7 @@ func buildPermissionRuleEntries(rules []string, opts Options) []PermissionRuleSt
 	return out
 }
 
-func buildPermissionRuleEntry(raw string, available map[string]string, aliases map[string]string) PermissionRuleStatus {
+func buildPermissionRuleEntry(raw string, available map[string]string, aliases map[string]string, suggestionCandidates []string) PermissionRuleStatus {
 	entry := PermissionRuleStatus{Raw: strings.TrimSpace(raw)}
 	tool, matcher := parsePermissionRuleStatus(entry.Raw)
 	entry.Tool = tool
@@ -911,7 +914,29 @@ func buildPermissionRuleEntry(raw string, available map[string]string, aliases m
 		return entry
 	}
 	entry.UnknownTool = true
+	entry.Suggestions = toolnames.Suggestions(tool, suggestionCandidates, 4)
 	return entry
+}
+
+func permissionRuleSuggestionCandidates(available map[string]string, aliases map[string]string) []string {
+	seen := map[string]struct{}{}
+	for _, name := range available {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			seen[name] = struct{}{}
+		}
+	}
+	for _, canonical := range aliases {
+		canonical = strings.TrimSpace(canonical)
+		if canonical != "" {
+			seen[canonical] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	return out
 }
 
 func resolvePermissionRuleTool(tool string, available map[string]string, aliases map[string]string) string {
