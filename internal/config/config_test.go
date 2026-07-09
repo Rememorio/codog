@@ -304,11 +304,13 @@ func TestLoadBackgroundConfigCompatibility(t *testing.T) {
 func TestLoadRejectsInvalidPermissionMode(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(configPath, []byte(`{"permission_mode":"bogus"}`), 0o644))
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permission_mode":"workspacewrite"}`), 0o644))
 
 	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid_permission_mode")
+	require.Contains(t, err.Error(), `unknown permission mode "workspacewrite"`)
+	require.Contains(t, err.Error(), `did you mean "workspace-write"`)
 
 	_, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath, PermissionMode: "PROMPT"})
 	require.NoError(t, err)
@@ -567,12 +569,14 @@ func TestLoadPermissionModeEnvProvenance(t *testing.T) {
 func TestLoadRejectsInvalidPermissionsDefaultMode(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(configPath, []byte(`{"permissions":{"defaultMode":"always"}}`), 0o644))
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permissions":{"defaultMode":"acceptedit"}}`), 0o644))
 
 	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid_permission_default_mode")
+	require.Contains(t, err.Error(), `unknown permissions.defaultMode "acceptedit"`)
+	require.Contains(t, err.Error(), `did you mean "acceptEdits"`)
 }
 
 func TestMergeFutureConfigPreservesSandboxDefaults(t *testing.T) {
@@ -1805,12 +1809,14 @@ func TestLoadForceLoginSettings(t *testing.T) {
 func TestLoadRejectsInvalidForceLoginMethod(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(configPath, []byte(`{"forceLoginMethod":"password"}`), 0o644))
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"forceLoginMethod":"claudai"}`), 0o644))
 
 	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid_force_login_method")
+	require.Contains(t, err.Error(), `unknown forceLoginMethod "claudai"`)
+	require.Contains(t, err.Error(), `did you mean "claudeai"`)
 }
 
 func TestLoadAPIKeyHelper(t *testing.T) {
@@ -1932,12 +1938,14 @@ func TestLoadDefaultShellFromEnv(t *testing.T) {
 func TestLoadRejectsInvalidDefaultShell(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(configPath, []byte(`{"defaultShell":"zsh"}`), 0o644))
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"defaultShell":"powershel"}`), 0o644))
 
 	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid_default_shell")
+	require.Contains(t, err.Error(), `unknown defaultShell "powershel"`)
+	require.Contains(t, err.Error(), `did you mean "powershell"`)
 }
 
 func unsetCredentialEnv(t *testing.T) {

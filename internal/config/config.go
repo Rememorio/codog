@@ -20,6 +20,7 @@ import (
 	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/signing"
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 const (
@@ -27,6 +28,25 @@ const (
 	DefaultModel                    = "claude-sonnet-4-5"
 	sessionDefaultCleanupPeriodDays = 30
 	apiKeyHelperTimeout             = 5 * time.Second
+)
+
+var (
+	permissionModeNames = []string{
+		"read-only",
+		"workspace-write",
+		"danger-full-access",
+		"prompt",
+		"allow",
+		"default",
+		"plan",
+		"acceptEdits",
+		"bypassPermissions",
+		"dontAsk",
+		"auto",
+	}
+	permissionDefaultModeNames = []string{"default", "plan", "acceptEdits", "bypassPermissions", "dontAsk", "auto"}
+	forceLoginMethodNames      = []string{"claudeai", "console"}
+	defaultShellNames          = []string{"bash", "powershell"}
 )
 
 type HookConfig struct {
@@ -3704,7 +3724,7 @@ func validatePermissionMode(cfg *Config) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("invalid_permission_mode: unknown permission mode %q", cfg.PermissionMode)
+	return fmt.Errorf("invalid_permission_mode: %w", unsupportedConfigValueError("unknown permission mode", cfg.PermissionMode, permissionModeNames))
 }
 
 func validatePermissionRulesDefaultMode(cfg *Config) error {
@@ -3713,7 +3733,7 @@ func validatePermissionRulesDefaultMode(cfg *Config) error {
 	}
 	_, _, canonical, ok := mapClaudePermissionDefaultMode(cfg.PermissionRules.DefaultMode)
 	if !ok {
-		return fmt.Errorf("invalid_permission_default_mode: unknown permissions.defaultMode %q", cfg.PermissionRules.DefaultMode)
+		return fmt.Errorf("invalid_permission_default_mode: %w", unsupportedConfigValueError("unknown permissions.defaultMode", cfg.PermissionRules.DefaultMode, permissionDefaultModeNames))
 	}
 	cfg.PermissionRules.DefaultMode = canonical
 	return nil
@@ -3760,7 +3780,7 @@ func validateForceLoginMethod(cfg *Config) error {
 		cfg.ForceLoginMethod = method
 		return nil
 	default:
-		return fmt.Errorf("invalid_force_login_method: unknown forceLoginMethod %q", cfg.ForceLoginMethod)
+		return fmt.Errorf("invalid_force_login_method: %w", unsupportedConfigValueError("unknown forceLoginMethod", cfg.ForceLoginMethod, forceLoginMethodNames))
 	}
 }
 
@@ -3774,7 +3794,19 @@ func validateDefaultShell(cfg *Config) error {
 		cfg.DefaultShell = shell
 		return nil
 	default:
-		return fmt.Errorf("invalid_default_shell: defaultShell must be %q or %q", "bash", "powershell")
+		return fmt.Errorf("invalid_default_shell: %w", unsupportedConfigValueError("unknown defaultShell", cfg.DefaultShell, defaultShellNames))
+	}
+}
+
+func unsupportedConfigValueError(prefix, value string, candidates []string) error {
+	suggestions := toolnames.Suggestions(value, candidates, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("%s %q", prefix, value)
+	case 1:
+		return fmt.Errorf("%s %q; did you mean %q?", prefix, value, suggestions[0])
+	default:
+		return fmt.Errorf("%s %q; suggestions: %s", prefix, value, strings.Join(suggestions, ", "))
 	}
 }
 
