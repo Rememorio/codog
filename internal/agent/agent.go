@@ -14594,12 +14594,28 @@ func normalizeSandboxToggleAction(value string) (string, string, error) {
 	case "sandbox-exec", "bwrap", "unshare", "restricted-token":
 		return "set", strings.ToLower(strings.TrimSpace(value)), nil
 	default:
-		return "", "", invalidFlagValueError{
-			Flag:    "strategy",
-			Value:   value,
-			Message: fmt.Sprintf("unknown sandbox-toggle strategy %q", value),
-			Usage:   "codog sandbox-toggle [status|on|off|clear|sandbox-exec|bwrap|unshare|restricted-token] [--json|--output-format text|json]",
-		}
+		return "", "", unknownSandboxToggleStrategyError(value)
+	}
+}
+
+var sandboxToggleStrategyCandidates = []string{"status", "show", "list", "clear", "reset", "unset", "on", "enable", "enabled", "auto", "detect", "off", "disable", "disabled", "none", "sandbox-exec", "bwrap", "unshare", "restricted-token"}
+
+func unknownSandboxToggleStrategyError(value string) error {
+	value = strings.TrimSpace(value)
+	message := fmt.Sprintf("unknown sandbox-toggle strategy %q", value)
+	suggestions := toolnames.Suggestions(value, sandboxToggleStrategyCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		message += fmt.Sprintf("; did you mean %q?", suggestions[0])
+	case 0:
+	default:
+		message += "; suggestions: " + strings.Join(suggestions, ", ")
+	}
+	return invalidFlagValueError{
+		Flag:    "strategy",
+		Value:   value,
+		Message: message,
+		Usage:   "codog sandbox-toggle [status|on|off|clear|sandbox-exec|bwrap|unshare|restricted-token] [--json|--output-format text|json]",
 	}
 }
 

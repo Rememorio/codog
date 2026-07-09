@@ -32566,10 +32566,10 @@ func TestRuntimeConfigErrorsHonorGlobalJSONFormat(t *testing.T) {
 		},
 		{
 			name:      "sandbox-toggle invalid strategy",
-			args:      []string{"sandbox-toggle", "bogus"},
+			args:      []string{"sandbox-toggle", "sandbx-exec"},
 			kind:      "invalid_flag_value",
 			errorKind: "invalid_flag_value",
-			contains:  []string{`"option": "strategy"`, `"value": "bogus"`},
+			contains:  []string{`"option": "strategy"`, `"value": "sandbx-exec"`, `did you mean \"sandbox-exec\"?`},
 		},
 		{
 			name:      "providers missing show name",
