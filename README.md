@@ -73,11 +73,16 @@ calling a live provider. Passing it means the implemented Claude-Code-style
 workflows remain compatible with Codog's published behavior; it does not mean
 Codog is identical to Claude Code.
 
+The current command and tool name audit against the local Claude-Code-style
+reference snapshot is green, but that audit is only a surface check. The
+workflow-level closure audit lives in
+[`docs/claude-code-gap-audit.md`](docs/claude-code-gap-audit.md).
+
 | Maturity | Scope |
 | --- | --- |
-| Daily local use | One-shot prompts, full-screen Bubble Tea TUI, legacy REPL, streaming output, Anthropic-compatible requests, OpenAI-compatible routing, shell/file/search/edit/git tools, JSONL sessions, resume, usage reporting, compaction, permission modes, workspace boundaries, hooks, and diagnostics. |
-| Experimental | Advanced slash palettes, skills, templates, output styles, Markdown agent definitions, MCP client/server paths, code intelligence, LSP routing, notebook helpers, background tasks, subagents, branch freshness checks, and remote-control surfaces. |
-| Not production-hardened | Hosted remote sessions, remote identity management, organization-wide policy rollout, enterprise administration, plugin signing and distribution, update channels, hostile-repository sandboxing, IDE extensions, and large multi-agent operations. |
+| Verified local core | One-shot prompts, full-screen Bubble Tea TUI, legacy REPL, Anthropic-compatible streaming, OpenAI-compatible `glm52` routing, `bash`/read/write/edit/grep/glob tools, permission confirmation, JSONL sessions, resume, TUI slash help/status, TUI tool summaries, provider error hints, usage reporting, compaction, workspace boundaries, hooks, and diagnostics. |
+| Available but experimental | Advanced command-palette behavior, skills, templates, output styles, Markdown agent definitions, MCP client/server paths, code intelligence, LSP routing, notebook helpers, background tasks, subagents, branch freshness checks, and remote-control surfaces. |
+| Out of scope or not production-hardened | Hosted remote sessions, official Anthropic identity and subscription flows, organization-wide policy rollout, enterprise administration, plugin signing and distribution, update channels, hostile-repository sandboxing, official IDE extensions, and large multi-agent operations. |
 
 The CLI exposes many compatibility commands because they are useful for testing
 and migration work. A command being present does not mean the surrounding

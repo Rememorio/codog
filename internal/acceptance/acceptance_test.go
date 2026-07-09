@@ -156,6 +156,46 @@ expect eof
 	require.Equal(t, "created by tui tool smoke\n", string(created))
 }
 
+func TestRealBinaryTUISubmitsCtrlJMultilinePromptWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	var mu sync.Mutex
+	requestBodies := []string{}
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "multiline prompt ok",
+		OnRequest: func(body json.RawMessage) {
+			mu.Lock()
+			requestBodies = append(requestBodies, string(body))
+			mu.Unlock()
+		},
+	}.Handler())
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, `
+set timeout 30
+spawn -noecho $env(CODOG_TEST_BIN) --model claude-sonnet-4-5 tui
+expect "Codog TUI"
+send "first line"
+send "\012"
+send "second line\r"
+expect "assistant"
+expect "multiline prompt ok"
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, output, "multiline prompt ok")
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, requestBodies)
+	require.Contains(t, requestBodies[0], "first line")
+	require.Contains(t, requestBodies[0], "second line")
+}
+
 func TestRealBinaryReplSlashHelpAndExit(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()
