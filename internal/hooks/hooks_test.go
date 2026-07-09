@@ -31,6 +31,21 @@ func TestNormalizeHookEventSuggestsKnownEvents(t *testing.T) {
 	require.Contains(t, err.Error(), `did you mean "file_changed"`)
 }
 
+func TestRunHooksSuggestsKnownHookTypes(t *testing.T) {
+	report, err := Runner{Workspace: t.TempDir()}.RunHooks(context.Background(), []config.HookCommand{
+		{Type: "commnd", Command: "echo no"},
+	}, Payload{Event: "pre_tool_use"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown hook type "commnd"`)
+	require.Contains(t, err.Error(), `did you mean "command"`)
+	require.Equal(t, "hooks", report.Kind)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, "commnd", report.Results[0].Type)
+	require.False(t, report.Results[0].Success)
+	require.Equal(t, -1, report.Results[0].ExitCode)
+	require.Contains(t, report.Results[0].Error, `did you mean "command"`)
+}
+
 func TestRunPayloadCapturesHookOutput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

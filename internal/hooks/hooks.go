@@ -47,6 +47,13 @@ var hookEventNames = []string{
 	"file_changed",
 }
 
+var hookTypeNames = []string{
+	"command",
+	"http",
+	"prompt",
+	"agent",
+}
+
 // NormalizeHookEvent returns the canonical hook event for a CLI/API alias.
 func NormalizeHookEvent(value string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
@@ -111,6 +118,19 @@ func unknownHookEventError(value string) error {
 		return fmt.Errorf("unknown hook event %q; did you mean %q?", value, suggestions[0])
 	default:
 		return fmt.Errorf("unknown hook event %q; suggestions: %s", value, strings.Join(suggestions, ", "))
+	}
+}
+
+func unknownHookTypeError(value string) error {
+	value = strings.TrimSpace(value)
+	suggestions := toolnames.Suggestions(value, hookTypeNames, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unknown hook type %q", value)
+	case 1:
+		return fmt.Errorf("unknown hook type %q; did you mean %q?", value, suggestions[0])
+	default:
+		return fmt.Errorf("unknown hook type %q; suggestions: %s", value, strings.Join(suggestions, ", "))
 	}
 }
 
@@ -1227,14 +1247,16 @@ func (r Runner) runOneHook(ctx context.Context, hook config.HookCommand, hookInd
 	case "prompt", "agent":
 		return r.runPromptHook(ctx, hook, payload, data, defaultTimeout)
 	default:
+		typ := hookType(hook)
+		err := unknownHookTypeError(typ)
 		result := CommandResult{
-			Type:     hookType(hook),
+			Type:     typ,
 			Command:  config.HookCommandDisplay(hook),
 			ExitCode: -1,
 			Success:  false,
-			Error:    "unknown hook type",
+			Error:    err.Error(),
 		}
-		return result, fmt.Errorf("unknown hook type %q", hookType(hook))
+		return result, err
 	}
 }
 
