@@ -1877,6 +1877,8 @@ type apiReport struct {
 	RemoteURL           string              `json:"remote_url"`
 	HealthURL           string              `json:"health_url"`
 	StateURL            string              `json:"state_url"`
+	RoutesURL           string              `json:"routes_url"`
+	CapabilitiesURL     string              `json:"capabilities_url"`
 	Listening           bool                `json:"listening"`
 	RouteCount          int                 `json:"route_count"`
 	PublicRouteCount    int                 `json:"public_route_count"`
@@ -1961,6 +1963,8 @@ type serverReport struct {
 	Addr                string   `json:"addr"`
 	HTTPURL             string   `json:"http_url"`
 	HealthURL           string   `json:"health_url,omitempty"`
+	RoutesURL           string   `json:"routes_url,omitempty"`
+	CapabilitiesURL     string   `json:"capabilities_url,omitempty"`
 	AuthTokenConfigured bool     `json:"auth_token_configured"`
 	AuthToken           string   `json:"auth_token,omitempty"`
 	IdleTimeoutMS       int      `json:"idle_timeout_ms"`
@@ -2221,7 +2225,10 @@ func (a *App) buildServerReport(req serverRequest, network, addr, httpURL string
 		Routes:              routePaths,
 	}
 	if strings.HasPrefix(httpURL, "http://") || strings.HasPrefix(httpURL, "https://") {
-		report.HealthURL = strings.TrimRight(httpURL, "/") + "/health"
+		baseURL := strings.TrimRight(httpURL, "/")
+		report.HealthURL = baseURL + "/health"
+		report.RoutesURL = baseURL + "/routes"
+		report.CapabilitiesURL = baseURL + "/capabilities"
 	}
 	return report
 }
@@ -2240,6 +2247,12 @@ func renderServerReport(out io.Writer, report serverReport, format string) error
 	fmt.Fprintf(out, "  URL              %s\n", report.HTTPURL)
 	if report.HealthURL != "" {
 		fmt.Fprintf(out, "  Health URL       %s\n", report.HealthURL)
+	}
+	if report.RoutesURL != "" {
+		fmt.Fprintf(out, "  Routes URL       %s\n", report.RoutesURL)
+	}
+	if report.CapabilitiesURL != "" {
+		fmt.Fprintf(out, "  Capabilities URL %s\n", report.CapabilitiesURL)
 	}
 	fmt.Fprintf(out, "  Auth token       %s\n", report.AuthToken)
 	fmt.Fprintf(out, "  Idle timeout     %d ms\n", report.IdleTimeoutMS)
@@ -3259,6 +3272,7 @@ func (a *App) buildAPIReport(req apiRequest, addr, remoteURL string) apiReport {
 	if req.Action == "serve" {
 		remoteCommand = "codog api serve " + addr
 	}
+	baseURL := strings.TrimRight(remoteURL, "/")
 	report := apiReport{
 		Kind:                "api",
 		Action:              req.Action,
@@ -3272,8 +3286,10 @@ func (a *App) buildAPIReport(req apiRequest, addr, remoteURL string) apiReport {
 		RemoteCommand:       remoteCommand,
 		RemoteAddr:          addr,
 		RemoteURL:           remoteURL,
-		HealthURL:           strings.TrimRight(remoteURL, "/") + "/health",
-		StateURL:            strings.TrimRight(remoteURL, "/") + "/state",
+		HealthURL:           baseURL + "/health",
+		StateURL:            baseURL + "/state",
+		RoutesURL:           baseURL + "/routes",
+		CapabilitiesURL:     baseURL + "/capabilities",
 		RouteCount:          len(routes),
 		PublicRouteCount:    publicCount,
 		StreamingRouteCount: streamingCount,
@@ -3298,6 +3314,9 @@ func renderAPIReport(out io.Writer, report apiReport) {
 	fmt.Fprintf(out, "  Remote command   %s\n", report.RemoteCommand)
 	fmt.Fprintf(out, "  Remote URL       %s\n", report.RemoteURL)
 	fmt.Fprintf(out, "  Health URL       %s\n", report.HealthURL)
+	fmt.Fprintf(out, "  State URL        %s\n", report.StateURL)
+	fmt.Fprintf(out, "  Routes URL       %s\n", report.RoutesURL)
+	fmt.Fprintf(out, "  Capabilities URL %s\n", report.CapabilitiesURL)
 	fmt.Fprintf(out, "  Routes           %d\n", report.RouteCount)
 	if len(report.Routes) != 0 {
 		fmt.Fprintln(out, "  Endpoints")

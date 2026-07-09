@@ -21431,6 +21431,10 @@ func TestAPICommandReportsRemoteControlRoutes(t *testing.T) {
 	require.Equal(t, "ready", report.Status)
 	require.True(t, report.AuthRequired)
 	require.Equal(t, "http://127.0.0.1:8799", report.RemoteURL)
+	require.Equal(t, "http://127.0.0.1:8799/health", report.HealthURL)
+	require.Equal(t, "http://127.0.0.1:8799/state", report.StateURL)
+	require.Equal(t, "http://127.0.0.1:8799/routes", report.RoutesURL)
+	require.Equal(t, "http://127.0.0.1:8799/capabilities", report.CapabilitiesURL)
 	require.Equal(t, "codog remote serve :8799", report.RemoteCommand)
 	require.Equal(t, 90, report.LeaseSeconds)
 	require.Equal(t, len(control.RouteSpecs()), report.RouteCount)
@@ -21443,6 +21447,9 @@ func TestAPICommandReportsRemoteControlRoutes(t *testing.T) {
 	require.Contains(t, out.String(), "Remote API")
 	require.Contains(t, out.String(), "Remote URL       http://127.0.0.1:8800")
 	require.Contains(t, out.String(), "/health")
+	require.Contains(t, out.String(), "/state")
+	require.Contains(t, out.String(), "/routes")
+	require.Contains(t, out.String(), "/capabilities")
 	require.Empty(t, errOut.String())
 	out.Reset()
 
@@ -21586,6 +21593,9 @@ func TestServerCommandStartsControlListener(t *testing.T) {
 	require.True(t, report.MaxSessionsEnforced)
 	require.Equal(t, len(control.RouteSpecs()), report.RouteCount)
 	require.Contains(t, report.Routes, "/health")
+	require.Equal(t, strings.TrimRight(report.HTTPURL, "/")+"/health", report.HealthURL)
+	require.Equal(t, strings.TrimRight(report.HTTPURL, "/")+"/routes", report.RoutesURL)
+	require.Equal(t, strings.TrimRight(report.HTTPURL, "/")+"/capabilities", report.CapabilitiesURL)
 
 	require.Eventually(t, func() bool {
 		resp, err := http.Get(report.HealthURL)
