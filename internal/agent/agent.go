@@ -52320,11 +52320,11 @@ func (a *App) Commands(args []string) error {
 		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
 		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
 	default:
-		return unexpectedExtraArgsError{
-			Command: "commands",
-			Args:    []string{action},
-			Usage:   "codog commands [list|search|audit|sources|show|run|install|uninstall] [ARGS...] [--json|--output-format text|json]",
+		_, format, err := stripJSONOnlyOutputFormat("commands", rest)
+		if err != nil {
+			return renderCLIError(a.Out, err, requestedOutputFormat(append([]string{"commands", action}, rest...)))
 		}
+		return renderUnsupportedCommandsAction(a.Out, action, format)
 	}
 	return nil
 }
@@ -52551,6 +52551,40 @@ func renderCommandInstallMissingSource(out io.Writer, format string) error {
 		Message:   "commands install requires a source",
 		Hint:      "Usage: codog commands install [--project|--user|--claude] [--name NAME] SOURCE [--json|--output-format text|json].",
 	}, format)
+}
+
+func renderUnsupportedCommandsAction(out io.Writer, action string, format string) error {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		action = "unknown"
+	}
+	return renderActionError(out, actionErrorReport{
+		Kind:      "commands",
+		Action:    action,
+		Status:    "error",
+		ErrorKind: "unsupported_commands_action",
+		Message:   fmt.Sprintf("unsupported commands action %q", action),
+		Hint:      unknownCommandsActionHint(action),
+	}, format)
+}
+
+var commandsActionCandidates = []string{
+	"list", "ls", "search", "find", "query", "lookup", "audit", "doctor", "check",
+	"validate", "source", "sources", "root", "roots", "show", "info", "describe",
+	"get", "view", "cat", "run", "render", "exec", "execute", "call", "invoke",
+	"install", "add", "uninstall", "remove", "delete", "rm", "del",
+}
+
+func unknownCommandsActionHint(action string) string {
+	suggestions := toolnames.Suggestions(action, commandsActionCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		return fmt.Sprintf("Did you mean `codog commands %s`? Use `codog commands list` to see available commands.", suggestions[0])
+	case 0:
+		return "Supported: `codog commands list|ls`, `codog commands search|find QUERY`, `codog commands audit|doctor`, `codog commands sources|roots`, `codog commands show|info|describe NAME`, `codog commands run|render NAME [ARGS...]`, `codog commands add|install SOURCE`, or `codog commands uninstall|remove|rm NAME`."
+	default:
+		return fmt.Sprintf("Did you mean one of: %s? Use `codog commands list` to see available commands.", strings.Join(suggestions, ", "))
+	}
 }
 
 func (a *App) renderCommandsList(format string) error {

@@ -29186,10 +29186,10 @@ func TestResourceCatalogErrorsHonorGlobalJSONFormat(t *testing.T) {
 	}{
 		{
 			name:      "commands unknown action",
-			args:      []string{"commands", "bogus"},
-			kind:      "unexpected_extra_args",
-			errorKind: "unexpected_extra_args",
-			contains:  []string{`"command": "commands"`, `"bogus"`},
+			args:      []string{"commands", "serch"},
+			kind:      "commands",
+			errorKind: "unsupported_commands_action",
+			contains:  []string{`"action": "serch"`, "Did you mean `codog commands search`?"},
 		},
 		{
 			name:      "templates unknown action",
