@@ -44,6 +44,7 @@ import (
 	"github.com/Rememorio/codog/internal/bookmarks"
 	"github.com/Rememorio/codog/internal/branchlock"
 	"github.com/Rememorio/codog/internal/bridge"
+	"github.com/Rememorio/codog/internal/bridgeparity"
 	"github.com/Rememorio/codog/internal/bughunt"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/commandrun"
@@ -29900,6 +29901,7 @@ type capabilitiesReport struct {
 	MCP                     capabilityMCP         `json:"mcp"`
 	MockParity              harness.Manifest      `json:"mock_parity"`
 	Terminal                terminalparity.Report `json:"terminal"`
+	Bridge                  bridgeparity.Report   `json:"bridge"`
 	Features                []string              `json:"features"`
 	Protocols               []string              `json:"protocols"`
 	OutputFormats           []string              `json:"output_formats"`
@@ -30200,8 +30202,13 @@ func (a *App) capabilitiesReport() capabilitiesReport {
 			LocalPrompts:           localPrompts,
 			ExposedToolCount:       len(exposed),
 		},
-		MockParity:    harness.ScenarioManifest(),
-		Terminal:      terminalparity.Build(),
+		MockParity: harness.ScenarioManifest(),
+		Terminal:   terminalparity.Build(),
+		Bridge: bridgeparity.Build(bridgeparity.Options{
+			RemoteAuthToken:   a.Config.Future.RemoteAuthToken,
+			EditorBridgeToken: a.Config.Future.EditorBridgeToken,
+			RemoteEnabled:     a.Config.Future.RemoteEnabled,
+		}),
 		Features:      codogCapabilityFeatures(),
 		Protocols:     codogCapabilityProtocols(),
 		OutputFormats: []string{"text", "json", "stream-json"},
@@ -31054,6 +31061,7 @@ func renderCapabilitiesText(out io.Writer, report capabilitiesReport) {
 	fmt.Fprintf(out, "  MCP local data    %d resources, %d templates, %d prompts\n", report.MCP.LocalResourceCount, report.MCP.LocalTemplateCount, report.MCP.LocalPromptCount)
 	fmt.Fprintf(out, "  Mock parity       %d scenarios, %d categories\n", report.MockParity.ScenarioCount, len(report.MockParity.Categories))
 	fmt.Fprintf(out, "  Terminal parity   %s (%d required commands, %d resume-safe)\n", report.Terminal.Status, report.Terminal.RequiredCommandCount, report.Terminal.ResumeSafeSlashCount)
+	fmt.Fprintf(out, "  Bridge parity     %s (%d methods, %d routes)\n", report.Bridge.Status, report.Bridge.BridgeMethodCount, report.Bridge.ControlRouteCount)
 	fmt.Fprintln(out, "  Features")
 	for _, feature := range report.Features {
 		fmt.Fprintf(out, "    - %s\n", feature)
