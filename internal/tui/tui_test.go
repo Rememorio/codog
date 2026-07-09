@@ -85,6 +85,12 @@ func TestCompletionListRendersSelectedSuggestion(t *testing.T) {
 	require.Contains(t, view, "suggestions")
 	require.Contains(t, view, "  /model claude-test")
 	require.Contains(t, view, "> /memory list")
+	require.Contains(t, view, "Show or switch the current model.")
+	require.Contains(t, view, "List, search, show")
+}
+
+func TestCompletionDisplayLineFallsBackForCustomCandidate(t *testing.T) {
+	require.Equal(t, "/custom thing", completionDisplayLine("/custom thing"))
 }
 
 func TestStatusBarUsesCompactHintsAtTerminalWidth(t *testing.T) {

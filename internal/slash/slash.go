@@ -518,6 +518,17 @@ func Lookup(name string) (Spec, bool) {
 	return Spec{}, false
 }
 
+// DescribeCandidate returns the built-in slash spec that explains a completion
+// candidate. Candidates may include arguments or subcommands; only the command
+// token is used for lookup.
+func DescribeCandidate(candidate string) (Spec, bool) {
+	fields := strings.Fields(strings.TrimSpace(candidate))
+	if len(fields) == 0 {
+		return Spec{}, false
+	}
+	return Lookup(fields[0])
+}
+
 // Suggest returns likely built-in slash commands for input.
 func Suggest(input string, limit int) []string {
 	return SuggestWithCandidates(input, limit, nil)

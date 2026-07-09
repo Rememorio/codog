@@ -98,6 +98,7 @@ expect "Codog TUI"
 send "/stat\t"
 expect "suggestions"
 expect "/status"
+expect "Show local workspace"
 expect "/statusline"
 send "\033"
 expect eof
@@ -111,6 +112,7 @@ expect eof
 
 	require.Contains(t, output, "suggestions")
 	require.Contains(t, output, "/status")
+	require.Contains(t, output, "Show local workspace")
 	require.Contains(t, output, "/statusline")
 	require.Contains(t, output, "/doctor")
 }

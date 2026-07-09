@@ -183,6 +183,17 @@ func TestLookupIncludesApprovalAliases(t *testing.T) {
 	}
 }
 
+func TestDescribeCandidateUsesCommandToken(t *testing.T) {
+	spec, ok := DescribeCandidate("/model claude-sonnet")
+
+	require.True(t, ok)
+	require.Equal(t, "/model", spec.Name)
+	require.Contains(t, spec.Description, "model")
+
+	_, ok = DescribeCandidate("not-a-slash-command")
+	require.False(t, ok)
+}
+
 func TestCandidatesFiltersSlashCommands(t *testing.T) {
 	require.Contains(t, Candidates("/ac"), "/acp")
 	require.Contains(t, Candidates("/an"), "/ant-trace --no-request")

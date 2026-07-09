@@ -602,9 +602,21 @@ func renderCompletions(matches []string, selected int) string {
 			prefix = "> "
 			style = selectedCompletionStyle()
 		}
-		lines = append(lines, style.Render(prefix+match))
+		lines = append(lines, style.Render(prefix+completionDisplayLine(match)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func completionDisplayLine(candidate string) string {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return ""
+	}
+	spec, ok := slash.DescribeCandidate(candidate)
+	if !ok || strings.TrimSpace(spec.Description) == "" {
+		return candidate
+	}
+	return truncateForComposer(candidate+"  -  "+spec.Description, 120)
 }
 
 func renderHistorySearch(matches []string, selected int, query string) string {
