@@ -28606,13 +28606,15 @@ func (a *App) setupChecks(terminal *terminalsetup.Report) []setupCheck {
 	instructionsPath := filepath.Join(workspace, ".codog", "instructions.md")
 	configPath := filepath.Join(workspace, ".codog.json")
 	agentsPath := filepath.Join(workspace, "AGENTS.md")
+	claudePath := filepath.Join(workspace, "CLAUDE.md")
 	instructionsOK := fileExists(instructionsPath)
 	projectConfigOK := fileExists(configPath)
 	agentsOK := fileExists(agentsPath)
+	claudeOK := fileExists(claudePath)
 	switch {
-	case instructionsOK && projectConfigOK && agentsOK:
-		checks = append(checks, setupCheck{Name: "Project memory", Status: "ok", Message: ".codog/instructions.md, .codog.json, and AGENTS.md are present"})
-	case instructionsOK || projectConfigOK:
+	case instructionsOK && projectConfigOK && agentsOK && claudeOK:
+		checks = append(checks, setupCheck{Name: "Project memory", Status: "ok", Message: ".codog/instructions.md, .codog.json, AGENTS.md, and CLAUDE.md are present"})
+	case instructionsOK || projectConfigOK || agentsOK || claudeOK:
 		checks = append(checks, setupCheck{Name: "Project memory", Status: "warn", Message: "project setup is partial; run `codog setup init`"})
 	default:
 		checks = append(checks, setupCheck{Name: "Project memory", Status: "warn", Message: "run `codog setup init` to create project guidance and shared defaults"})

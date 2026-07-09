@@ -118,6 +118,12 @@ func Initialize(workspace string) (Report, error) {
 	}
 	artifacts = append(artifacts, Artifact{Name: "AGENTS.md", Status: agentsStatus})
 
+	claudeStatus, err := writeFileIfMissing(filepath.Join(abs, "CLAUDE.md"), RenderClaude(abs))
+	if err != nil {
+		return Report{}, err
+	}
+	artifacts = append(artifacts, Artifact{Name: "CLAUDE.md", Status: claudeStatus})
+
 	return newReport(abs, artifacts), nil
 }
 
@@ -185,6 +191,28 @@ func RenderAgents(workspace string) string {
 		"- Read `.codog/instructions.md` before making code changes.",
 		"- Prefer small, reviewable changes with focused validation.",
 		"- Keep local machine settings in `.codog.local.json`; keep shared defaults in `.codog.json`.",
+	}
+	verification := detection.verification()
+	if len(verification) != 0 {
+		lines = append(lines, "", "## Verification")
+		lines = append(lines, verification...)
+	}
+	lines = append(lines, "")
+	return strings.Join(lines, "\n")
+}
+
+func RenderClaude(workspace string) string {
+	detection := detect(workspace)
+	lines := []string{
+		"# CLAUDE.md",
+		"",
+		"This file provides compatibility guidance for Claude-Code-style agents working in this repository.",
+		"Canonical Codog project guidance lives in `.codog/instructions.md`.",
+		"",
+		"## Defaults",
+		"- Read `.codog/instructions.md` before making code changes.",
+		"- Prefer small, reviewable changes with focused validation.",
+		"- Do not overwrite existing project instruction files automatically.",
 	}
 	verification := detection.verification()
 	if len(verification) != 0 {
