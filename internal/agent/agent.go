@@ -25642,14 +25642,9 @@ func (a *App) serveACP(ctx context.Context) error {
 			if cellIndex != nil && strings.TrimSpace(req.CellID) != "" {
 				return nil, errors.New("notebook/edit accepts either cell_index or cell_id, not both")
 			}
-			mode := strings.ToLower(firstNonEmpty(req.Mode, req.EditMode))
-			if mode == "" {
-				mode = "replace"
-			}
-			switch mode {
-			case "replace", "insert", "delete":
-			default:
-				return nil, fmt.Errorf("unknown notebook edit mode %q", mode)
+			mode, err := codeintel.NormalizeNotebookEditMode(firstNonEmpty(req.Mode, req.EditMode))
+			if err != nil {
+				return nil, err
 			}
 			source, sourceSet := "", false
 			if req.Source != nil {
@@ -36756,13 +36751,11 @@ func parseCodeIntelNotebookEditArgs(args []string) (codeIntelNotebookEditRequest
 }
 
 func validateCodeIntelNotebookEditRequest(req codeIntelNotebookEditRequest) (codeIntelNotebookEditRequest, error) {
-	switch req.Mode {
-	case "", "replace":
-		req.Mode = "replace"
-	case "insert", "delete":
-	default:
-		return req, fmt.Errorf("unknown notebook edit mode %q", req.Mode)
+	mode, err := codeintel.NormalizeNotebookEditMode(req.Mode)
+	if err != nil {
+		return req, err
 	}
+	req.Mode = mode
 	if strings.TrimSpace(req.NotebookPath) == "" {
 		return req, errors.New("notebook-edit notebook path is required")
 	}

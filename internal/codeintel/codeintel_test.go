@@ -514,6 +514,21 @@ func TestEditNotebookCell(t *testing.T) {
 	require.Equal(t, "print('hello')\n", read.Cells[0].Source)
 }
 
+func TestNormalizeNotebookEditModeSuggestsKnownModes(t *testing.T) {
+	mode, err := NormalizeNotebookEditMode("")
+	require.NoError(t, err)
+	require.Equal(t, "replace", mode)
+
+	mode, err = NormalizeNotebookEditMode("INSERT")
+	require.NoError(t, err)
+	require.Equal(t, "insert", mode)
+
+	_, err = NormalizeNotebookEditMode("delet")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown notebook edit mode "delet"`)
+	require.Contains(t, err.Error(), `did you mean "delete"`)
+}
+
 func TestParseGoTestJSONDiagnostics(t *testing.T) {
 	workspace := t.TempDir()
 	data := []byte(`{"Action":"output","Package":"example","Output":"main.go:7:13: undefined: Missing\n"}` + "\n" +

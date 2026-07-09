@@ -2152,14 +2152,9 @@ func (s Server) notebookEdit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("notebook/edit accepts either cell_index or cell_id, not both"), http.StatusBadRequest)
 		return
 	}
-	mode := strings.ToLower(firstNonEmpty(payload.Mode, payload.EditMode))
-	if mode == "" {
-		mode = "replace"
-	}
-	switch mode {
-	case "replace", "insert", "delete":
-	default:
-		writeError(w, fmt.Errorf("unknown notebook edit mode %q", mode), http.StatusBadRequest)
+	mode, err := codeintel.NormalizeNotebookEditMode(firstNonEmpty(payload.Mode, payload.EditMode))
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
 		return
 	}
 	source, sourceSet := "", false

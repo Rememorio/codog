@@ -18255,6 +18255,11 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "new_source is required")
 
+	_, err = parseCodeIntelNotebookEditArgs([]string{"analysis.ipynb", "--mode", "replac", "--source", "title"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown notebook edit mode "replac"`)
+	require.Contains(t, err.Error(), `did you mean "replace"`)
+
 	_, err = parseCodeIntelNotebookReadArgs([]string{"analysis.ipynb", "--limit", "0"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "positive integer")

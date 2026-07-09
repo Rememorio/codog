@@ -24,6 +24,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 // Symbol describes a Go declaration discovered in the workspace.
@@ -3019,6 +3021,34 @@ type NotebookEditResult struct {
 	SourceLines int    `json:"source_lines,omitempty"`
 }
 
+var notebookEditModeNames = []string{"replace", "insert", "delete"}
+
+// NormalizeNotebookEditMode returns the canonical notebook edit mode.
+func NormalizeNotebookEditMode(mode string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return "replace", nil
+	}
+	switch mode {
+	case "replace", "insert", "delete":
+		return mode, nil
+	default:
+		return "", unknownNotebookEditModeError(mode)
+	}
+}
+
+func unknownNotebookEditModeError(mode string) error {
+	suggestions := toolnames.Suggestions(mode, notebookEditModeNames, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unknown notebook edit mode %q", mode)
+	case 1:
+		return fmt.Errorf("unknown notebook edit mode %q; did you mean %q?", mode, suggestions[0])
+	default:
+		return fmt.Errorf("unknown notebook edit mode %q; suggestions: %s", mode, strings.Join(suggestions, ", "))
+	}
+}
+
 // EditNotebookCell replaces one notebook cell with source and type.
 func EditNotebookCell(path string, index int, cellType string, source string) error {
 	_, err := EditNotebook(path, NotebookEditOptions{Index: index, CellType: cellType, Source: source, Mode: "replace"})
@@ -3156,9 +3186,9 @@ func EditNotebook(path string, options NotebookEditOptions) (NotebookEditResult,
 	if err != nil {
 		return NotebookEditResult{}, err
 	}
-	mode := strings.ToLower(strings.TrimSpace(options.Mode))
-	if mode == "" {
-		mode = "replace"
+	mode, err := NormalizeNotebookEditMode(options.Mode)
+	if err != nil {
+		return NotebookEditResult{}, err
 	}
 	cellType := strings.ToLower(strings.TrimSpace(options.CellType))
 	if cellType == "" && mode != "delete" && options.Index < len(cells) {

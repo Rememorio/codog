@@ -791,14 +791,9 @@ func (s Server) notebookEdit(params json.RawMessage) (any, error) {
 	if cellIndex != nil && strings.TrimSpace(payload.CellID) != "" {
 		return nil, errors.New("notebook/edit accepts either cell_index or cell_id, not both")
 	}
-	mode := strings.ToLower(firstNonEmpty(payload.Mode, payload.EditMode))
-	if mode == "" {
-		mode = "replace"
-	}
-	switch mode {
-	case "replace", "insert", "delete":
-	default:
-		return nil, fmt.Errorf("unknown notebook edit mode %q", mode)
+	mode, err := codeintel.NormalizeNotebookEditMode(firstNonEmpty(payload.Mode, payload.EditMode))
+	if err != nil {
+		return nil, err
 	}
 	source, sourceSet := "", false
 	if payload.Source != nil {
