@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/hookenv"
 	"github.com/Rememorio/codog/internal/oauth"
@@ -2850,6 +2851,13 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	definition := tool.Definition()
 	properties := definition.InputSchema["properties"].(map[string]any)
 	actionSchema := properties["action"].(map[string]any)
+	actionEnum := actionSchema["enum"].([]string)
+	for _, action := range codeintel.SupportedLSPActions() {
+		require.Contains(t, actionEnum, action.Name)
+		for _, alias := range action.Aliases {
+			require.Contains(t, actionEnum, alias)
+		}
+	}
 	require.Contains(t, actionSchema["enum"], "rename")
 	require.Contains(t, actionSchema["enum"], "workspace_symbol")
 	require.Contains(t, actionSchema["enum"], "workspace_symbol_resolve")

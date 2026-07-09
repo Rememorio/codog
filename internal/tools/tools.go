@@ -5853,7 +5853,7 @@ func (LSPTool) Definition() anthropic.ToolDefinition {
 			"properties": map[string]any{
 				"action": map[string]any{
 					"type": "string",
-					"enum": []string{"symbols", "document_symbols", "workspace_symbol", "workspace_symbols", "workspace_symbol_resolve", "execute_command", "references", "find_references", "diagnostics", "document_diagnostic", "workspace_diagnostic", "definition", "goto_definition", "declaration", "goto_declaration", "implementation", "goto_implementation", "type_definition", "goto_type_definition", "rename", "rename_symbol", "prepare_rename", "code_action", "quickfix", "code_action_resolve", "code_lens", "code_lens_resolve", "prepare_call_hierarchy", "incoming_calls", "outgoing_calls", "prepare_type_hierarchy", "supertypes", "subtypes", "hover", "completion", "completions", "completion_resolve", "document_highlight", "selection_range", "folding_range", "document_link", "document_link_resolve", "document_color", "color_presentation", "inlay_hint", "inlay_hint_resolve", "inline_value", "linked_editing_range", "moniker", "semantic_tokens", "semantic_tokens_full", "semantic_tokens_range", "semantic_tokens_delta", "signature_help", "format", "formatting", "range_format", "on_type_format", "will_save"},
+					"enum": lspToolActionEnum(),
 				},
 				"path":      map[string]any{"type": "string"},
 				"line":      map[string]any{"type": "integer", "minimum": 0},
@@ -5872,6 +5872,22 @@ func (LSPTool) Definition() anthropic.ToolDefinition {
 			"additionalProperties": false,
 		},
 	}
+}
+
+func lspToolActionEnum() []string {
+	seen := map[string]bool{}
+	actions := []string{}
+	for _, action := range codeintel.SupportedLSPActions() {
+		for _, candidate := range append([]string{action.Name}, action.Aliases...) {
+			candidate = strings.TrimSpace(candidate)
+			if candidate == "" || seen[candidate] {
+				continue
+			}
+			seen[candidate] = true
+			actions = append(actions, candidate)
+		}
+	}
+	return actions
 }
 
 func (LSPTool) Permission() Permission {
