@@ -6698,6 +6698,14 @@ func parseTeamArgsWithDefault(args []string, defaultFormat string) (teamRequest,
 		case !actionSet && isTeamAction(arg):
 			req.Action = normalizeTeamAction(arg)
 			actionSet = true
+		case !actionSet:
+			return req, unknownActionError{
+				Command:     "team",
+				Action:      arg,
+				Expected:    append([]string(nil), teamActionCandidates...),
+				Suggestions: toolnames.Suggestions(arg, teamActionCandidates, 4),
+				Usage:       teamUsage,
+			}
 		default:
 			positionals = append(positionals, arg)
 		}
@@ -6954,6 +6962,8 @@ func isTeamAction(value string) bool {
 }
 
 const teamUsage = "codog team [list|ls|get|show|status|stat|logs|log|watch|tail|follow|create|add|new|delete|remove|rm] [ARGS...] [--json|--output-format text|json]"
+
+var teamActionCandidates = []string{"list", "ls", "get", "show", "status", "stat", "logs", "log", "watch", "tail", "follow", "create", "add", "new", "delete", "remove", "rm"}
 
 func normalizeTeamAction(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
