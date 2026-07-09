@@ -869,7 +869,7 @@ func (r *Registry) Info(name string) (ToolInfo, bool) {
 func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessage, prompter *Prompter) (string, error) {
 	canonical, tool, ok := r.resolve(name)
 	if !ok {
-		return "", fmt.Errorf("unknown tool %q", name)
+		return "", r.unknownToolError(name)
 	}
 	if strings.EqualFold(canonical, "permission_check") {
 		return r.executePermissionCheck(input, prompter)
@@ -880,6 +880,18 @@ func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessa
 		}
 	}
 	return tool.Execute(ctx, input)
+}
+
+func (r *Registry) unknownToolError(name string) error {
+	suggestions := toolnames.Suggestions(name, r.toolNameSuggestionCandidates(), 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unknown tool %q", name)
+	case 1:
+		return fmt.Errorf("unknown tool %q; did you mean %q?", name, suggestions[0])
+	default:
+		return fmt.Errorf("unknown tool %q; suggestions: %s", name, strings.Join(suggestions, ", "))
+	}
 }
 
 func (r *Registry) resolve(name string) (string, Tool, bool) {

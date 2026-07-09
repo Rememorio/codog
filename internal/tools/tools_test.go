@@ -2046,6 +2046,16 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 	require.Contains(t, out, `"required_permission": "danger-full-access"`)
 }
 
+func TestRegistryUnknownToolSuggestsCanonicalName(t *testing.T) {
+	registry := NewRegistry(t.TempDir())
+
+	_, err := registry.Execute(context.Background(), "read_fil", []byte(`{}`), nil)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown tool "read_fil"`)
+	require.Contains(t, err.Error(), `did you mean "read_file"`)
+}
+
 func TestFileToolsAcceptClaudeFilePathParameter(t *testing.T) {
 	workspace := t.TempDir()
 	registry := NewRegistry(workspace)
