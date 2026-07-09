@@ -1392,7 +1392,9 @@ func Load(overrides FlagOverrides) (Config, error) {
 		return Config{}, err
 	}
 
-	applyEnv(&cfg)
+	if err := applyEnv(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := applyFlags(&cfg, overrides); err != nil {
 		return Config{}, err
 	}
@@ -1432,7 +1434,9 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 	if err := applyFlagSettings(&cfg, overrides.Settings); err != nil {
 		return Config{}, paths, err
 	}
-	applyEnv(&cfg)
+	if err := applyEnv(&cfg); err != nil {
+		return Config{}, paths, err
+	}
 	if err := applyFlags(&cfg, overrides); err != nil {
 		return Config{}, paths, err
 	}
@@ -1466,7 +1470,9 @@ func Default(overrides FlagOverrides) (Config, error) {
 	if err := applyFlagSettings(&cfg, overrides.Settings); err != nil {
 		return Config{}, err
 	}
-	applyEnv(&cfg)
+	if err := applyEnv(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := applyFlags(&cfg, overrides); err != nil {
 		return Config{}, err
 	}
@@ -1474,6 +1480,28 @@ func Default(overrides FlagOverrides) (Config, error) {
 		return Config{}, err
 	}
 	if err := applyManagedPolicy(&cfg); err != nil {
+		return Config{}, err
+	}
+	if err := finalizeConfig(&cfg); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+// DiagnosticDefault returns a validated baseline configuration for commands that
+// need to render diagnostics after full configuration loading has already
+// failed. It intentionally skips config files, environment overrides, external
+// credential helpers, and managed policy so the original load error remains
+// visible instead of being repeated by the fallback renderer.
+func DiagnosticDefault(overrides FlagOverrides) (Config, error) {
+	cfg, err := defaultConfig()
+	if err != nil {
+		return Config{}, err
+	}
+	if err := applyFlagSettings(&cfg, overrides.Settings); err != nil {
+		return Config{}, err
+	}
+	if err := applyFlags(&cfg, overrides); err != nil {
 		return Config{}, err
 	}
 	if err := finalizeConfig(&cfg); err != nil {
@@ -1751,6 +1779,19 @@ func (e *FileError) Unwrap() error {
 func IsFileError(err error) bool {
 	var fileErr *FileError
 	return errors.As(err, &fileErr)
+}
+
+// IsDiagnosticLoadError reports whether err can still be shown through
+// degraded diagnostic commands that do not need the rejected setting itself.
+func IsDiagnosticLoadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if IsFileError(err) {
+		return true
+	}
+	message := strings.TrimSpace(err.Error())
+	return strings.HasPrefix(message, "invalid_extra_body:")
 }
 
 func SetFileValue(path string, key string, value any) (MutationReport, error) {
@@ -3056,7 +3097,7 @@ func joinPromptAppend(existing string, next string) string {
 	return existing + "\n\n" + next
 }
 
-func applyEnv(cfg *Config) {
+func applyEnv(cfg *Config) error {
 	dotenv := envfile.Current()
 	lookup := func(name string) string {
 		value, _ := envfile.Lookup(name, dotenv)
@@ -3123,9 +3164,11 @@ func applyEnv(cfg *Config) {
 		}
 	}
 	if value := lookup("CODOG_EXTRA_BODY"); value != "" {
-		if parsed, err := parseExtraBody(value); err == nil {
-			cfg.ExtraBody = parsed
+		parsed, err := parseExtraBody(value)
+		if err != nil {
+			return fmt.Errorf("invalid_extra_body: CODOG_EXTRA_BODY must be a JSON object: %w", err)
 		}
+		cfg.ExtraBody = parsed
 	}
 	if value, ok := parseBoolEnv("CODOG_FAST_MODE", lookup); ok {
 		cfg.FastMode = &value
@@ -3205,6 +3248,7 @@ func applyEnv(cfg *Config) {
 	if value := lookup("CODOG_ADDITIONAL_DIRS"); value != "" {
 		cfg.AdditionalDirs = splitPathList(value)
 	}
+	return nil
 }
 
 func applyRoutedProviderEnv(cfg *Config, genericBaseURLSet bool, genericCredentialSet bool, lookup func(string) string) {

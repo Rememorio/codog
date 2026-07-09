@@ -230,7 +230,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		cfg, paths, err := config.LoadForInspection(overrides)
 		if err != nil {
-			if config.IsFileError(err) {
+			if config.IsDiagnosticLoadError(err) {
 				return renderConfigWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 			}
 			return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
@@ -241,7 +241,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if command == "providers" {
 		cfg, paths, err := config.LoadForInspection(overrides)
 		if err != nil {
-			if config.IsFileError(err) {
+			if config.IsDiagnosticLoadError(err) {
 				return renderProvidersWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 			}
 			return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
@@ -348,34 +348,34 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 
 	cfg, err := config.Load(overrides)
 	if err != nil {
-		if config.IsFileError(err) && isConfigCommand(command) {
+		if config.IsDiagnosticLoadError(err) && isConfigCommand(command) {
 			return renderConfigWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
-		if config.IsFileError(err) && isMCPCommand(command) {
+		if config.IsDiagnosticLoadError(err) && isMCPCommand(command) {
 			return renderMCPWithConfigLoadError(os.Stdout, command, rest, originalArgs, err)
 		}
-		if config.IsFileError(err) && isPluginsCommand(command) {
+		if config.IsDiagnosticLoadError(err) && isPluginsCommand(command) {
 			return renderPluginsWithConfigLoadError(os.Stdout, command, rest, originalArgs, err)
 		}
-		if config.IsFileError(err) && isProvidersCommand(command) {
+		if config.IsDiagnosticLoadError(err) && isProvidersCommand(command) {
 			return renderProvidersWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
-		if config.IsFileError(err) && isStatusCommand(command) {
+		if config.IsDiagnosticLoadError(err) && isStatusCommand(command) {
 			return renderStatusWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
-		if config.IsFileError(err) && isBootstrapPlanCommand(command) {
+		if config.IsDiagnosticLoadError(err) && isBootstrapPlanCommand(command) {
 			return renderBootstrapPlanWithConfigLoadError(os.Stdout, rest, overrides, originalArgs, err)
 		}
-		if config.IsFileError(err) && isDeferredInitCommand(command) {
+		if config.IsDiagnosticLoadError(err) && isDeferredInitCommand(command) {
 			return renderDeferredInitWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
-		if config.IsFileError(err) && isPrefetchCommand(command) {
+		if config.IsDiagnosticLoadError(err) && isPrefetchCommand(command) {
 			return renderPrefetchWithConfigLoadError(os.Stdout, rest, overrides, originalArgs, err)
 		}
-		if config.IsFileError(err) && isCapabilitiesCommand(command) {
+		if config.IsDiagnosticLoadError(err) && isCapabilitiesCommand(command) {
 			return renderCapabilitiesWithConfigLoadError(os.Stdout, rest, overrides, originalArgs)
 		}
-		if config.IsFileError(err) && isDoctorCommand(command) {
+		if config.IsDiagnosticLoadError(err) && isDoctorCommand(command) {
 			return renderDoctorWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
 		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
@@ -1301,7 +1301,7 @@ func isProvidersCommand(command string) bool {
 }
 
 func renderStatusWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
-	cfg, err := config.Default(overrides)
+	cfg, err := config.DiagnosticDefault(overrides)
 	if err != nil {
 		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
 	}
@@ -1334,7 +1334,7 @@ func renderStatusWithConfigLoadError(out io.Writer, command string, rest []strin
 }
 
 func renderBootstrapPlanWithConfigLoadError(out io.Writer, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
-	cfg, err := config.Default(overrides)
+	cfg, err := config.DiagnosticDefault(overrides)
 	if err != nil {
 		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
 	}
@@ -1363,7 +1363,7 @@ func renderBootstrapPlanWithConfigLoadError(out io.Writer, rest []string, overri
 }
 
 func renderDeferredInitWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
-	cfg, err := config.Default(overrides)
+	cfg, err := config.DiagnosticDefault(overrides)
 	if err != nil {
 		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
 	}
@@ -1392,7 +1392,7 @@ func renderDeferredInitWithConfigLoadError(out io.Writer, command string, rest [
 }
 
 func renderPrefetchWithConfigLoadError(out io.Writer, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
-	cfg, err := config.Default(overrides)
+	cfg, err := config.DiagnosticDefault(overrides)
 	if err != nil {
 		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
 	}
@@ -1425,7 +1425,7 @@ func renderPrefetchWithConfigLoadError(out io.Writer, rest []string, overrides c
 }
 
 func renderCapabilitiesWithConfigLoadError(out io.Writer, rest []string, overrides config.FlagOverrides, originalArgs []string) error {
-	cfg, err := config.Default(overrides)
+	cfg, err := config.DiagnosticDefault(overrides)
 	if err != nil {
 		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
 	}
@@ -1457,7 +1457,7 @@ func renderCapabilitiesWithConfigLoadError(out io.Writer, rest []string, overrid
 }
 
 func renderDoctorWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
-	cfg, err := config.Default(overrides)
+	cfg, err := config.DiagnosticDefault(overrides)
 	if err != nil {
 		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
 	}
@@ -1498,7 +1498,7 @@ func renderConfigWithConfigLoadError(out io.Writer, command string, rest []strin
 	if err != nil {
 		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
 	}
-	cfg, err := config.Default(overrides)
+	cfg, err := config.DiagnosticDefault(overrides)
 	if err != nil {
 		return renderCLIError(out, err, req.Format)
 	}
@@ -1582,7 +1582,7 @@ func renderProvidersWithConfigLoadError(out io.Writer, command string, rest []st
 	if req.Action == "set" {
 		return renderCLIError(out, loadErr, req.Format)
 	}
-	cfg, err := config.Default(overrides)
+	cfg, err := config.DiagnosticDefault(overrides)
 	if err != nil {
 		return renderCLIError(out, err, req.Format)
 	}
@@ -32609,6 +32609,11 @@ func buildCLIErrorReport(err error) cliErrorReport {
 		kind = "invalid_permission_mode"
 		message = strings.TrimSpace(rest)
 		hint = "Use one of: read-only, workspace-write, danger-full-access, prompt, allow."
+	}
+	if rest, ok := strings.CutPrefix(message, "invalid_extra_body:"); ok {
+		kind = "invalid_extra_body"
+		message = strings.TrimSpace(rest)
+		hint = "Set CODOG_EXTRA_BODY to a JSON object, or move provider-specific fields into the config extraBody object."
 	}
 	return finish(cliErrorReport{
 		Kind:      kind,

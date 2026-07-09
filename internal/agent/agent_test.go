@@ -32326,6 +32326,36 @@ func TestProvidersDegradeOnMalformedConfigFile(t *testing.T) {
 	require.NotContains(t, out, "config_load_error")
 }
 
+func TestProvidersDegradeOnInvalidExtraBodyEnv(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	t.Setenv("CODOG_EXTRA_BODY", `{`)
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--output-format", "json", "providers"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report providersReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "providers", report.Kind)
+	require.Equal(t, "degraded", report.Status)
+	require.Equal(t, "invalid_extra_body", report.ConfigLoadErrorKind)
+	require.NotNil(t, report.ConfigLoadError)
+	require.Contains(t, *report.ConfigLoadError, "CODOG_EXTRA_BODY")
+	require.Equal(t, config.DefaultModel, report.Active.Model)
+	require.NotNil(t, report.Active.ConfigLoadError)
+	require.Equal(t, "invalid_extra_body", report.Active.ConfigLoadErrorKind)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--output-format", "json", "providers", "set", "openai"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var errorReport cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &errorReport))
+	require.Equal(t, "invalid_extra_body", errorReport.ErrorKind)
+	require.Contains(t, errorReport.Hint, "CODOG_EXTRA_BODY")
+}
+
 func TestProvidersSetWritesConfig(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(configHome, "provider.json")

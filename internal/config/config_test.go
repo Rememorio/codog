@@ -1443,6 +1443,21 @@ func TestLoadExtraBodyConfigAndEnv(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, false, cfg.ExtraBody["parallel_tool_calls"])
 	require.NotContains(t, cfg.ExtraBody, "web_search_options")
+
+	t.Setenv("CODOG_EXTRA_BODY", `{`)
+	_, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_extra_body")
+
+	t.Setenv("CODOG_EXTRA_BODY", `[]`)
+	_, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_extra_body")
+	require.True(t, IsDiagnosticLoadError(err))
+
+	cfg, err = DiagnosticDefault(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Empty(t, cfg.ExtraBody)
 }
 
 func TestLoadMCPHeadersHelperAliases(t *testing.T) {
