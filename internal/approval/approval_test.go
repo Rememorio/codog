@@ -59,6 +59,20 @@ func TestApprovalTokenBlocksUntilGranted(t *testing.T) {
 	}, audit.DelegationChain)
 }
 
+func TestApprovalTokenSuggestsKnownStatuses(t *testing.T) {
+	store := NewStore(t.TempDir())
+	_, err := store.Grant(GrantOptions{
+		Token:            "tok-typo",
+		Scope:            Scope{Policy: "main_push_forbidden", Action: "git push"},
+		ApprovingActor:   "owner",
+		ApprovedExecutor: "release-bot",
+		Status:           Status("approvalgrantd"),
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown approval status "approvalgrantd"`)
+	require.Contains(t, err.Error(), `did you mean "approval_granted"`)
+}
+
 func TestApprovalTokenApprovesPendingGrantInPlace(t *testing.T) {
 	store := NewStore(t.TempDir())
 	scope := Scope{Policy: "main_push_forbidden", Action: "git push", Repository: "owner/repo", Branch: "main"}

@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 type Status string
@@ -23,6 +25,14 @@ const (
 	StatusExpired  Status = "approval_expired"
 	StatusRevoked  Status = "approval_revoked"
 )
+
+var statusNames = []string{
+	string(StatusPending),
+	string(StatusGranted),
+	string(StatusConsumed),
+	string(StatusExpired),
+	string(StatusRevoked),
+}
 
 // UsageState summarizes whether an approval token can still authorize work.
 type UsageState string
@@ -154,7 +164,7 @@ func (s Store) Grant(opts GrantOptions) (Grant, error) {
 		status = StatusGranted
 	}
 	if !validStatus(status) {
-		return Grant{}, fmt.Errorf("unknown approval status %q", status)
+		return Grant{}, unknownStatusError(status)
 	}
 	token := strings.TrimSpace(opts.Token)
 	if token == "" {
@@ -560,6 +570,19 @@ func validStatus(status Status) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func unknownStatusError(status Status) error {
+	value := string(status)
+	suggestions := toolnames.Suggestions(value, statusNames, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unknown approval status %q", value)
+	case 1:
+		return fmt.Errorf("unknown approval status %q; did you mean %q?", value, suggestions[0])
+	default:
+		return fmt.Errorf("unknown approval status %q; suggestions: %s", value, strings.Join(suggestions, ", "))
 	}
 }
 
