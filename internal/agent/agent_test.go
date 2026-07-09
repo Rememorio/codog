@@ -1129,6 +1129,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, out.String(), "Mock parity")
 	require.Contains(t, out.String(), "Terminal parity")
 	require.Contains(t, out.String(), "Bridge parity")
+	require.Contains(t, out.String(), "Orchestration")
 	out.Reset()
 
 	require.NoError(t, app.Capabilities([]string{"--json"}))
@@ -1148,6 +1149,10 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Empty(t, report.Bridge.MissingBridgeMethods)
 	require.Empty(t, report.Bridge.MissingControlRoutes)
 	require.False(t, report.Bridge.RemoteAuthConfigured)
+	require.Equal(t, "ready", report.Orchestration.Status)
+	require.True(t, report.Orchestration.AgentStoreReady)
+	require.True(t, report.Orchestration.PluginDiscoveryReady)
+	require.True(t, report.Orchestration.MCPLifecycleReady)
 	require.Contains(t, report.Commands, "prompt")
 	require.Contains(t, report.Commands, "addCommand")
 	require.Contains(t, report.Commands, "ant-trace")
