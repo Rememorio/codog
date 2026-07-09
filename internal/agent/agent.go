@@ -86,6 +86,7 @@ import (
 	"github.com/Rememorio/codog/internal/promptrefs"
 	"github.com/Rememorio/codog/internal/prworkflow"
 	"github.com/Rememorio/codog/internal/releasenotes"
+	"github.com/Rememorio/codog/internal/releaseparity"
 	remoteruntime "github.com/Rememorio/codog/internal/remote"
 	"github.com/Rememorio/codog/internal/reportconformance"
 	"github.com/Rememorio/codog/internal/reportschema"
@@ -29904,6 +29905,7 @@ type capabilitiesReport struct {
 	Terminal                terminalparity.Report      `json:"terminal"`
 	Bridge                  bridgeparity.Report        `json:"bridge"`
 	Orchestration           orchestrationparity.Report `json:"orchestration"`
+	Release                 releaseparity.Report       `json:"release"`
 	Features                []string                   `json:"features"`
 	Protocols               []string                   `json:"protocols"`
 	OutputFormats           []string                   `json:"output_formats"`
@@ -30215,6 +30217,13 @@ func (a *App) capabilitiesReport() capabilitiesReport {
 			ConfigHome: a.Config.ConfigHome,
 			Workspace:  a.Workspace,
 			MCPServers: a.Config.MCPServers,
+		}),
+		Release: releaseparity.Build(releaseparity.Options{
+			SandboxStrategy:           a.Config.Future.SandboxStrategy,
+			SandboxEnabled:            configBoolValue(a.Config.Future.Sandbox.Enabled),
+			UpdaterManifestURL:        a.Config.Future.UpdaterManifestURL,
+			EnterprisePolicyPath:      a.Config.Future.EnterprisePolicy,
+			EnterprisePolicyPublicKey: a.Config.Future.EnterprisePolicyPublicKey,
 		}),
 		Features:      codogCapabilityFeatures(),
 		Protocols:     codogCapabilityProtocols(),
@@ -31070,6 +31079,7 @@ func renderCapabilitiesText(out io.Writer, report capabilitiesReport) {
 	fmt.Fprintf(out, "  Terminal parity   %s (%d required commands, %d resume-safe)\n", report.Terminal.Status, report.Terminal.RequiredCommandCount, report.Terminal.ResumeSafeSlashCount)
 	fmt.Fprintf(out, "  Bridge parity     %s (%d methods, %d routes)\n", report.Bridge.Status, report.Bridge.BridgeMethodCount, report.Bridge.ControlRouteCount)
 	fmt.Fprintf(out, "  Orchestration     %s (%d skills, %d plugins, %d MCP servers)\n", report.Orchestration.Status, report.Orchestration.SkillCount, report.Orchestration.PluginCount, report.Orchestration.ConfiguredMCPCount)
+	fmt.Fprintf(out, "  Release hardening %s (%s)\n", report.Release.Status, report.Release.Platform)
 	fmt.Fprintln(out, "  Features")
 	for _, feature := range report.Features {
 		fmt.Fprintf(out, "    - %s\n", feature)

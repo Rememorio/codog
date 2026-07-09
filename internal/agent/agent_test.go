@@ -1130,6 +1130,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, out.String(), "Terminal parity")
 	require.Contains(t, out.String(), "Bridge parity")
 	require.Contains(t, out.String(), "Orchestration")
+	require.Contains(t, out.String(), "Release hardening")
 	out.Reset()
 
 	require.NoError(t, app.Capabilities([]string{"--json"}))
@@ -1153,6 +1154,10 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, report.Orchestration.AgentStoreReady)
 	require.True(t, report.Orchestration.PluginDiscoveryReady)
 	require.True(t, report.Orchestration.MCPLifecycleReady)
+	require.NotEmpty(t, report.Release.Platform)
+	require.Equal(t, "degraded", report.Release.Status)
+	require.Contains(t, report.Release.MissingProductionSurfaces, "updater_manifest")
+	require.Contains(t, report.Release.MissingProductionSurfaces, "managed_policy")
 	require.Contains(t, report.Commands, "prompt")
 	require.Contains(t, report.Commands, "addCommand")
 	require.Contains(t, report.Commands, "ant-trace")
