@@ -34,6 +34,14 @@ func TestSetupWritesSelectedWorkflow(t *testing.T) {
 	require.Contains(t, string(data), "${{ secrets.CLAUDE_KEY }}")
 }
 
+func TestSetupSuggestsKnownWorkflows(t *testing.T) {
+	_, err := Setup(Options{Workspace: t.TempDir(), Workflows: []string{"revie"}})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown GitHub workflow "revie"`)
+	require.Contains(t, err.Error(), `did you mean "review"`)
+}
+
 func TestSetupDoesNotOverwriteExistingWorkflowWithoutForce(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, ".github", "workflows", "claude.yml")

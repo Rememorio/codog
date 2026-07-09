@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 const (
@@ -16,6 +18,8 @@ const (
 )
 
 var secretNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+var workflowNameCandidates = []string{"all", "claude", "review", "claude-review"}
 
 type Options struct {
 	Workspace  string
@@ -146,7 +150,7 @@ func normalizeWorkflows(values []string) ([]string, error) {
 				value = "review"
 			}
 			if value != "claude" && value != "review" {
-				return nil, fmt.Errorf("unknown GitHub workflow %q", part)
+				return nil, unknownWorkflowError(part)
 			}
 			if !seen[value] {
 				out = append(out, value)
@@ -158,6 +162,19 @@ func normalizeWorkflows(values []string) ([]string, error) {
 		return nil, fmt.Errorf("at least one workflow is required")
 	}
 	return out, nil
+}
+
+func unknownWorkflowError(value string) error {
+	value = strings.TrimSpace(value)
+	suggestions := toolnames.Suggestions(value, workflowNameCandidates, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unknown GitHub workflow %q", value)
+	case 1:
+		return fmt.Errorf("unknown GitHub workflow %q; did you mean %q?", value, suggestions[0])
+	default:
+		return fmt.Errorf("unknown GitHub workflow %q; suggestions: %s", value, strings.Join(suggestions, ", "))
+	}
 }
 
 type workflowTemplate struct {

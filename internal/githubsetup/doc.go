@@ -1,2 +1,2 @@
-// Package githubsetup inspects local GitHub CLI configuration for Codog.
+// Package githubsetup creates Codog-compatible GitHub Actions setup reports.
 package githubsetup
