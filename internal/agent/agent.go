@@ -33836,7 +33836,7 @@ func (a *App) runResumedCodeIntelSlash(ctx context.Context, args []string, forma
 	case "lsp":
 		return a.runResumedCodeIntelLSPSlash(rest, format)
 	default:
-		return fmt.Errorf("unknown code-intel command %q", args[0])
+		return unknownCodeIntelActionError(args[0])
 	}
 }
 
@@ -33849,7 +33849,7 @@ func (a *App) runResumedCodeIntelLSPSlash(args []string, format string) error {
 	case "list", "actions", "capabilities", "discover", "status", "query", "request", "start", "stop":
 		return a.CodeIntelLSP(args)
 	default:
-		return fmt.Errorf("unknown code-intel lsp command %q", args[0])
+		return unknownCodeIntelLSPActionError(args[0])
 	}
 }
 
@@ -36655,7 +36655,23 @@ func (a *App) CodeIntel(args []string) error {
 		renderCodeIntelNotebookEdit(a.Out, report)
 		return nil
 	default:
-		return fmt.Errorf("unknown code-intel command %q", args[0])
+		return unknownCodeIntelActionError(args[0])
+	}
+}
+
+var codeIntelActionCandidates = []string{
+	"symbols", "diagnostics", "map", "references", "definition", "hover", "teleport",
+	"completion", "completions", "format", "formatting", "lsp", "notebook",
+	"notebook-read", "notebook-edit",
+}
+
+func unknownCodeIntelActionError(action string) error {
+	return unknownActionError{
+		Command:     "codog code-intel",
+		Action:      action,
+		Expected:    append([]string(nil), codeIntelActionCandidates...),
+		Suggestions: toolnames.Suggestions(action, codeIntelActionCandidates, 4),
+		Usage:       "codog code-intel [symbols|diagnostics|map|references|definition|hover|teleport|completion|format|lsp|notebook-read|notebook-edit] [ARGS...]",
 	}
 }
 
@@ -37148,9 +37164,23 @@ func (a *App) CodeIntelLSP(args []string) error {
 		}
 		payload = status
 	default:
-		return fmt.Errorf("unknown code-intel lsp command %q", args[0])
+		return unknownCodeIntelLSPActionError(args[0])
 	}
 	return renderCodeIntelLSPPayload(a.Out, format, payload)
+}
+
+var codeIntelLSPActionCandidates = []string{
+	"list", "actions", "capabilities", "discover", "start", "status", "query", "request", "stop",
+}
+
+func unknownCodeIntelLSPActionError(action string) error {
+	return unknownActionError{
+		Command:     "codog code-intel lsp",
+		Action:      action,
+		Expected:    append([]string(nil), codeIntelLSPActionCandidates...),
+		Suggestions: toolnames.Suggestions(action, codeIntelLSPActionCandidates, 4),
+		Usage:       "codog code-intel lsp [list|actions|discover|start|status|query|stop] [ARGS...]",
+	}
 }
 
 func parseCodeIntelLSPArgs(args []string) (string, []string, error) {

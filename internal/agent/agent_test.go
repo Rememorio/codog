@@ -31503,15 +31503,16 @@ func TestLongTailCommandFallbackErrorsAreStructured(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, data, 0o644))
 
 	for _, tc := range []struct {
-		name string
-		args []string
+		name     string
+		args     []string
+		hintPart string
 	}{
 		{name: "marketplace install missing path", args: []string{"marketplace", "install"}},
 		{name: "oauth refresh unknown option", args: []string{"oauth-refresh", "--bogus"}},
 		{name: "bridge unknown action", args: []string{"bridge", "bogus"}},
 		{name: "mobile unknown flag", args: []string{"mobile", "--bogus"}},
 		{name: "desktop unknown flag", args: []string{"desktop", "--bogus"}},
-		{name: "code intel unknown command", args: []string{"code-intel", "bogus"}},
+		{name: "code intel unknown command", args: []string{"code-intel", "symbls"}, hintPart: "Did you mean `codog code-intel symbols`?"},
 		{name: "notebook read missing path", args: []string{"notebook-read"}},
 		{name: "tool details missing name", args: []string{"tool-details"}},
 	} {
@@ -31532,6 +31533,9 @@ func TestLongTailCommandFallbackErrorsAreStructured(t *testing.T) {
 			require.NotEmpty(t, report.ErrorKind)
 			require.NotEmpty(t, report.Message)
 			require.NotEmpty(t, report.Hint)
+			if tc.hintPart != "" {
+				require.Contains(t, report.Hint, tc.hintPart)
+			}
 			require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
 		})
 	}
