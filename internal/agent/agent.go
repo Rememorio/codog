@@ -13118,6 +13118,11 @@ type providerPreset struct {
 	DefaultModel                          string   `json:"default_model,omitempty"`
 	AuthEnv                               []string `json:"auth_env,omitempty"`
 	OpenAICompatible                      bool     `json:"openai_compatible"`
+	ReasoningModel                        bool     `json:"reasoning_model"`
+	PreservesReasoningContentInHistory    bool     `json:"preserves_reasoning_content_in_history"`
+	StripsTuningParams                    bool     `json:"strips_tuning_params"`
+	SupportsStreamUsage                   bool     `json:"supports_stream_usage"`
+	HonorsProxyEnv                        bool     `json:"honors_proxy_env"`
 	SupportsExtraBodyParams               bool     `json:"supports_extra_body_params"`
 	PreservesSlashModelIDsOnCustomBaseURL bool     `json:"preserves_slash_model_ids_on_custom_base_url,omitempty"`
 	ProtectedExtraBodyKeys                []string `json:"protected_extra_body_keys,omitempty"`
@@ -13141,6 +13146,11 @@ type activeProviderReport struct {
 	MaxTokens                             int                `json:"max_tokens"`
 	MaxTurns                              int                `json:"max_turns"`
 	OpenAICompatible                      bool               `json:"openai_compatible"`
+	ReasoningModel                        bool               `json:"reasoning_model"`
+	PreservesReasoningContentInHistory    bool               `json:"preserves_reasoning_content_in_history"`
+	StripsTuningParams                    bool               `json:"strips_tuning_params"`
+	SupportsStreamUsage                   bool               `json:"supports_stream_usage"`
+	HonorsProxyEnv                        bool               `json:"honors_proxy_env"`
 	SupportsExtraBodyParams               bool               `json:"supports_extra_body_params"`
 	ExtraBodyConfigured                   bool               `json:"extra_body_configured"`
 	PreservesSlashModelIDsOnCustomBaseURL bool               `json:"preserves_slash_model_ids_on_custom_base_url,omitempty"`
@@ -13434,6 +13444,11 @@ func activeProvider(cfg config.Config) activeProviderReport {
 		protocol = "openai-compatible"
 	}
 	openAICompatible := providerProtocolOpenAICompatible(protocol)
+	wireModel := modelrouting.ResolveAlias(cfg.Model)
+	if openAICompatible {
+		wireModel = modelrouting.WireModelForBaseURL(wireModel, cfg.BaseURL)
+	}
+	reasoningModel := openAICompatible && modelrouting.IsReasoningModel(wireModel)
 	return activeProviderReport{
 		Name:                                  name,
 		Protocol:                              protocol,
@@ -13442,12 +13457,24 @@ func activeProvider(cfg config.Config) activeProviderReport {
 		MaxTokens:                             cfg.MaxTokens,
 		MaxTurns:                              cfg.MaxTurns,
 		OpenAICompatible:                      openAICompatible,
+		ReasoningModel:                        reasoningModel,
+		PreservesReasoningContentInHistory:    openAICompatible && modelrouting.RequiresReasoningContentHistory(wireModel),
+		StripsTuningParams:                    reasoningModel,
+		SupportsStreamUsage:                   providerSupportsStreamUsage(name, openAICompatible),
+		HonorsProxyEnv:                        true,
 		SupportsExtraBodyParams:               openAICompatible,
 		ExtraBodyConfigured:                   len(cfg.ExtraBody) != 0,
 		PreservesSlashModelIDsOnCustomBaseURL: name == "openai",
 		ProtectedExtraBodyKeys:                providerProtectedExtraBodyKeys(openAICompatible),
 		Auth:                                  providerAuthStatus(cfg),
 	}
+}
+
+func providerSupportsStreamUsage(name string, openAICompatible bool) bool {
+	if !openAICompatible {
+		return false
+	}
+	return !strings.EqualFold(strings.TrimSpace(name), "xai")
 }
 
 func providerAuthStatus(cfg config.Config) providerAuthReport {
@@ -13488,12 +13515,13 @@ func providerAuthStatus(cfg config.Config) providerAuthReport {
 func providerPresets() []providerPreset {
 	return []providerPreset{
 		{
-			Name:         "anthropic",
-			Protocol:     "anthropic-compatible",
-			BaseURL:      config.DefaultBaseURL,
-			DefaultModel: config.DefaultModel,
-			AuthEnv:      []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
-			Description:  "Anthropic Messages API.",
+			Name:           "anthropic",
+			Protocol:       "anthropic-compatible",
+			BaseURL:        config.DefaultBaseURL,
+			DefaultModel:   config.DefaultModel,
+			AuthEnv:        []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
+			HonorsProxyEnv: true,
+			Description:    "Anthropic Messages API.",
 		},
 		{
 			Name:                                  "openai",
@@ -13502,6 +13530,8 @@ func providerPresets() []providerPreset {
 			DefaultModel:                          "openai/gpt-4o-mini",
 			AuthEnv:                               []string{"CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_API_KEY"},
 			OpenAICompatible:                      true,
+			SupportsStreamUsage:                   true,
+			HonorsProxyEnv:                        true,
 			SupportsExtraBodyParams:               true,
 			PreservesSlashModelIDsOnCustomBaseURL: true,
 			ProtectedExtraBodyKeys:                providerProtectedExtraBodyKeys(true),
@@ -13514,6 +13544,7 @@ func providerPresets() []providerPreset {
 			DefaultModel:            "grok",
 			AuthEnv:                 []string{"XAI_API_KEY"},
 			OpenAICompatible:        true,
+			HonorsProxyEnv:          true,
 			SupportsExtraBodyParams: true,
 			ProtectedExtraBodyKeys:  providerProtectedExtraBodyKeys(true),
 			Description:             "xAI Chat Completions API selected by Grok model aliases or the xai/ model prefix.",
@@ -13525,15 +13556,18 @@ func providerPresets() []providerPreset {
 			DefaultModel:            "qwen-plus",
 			AuthEnv:                 []string{"DASHSCOPE_API_KEY"},
 			OpenAICompatible:        true,
+			SupportsStreamUsage:     true,
+			HonorsProxyEnv:          true,
 			SupportsExtraBodyParams: true,
 			ProtectedExtraBodyKeys:  providerProtectedExtraBodyKeys(true),
 			Description:             "Alibaba DashScope compatible mode selected by Qwen and Kimi model aliases or prefixes.",
 		},
 		{
-			Name:        "custom",
-			Protocol:    "anthropic-compatible",
-			AuthEnv:     []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
-			Description: "Any endpoint that implements the Anthropic Messages API.",
+			Name:           "custom",
+			Protocol:       "anthropic-compatible",
+			AuthEnv:        []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
+			HonorsProxyEnv: true,
+			Description:    "Any endpoint that implements the Anthropic Messages API.",
 		},
 	}
 }
@@ -13696,6 +13730,8 @@ func renderProvidersText(out io.Writer, report providersReport) {
 	fmt.Fprintf(out, "Provider: %s (%s)\n", active.Name, active.Protocol)
 	fmt.Fprintf(out, "Model: %s\n", active.Model)
 	fmt.Fprintf(out, "Base URL: %s\n", active.BaseURL)
+	fmt.Fprintf(out, "Reasoning model: %t\n", active.ReasoningModel)
+	fmt.Fprintf(out, "Stream usage: %t\n", active.SupportsStreamUsage)
 	if active.SupportsExtraBodyParams {
 		extraBody := "supported"
 		if active.ExtraBodyConfigured {
