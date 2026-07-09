@@ -115,6 +115,39 @@ expect eof
 	require.Contains(t, output, "/doctor")
 }
 
+func TestRealBinaryTUISearchesPromptHistoryWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	server := httptest.NewServer(mockanthropic.Server{Text: "history seed answer"}.Handler())
+	defer server.Close()
+	extraEnv := []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}
+
+	first := runCodogWithExtraEnv(t, bin, workspace, configHome, extraEnv, nil, "--model", "claude-sonnet-4-5", "-p", "history recall marker", "--max-turns", "2")
+	require.Equal(t, 0, first.Code, first.Combined())
+	sessionID := extractSessionID(t, first.Stderr)
+
+	output := runExpectCodog(t, bin, workspace, configHome, extraEnv, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --session `+sessionID+` --model claude-sonnet-4-5 tui
+expect "Codog TUI"
+send "\022"
+expect "history"
+expect "history recall marker"
+send "\r"
+expect "history selected"
+expect "history recall marker"
+send "\033"
+expect eof
+`)
+
+	require.Contains(t, output, "history recall marker")
+	require.Contains(t, output, "history selected")
+}
+
 func TestRealBinaryTUIShowsProviderErrorsWithTTY(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()

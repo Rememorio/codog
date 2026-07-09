@@ -35,6 +35,7 @@ type SlashFunc func(context.Context, string) (output string, handled bool, err e
 type ShellOptions struct {
 	Candidates []string
 	Prefill    string
+	History    []string
 	Entries    []Entry
 	Submit     SubmitFunc
 	Slash      SlashFunc
@@ -68,6 +69,12 @@ type model struct {
 	transcript []transcriptEntry
 	submit     SubmitFunc
 	slash      SlashFunc
+	history    []string
+	historyPos int
+	draft      string
+	searchOpen bool
+	searchHits []string
+	searchPos  int
 }
 
 type transcriptEntry struct {
@@ -147,6 +154,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m := newModel(ctx, ta, options.Candidates, entries)
 	m.submit = options.Submit
 	m.slash = options.Slash
+	m.setHistory(options.History)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
@@ -168,6 +176,7 @@ func newModel(ctx context.Context, ta textarea.Model, candidates []string, entri
 		candidates: candidates,
 		status:     "ready",
 		transcript: entries,
+		historyPos: -1,
 	}
 	m.refreshViewport()
 	return m
@@ -211,6 +220,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":
+			if m.searchOpen {
+				m.closeHistorySearch(false)
+				return m, nil
+			}
 			if m.helpOpen {
 				m.helpOpen = false
 				m.status = "ready"
@@ -230,21 +243,46 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.LineDown(max(1, m.viewport.Height/2))
 			return m, nil
 		case "up":
+			if m.searchOpen {
+				m.moveHistorySearch(-1)
+				return m, nil
+			}
 			if len(m.matches) > 0 {
 				m.selected = (m.selected - 1 + len(m.matches)) % len(m.matches)
 				return m, nil
 			}
+			if m.canNavigateHistory() {
+				m.navigateHistory(-1)
+				return m, nil
+			}
 		case "down":
+			if m.searchOpen {
+				m.moveHistorySearch(1)
+				return m, nil
+			}
 			if len(m.matches) > 0 {
 				m.selected = (m.selected + 1) % len(m.matches)
+				return m, nil
+			}
+			if m.canNavigateHistory() {
+				m.navigateHistory(1)
 				return m, nil
 			}
 		case "tab":
 			if m.busy {
 				return m, nil
 			}
+			if m.searchOpen {
+				m.moveHistorySearch(1)
+				return m, nil
+			}
 			m = m.completeSlashCommand()
 			return m, nil
+		case "ctrl+r":
+			if len(m.history) > 0 {
+				m.openHistorySearch()
+				return m, nil
+			}
 		case "?":
 			if strings.TrimSpace(m.textarea.Value()) == "" {
 				m.helpOpen = !m.helpOpen
@@ -254,6 +292,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if m.busy {
+				return m, nil
+			}
+			if m.searchOpen {
+				m.closeHistorySearch(true)
 				return m, nil
 			}
 			if len(m.matches) > 0 {
@@ -275,6 +317,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var viewportCmd tea.Cmd
 	m.viewport, viewportCmd = m.viewport.Update(msg)
 	m.textarea, cmd = m.textarea.Update(msg)
+	if m.searchOpen {
+		m.updateHistorySearch()
+		return m, tea.Batch(cmd, viewportCmd)
+	}
 	if strings.TrimSpace(m.textarea.Value()) == "" || !strings.HasPrefix(strings.TrimSpace(m.textarea.Value()), "/") {
 		m.matches = nil
 		m.selected = 0
@@ -299,6 +345,9 @@ func (m model) View() string {
 	composer := composerTitle + "\n" + m.textarea.View()
 	if len(m.matches) > 0 {
 		composer += "\n" + renderCompletions(m.matches, m.selected)
+	}
+	if m.searchOpen {
+		composer += "\n" + renderHistorySearch(m.searchHits, m.searchPos, m.textarea.Value())
 	}
 	status := statusStyle().Width(max(40, m.width)).Render(statusBarText(m.status, m.width))
 	return strings.Join([]string{title, body, composer, status}, "\n")
@@ -328,9 +377,11 @@ func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if strings.HasPrefix(value, "/") && m.slash != nil {
+		m.appendHistory(value)
 		m.textarea.SetValue("")
 		m.matches = nil
 		m.selected = 0
+		m.historyPos = -1
 		m.busy = true
 		m.status = "running slash"
 		m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: value})
@@ -342,9 +393,11 @@ func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
 		m.result = Result{Submitted: true, Prompt: value}
 		return m, tea.Quit
 	}
+	m.appendHistory(value)
 	m.textarea.SetValue("")
 	m.matches = nil
 	m.selected = 0
+	m.historyPos = -1
 	m.busy = true
 	m.status = "running"
 	m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: value})
@@ -436,6 +489,31 @@ func renderCompletions(matches []string, selected int) string {
 	return strings.Join(lines, "\n")
 }
 
+func renderHistorySearch(matches []string, selected int, query string) string {
+	query = strings.TrimSpace(query)
+	title := " history "
+	if query != "" {
+		title = fmt.Sprintf(" history: %s ", query)
+	}
+	lines := []string{completionTitleStyle().Render(title)}
+	if len(matches) == 0 {
+		return strings.Join(append(lines, completionStyle().Render("  no matches")), "\n")
+	}
+	if selected < 0 || selected >= len(matches) {
+		selected = 0
+	}
+	for index, match := range matches {
+		prefix := "  "
+		style := completionStyle()
+		if index == selected {
+			prefix = "> "
+			style = selectedCompletionStyle()
+		}
+		lines = append(lines, style.Render(prefix+truncateForComposer(match, 100)))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func statusBarText(status string, width int) string {
 	status = strings.TrimSpace(status)
 	if status == "" {
@@ -443,12 +521,174 @@ func statusBarText(status string, width int) string {
 	}
 	switch {
 	case width > 0 && width < 70:
-		return fmt.Sprintf("%s · Enter · Tab · ? · Esc", status)
+		return fmt.Sprintf("%s · Enter · Tab · Ctrl-R · Esc", status)
 	case width > 0 && width < 90:
-		return fmt.Sprintf("%s · Enter send · Alt+Enter newline · Tab · ? help · Esc", status)
+		return fmt.Sprintf("%s · Enter send · Alt+Enter newline · Tab · Ctrl-R · Esc", status)
 	default:
-		return fmt.Sprintf("%s · Enter send · Alt+Enter newline · Tab complete · ? help · Esc quit", status)
+		return fmt.Sprintf("%s · Enter send · Alt+Enter newline · Tab complete · Ctrl-R history · ? help · Esc quit", status)
 	}
+}
+
+func (m *model) setHistory(history []string) {
+	m.history = normalizeHistory(history)
+	m.historyPos = -1
+}
+
+func normalizeHistory(history []string) []string {
+	seen := map[string]struct{}{}
+	reversed := make([]string, 0, len(history))
+	for index := len(history) - 1; index >= 0; index-- {
+		text := strings.TrimSpace(history[index])
+		if text == "" {
+			continue
+		}
+		if _, ok := seen[text]; ok {
+			continue
+		}
+		seen[text] = struct{}{}
+		reversed = append(reversed, text)
+	}
+	out := make([]string, 0, len(reversed))
+	for index := len(reversed) - 1; index >= 0; index-- {
+		out = append(out, reversed[index])
+	}
+	return out
+}
+
+func (m model) canNavigateHistory() bool {
+	if len(m.history) == 0 || m.busy || m.helpOpen || m.searchOpen {
+		return false
+	}
+	if strings.Contains(m.textarea.Value(), "\n") {
+		return false
+	}
+	return m.historyPos >= 0 || strings.TrimSpace(m.textarea.Value()) == ""
+}
+
+func (m *model) navigateHistory(delta int) {
+	if len(m.history) == 0 {
+		return
+	}
+	if m.historyPos < 0 {
+		m.draft = m.textarea.Value()
+		if delta < 0 {
+			m.historyPos = len(m.history) - 1
+		} else {
+			return
+		}
+	} else {
+		m.historyPos += delta
+	}
+	if m.historyPos < 0 {
+		m.historyPos = -1
+		m.textarea.SetValue(m.draft)
+		m.status = "compose"
+		return
+	}
+	if m.historyPos >= len(m.history) {
+		m.historyPos = -1
+		m.textarea.SetValue(m.draft)
+		m.status = "compose"
+		return
+	}
+	m.textarea.SetValue(m.history[m.historyPos])
+	m.status = fmt.Sprintf("history %d/%d", m.historyPos+1, len(m.history))
+}
+
+func (m *model) openHistorySearch() {
+	if m.searchOpen {
+		return
+	}
+	m.searchOpen = true
+	m.draft = m.textarea.Value()
+	m.textarea.SetValue("")
+	m.matches = nil
+	m.selected = 0
+	m.historyPos = -1
+	m.updateHistorySearch()
+}
+
+func (m *model) updateHistorySearch() {
+	m.searchHits = filterHistory(m.history, m.textarea.Value(), 8)
+	if m.searchPos < 0 || m.searchPos >= len(m.searchHits) {
+		m.searchPos = 0
+	}
+	m.status = fmt.Sprintf("history search %d/%d", min(len(m.searchHits), m.searchPos+1), len(m.searchHits))
+	if len(m.searchHits) == 0 {
+		m.status = "history search"
+	}
+}
+
+func (m *model) moveHistorySearch(delta int) {
+	if len(m.searchHits) == 0 {
+		return
+	}
+	m.searchPos = (m.searchPos + delta + len(m.searchHits)) % len(m.searchHits)
+	m.status = fmt.Sprintf("history search %d/%d", m.searchPos+1, len(m.searchHits))
+}
+
+func (m *model) closeHistorySearch(accept bool) {
+	if accept && len(m.searchHits) > 0 {
+		if m.searchPos < 0 || m.searchPos >= len(m.searchHits) {
+			m.searchPos = 0
+		}
+		m.textarea.SetValue(m.searchHits[m.searchPos])
+		m.status = "history selected"
+	} else {
+		m.textarea.SetValue(m.draft)
+		m.status = m.mode()
+	}
+	m.searchOpen = false
+	m.searchHits = nil
+	m.searchPos = 0
+}
+
+func filterHistory(history []string, query string, limit int) []string {
+	if limit <= 0 {
+		limit = 8
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	out := []string{}
+	seen := map[string]struct{}{}
+	for index := len(history) - 1; index >= 0 && len(out) < limit; index-- {
+		text := strings.TrimSpace(history[index])
+		if text == "" {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(text), query) {
+			continue
+		}
+		if _, ok := seen[text]; ok {
+			continue
+		}
+		seen[text] = struct{}{}
+		out = append(out, text)
+	}
+	return out
+}
+
+func (m *model) appendHistory(value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	m.history = append(m.history, value)
+	m.history = normalizeHistory(m.history)
+}
+
+func truncateForComposer(text string, limit int) string {
+	text = strings.TrimSpace(strings.ReplaceAll(text, "\n", " "))
+	if limit <= 0 {
+		limit = 80
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-3]) + "..."
 }
 
 func (m model) completionCandidates() []string {
@@ -596,9 +836,11 @@ func helpPanel(candidates []string, width int) string {
 		"Keys",
 		"  Enter       submit composer",
 		"  Alt+Enter   insert newline",
-		"  Ctrl+J      insert newline",
+		"  Ctrl+R      search prompt history",
 		"  Tab         complete slash command",
 		"  Up/Down     choose a shown completion",
+		"  Up/Down     recall prompt history when composer is empty",
+		"  Ctrl+J      insert newline",
 		"  PgUp/PgDn   scroll transcript",
 		"  ?           toggle this help panel",
 		"  Esc         close help or quit",

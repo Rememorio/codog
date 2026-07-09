@@ -92,6 +92,7 @@ func TestStatusBarUsesCompactHintsAtTerminalWidth(t *testing.T) {
 	require.Contains(t, text, "Enter send")
 	require.Contains(t, text, "Tab")
 	require.Contains(t, text, "Esc")
+	require.Contains(t, text, "Ctrl-R")
 	require.NotContains(t, text, "Tab complete")
 	require.LessOrEqual(t, len([]rune(text)), 80)
 }
@@ -152,6 +153,93 @@ func TestSlashCommandWithEmptyOutputShowsDone(t *testing.T) {
 	require.NoError(t, msg.Err)
 }
 
+func TestHistoryNavigationFromEmptyComposer(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.setHistory([]string{"first prompt", "second prompt"})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(model)
+	require.Equal(t, "second prompt", m.textarea.Value())
+	require.Equal(t, "history 2/2", m.status)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(model)
+	require.Equal(t, "first prompt", m.textarea.Value())
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	require.Equal(t, "second prompt", m.textarea.Value())
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	require.Empty(t, m.textarea.Value())
+}
+
+func TestHistoryKeepsLatestDuplicatePrompt(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.setHistory([]string{"repeat prompt", "middle prompt", "repeat prompt"})
+
+	require.Equal(t, []string{"middle prompt", "repeat prompt"}, m.history)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(model)
+	require.Equal(t, "repeat prompt", m.textarea.Value())
+}
+
+func TestHistorySearchAcceptsSelectedPrompt(t *testing.T) {
+	ta := newPromptTextarea("draft")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.setHistory([]string{"review auth flow", "write tests", "review tui state"})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m = updated.(model)
+	require.True(t, m.searchOpen)
+	require.Empty(t, m.textarea.Value())
+	require.Contains(t, m.View(), "history")
+
+	m.textarea.SetValue("review")
+	m.updateHistorySearch()
+	require.Len(t, m.searchHits, 2)
+	require.Equal(t, "review tui state", m.searchHits[0])
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.False(t, m.searchOpen)
+	require.Equal(t, "review auth flow", m.textarea.Value())
+	require.Equal(t, "history selected", m.status)
+}
+
+func TestHistorySearchEscapeRestoresDraft(t *testing.T) {
+	ta := newPromptTextarea("unfinished draft")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.setHistory([]string{"previous prompt"})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m = updated.(model)
+	m.textarea.SetValue("previous")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.False(t, m.searchOpen)
+	require.Equal(t, "unfinished draft", m.textarea.Value())
+}
+
+func TestSubmittingPromptAppendsTUIHistory(t *testing.T) {
+	ta := newPromptTextarea("new prompt")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.submit = func(context.Context, string) (string, error) { return "ok", nil }
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	require.Contains(t, m.history, "new prompt")
+	require.Equal(t, -1, m.historyPos)
+}
+
 func TestPreviewQuestionMarkOpensHelpWhenComposerEmpty(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, []string{"/status"}, nil)
@@ -161,6 +249,7 @@ func TestPreviewQuestionMarkOpensHelpWhenComposerEmpty(t *testing.T) {
 	require.True(t, next.helpOpen)
 	require.Contains(t, next.View(), "Keys")
 	require.Contains(t, next.View(), "/status")
+	require.Contains(t, next.View(), "Ctrl+R")
 }
 
 func TestEnterSubmitsAndCtrlJInsertsNewline(t *testing.T) {

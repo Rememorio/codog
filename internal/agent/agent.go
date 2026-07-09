@@ -39036,6 +39036,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 	if banner := buildDeepLinkBanner(a.Workspace, overrides, time.Now()); banner != "" {
 		entries = append(entries, tui.Entry{Role: "system", Text: banner})
 	}
+	history := a.tuiPromptHistory(sess.ID)
 	submit := func(ctx context.Context, prompt string) (string, error) {
 		var out bytes.Buffer
 		toolCalls := []runloop.ToolCall{}
@@ -39067,11 +39068,30 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 	loopErr := tui.Shell(ctx, tui.ShellOptions{
 		Candidates: a.slashCompletionCandidates(sess.ID),
 		Prefill:    overrides.Prefill,
+		History:    history,
 		Entries:    entries,
 		Submit:     submit,
 		Slash:      slashHandler,
 	})
 	return a.finishREPL(ctx, sess, loopErr)
+}
+
+func (a *App) tuiPromptHistory(sessionID string) []string {
+	if !a.promptHistoryEnabled() || a.Sessions == nil {
+		return nil
+	}
+	entries, err := a.Sessions.PromptHistory(sessionID)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		text := strings.TrimSpace(entry.Text)
+		if text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
 }
 
 func renderTUIToolSummary(calls []runloop.ToolCall) string {
