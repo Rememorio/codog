@@ -50488,24 +50488,26 @@ func renderSessionListText(out io.Writer, report sessionListReport) {
 }
 
 type sessionAuditReport struct {
-	Kind                     string              `json:"kind"`
-	Action                   string              `json:"action"`
-	Status                   string              `json:"status"`
-	Workspace                string              `json:"workspace,omitempty"`
-	SessionDir               string              `json:"session_dir,omitempty"`
-	LegacySessionDir         string              `json:"legacy_session_dir,omitempty"`
-	SessionCount             int                 `json:"session_count"`
-	MessageCount             int                 `json:"message_count"`
-	EmptyCount               int                 `json:"empty_count"`
-	BranchCount              int                 `json:"branch_count"`
-	PinnedMessageCount       int                 `json:"pinned_message_count"`
-	PlaceholderIdentityCount int                 `json:"placeholder_identity_count"`
-	MissingIdentityCount     int                 `json:"missing_identity_count"`
-	WorkspaceMismatchCount   int                 `json:"workspace_mismatch_count"`
-	PinnedOutOfRangeCount    int                 `json:"pinned_out_of_range_count"`
-	OversizedFileCount       int                 `json:"oversized_file_count"`
-	Issues                   []sessionAuditIssue `json:"issues,omitempty"`
-	NextActions              []string            `json:"next_actions,omitempty"`
+	Kind                      string              `json:"kind"`
+	Action                    string              `json:"action"`
+	Status                    string              `json:"status"`
+	Workspace                 string              `json:"workspace,omitempty"`
+	SessionDir                string              `json:"session_dir,omitempty"`
+	LegacySessionDir          string              `json:"legacy_session_dir,omitempty"`
+	SessionCount              int                 `json:"session_count"`
+	MessageCount              int                 `json:"message_count"`
+	EmptyCount                int                 `json:"empty_count"`
+	BranchCount               int                 `json:"branch_count"`
+	PinnedMessageCount        int                 `json:"pinned_message_count"`
+	PlaceholderIdentityCount  int                 `json:"placeholder_identity_count"`
+	RepairableIdentityCount   int                 `json:"repairable_identity_count,omitempty"`
+	ManualIdentityReviewCount int                 `json:"manual_identity_review_count,omitempty"`
+	MissingIdentityCount      int                 `json:"missing_identity_count"`
+	WorkspaceMismatchCount    int                 `json:"workspace_mismatch_count"`
+	PinnedOutOfRangeCount     int                 `json:"pinned_out_of_range_count"`
+	OversizedFileCount        int                 `json:"oversized_file_count"`
+	Issues                    []sessionAuditIssue `json:"issues,omitempty"`
+	NextActions               []string            `json:"next_actions,omitempty"`
 }
 
 type sessionAuditIssue struct {
@@ -50574,22 +50576,24 @@ func doctorSessionHygiene(report sessionAuditReport) *doctor.SessionHygiene {
 		})
 	}
 	return &doctor.SessionHygiene{
-		Status:                   report.Status,
-		Workspace:                report.Workspace,
-		SessionDir:               report.SessionDir,
-		LegacySessionDir:         report.LegacySessionDir,
-		SessionCount:             report.SessionCount,
-		MessageCount:             report.MessageCount,
-		EmptyCount:               report.EmptyCount,
-		BranchCount:              report.BranchCount,
-		PinnedMessageCount:       report.PinnedMessageCount,
-		PlaceholderIdentityCount: report.PlaceholderIdentityCount,
-		MissingIdentityCount:     report.MissingIdentityCount,
-		WorkspaceMismatchCount:   report.WorkspaceMismatchCount,
-		PinnedOutOfRangeCount:    report.PinnedOutOfRangeCount,
-		OversizedFileCount:       report.OversizedFileCount,
-		Issues:                   issues,
-		NextActions:              append([]string(nil), report.NextActions...),
+		Status:                    report.Status,
+		Workspace:                 report.Workspace,
+		SessionDir:                report.SessionDir,
+		LegacySessionDir:          report.LegacySessionDir,
+		SessionCount:              report.SessionCount,
+		MessageCount:              report.MessageCount,
+		EmptyCount:                report.EmptyCount,
+		BranchCount:               report.BranchCount,
+		PinnedMessageCount:        report.PinnedMessageCount,
+		PlaceholderIdentityCount:  report.PlaceholderIdentityCount,
+		RepairableIdentityCount:   report.RepairableIdentityCount,
+		ManualIdentityReviewCount: report.ManualIdentityReviewCount,
+		MissingIdentityCount:      report.MissingIdentityCount,
+		WorkspaceMismatchCount:    report.WorkspaceMismatchCount,
+		PinnedOutOfRangeCount:     report.PinnedOutOfRangeCount,
+		OversizedFileCount:        report.OversizedFileCount,
+		Issues:                    issues,
+		NextActions:               append([]string(nil), report.NextActions...),
 	}
 }
 
@@ -50605,12 +50609,21 @@ func (report *sessionAuditReport) auditSession(sess session.Session) {
 			NextAction: "codog sessions prune --empty --confirm",
 		})
 	}
+	identityRepairable := sessionHasUserPromptText(sess)
 	for _, placeholder := range sess.Identity.Placeholders {
 		report.PlaceholderIdentityCount++
 		field := strings.TrimSpace(placeholder.Field)
 		message := "session identity still uses a typed placeholder"
 		if strings.TrimSpace(placeholder.Reason) != "" {
 			message += ": " + strings.TrimSpace(placeholder.Reason)
+		}
+		nextAction := "codog sessions repair"
+		if identityRepairable {
+			report.RepairableIdentityCount++
+		} else {
+			report.ManualIdentityReviewCount++
+			nextAction = "codog sessions show " + shellQuote(sess.ID) + " --json"
+			message += "; no saved user prompt is available for automatic repair"
 		}
 		report.Issues = append(report.Issues, sessionAuditIssue{
 			Kind:       "identity_placeholder",
@@ -50619,7 +50632,7 @@ func (report *sessionAuditReport) auditSession(sess session.Session) {
 			Path:       sess.Path,
 			Field:      field,
 			Message:    message,
-			NextAction: "codog sessions repair",
+			NextAction: nextAction,
 		})
 	}
 	for _, field := range missingSessionIdentityFields(sess.Identity) {
@@ -50689,6 +50702,18 @@ func missingSessionIdentityFields(identity session.SessionIdentity) []string {
 	return fields
 }
 
+func sessionHasUserPromptText(sess session.Session) bool {
+	for _, message := range sess.Messages {
+		if message.Role != "user" {
+			continue
+		}
+		if strings.TrimSpace(promptTextFromAnthropicContent(message.Content)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func sameCleanPath(left string, right string) bool {
 	left = strings.TrimSpace(left)
 	right = strings.TrimSpace(right)
@@ -50724,6 +50749,8 @@ func renderSessionAuditText(out io.Writer, report sessionAuditReport) {
 	fmt.Fprintf(out, "  Branches         %d\n", report.BranchCount)
 	fmt.Fprintf(out, "  Pinned messages  %d\n", report.PinnedMessageCount)
 	fmt.Fprintf(out, "  Placeholders     %d\n", report.PlaceholderIdentityCount)
+	fmt.Fprintf(out, "  Repairable ids   %d\n", report.RepairableIdentityCount)
+	fmt.Fprintf(out, "  Manual id review %d\n", report.ManualIdentityReviewCount)
 	fmt.Fprintf(out, "  Missing identity %d\n", report.MissingIdentityCount)
 	fmt.Fprintf(out, "  Workspace drift  %d\n", report.WorkspaceMismatchCount)
 	fmt.Fprintf(out, "  Pin drift        %d\n", report.PinnedOutOfRangeCount)

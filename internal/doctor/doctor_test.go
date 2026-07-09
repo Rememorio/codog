@@ -431,10 +431,12 @@ func TestRunWarnsOnSessionHygieneIssues(t *testing.T) {
 		ToolCount:      6,
 		SessionCount:   1,
 		SessionHygiene: &SessionHygiene{
-			Status:                   StatusWarn,
-			SessionCount:             1,
-			MessageCount:             2,
-			PlaceholderIdentityCount: 1,
+			Status:                    StatusWarn,
+			SessionCount:              1,
+			MessageCount:              2,
+			PlaceholderIdentityCount:  1,
+			RepairableIdentityCount:   0,
+			ManualIdentityReviewCount: 1,
 			Issues: []SessionHygieneIssue{{
 				Kind:       "identity_placeholder",
 				Severity:   StatusWarn,
@@ -455,6 +457,8 @@ func TestRunWarnsOnSessionHygieneIssues(t *testing.T) {
 	require.Contains(t, sessions.Summary, "session hygiene")
 	require.Contains(t, sessions.Hint, "codog sessions audit")
 	require.Contains(t, strings.Join(sessions.Details, "\n"), "Identity placeholders: 1")
+	require.Contains(t, strings.Join(sessions.Details, "\n"), "Repairable identities: 0")
+	require.Contains(t, strings.Join(sessions.Details, "\n"), "Manual identity review: 1")
 	require.Contains(t, strings.Join(sessions.Details, "\n"), "codog sessions repair")
 	hygiene, ok := sessions.Data["hygiene"].(*SessionHygiene)
 	require.True(t, ok)

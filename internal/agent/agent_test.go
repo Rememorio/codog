@@ -13454,9 +13454,12 @@ func TestSessionsAuditReportsHygieneIssuesAndNextActions(t *testing.T) {
 	require.Equal(t, 1, report.EmptyCount)
 	require.Equal(t, 1, report.BranchCount)
 	require.GreaterOrEqual(t, report.PlaceholderIdentityCount, 1)
+	require.Equal(t, 0, report.RepairableIdentityCount)
+	require.GreaterOrEqual(t, report.ManualIdentityReviewCount, 1)
 	require.Equal(t, 0, report.PinnedOutOfRangeCount)
 	require.Contains(t, report.NextActions, "codog sessions prune --empty --confirm")
-	require.Contains(t, report.NextActions, "codog sessions repair")
+	require.Contains(t, report.NextActions, "codog sessions show 'empty' --json")
+	require.NotContains(t, report.NextActions, "codog sessions repair")
 
 	issues := map[string]sessionAuditIssue{}
 	for _, issue := range report.Issues {
@@ -13467,6 +13470,7 @@ func TestSessionsAuditReportsHygieneIssuesAndNextActions(t *testing.T) {
 	require.Equal(t, "identity_placeholder", issues["identity_placeholder:empty"].Kind)
 	require.Equal(t, "warn", issues["identity_placeholder:empty"].Severity)
 	require.Equal(t, "purpose", issues["identity_placeholder:empty"].Field)
+	require.Contains(t, issues["identity_placeholder:empty"].Message, "no saved user prompt")
 	require.NotContains(t, issues, "empty_session:"+forked.ID)
 	out.Reset()
 
@@ -13475,9 +13479,11 @@ func TestSessionsAuditReportsHygieneIssuesAndNextActions(t *testing.T) {
 	require.Contains(t, text, "Session Audit")
 	require.Contains(t, text, "Status           warn")
 	require.Contains(t, text, "Sessions         3")
+	require.Contains(t, text, "Manual id review")
 	require.Contains(t, text, "Next actions")
 	require.Contains(t, text, "codog sessions prune --empty --confirm")
-	require.Contains(t, text, "codog sessions repair")
+	require.Contains(t, text, "codog sessions show 'empty' --json")
+	require.NotContains(t, text, "codog sessions repair")
 }
 
 func TestDoctorSurfacesSessionAuditWarnings(t *testing.T) {
@@ -13524,7 +13530,9 @@ func TestDoctorSurfacesSessionAuditWarnings(t *testing.T) {
 	require.Equal(t, float64(1), hygiene["session_count"])
 	require.Equal(t, float64(1), hygiene["empty_count"])
 	require.NotZero(t, hygiene["placeholder_identity_count"])
+	require.NotZero(t, hygiene["manual_identity_review_count"])
 	require.Contains(t, strings.Join(sessions.Details, "\n"), "Identity placeholders")
+	require.Contains(t, strings.Join(sessions.Details, "\n"), "Manual identity review")
 }
 
 func TestResumeCommandReportsSessionAndContinueCommands(t *testing.T) {

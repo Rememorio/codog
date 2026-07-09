@@ -97,22 +97,24 @@ type ToolPermission struct {
 
 // SessionHygiene contains the session audit facts surfaced by Doctor.
 type SessionHygiene struct {
-	Status                   string                `json:"status"`
-	Workspace                string                `json:"workspace,omitempty"`
-	SessionDir               string                `json:"session_dir,omitempty"`
-	LegacySessionDir         string                `json:"legacy_session_dir,omitempty"`
-	SessionCount             int                   `json:"session_count"`
-	MessageCount             int                   `json:"message_count"`
-	EmptyCount               int                   `json:"empty_count"`
-	BranchCount              int                   `json:"branch_count"`
-	PinnedMessageCount       int                   `json:"pinned_message_count"`
-	PlaceholderIdentityCount int                   `json:"placeholder_identity_count"`
-	MissingIdentityCount     int                   `json:"missing_identity_count"`
-	WorkspaceMismatchCount   int                   `json:"workspace_mismatch_count"`
-	PinnedOutOfRangeCount    int                   `json:"pinned_out_of_range_count"`
-	OversizedFileCount       int                   `json:"oversized_file_count"`
-	Issues                   []SessionHygieneIssue `json:"issues,omitempty"`
-	NextActions              []string              `json:"next_actions,omitempty"`
+	Status                    string                `json:"status"`
+	Workspace                 string                `json:"workspace,omitempty"`
+	SessionDir                string                `json:"session_dir,omitempty"`
+	LegacySessionDir          string                `json:"legacy_session_dir,omitempty"`
+	SessionCount              int                   `json:"session_count"`
+	MessageCount              int                   `json:"message_count"`
+	EmptyCount                int                   `json:"empty_count"`
+	BranchCount               int                   `json:"branch_count"`
+	PinnedMessageCount        int                   `json:"pinned_message_count"`
+	PlaceholderIdentityCount  int                   `json:"placeholder_identity_count"`
+	RepairableIdentityCount   int                   `json:"repairable_identity_count,omitempty"`
+	ManualIdentityReviewCount int                   `json:"manual_identity_review_count,omitempty"`
+	MissingIdentityCount      int                   `json:"missing_identity_count"`
+	WorkspaceMismatchCount    int                   `json:"workspace_mismatch_count"`
+	PinnedOutOfRangeCount     int                   `json:"pinned_out_of_range_count"`
+	OversizedFileCount        int                   `json:"oversized_file_count"`
+	Issues                    []SessionHygieneIssue `json:"issues,omitempty"`
+	NextActions               []string              `json:"next_actions,omitempty"`
 }
 
 // SessionHygieneIssue describes one actionable session hygiene finding.
@@ -880,6 +882,8 @@ func checkSessions(count int, hygiene *SessionHygiene) Check {
 		fmt.Sprintf("Branch sessions: %d", hygiene.BranchCount),
 		fmt.Sprintf("Pinned messages: %d", hygiene.PinnedMessageCount),
 		fmt.Sprintf("Identity placeholders: %d", hygiene.PlaceholderIdentityCount),
+		fmt.Sprintf("Repairable identities: %d", hygiene.RepairableIdentityCount),
+		fmt.Sprintf("Manual identity review: %d", hygiene.ManualIdentityReviewCount),
 		fmt.Sprintf("Missing identity fields: %d", hygiene.MissingIdentityCount),
 		fmt.Sprintf("Workspace mismatches: %d", hygiene.WorkspaceMismatchCount),
 		fmt.Sprintf("Pinned messages out of range: %d", hygiene.PinnedOutOfRangeCount),
