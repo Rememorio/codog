@@ -309,6 +309,7 @@ type openAIRequest struct {
 	MaxTokens           int               `json:"max_tokens,omitempty"`
 	MaxCompletionTokens int               `json:"max_completion_tokens,omitempty"`
 	Temperature         *float64          `json:"temperature,omitempty"`
+	ExtraBody           map[string]any    `json:"-"`
 }
 
 type openAIMessage struct {
@@ -350,6 +351,38 @@ type openAIFunction struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
+func (r openAIRequest) MarshalJSON() ([]byte, error) {
+	type plain openAIRequest
+	base, err := json.Marshal(plain(r))
+	if err != nil {
+		return nil, err
+	}
+	if len(r.ExtraBody) == 0 {
+		return base, nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(base, &payload); err != nil {
+		return nil, err
+	}
+	for key, value := range r.ExtraBody {
+		key = strings.TrimSpace(key)
+		if key == "" || isProtectedOpenAIExtraBodyKey(key) {
+			continue
+		}
+		payload[key] = value
+	}
+	return json.Marshal(payload)
+}
+
+func isProtectedOpenAIExtraBodyKey(key string) bool {
+	switch key {
+	case "model", "messages", "stream", "tools", "tool_choice", "max_tokens", "max_completion_tokens":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) streamOpenAICompatible(ctx context.Context, req Request, onText func(string)) (AssistantMessage, error) {
@@ -433,10 +466,11 @@ func openAIRequestFromAnthropic(req Request, baseURL string) (openAIRequest, err
 		})
 	}
 	wire := openAIRequest{
-		Model:    wireModel,
-		Messages: messages,
-		Tools:    tools,
-		Stream:   true,
+		Model:     wireModel,
+		Messages:  messages,
+		Tools:     tools,
+		Stream:    true,
+		ExtraBody: cloneExtraBody(req.ExtraBody),
 	}
 	if modelrouting.ProviderForModel(req.Model) != modelrouting.ProviderXAI {
 		wire.StreamOptions = map[string]bool{"include_usage": true}
@@ -456,6 +490,17 @@ func openAIRequestFromAnthropic(req Request, baseURL string) (openAIRequest, err
 		wire.Thinking = map[string]string{"type": "enabled"}
 	}
 	return wire, nil
+}
+
+func cloneExtraBody(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
 }
 
 func providerReasoningEffort(value string) string {

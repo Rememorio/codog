@@ -13,6 +13,7 @@ type Request struct {
 	MaxTokens       int              `json:"max_tokens"`
 	Temperature     *float64         `json:"temperature,omitempty"`
 	ReasoningEffort string           `json:"-"`
+	ExtraBody       map[string]any   `json:"-"`
 	System          string           `json:"system,omitempty"`
 	Messages        []Message        `json:"messages"`
 	Tools           []ToolDefinition `json:"tools,omitempty"`

@@ -99,6 +99,7 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 			MaxTokens:           128,
 			Temperature:         &temperature,
 			ReasoningEffort:     "high",
+			ExtraBody:           map[string]any{"parallel_tool_calls": false},
 			MaxTurns:            4,
 			AutoCompactMessages: 20,
 		},
@@ -120,6 +121,7 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 	require.NotNil(t, client.requests[0].Temperature)
 	require.InDelta(t, 0.3, *client.requests[0].Temperature, 0.0001)
 	require.Equal(t, "high", client.requests[0].ReasoningEffort)
+	require.Equal(t, false, client.requests[0].ExtraBody["parallel_tool_calls"])
 }
 
 func TestRunnerStopsWhenMaxBudgetExceeded(t *testing.T) {

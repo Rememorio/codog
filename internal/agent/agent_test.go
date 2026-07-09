@@ -470,6 +470,7 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, helpOutput, "<cc-url|cc+unix-url>")
 	require.Contains(t, helpOutput, "models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|set MODEL|clear|reset|help]")
 	require.Contains(t, helpOutput, "--target user|project|local")
+	require.Contains(t, helpOutput, "CODOG_EXTRA_BODY")
 	resumeLine := requireResumeSafeHelpLine(t, helpOutput)
 	require.Contains(t, resumeLine, "/status")
 	require.Contains(t, resumeLine, "/mcp")

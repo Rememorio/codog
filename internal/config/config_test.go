@@ -1428,6 +1428,23 @@ func TestLoadTemperatureConfigEnvAndFlags(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid_temperature")
 }
 
+func TestLoadExtraBodyConfigAndEnv(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"extra_body":{"web_search_options":{"search_context_size":"medium"}}}`), 0o644))
+
+	unsetEnv(t, "CODOG_EXTRA_BODY")
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, "medium", cfg.ExtraBody["web_search_options"].(map[string]any)["search_context_size"])
+
+	t.Setenv("CODOG_EXTRA_BODY", `{"parallel_tool_calls":false}`)
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, false, cfg.ExtraBody["parallel_tool_calls"])
+	require.NotContains(t, cfg.ExtraBody, "web_search_options")
+}
+
 func TestLoadMCPHeadersHelperAliases(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

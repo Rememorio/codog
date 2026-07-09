@@ -163,6 +163,7 @@ func (r Runner) RunWithUserContent(ctx context.Context, previous []anthropic.Mes
 			MaxTokens:       r.Config.MaxTokens,
 			Temperature:     r.Config.Temperature,
 			ReasoningEffort: r.Config.ReasoningEffort,
+			ExtraBody:       r.Config.ExtraBody,
 			System:          system,
 			Messages:        requestMessages,
 			Tools:           r.toolDefinitions(),

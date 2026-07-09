@@ -590,6 +590,31 @@ func TestOpenAICompatibleGPT5UsesMaxCompletionTokens(t *testing.T) {
 	require.Equal(t, float64(512), payload["max_completion_tokens"])
 }
 
+func TestOpenAICompatibleExtraBodyMergesWithoutOverridingCoreFields(t *testing.T) {
+	wire, err := openAIRequestFromAnthropic(Request{
+		Model:     "openai/gpt-4.1-mini",
+		MaxTokens: 128,
+		Messages:  []Message{TextMessage("user", "hi")},
+		ExtraBody: map[string]any{
+			"web_search_options":  map[string]any{"search_context_size": "low"},
+			"parallel_tool_calls": false,
+			"model":               "malicious-override",
+			"stream":              false,
+			"max_tokens":          1,
+		},
+	}, "https://api.openai.com/v1")
+	require.NoError(t, err)
+	data, err := json.Marshal(wire)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(data, &payload))
+	require.Equal(t, "gpt-4.1-mini", payload["model"])
+	require.Equal(t, true, payload["stream"])
+	require.Equal(t, float64(128), payload["max_tokens"])
+	require.Equal(t, false, payload["parallel_tool_calls"])
+	require.Equal(t, "low", payload["web_search_options"].(map[string]any)["search_context_size"])
+}
+
 func TestOpenAICompatibleToolResultsIncludeIsErrorForNonKimiModels(t *testing.T) {
 	wire, err := openAIRequestFromAnthropic(Request{
 		Model:     "gpt-4o",

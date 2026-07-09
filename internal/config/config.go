@@ -1155,6 +1155,7 @@ type Config struct {
 	MaxTokens                  int                        `json:"max_tokens,omitempty"`
 	MaxTurns                   int                        `json:"max_turns,omitempty"`
 	Temperature                *float64                   `json:"temperature,omitempty"`
+	ExtraBody                  map[string]any             `json:"extra_body,omitempty"`
 	PermissionMode             string                     `json:"permission_mode,omitempty"`
 	PermissionModeRaw          string                     `json:"-"`
 	PermissionModeSource       string                     `json:"-"`
@@ -2232,6 +2233,9 @@ func merge(dst *Config, src Config) {
 		value := *src.Temperature
 		dst.Temperature = &value
 	}
+	if len(src.ExtraBody) != 0 {
+		dst.ExtraBody = cloneJSONMap(src.ExtraBody)
+	}
 	if src.PermissionMode != "" {
 		dst.PermissionMode = src.PermissionMode
 		dst.PermissionModeRaw = defaultString(src.PermissionModeRaw, src.PermissionMode)
@@ -3118,6 +3122,11 @@ func applyEnv(cfg *Config) {
 			cfg.Temperature = &parsed
 		}
 	}
+	if value := lookup("CODOG_EXTRA_BODY"); value != "" {
+		if parsed, err := parseExtraBody(value); err == nil {
+			cfg.ExtraBody = parsed
+		}
+	}
 	if value, ok := parseBoolEnv("CODOG_FAST_MODE", lookup); ok {
 		cfg.FastMode = &value
 	}
@@ -3394,6 +3403,28 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 		cfg.Temperature = &value
 	}
 	return nil
+}
+
+func parseExtraBody(value string) (map[string]any, error) {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(value), &parsed); err != nil {
+		return nil, err
+	}
+	if parsed == nil {
+		return nil, fmt.Errorf("extra body must be a JSON object")
+	}
+	return parsed, nil
+}
+
+func cloneJSONMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
 }
 
 func reasoningEffortFromThinkingMode(value string) (string, error) {
