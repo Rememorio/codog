@@ -5035,7 +5035,8 @@ func TestWorkerStartupTimeoutToolRecordsEvidence(t *testing.T) {
 		Status            string `json:"status"`
 		LastError         string `json:"last_error"`
 		StartupNoEvidence struct {
-			Classification string `json:"classification"`
+			Classification string   `json:"classification"`
+			NextActions    []string `json:"next_actions"`
 			Evidence       struct {
 				LastLifecycleState  string `json:"last_lifecycle_state"`
 				PaneCommand         string `json:"pane_command"`
@@ -5067,6 +5068,7 @@ func TestWorkerStartupTimeoutToolRecordsEvidence(t *testing.T) {
 	require.Equal(t, "failed", result.Status)
 	require.Equal(t, "startup_no_evidence: trust_required", result.LastError)
 	require.Equal(t, "trust_required", result.StartupNoEvidence.Classification)
+	require.Contains(t, result.StartupNoEvidence.NextActions, "resolve the workspace trust prompt in the worker pane")
 	require.Equal(t, "trust_prompt", result.StartupNoEvidence.Evidence.LastLifecycleState)
 	require.Equal(t, "codog repl", result.StartupNoEvidence.Evidence.PaneCommand)
 	require.True(t, result.StartupNoEvidence.Evidence.TrustPromptDetected)

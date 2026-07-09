@@ -117,6 +117,10 @@ func TestStoreRecordsStartupNoEvidenceReport(t *testing.T) {
 	require.NotNil(t, worker.StartupNoEvidence)
 	require.Equal(t, "worker.startup_no_evidence", worker.StartupNoEvidence.Kind)
 	require.Equal(t, StartupTrustRequired, worker.StartupNoEvidence.Classification)
+	require.Equal(t, []string{
+		"resolve the workspace trust prompt in the worker pane",
+		"restart the worker after trust is accepted",
+	}, worker.StartupNoEvidence.NextActions)
 	require.Equal(t, "trust_prompt", worker.StartupNoEvidence.Evidence.LastLifecycleState)
 	require.Equal(t, "codog repl", worker.StartupNoEvidence.Evidence.PaneCommand)
 	require.True(t, worker.StartupNoEvidence.Evidence.TrustPromptDetected)
@@ -139,6 +143,7 @@ func TestStoreRecordsStartupNoEvidenceReport(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, reloaded.StartupNoEvidence)
 	require.Equal(t, StartupTrustRequired, reloaded.StartupNoEvidence.Classification)
+	require.Equal(t, worker.StartupNoEvidence.NextActions, reloaded.StartupNoEvidence.NextActions)
 }
 
 func TestStoreStartupNoEvidenceUsesPromptSentTimestamp(t *testing.T) {
@@ -184,12 +189,23 @@ func TestStoreStartupNoEvidenceInfersStructuredHealth(t *testing.T) {
 	require.Equal(t, "mcp:not_checked", worker.StartupNoEvidence.Evidence.MCPHealth)
 	require.Equal(t, "not_checked", worker.StartupNoEvidence.Evidence.MCP.Status)
 	require.False(t, worker.StartupNoEvidence.Evidence.MCP.Checked)
+	require.Contains(t, worker.StartupNoEvidence.NextActions, "restart the worker transport")
 
 	event := worker.Events[len(worker.Events)-1]
 	transport, ok := event.Evidence["transport"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "unhealthy", transport["status"])
 	require.Equal(t, "inferred", transport["source"])
+}
+
+func TestStartupRecoveryActionsForUnknownIncompleteEvidence(t *testing.T) {
+	actions := StartupRecoveryActions(StartupUnknown, StartupEvidence{
+		Transport: StartupHealth{Name: "transport", Status: "not_checked"},
+		MCP:       StartupHealth{Name: "mcp", Status: "not_checked"},
+	})
+
+	require.Contains(t, actions, "inspect worker events and pane output for the missing startup signal")
+	require.Contains(t, actions, "rerun the startup healthcheck with transport and MCP probes enabled")
 }
 
 func TestClassifyStartupNoEvidence(t *testing.T) {

@@ -67,6 +67,7 @@ type StartupNoEvidenceReport struct {
 	Kind           string          `json:"kind"`
 	Classification string          `json:"classification"`
 	Evidence       StartupEvidence `json:"evidence"`
+	NextActions    []string        `json:"next_actions,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 }
 
@@ -326,6 +327,7 @@ func (s Store) ObserveStartupTimeout(id string, evidence StartupEvidence) (Worke
 		Kind:           startupNoEvidenceEventType,
 		Classification: classification,
 		Evidence:       evidence,
+		NextActions:    StartupRecoveryActions(classification, evidence),
 		CreatedAt:      now,
 	}
 
@@ -377,6 +379,41 @@ func ClassifyStartupNoEvidence(evidence StartupEvidence) string {
 		return StartupPromptAcceptanceTimeout
 	}
 	return StartupUnknown
+}
+
+func StartupRecoveryActions(classification string, evidence StartupEvidence) []string {
+	switch strings.TrimSpace(classification) {
+	case StartupTrustRequired:
+		return []string{
+			"resolve the workspace trust prompt in the worker pane",
+			"restart the worker after trust is accepted",
+		}
+	case StartupPromptMisdelivery:
+		return []string{
+			"restart the worker and resend the prompt to the target pane",
+			"verify the prompt was accepted before waiting for task output",
+		}
+	case StartupPromptAcceptanceTimeout:
+		return []string{
+			"check pane focus and prompt acceptance state",
+			"retry prompt delivery or restart the worker if acceptance remains pending",
+		}
+	case StartupTransportDead:
+		return []string{
+			"restart the worker transport",
+			"rerun the startup healthcheck with transport probes enabled",
+		}
+	case StartupWorkerCrashed:
+		return []string{
+			"inspect worker logs for the crash reason",
+			"restart the worker after the failing startup dependency is fixed",
+		}
+	}
+	actions := []string{"inspect worker events and pane output for the missing startup signal"}
+	if !evidence.Transport.Checked || !evidence.MCP.Checked {
+		actions = append(actions, "rerun the startup healthcheck with transport and MCP probes enabled")
+	}
+	return actions
 }
 
 func normalizeStartupEvidence(worker Worker, evidence StartupEvidence, now time.Time) StartupEvidence {
