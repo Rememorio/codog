@@ -5491,13 +5491,14 @@ func TestCommandToolLoadsConfiguredEnvironment(t *testing.T) {
 	require.Contains(t, out, `"stdout": "ready"`)
 }
 
-func TestBashToolRejectsUnavailableSandbox(t *testing.T) {
+func TestBashToolRejectsInvalidSandboxStrategy(t *testing.T) {
 	_, err := BashTool{
 		Workspace:       t.TempDir(),
-		SandboxStrategy: "codog-missing-sandbox",
+		SandboxStrategy: "sandbx-exec",
 	}.Execute(context.Background(), []byte(`{"command":"pwd"}`))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "not available")
+	require.Contains(t, err.Error(), `unsupported sandbox strategy "sandbx-exec"`)
+	require.Contains(t, err.Error(), `did you mean "sandbox-exec"`)
 }
 
 func TestMCPToolCallsRemoteTool(t *testing.T) {

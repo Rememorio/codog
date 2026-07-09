@@ -169,6 +169,13 @@ func TestResolveStrategyReportForDetectAndUnavailable(t *testing.T) {
 	require.Contains(t, resolution.FallbackReason, "command not found")
 }
 
+func TestResolveStrategyReportSuggestsKnownStrategyNames(t *testing.T) {
+	resolution := ResolveStrategyReportFor("sandbx-exec", Status{})
+	require.Equal(t, "unavailable", resolution.Status)
+	require.Contains(t, resolution.Error, `unsupported sandbox strategy "sandbx-exec"`)
+	require.Contains(t, resolution.Error, `did you mean "sandbox-exec"`)
+}
+
 func TestResolveSandboxExecutionStatusForRequest(t *testing.T) {
 	workspace := t.TempDir()
 	network := true

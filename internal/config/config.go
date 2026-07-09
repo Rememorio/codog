@@ -1603,6 +1603,9 @@ func finalizeConfig(cfg *Config) error {
 	if err := validateStatusLineConfig(cfg); err != nil {
 		return err
 	}
+	if err := validateSandboxStrategyConfig(cfg.Future.SandboxStrategy); err != nil {
+		return err
+	}
 	if err := validateSandboxConfig(cfg.Future.Sandbox); err != nil {
 		return err
 	}
@@ -3812,6 +3815,13 @@ func validateSandboxConfig(cfg SandboxConfig) error {
 		return nil
 	}
 	if _, err := sandbox.ParseFilesystemIsolationMode(mode); err != nil {
+		return fmt.Errorf("invalid_sandbox_config: %w", err)
+	}
+	return nil
+}
+
+func validateSandboxStrategyConfig(strategy string) error {
+	if err := sandbox.ValidateStrategyName(strategy); err != nil {
 		return fmt.Errorf("invalid_sandbox_config: %w", err)
 	}
 	return nil

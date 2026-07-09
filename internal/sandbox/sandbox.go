@@ -290,11 +290,29 @@ func ResolveStrategyReportFor(strategy string, status Status) StrategyResolution
 				Error:          message,
 			}
 		}
+		if err := ValidateStrategyName(configured); err != nil {
+			return StrategyResolution{
+				Configured: configured,
+				Status:     "unavailable",
+				Error:      err.Error(),
+			}
+		}
 		return StrategyResolution{
 			Configured: configured,
 			Status:     "unavailable",
-			Error:      fmt.Sprintf("sandbox strategy %q is not available: unsupported strategy", configured),
+			Error:      fmt.Sprintf("sandbox strategy %q is not available on this platform", configured),
 		}
+	}
+}
+
+// ValidateStrategyName reports whether strategy names a supported sandbox strategy.
+func ValidateStrategyName(strategy string) error {
+	strategy = strings.TrimSpace(strategy)
+	switch strategy {
+	case "", "off", "none", "detect", "sandbox-exec", "bwrap", "unshare", "restricted-token":
+		return nil
+	default:
+		return unsupportedSandboxValueError("sandbox strategy", strategy, sandboxStrategyNames)
 	}
 }
 

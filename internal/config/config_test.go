@@ -2659,6 +2659,18 @@ func TestLoadRejectsInvalidSandboxFilesystemMode(t *testing.T) {
 	require.Contains(t, err.Error(), `did you mean "workspace-only"`)
 }
 
+func TestLoadRejectsInvalidSandboxStrategy(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"sandbox":{"strategy":"sandbx-exec"}}`), 0o644))
+
+	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_sandbox_config")
+	require.Contains(t, err.Error(), `unsupported sandbox strategy "sandbx-exec"`)
+	require.Contains(t, err.Error(), `did you mean "sandbox-exec"`)
+}
+
 func TestLoadProjectLocalOverridesSharedConfig(t *testing.T) {
 	workspace := t.TempDir()
 	previous, err := os.Getwd()
