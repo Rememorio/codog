@@ -21319,6 +21319,7 @@ func TestSetupCommandAndSlash(t *testing.T) {
 	require.NotNil(t, report.Project)
 	require.FileExists(t, filepath.Join(workspace, ".codog", "instructions.md"))
 	require.FileExists(t, filepath.Join(workspace, ".codog.json"))
+	require.FileExists(t, filepath.Join(workspace, "AGENTS.md"))
 	require.Len(t, setupPayloads, 1)
 	require.Equal(t, "setup", setupPayloads[0].Event)
 	require.Contains(t, setupPayloads[0].Input, `"source":"setup"`)
@@ -24601,6 +24602,7 @@ func TestInitCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), ".codog/instructions.md")
 	require.FileExists(t, filepath.Join(workspace, ".codog", "instructions.md"))
 	require.FileExists(t, filepath.Join(workspace, ".codog.json"))
+	require.FileExists(t, filepath.Join(workspace, "AGENTS.md"))
 	require.Len(t, setupPayloads, 1)
 	require.Equal(t, "setup", setupPayloads[0].Event)
 	require.Contains(t, setupPayloads[0].Input, `"source":"init"`)
@@ -24611,6 +24613,7 @@ func TestInitCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"already_initialized": true`)
 	require.Contains(t, out.String(), `"deferred": [`)
 	require.Contains(t, out.String(), `".codog/sessions/"`)
+	require.Contains(t, out.String(), `"AGENTS.md"`)
 	require.Len(t, setupPayloads, 2)
 	out.Reset()
 

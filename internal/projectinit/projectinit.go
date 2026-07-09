@@ -112,6 +112,12 @@ func Initialize(workspace string) (Report, error) {
 	}
 	artifacts = append(artifacts, Artifact{Name: ".gitignore", Status: gitignoreStatus})
 
+	agentsStatus, err := writeFileIfMissing(filepath.Join(abs, "AGENTS.md"), RenderAgents(abs))
+	if err != nil {
+		return Report{}, err
+	}
+	artifacts = append(artifacts, Artifact{Name: "AGENTS.md", Status: agentsStatus})
+
 	return newReport(abs, artifacts), nil
 }
 
@@ -164,6 +170,28 @@ func RenderInstructions(workspace string) string {
 		"- Update this file intentionally when repository workflows change.",
 		"",
 	)
+	return strings.Join(lines, "\n")
+}
+
+func RenderAgents(workspace string) string {
+	detection := detect(workspace)
+	lines := []string{
+		"# Agent Instructions",
+		"",
+		"This repository is initialized for Codog-compatible coding agents.",
+		"Use `.codog/instructions.md` for project-specific build, test, and review guidance.",
+		"",
+		"## Defaults",
+		"- Read `.codog/instructions.md` before making code changes.",
+		"- Prefer small, reviewable changes with focused validation.",
+		"- Keep local machine settings in `.codog.local.json`; keep shared defaults in `.codog.json`.",
+	}
+	verification := detection.verification()
+	if len(verification) != 0 {
+		lines = append(lines, "", "## Verification")
+		lines = append(lines, verification...)
+	}
+	lines = append(lines, "")
 	return strings.Join(lines, "\n")
 }
 

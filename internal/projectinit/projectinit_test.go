@@ -27,16 +27,23 @@ func TestInitializeCreatesExpectedArtifacts(t *testing.T) {
 	require.Contains(t, report.Created, ".codog/instructions.md")
 	require.Contains(t, report.Created, ".codog.json")
 	require.Contains(t, report.Created, ".gitignore")
+	require.Contains(t, report.Created, "AGENTS.md")
 	require.Equal(t, StatusDeferred, artifactByName(t, report, ".codog/sessions/").Status)
 	require.FileExists(t, filepath.Join(workspace, ".codog", "instructions.md"))
 	require.NoDirExists(t, filepath.Join(workspace, ".codog", "sessions"))
 	require.FileExists(t, filepath.Join(workspace, ".codog.json"))
 	require.FileExists(t, filepath.Join(workspace, ".gitignore"))
+	require.FileExists(t, filepath.Join(workspace, "AGENTS.md"))
 
 	instructions, err := os.ReadFile(filepath.Join(workspace, ".codog", "instructions.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(instructions), "Languages: Go.")
 	require.Contains(t, string(instructions), "go test ./...")
+
+	agents, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(agents), ".codog/instructions.md")
+	require.Contains(t, string(agents), "go test ./...")
 
 	configData, err := os.ReadFile(filepath.Join(workspace, ".codog.json"))
 	require.NoError(t, err)
@@ -75,6 +82,7 @@ func TestInitializeIsIdempotentAndPreservesFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "instructions.md"), []byte("custom instructions\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.json"), []byte(`{"model":"custom"}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".gitignore"), []byte(gitignoreComment+"\n"+strings.Join(gitignoreEntries, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("custom agents\n"), 0o644))
 
 	report, err := Initialize(workspace)
 
@@ -87,14 +95,20 @@ func TestInitializeIsIdempotentAndPreservesFiles(t *testing.T) {
 	require.Contains(t, report.Skipped, ".codog/instructions.md")
 	require.Contains(t, report.Skipped, ".codog.json")
 	require.Contains(t, report.Skipped, ".gitignore")
+	require.Contains(t, report.Skipped, "AGENTS.md")
 	require.Equal(t, "already_exists", artifactByName(t, report, ".codog/").SkipReason)
 	require.Equal(t, "already_exists", artifactByName(t, report, ".codog/instructions.md").SkipReason)
 	require.Equal(t, "already_exists", artifactByName(t, report, ".codog.json").SkipReason)
 	require.Equal(t, "already_configured", artifactByName(t, report, ".gitignore").SkipReason)
+	require.Equal(t, "already_exists", artifactByName(t, report, "AGENTS.md").SkipReason)
 
 	instructions, err := os.ReadFile(filepath.Join(workspace, ".codog", "instructions.md"))
 	require.NoError(t, err)
 	require.Equal(t, "custom instructions\n", string(instructions))
+
+	agents, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md"))
+	require.NoError(t, err)
+	require.Equal(t, "custom agents\n", string(agents))
 }
 
 func TestInitializeReportsPartialDirectory(t *testing.T) {
