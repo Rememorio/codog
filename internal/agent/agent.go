@@ -16771,7 +16771,13 @@ func parseScopeArgs(args []string) (scopeRequest, error) {
 		case "restore", "back", "reset":
 			req.Action = "restore"
 		default:
-			return req, unexpectedExtraArgsError{Command: "scope", Args: []string{positionals[0]}, Usage: usage}
+			return req, unknownActionError{
+				Command:     "codog scope",
+				Action:      positionals[0],
+				Expected:    append([]string(nil), scopeActionCandidates...),
+				Suggestions: toolnames.Suggestions(positionals[0], scopeActionCandidates, 4),
+				Usage:       usage,
+			}
 		}
 	}
 	if len(positionals) > 1 {
@@ -16788,6 +16794,8 @@ func parseScopeArgs(args []string) (scopeRequest, error) {
 	}
 	return req, nil
 }
+
+var scopeActionCandidates = []string{"status", "state", "current", "preview", "plan", "show", "apply", "use", "restore", "back", "reset"}
 
 func (a *App) WorkspaceCommand(args []string) error {
 	req, err := parseWorkspaceArgs(args)

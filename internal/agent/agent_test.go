@@ -31583,6 +31583,12 @@ func TestRemainingCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
 			contains: []string{`"command": "add-dir remove"`, `"argument": "PATH"`},
 		},
 		{
+			name:     "scope unknown action",
+			args:     []string{"scope", "previe"},
+			kind:     "unknown_action",
+			contains: []string{`"command": "codog scope"`, `"action": "previe"`, "Did you mean `codog scope preview`?"},
+		},
+		{
 			name:     "validation missing output format",
 			args:     []string{"validation", "--output-format"},
 			kind:     "missing_flag_value",
