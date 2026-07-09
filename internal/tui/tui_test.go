@@ -285,6 +285,43 @@ func TestEscapeCancelsBusyTurnWithoutQuitting(t *testing.T) {
 	require.Contains(t, m.View(), "Interrupted by user.")
 }
 
+func TestStreamedTurnDeltasRenderBeforeDone(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, _ := m.Update(turnStreamMsg{Role: "assistant", Delta: "streaming "})
+	m = updated.(model)
+	require.Equal(t, "streaming", m.status)
+	require.Contains(t, m.View(), "streaming")
+
+	updated, _ = m.Update(turnStreamMsg{Role: "assistant", Delta: "answer"})
+	m = updated.(model)
+	require.Contains(t, m.View(), "streaming answer")
+
+	updated, _ = m.Update(turnDoneMsg{Role: "assistant", Output: "streaming answer"})
+	m = updated.(model)
+	require.Equal(t, "ready", m.status)
+	require.Contains(t, m.View(), "streaming answer")
+	require.NotContains(t, m.View(), "streaming answer\nstreaming answer")
+}
+
+func TestRunStreamSubmitCommandEmitsDeltasBeforeDone(t *testing.T) {
+	ctx := context.Background()
+	messages := make(chan tea.Msg, 4)
+	cmd := runStreamSubmitCommand(ctx, func(_ context.Context, prompt string, emit func(string)) (string, error) {
+		emit("first ")
+		emit(prompt)
+		return "", nil
+	}, "chunk", messages)
+
+	first := cmd()
+	require.Equal(t, turnStreamMsg{Role: "assistant", Delta: "first "}, first)
+	second := waitTurnMessage(messages)()
+	require.Equal(t, turnStreamMsg{Role: "assistant", Delta: "chunk"}, second)
+	done := waitTurnMessage(messages)()
+	require.IsType(t, turnDoneMsg{}, done)
+}
+
 func TestCanceledSlashCommandRendersInterrupted(t *testing.T) {
 	cmd := runSlashCommand(context.Background(), func(context.Context, string) (string, bool, error) {
 		return "", true, context.Canceled

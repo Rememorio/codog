@@ -28,18 +28,23 @@ type Entry struct {
 // transcript.
 type SubmitFunc func(context.Context, string) (string, error)
 
+// StreamSubmitFunc runs one user prompt and can emit assistant deltas while the
+// turn is still running.
+type StreamSubmitFunc func(context.Context, string, func(string)) (string, error)
+
 // SlashFunc runs one slash command and returns local command output. handled is
 // true when the command should not be sent to the model.
 type SlashFunc func(context.Context, string) (output string, handled bool, err error)
 
 // ShellOptions configures the full-screen TUI shell.
 type ShellOptions struct {
-	Candidates []string
-	Prefill    string
-	History    []string
-	Entries    []Entry
-	Submit     SubmitFunc
-	Slash      SlashFunc
+	Candidates   []string
+	Prefill      string
+	History      []string
+	Entries      []Entry
+	Submit       SubmitFunc
+	SubmitStream StreamSubmitFunc
+	Slash        SlashFunc
 }
 
 // Preview captures a deterministic TUI model state for tests and parity
@@ -55,28 +60,31 @@ type Preview struct {
 }
 
 type model struct {
-	ctx        context.Context
-	textarea   textarea.Model
-	viewport   viewport.Model
-	result     Result
-	width      int
-	height     int
-	matches    []string
-	selected   int
-	candidates []string
-	helpOpen   bool
-	busy       bool
-	status     string
-	transcript []transcriptEntry
-	submit     SubmitFunc
-	slash      SlashFunc
-	history    []string
-	historyPos int
-	draft      string
-	searchOpen bool
-	searchHits []string
-	searchPos  int
-	turnCancel context.CancelFunc
+	ctx            context.Context
+	textarea       textarea.Model
+	viewport       viewport.Model
+	result         Result
+	width          int
+	height         int
+	matches        []string
+	selected       int
+	candidates     []string
+	helpOpen       bool
+	busy           bool
+	status         string
+	transcript     []transcriptEntry
+	submit         SubmitFunc
+	submitStream   StreamSubmitFunc
+	slash          SlashFunc
+	history        []string
+	historyPos     int
+	draft          string
+	searchOpen     bool
+	searchHits     []string
+	searchPos      int
+	turnCancel     context.CancelFunc
+	turnMessages   <-chan tea.Msg
+	streamingIndex int
 }
 
 type transcriptEntry struct {
@@ -155,6 +163,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	}
 	m := newModel(ctx, ta, options.Candidates, entries)
 	m.submit = options.Submit
+	m.submitStream = options.SubmitStream
 	m.slash = options.Slash
 	m.setHistory(options.History)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
@@ -172,13 +181,14 @@ func newModel(ctx context.Context, ta textarea.Model, candidates []string, entri
 		}
 	}
 	m := model{
-		ctx:        ctx,
-		textarea:   ta,
-		viewport:   vp,
-		candidates: candidates,
-		status:     "ready",
-		transcript: entries,
-		historyPos: -1,
+		ctx:            ctx,
+		textarea:       ta,
+		viewport:       vp,
+		candidates:     candidates,
+		status:         "ready",
+		transcript:     entries,
+		historyPos:     -1,
+		streamingIndex: -1,
 	}
 	m.refreshViewport()
 	return m
@@ -203,24 +213,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case turnDoneMsg:
 		m.busy = false
+		m.turnMessages = nil
 		if m.turnCancel != nil {
 			m.turnCancel()
 			m.turnCancel = nil
 		}
 		if msg.Interrupted || errors.Is(msg.Err, context.Canceled) {
+			m.streamingIndex = -1
 			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Interrupted by user."})
 			m.status = "interrupted"
 		} else if msg.Err != nil {
+			m.streamingIndex = -1
 			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
 			m.status = "error"
 		} else if strings.TrimSpace(msg.Output) != "" {
-			m.transcript = append(m.transcript, transcriptEntry{Role: msg.Role, Text: msg.Output})
+			m.finishStreamingOutput(msg.Role, msg.Output)
 			m.status = "ready"
 		} else {
 			m.status = "ready"
 		}
+		m.streamingIndex = -1
 		m.refreshViewport()
 		m.viewport.GotoBottom()
+		return m, nil
+	case turnStreamMsg:
+		m.appendStreamDelta(msg.Role, msg.Delta)
+		m.status = "streaming"
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		if m.turnMessages != nil {
+			return m, waitTurnMessage(m.turnMessages)
+		}
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -405,7 +428,7 @@ func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
 		m.viewport.GotoBottom()
 		return m, runSlashCommand(ctx, m.slash, value)
 	}
-	if m.submit == nil {
+	if m.submit == nil && m.submitStream == nil {
 		m.result = Result{Submitted: true, Prompt: value}
 		return m, tea.Quit
 	}
@@ -421,6 +444,11 @@ func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
 	m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: value})
 	m.refreshViewport()
 	m.viewport.GotoBottom()
+	if m.submitStream != nil {
+		messages := make(chan tea.Msg, 32)
+		m.turnMessages = messages
+		return m, runStreamSubmitCommand(ctx, m.submitStream, value, messages)
+	}
 	return m, runSubmitCommand(ctx, m.submit, value)
 }
 
@@ -428,6 +456,28 @@ func runSubmitCommand(ctx context.Context, submit SubmitFunc, prompt string) tea
 	return func() tea.Msg {
 		output, err := submit(ctx, prompt)
 		return turnDoneMsg{Role: "assistant", Output: output, Err: err, Interrupted: errors.Is(err, context.Canceled)}
+	}
+}
+
+func runStreamSubmitCommand(ctx context.Context, submit StreamSubmitFunc, prompt string, messages chan tea.Msg) tea.Cmd {
+	go func() {
+		output, err := submit(ctx, prompt, func(delta string) {
+			if delta == "" {
+				return
+			}
+			select {
+			case messages <- turnStreamMsg{Role: "assistant", Delta: delta}:
+			case <-ctx.Done():
+			}
+		})
+		messages <- turnDoneMsg{Role: "assistant", Output: output, Err: err, Interrupted: errors.Is(err, context.Canceled)}
+	}()
+	return waitTurnMessage(messages)
+}
+
+func waitTurnMessage(messages <-chan tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		return <-messages
 	}
 }
 
@@ -444,6 +494,11 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 	}
 }
 
+type turnStreamMsg struct {
+	Role  string
+	Delta string
+}
+
 func (m *model) interruptTurn() {
 	if !m.busy {
 		return
@@ -452,6 +507,41 @@ func (m *model) interruptTurn() {
 		m.turnCancel()
 	}
 	m.status = "interrupting"
+}
+
+func (m *model) appendStreamDelta(role string, delta string) {
+	if strings.TrimSpace(role) == "" {
+		role = "assistant"
+	}
+	if delta == "" {
+		return
+	}
+	if m.streamingIndex < 0 || m.streamingIndex >= len(m.transcript) {
+		m.transcript = append(m.transcript, transcriptEntry{Role: role, Text: delta})
+		m.streamingIndex = len(m.transcript) - 1
+		return
+	}
+	m.transcript[m.streamingIndex].Text += delta
+}
+
+func (m *model) finishStreamingOutput(role string, output string) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return
+	}
+	if m.streamingIndex < 0 || m.streamingIndex >= len(m.transcript) {
+		m.transcript = append(m.transcript, transcriptEntry{Role: role, Text: output})
+		return
+	}
+	current := strings.TrimSpace(m.transcript[m.streamingIndex].Text)
+	if current == "" {
+		m.transcript[m.streamingIndex].Text = output
+		return
+	}
+	if current == output || strings.Contains(current, output) {
+		return
+	}
+	m.transcript[m.streamingIndex].Text = strings.TrimSpace(current + "\n" + output)
 }
 
 func (m model) completeSlashCommand() model {

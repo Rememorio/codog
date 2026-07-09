@@ -206,6 +206,52 @@ expect eof
 	require.Contains(t, output, "Tools")
 }
 
+func TestRealBinaryTUIRendersStreamingDeltaBeforeTurnDoneWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		writeAcceptanceStreamEvent(t, w, map[string]any{"type": "message_start"})
+		writeAcceptanceStreamEvent(t, w, map[string]any{
+			"type":  "content_block_start",
+			"index": 0,
+			"content_block": map[string]any{
+				"type": "text",
+				"text": "",
+			},
+		})
+		writeAcceptanceStreamEvent(t, w, map[string]any{
+			"type":  "content_block_delta",
+			"index": 0,
+			"delta": map[string]any{
+				"type": "text_delta",
+				"text": "streaming early marker",
+			},
+		})
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model claude-sonnet-4-5 tui
+expect "Codog TUI"
+send "show streaming before done\r"
+expect "streaming early marker"
+send "\033"
+expect "Interrupted by user."
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, output, "streaming early marker")
+	require.Contains(t, output, "Interrupted by user.")
+}
+
 func TestRealBinaryTUIShowsToolResultsWithTTY(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()
@@ -720,6 +766,19 @@ func extractSessionID(t *testing.T, stderr string) string {
 	}
 	t.Fatalf("session id not found in stderr: %s", stderr)
 	return ""
+}
+
+func writeAcceptanceStreamEvent(t *testing.T, w http.ResponseWriter, payload map[string]any) {
+	t.Helper()
+	data, err := json.Marshal(payload)
+	require.NoError(t, err)
+	_, err = w.Write([]byte("event: " + payload["type"].(string) + "\n"))
+	require.NoError(t, err)
+	_, err = w.Write([]byte("data: " + string(data) + "\n\n"))
+	require.NoError(t, err)
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 func TestAcceptanceHarnessUsesRealBinary(t *testing.T) {

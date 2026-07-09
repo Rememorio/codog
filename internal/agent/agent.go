@@ -39037,11 +39037,12 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		entries = append(entries, tui.Entry{Role: "system", Text: banner})
 	}
 	history := a.tuiPromptHistory(sess.ID)
-	submit := func(ctx context.Context, prompt string) (string, error) {
+	submit := func(ctx context.Context, prompt string, emit func(string)) (string, error) {
 		var out bytes.Buffer
+		streamOut := tuiStreamWriter{buffer: &out, emit: emit}
 		toolCalls := []runloop.ToolCall{}
 		err := a.runSessionTurnWithOptions(ctx, "tui", sess, prompt, "idle", turnOptions{
-			Out: &out,
+			Out: &streamOut,
 			OnToolUse: func(call runloop.ToolCall) {
 				toolCalls = append(toolCalls, call)
 			},
@@ -39051,7 +39052,13 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 			response = strings.TrimSpace(lastAssistantText(sess.Messages))
 		}
 		if toolSummary := renderTUIToolSummary(toolCalls); toolSummary != "" {
+			if streamOut.Emitted() {
+				return toolSummary, err
+			}
 			response = strings.TrimSpace(strings.Join([]string{toolSummary, response}, "\n\n"))
+		}
+		if streamOut.Emitted() {
+			return "", err
 		}
 		return response, err
 	}
@@ -39066,14 +39073,36 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		return strings.TrimSpace(out.String()), handled, nil
 	}
 	loopErr := tui.Shell(ctx, tui.ShellOptions{
-		Candidates: a.slashCompletionCandidates(sess.ID),
-		Prefill:    overrides.Prefill,
-		History:    history,
-		Entries:    entries,
-		Submit:     submit,
-		Slash:      slashHandler,
+		Candidates:   a.slashCompletionCandidates(sess.ID),
+		Prefill:      overrides.Prefill,
+		History:      history,
+		Entries:      entries,
+		SubmitStream: submit,
+		Slash:        slashHandler,
 	})
 	return a.finishREPL(ctx, sess, loopErr)
+}
+
+type tuiStreamWriter struct {
+	buffer  *bytes.Buffer
+	emit    func(string)
+	emitted bool
+}
+
+func (w *tuiStreamWriter) Write(data []byte) (int, error) {
+	if w.buffer != nil {
+		_, _ = w.buffer.Write(data)
+	}
+	text := string(data)
+	if text != "" && w.emit != nil {
+		w.emitted = true
+		w.emit(text)
+	}
+	return len(data), nil
+}
+
+func (w *tuiStreamWriter) Emitted() bool {
+	return w != nil && w.emitted
 }
 
 func (a *App) tuiPromptHistory(sessionID string) []string {
