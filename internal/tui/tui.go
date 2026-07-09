@@ -404,7 +404,7 @@ func (m *model) refreshViewport() {
 	}
 	lines := []string{}
 	for _, entry := range m.transcript {
-		lines = append(lines, renderTranscriptEntry(entry))
+		lines = append(lines, renderTranscriptEntry(entry, max(40, m.viewport.Width-2)))
 	}
 	m.viewport.SetContent(strings.Join(lines, "\n\n"))
 }
@@ -435,7 +435,7 @@ func isLocalHelpInput(value string) bool {
 	}
 }
 
-func renderTranscriptEntry(entry transcriptEntry) string {
+func renderTranscriptEntry(entry transcriptEntry, width int) string {
 	role := strings.TrimSpace(entry.Role)
 	if role == "" {
 		role = "message"
@@ -444,7 +444,57 @@ func renderTranscriptEntry(entry transcriptEntry) string {
 	if text == "" {
 		text = "(empty)"
 	}
-	return roleStyle(role).Render(role) + "\n" + text
+	return roleStyle(role).Render(role) + "\n" + wrapTranscriptText(text, width)
+}
+
+func wrapTranscriptText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	sourceLines := strings.Split(text, "\n")
+	out := make([]string, 0, len(sourceLines))
+	for _, line := range sourceLines {
+		wrapped := wrapTranscriptLine(line, width)
+		out = append(out, wrapped...)
+	}
+	return strings.Join(out, "\n")
+}
+
+func wrapTranscriptLine(line string, width int) []string {
+	if len([]rune(line)) <= width {
+		return []string{line}
+	}
+	words := strings.Fields(line)
+	if len(words) == 0 {
+		return []string{line}
+	}
+	out := []string{}
+	current := ""
+	for _, word := range words {
+		for len([]rune(word)) > width {
+			if current != "" {
+				out = append(out, current)
+				current = ""
+			}
+			runes := []rune(word)
+			out = append(out, string(runes[:width]))
+			word = string(runes[width:])
+		}
+		if current == "" {
+			current = word
+			continue
+		}
+		if len([]rune(current))+1+len([]rune(word)) <= width {
+			current += " " + word
+			continue
+		}
+		out = append(out, current)
+		current = word
+	}
+	if current != "" {
+		out = append(out, current)
+	}
+	return out
 }
 
 func helpPanel(candidates []string, width int) string {

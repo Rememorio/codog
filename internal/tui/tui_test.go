@@ -128,6 +128,31 @@ func TestEnterSubmitsAndCtrlJInsertsNewline(t *testing.T) {
 	require.Equal(t, "first", next.result.Prompt)
 }
 
+func TestLongErrorTranscriptWrapsInViewport(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+
+	message := "openai-compatible request failed: 400 Bad Request: provider returned an empty error body; verify the model name, base URL, and credentials with `codog models show MODEL` and `codog providers status`."
+	updated, _ = m.Update(turnDoneMsg{Role: "assistant", Err: assertErr{message: message}})
+	m = updated.(model)
+	view := m.View()
+
+	require.Contains(t, view, "provider returned an empty")
+	require.Contains(t, view, "error body")
+	require.Contains(t, view, "models show MODEL")
+	require.Contains(t, view, "codog providers status")
+}
+
+type assertErr struct {
+	message string
+}
+
+func (e assertErr) Error() string {
+	return e.message
+}
+
 func teaKey(value string) tea.KeyMsg {
 	if value == "enter" {
 		return tea.KeyMsg{Type: tea.KeyEnter}

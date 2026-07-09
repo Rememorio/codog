@@ -63,6 +63,57 @@ func TestRealBinaryTUIHelpDescribesFullScreenDefaults(t *testing.T) {
 	}
 }
 
+func TestRealBinaryTUIHandlesLocalSlashCommandsWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+
+	output := runExpectCodog(t, bin, workspace, configHome, nil, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model glm52 tui
+expect "Codog TUI"
+send "/help\r"
+expect "Common commands"
+send "\033"
+expect "ready"
+send "/status\r"
+expect "Tools"
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, output, "Common commands")
+	require.Contains(t, output, "Tools")
+}
+
+func TestRealBinaryTUIShowsProviderErrorsWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"OPENAI_BASE_URL=" + server.URL + "/v1",
+	}, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model glm52 tui
+expect "Codog TUI"
+send "trigger provider error\r"
+expect "provider returned an empty"
+expect "error body"
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, output, "openai-compatible request failed")
+	require.Contains(t, output, "provider returned an empty")
+	require.Contains(t, output, "error body")
+}
+
 func TestRealBinaryReplSlashHelpAndExit(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()
@@ -337,6 +388,26 @@ func runCodogWithExtraEnv(t *testing.T, bin string, workspace string, configHome
 		}
 	}
 	return commandResult{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}
+}
+
+func runExpectCodog(t *testing.T, bin string, workspace string, configHome string, extraEnv []string, script string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("expect-based TTY acceptance is not supported on windows")
+	}
+	if _, err := exec.LookPath("expect"); err != nil {
+		t.Skip("expect is required for TTY acceptance")
+	}
+	cmd := exec.Command("expect", "-c", script)
+	cmd.Dir = workspace
+	cmd.Env = append([]string{}, acceptanceEnv(configHome)...)
+	cmd.Env = append(cmd.Env, extraEnv...)
+	cmd.Env = append(cmd.Env, "CODOG_TEST_BIN="+bin)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	require.NoError(t, cmd.Run(), out.String())
+	return out.String()
 }
 
 func acceptanceEnv(configHome string) []string {
