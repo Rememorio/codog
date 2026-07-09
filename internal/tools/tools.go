@@ -1797,6 +1797,8 @@ type ApprovalTokenTool struct {
 	ConfigHome string
 }
 
+var approvalTokenActionNames = []string{"grant", "pending", "approve", "verify", "consume", "revoke", "list"}
+
 func (ApprovalTokenTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "approval_token",
@@ -1805,7 +1807,7 @@ func (ApprovalTokenTool) Definition() anthropic.ToolDefinition {
 			"type":                 "object",
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"action": map[string]any{"type": "string", "enum": []string{"grant", "pending", "approve", "verify", "consume", "revoke", "list"}},
+				"action": map[string]any{"type": "string", "enum": append([]string(nil), approvalTokenActionNames...)},
 				"token":  map[string]any{"type": "string"},
 				"scope": map[string]any{
 					"type":                 "object",
@@ -1935,7 +1937,19 @@ func (t ApprovalTokenTool) Execute(_ context.Context, input json.RawMessage) (st
 		}
 		return pretty(map[string]any{"kind": "approval_token", "action": action, "status": "ok", "ledger": ledger}), nil
 	default:
-		return "", fmt.Errorf("unknown approval_token action %q", payload.Action)
+		return "", unknownApprovalTokenActionError(payload.Action)
+	}
+}
+
+func unknownApprovalTokenActionError(action string) error {
+	suggestions := toolnames.Suggestions(action, approvalTokenActionNames, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unknown approval_token action %q", action)
+	case 1:
+		return fmt.Errorf("unknown approval_token action %q; did you mean %q?", action, suggestions[0])
+	default:
+		return fmt.Errorf("unknown approval_token action %q; suggestions: %s", action, strings.Join(suggestions, ", "))
 	}
 }
 

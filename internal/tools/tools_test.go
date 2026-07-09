@@ -5334,6 +5334,15 @@ func TestApprovalTokenToolApprovesPendingGrant(t *testing.T) {
 	require.Contains(t, verifyOut, `"delegated_execution": true`)
 }
 
+func TestApprovalTokenToolSuggestsUnknownAction(t *testing.T) {
+	tool := ApprovalTokenTool{ConfigHome: t.TempDir()}
+
+	_, err := tool.Execute(context.Background(), []byte(`{"action":"verfy"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown approval_token action "verfy"`)
+	require.Contains(t, err.Error(), `did you mean "verify"?`)
+}
+
 func TestCommandToolPermissionDefaultsToDanger(t *testing.T) {
 	require.Equal(t, PermissionDanger, CommandTool{}.Permission())
 	require.Equal(t, PermissionReadOnly, CommandTool{Required: PermissionReadOnly}.Permission())
