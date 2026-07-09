@@ -108,7 +108,7 @@ func TestServeReadsStatusToolsAndPromptVariants(t *testing.T) {
 		`{"jsonrpc":"2.0","id":4,"method":"prompts/get","params":{"name":"review_changes","arguments":{}}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"prompts/get","params":{"name":"explain_workspace","arguments":{}}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"prompts/get","params":{"name":"summarize_file","arguments":{}}}`,
-		`{"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"codog://unknown"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"codog://stats"}}`,
 		"",
 	}, "\n")
 	var out bytes.Buffer
@@ -135,6 +135,7 @@ func TestServeReadsStatusToolsAndPromptVariants(t *testing.T) {
 	errPayload = responses[6]["error"].(map[string]any)
 	require.EqualValues(t, -32602, errPayload["code"])
 	require.Contains(t, errPayload["message"], "unknown resource URI")
+	require.Contains(t, errPayload["message"], `did you mean "codog://status"`)
 }
 
 func TestServeReadsTruncatedFileResourceAndRequiresWorkspace(t *testing.T) {
@@ -170,7 +171,7 @@ func TestServeReportsProtocolErrors(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"unknown/method","params":{}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"resources/read","params":[]}`,
-		`{"jsonrpc":"2.0","id":4,"method":"prompts/get","params":{"name":"missing","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"prompts/get","params":{"name":"review_change","arguments":{}}}`,
 		`{not-json}`,
 		"",
 	}, "\n")
@@ -187,6 +188,7 @@ func TestServeReportsProtocolErrors(t *testing.T) {
 	require.EqualValues(t, -32602, responses[2]["error"].(map[string]any)["code"])
 	require.EqualValues(t, -32602, responses[3]["error"].(map[string]any)["code"])
 	require.Contains(t, responses[3]["error"].(map[string]any)["message"], "unknown prompt")
+	require.Contains(t, responses[3]["error"].(map[string]any)["message"], `did you mean "review_changes"`)
 	require.EqualValues(t, -32700, responses[4]["error"].(map[string]any)["code"])
 }
 

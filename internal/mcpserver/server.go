@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/toolnames"
 	"github.com/Rememorio/codog/internal/tools"
 )
 
@@ -237,8 +238,38 @@ func readLocalResource(uri string, registry *tools.Registry, opts Options) (map[
 		if strings.HasPrefix(uri, "codog://file/") {
 			return readWorkspaceFileResource(uri, opts)
 		}
-		return nil, fmt.Errorf("unknown resource URI %q", uri)
+		return nil, unknownResourceURIError(uri, opts)
 	}
+}
+
+func unknownResourceURIError(uri string, opts Options) error {
+	uri = strings.TrimSpace(uri)
+	suggestions := toolnames.Suggestions(uri, localResourceURICandidates(opts), 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unknown resource URI %q", uri)
+	case 1:
+		return fmt.Errorf("unknown resource URI %q; did you mean %q?", uri, suggestions[0])
+	default:
+		return fmt.Errorf("unknown resource URI %q; suggestions: %s", uri, strings.Join(suggestions, ", "))
+	}
+}
+
+func localResourceURICandidates(opts Options) []string {
+	resources := LocalResources(opts)
+	templates := LocalResourceTemplates()
+	candidates := make([]string, 0, len(resources)+len(templates))
+	for _, resource := range resources {
+		if uri, ok := resource["uri"].(string); ok && strings.TrimSpace(uri) != "" {
+			candidates = append(candidates, uri)
+		}
+	}
+	for _, template := range templates {
+		if uri, ok := template["uriTemplate"].(string); ok && strings.TrimSpace(uri) != "" {
+			candidates = append(candidates, uri)
+		}
+	}
+	return candidates
 }
 
 func jsonResource(uri string, payload any) (map[string]string, error) {
@@ -382,8 +413,32 @@ func localPromptText(name string, arguments map[string]any) (string, error) {
 		}
 		return "Summarize the workspace file `" + path + "` and call out important APIs, side effects, and tests.", nil
 	default:
-		return "", fmt.Errorf("unknown prompt %q", name)
+		return "", unknownPromptError(name)
 	}
+}
+
+func unknownPromptError(name string) error {
+	name = strings.TrimSpace(name)
+	suggestions := toolnames.Suggestions(name, localPromptNameCandidates(), 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unknown prompt %q", name)
+	case 1:
+		return fmt.Errorf("unknown prompt %q; did you mean %q?", name, suggestions[0])
+	default:
+		return fmt.Errorf("unknown prompt %q; suggestions: %s", name, strings.Join(suggestions, ", "))
+	}
+}
+
+func localPromptNameCandidates() []string {
+	prompts := LocalPrompts()
+	candidates := make([]string, 0, len(prompts))
+	for _, prompt := range prompts {
+		if name, ok := prompt["name"].(string); ok && strings.TrimSpace(name) != "" {
+			candidates = append(candidates, name)
+		}
+	}
+	return candidates
 }
 
 func toolExposed(name string) bool {
