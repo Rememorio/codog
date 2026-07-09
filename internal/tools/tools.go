@@ -6014,7 +6014,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 	}
 	action, err := codeintel.NormalizeLSPAction(payload.Action)
 	if err != nil {
-		return "", err
+		return "", unknownToolActionError("lsp", payload.Action, lspToolActionEnum())
 	}
 	var fallback any
 	if payload.UseServer || strings.TrimSpace(payload.Language) != "" {
@@ -6508,7 +6508,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			resolved := map[string]any{"title": "Review Go diagnostics", "kind": "quickfix", "path": rel, "diagnostics": diagnostics}
 			return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "selected": title, "resolved": resolved})), nil
 		default:
-			return "", fmt.Errorf("unsupported static code action %q", title)
+			return "", unknownToolActionError("static code", title, staticCodeActionNames)
 		}
 	case "inline-value":
 		if strings.TrimSpace(payload.Path) == "" {
@@ -6726,7 +6726,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		}
 		return pretty(staticLSPToolReport(action, fallback, map[string]any{"diagnostics": diagnostics, "total": len(diagnostics)})), nil
 	default:
-		return "", fmt.Errorf("unknown lsp action %q", payload.Action)
+		return "", unknownToolActionError("lsp", payload.Action, lspToolActionEnum())
 	}
 }
 
@@ -6739,6 +6739,17 @@ func staticLSPToolReport(action string, fallback any, values map[string]any) map
 		report["fallback"] = fallback
 	}
 	return report
+}
+
+var staticCodeActionNames = []string{
+	"Format Go file",
+	"Organize Go imports",
+	"Fix all Go source",
+	"Review Go diagnostics",
+	"format",
+	"organize-imports",
+	"fix-all",
+	"diagnostics",
 }
 
 func normalizeStaticCodeActionTitle(title string) string {
@@ -10410,6 +10421,8 @@ type skillToolEntry struct {
 	Origin        *skills.Origin `json:"origin,omitempty"`
 }
 
+var skillToolActionNames = []string{"list", "ls", "search", "find", "show", "info", "describe", "view", "inspect", "read", "invoke", "run", "use", "load", "activate"}
+
 func (SkillTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "skill",
@@ -10419,7 +10432,7 @@ func (SkillTool) Definition() anthropic.ToolDefinition {
 			"properties": map[string]any{
 				"action": map[string]any{
 					"type":        "string",
-					"enum":        []string{"list", "ls", "search", "find", "show", "info", "describe", "view", "inspect", "read", "invoke", "run", "use", "load", "activate"},
+					"enum":        append([]string(nil), skillToolActionNames...),
 					"description": "Action to run. Defaults to invoke when skill is set, otherwise list.",
 				},
 				"skill": map[string]any{
@@ -10497,7 +10510,7 @@ func (t SkillTool) Execute(_ context.Context, input json.RawMessage) (string, er
 		}), nil
 	}
 	if action != "invoke" {
-		return "", fmt.Errorf("unsupported skill action %q", action)
+		return "", unknownToolActionError("skill", payload.Action, skillToolActionNames)
 	}
 	return pretty(map[string]any{
 		"kind":        "skill",

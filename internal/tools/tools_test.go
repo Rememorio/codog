@@ -2925,6 +2925,11 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, properties, "arguments")
 	require.Contains(t, properties, "new_name")
 
+	_, err := tool.Execute(context.Background(), []byte(`{"action":"defnition","query":"Widget"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown lsp action "defnition"`)
+	require.Contains(t, err.Error(), `did you mean "definition"?`)
+
 	symbolsOut, err := tool.Execute(context.Background(), []byte(`{"action":"symbols","path":"demo.go"}`))
 	require.NoError(t, err)
 	require.Contains(t, symbolsOut, `"action": "symbols"`)
@@ -2958,6 +2963,11 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, definitionOut, `"source": "static"`)
 	require.Contains(t, definitionOut, `"found": true`)
 	require.Contains(t, definitionOut, `"name": "Widget"`)
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"code_action_resolve","path":"demo.go","query":"Formt Go file"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown static code action "Formt Go file"`)
+	require.Contains(t, err.Error(), `did you mean "Format Go file"?`)
 
 	gotoDefinitionOut, err := tool.Execute(context.Background(), []byte(`{"action":"goto_definition","query":"Widget"}`))
 	require.NoError(t, err)
@@ -4059,6 +4069,12 @@ func TestSkillToolLoadsAndRendersSkill(t *testing.T) {
 
 	_, err = tool.Execute(context.Background(), []byte(`{"skill":"disabled"}`))
 	require.ErrorContains(t, err, "disable-model-invocation")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"invok","skill":"review"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown skill action "invok"`)
+	require.Contains(t, err.Error(), `suggestions:`)
+	require.Contains(t, err.Error(), `invoke`)
 }
 
 func TestConfigToolGetsAndSetsUserConfig(t *testing.T) {
