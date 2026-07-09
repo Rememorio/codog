@@ -321,6 +321,55 @@ func TestClientIncludesFallbackRequestIDForOpenAICompatibleError(t *testing.T) {
 	require.Contains(t, err.Error(), "openai-compatible request failed: 401 Unauthorized (invalid_api_key) [trace req_openai_123]: bad key")
 }
 
+func TestClientExplainsEmptyOpenAICompatibleErrorBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	client := New(server.URL+"/v1", "test-key", "")
+	_, err := client.Stream(context.Background(), Request{
+		Model:     "glm52",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "openai-compatible request failed: 400 Bad Request")
+	require.Contains(t, err.Error(), "provider returned an empty error body")
+	require.Contains(t, err.Error(), "codog models show MODEL")
+}
+
+func TestClientParsesAlternativeProviderErrorShapes(t *testing.T) {
+	tests := map[string]string{
+		`{"error":"quota exceeded"}`:                           "openai-compatible request failed: 400 Bad Request: quota exceeded",
+		`{"code":"invalid_model","message":"model not found"}`: "openai-compatible request failed: 400 Bad Request (invalid_model): model not found",
+	}
+	for body, expected := range tests {
+		t.Run(expected, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "/v1/chat/completions", r.URL.Path)
+				w.WriteHeader(http.StatusBadRequest)
+				_, err := fmt.Fprint(w, body)
+				require.NoError(t, err)
+			}))
+			defer server.Close()
+
+			client := New(server.URL+"/v1", "test-key", "")
+			_, err := client.Stream(context.Background(), Request{
+				Model:     "glm52",
+				MaxTokens: 64,
+				Messages:  []Message{TextMessage("user", "hi")},
+			}, nil)
+
+			require.Error(t, err)
+			require.Contains(t, err.Error(), expected)
+			require.NotContains(t, err.Error(), `{"error"`)
+		})
+	}
+}
+
 func TestClientSuppressesSKAntBearerHintWhenAPIKeyHeaderIsPresent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "sk-ant-real", r.Header.Get("x-api-key"))

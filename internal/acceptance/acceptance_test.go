@@ -2,6 +2,9 @@ package acceptance
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/stretchr/testify/require"
 )
 
@@ -122,6 +126,73 @@ func TestRealBinaryCapabilitiesExposeTerminalContract(t *testing.T) {
 	require.Contains(t, result.Stdout, `"tui_submit_supported"`)
 }
 
+func TestRealBinaryOpenAICompatibleErrorIncludesActionableBodyFallback(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	result := runCodogWithExtraEnv(t, bin, workspace, configHome, []string{
+		"OPENAI_BASE_URL=" + server.URL + "/v1",
+	}, nil, "--model", "glm52", "-p", "hello", "--max-turns", "1")
+
+	require.NotEqual(t, 0, result.Code, result.Combined())
+	require.Contains(t, result.Combined(), "openai-compatible request failed: 400 Bad Request")
+	require.Contains(t, result.Combined(), "provider returned an empty error body")
+	require.Contains(t, result.Combined(), "codog models show MODEL")
+}
+
+func TestRealBinaryRunLoopExecutesWorkspaceTools(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "src"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "src", "app.txt"), []byte("alpha Needle\n"), 0o644))
+
+	var mu sync.Mutex
+	requests := 0
+	server := httptest.NewServer(mockanthropic.Server{
+		Turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{
+				{ID: "tool-read", Name: "read_file", Input: json.RawMessage(`{"path":"src/app.txt"}`)},
+				{ID: "tool-write", Name: "write_file", Input: json.RawMessage(`{"path":"created.txt","content":"created by real binary tool smoke\n"}`)},
+				{ID: "tool-edit", Name: "edit_file", Input: json.RawMessage(`{"path":"src/app.txt","old_string":"alpha","new_string":"beta"}`)},
+				{ID: "tool-grep", Name: "grep", Input: json.RawMessage(`{"pattern":"Needle","path":"."}`)},
+				{ID: "tool-glob", Name: "glob", Input: json.RawMessage(`{"pattern":"src/*.txt","limit":5}`)},
+				{ID: "tool-bash", Name: "bash", Input: json.RawMessage(`{"command":"printf real-bash-smoke"}`)},
+			}},
+			{Text: "real binary tool smoke ok"},
+		},
+		OnRequest: func(json.RawMessage) {
+			mu.Lock()
+			requests++
+			mu.Unlock()
+		},
+	}.Handler())
+	defer server.Close()
+
+	result := runCodogWithExtraEnv(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, nil, "--permission-mode", "allow", "--model", "claude-sonnet-4-5", "-p", "exercise workspace tools", "--max-turns", "4")
+
+	require.Equal(t, 0, result.Code, result.Combined())
+	require.Contains(t, result.Stdout, "real binary tool smoke ok")
+	appData, err := os.ReadFile(filepath.Join(workspace, "src", "app.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "beta Needle\n", string(appData))
+	created, err := os.ReadFile(filepath.Join(workspace, "created.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "created by real binary tool smoke\n", string(created))
+	mu.Lock()
+	require.GreaterOrEqual(t, requests, 2)
+	mu.Unlock()
+}
+
 type commandResult struct {
 	Code   int
 	Stdout string
@@ -134,9 +205,14 @@ func (r commandResult) Combined() string {
 
 func runCodog(t *testing.T, bin string, workspace string, configHome string, stdin []byte, args ...string) commandResult {
 	t.Helper()
+	return runCodogWithExtraEnv(t, bin, workspace, configHome, nil, stdin, args...)
+}
+
+func runCodogWithExtraEnv(t *testing.T, bin string, workspace string, configHome string, extraEnv []string, stdin []byte, args ...string) commandResult {
+	t.Helper()
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = workspace
-	cmd.Env = acceptanceEnv(configHome)
+	cmd.Env = append(acceptanceEnv(configHome), extraEnv...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}

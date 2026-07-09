@@ -880,13 +880,6 @@ func retryableResponse(status int, body string) bool {
 		strings.Contains(lowered, "empty reply from server")
 }
 
-type providerErrorEnvelope struct {
-	Error struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
 func providerStatusErrorMessage(provider string, status string, body string, headers http.Header) string {
 	message := fmt.Sprintf("%s request failed: %s", provider, strings.TrimSpace(status))
 	errorType, errorMessage := providerErrorParts(body)
@@ -899,15 +892,58 @@ func providerStatusErrorMessage(provider string, status string, body string, hea
 	if errorMessage != "" {
 		return message + ": " + errorMessage
 	}
-	return message + ": " + strings.TrimSpace(body)
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return message + ": provider returned an empty error body; verify the model name, base URL, and credentials with `codog models show MODEL` and `codog providers status`."
+	}
+	return message + ": " + truncateProviderErrorBody(body)
 }
 
 func providerErrorParts(body string) (string, string) {
-	var envelope providerErrorEnvelope
-	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+	body = strings.TrimSpace(body)
+	if body == "" {
 		return "", ""
 	}
-	return strings.TrimSpace(envelope.Error.Type), strings.TrimSpace(envelope.Error.Message)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return "", ""
+	}
+	if errorValue, ok := payload["error"]; ok {
+		switch value := errorValue.(type) {
+		case map[string]any:
+			errorType := firstJSONText(value, "type", "code", "status")
+			errorMessage := firstJSONText(value, "message", "detail", "error")
+			return errorType, errorMessage
+		case string:
+			return "", strings.TrimSpace(value)
+		}
+	}
+	return firstJSONText(payload, "type", "code", "status"), firstJSONText(payload, "message", "detail", "error")
+}
+
+func firstJSONText(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		switch value := values[key].(type) {
+		case string:
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		case float64:
+			return fmt.Sprintf("%.0f", value)
+		case bool:
+			return fmt.Sprintf("%t", value)
+		}
+	}
+	return ""
+}
+
+func truncateProviderErrorBody(body string) string {
+	const max = 4096
+	body = strings.TrimSpace(body)
+	if len(body) <= max {
+		return body
+	}
+	return body[:max] + "... (truncated)"
 }
 
 func requestIDFromHeaders(headers http.Header) string {
