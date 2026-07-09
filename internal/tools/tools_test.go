@@ -3292,6 +3292,11 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, organizeResolveOut, `"kind": "organize_imports"`)
 	require.Contains(t, organizeResolveOut, `"removed_imports": [`)
 
+	organizeGoKindOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_action_resolve","path":"imports.go","query":"source.organizeImports.go"}`))
+	require.NoError(t, err)
+	require.Contains(t, organizeGoKindOut, `"selected": "source.organizeImports.go"`)
+	require.Contains(t, organizeGoKindOut, `"title": "Organize Go imports"`)
+
 	fixAllResolveOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_action_resolve","path":"imports.go","query":"source.fixAll"}`))
 	require.NoError(t, err)
 	require.Contains(t, fixAllResolveOut, `"action": "code-action-resolve"`)
@@ -3300,6 +3305,16 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, fixAllResolveOut, `"kind": "fix_all"`)
 	require.Contains(t, fixAllResolveOut, `"actions": [`)
 	require.Contains(t, fixAllResolveOut, `"source.organizeImports"`)
+
+	fixAllGoKindOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_action_resolve","path":"imports.go","query":"source.fixAll.go"}`))
+	require.NoError(t, err)
+	require.Contains(t, fixAllGoKindOut, `"selected": "source.fixAll.go"`)
+	require.Contains(t, fixAllGoKindOut, `"title": "Fix all Go source"`)
+
+	gofmtResolveOut, err := tool.Execute(context.Background(), []byte(`{"action":"code_action_resolve","path":"messy.go","query":"gofmt"}`))
+	require.NoError(t, err)
+	require.Contains(t, gofmtResolveOut, `"selected": "gofmt"`)
+	require.Contains(t, gofmtResolveOut, `"title": "Format Go file"`)
 
 	inlineValueOut, err := tool.Execute(context.Background(), []byte(`{"action":"inline_value","path":"inline.go","limit":5}`))
 	require.NoError(t, err)

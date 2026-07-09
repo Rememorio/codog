@@ -6341,21 +6341,21 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		switch strings.ToLower(title) {
-		case "format go file", "format", "source.format":
+		case "format go file", "format", "gofmt", "gopls.gofmt", "source.format", "source.format.go", "source.format.gofmt":
 			format, err := codeintel.FormatGoFile(t.Workspace, rel, false)
 			if err != nil {
 				return "", err
 			}
 			resolved := map[string]any{"title": "Format Go file", "kind": "source.format", "path": rel, "edit": format}
 			return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "selected": title, "resolved": resolved})), nil
-		case "organize go imports", "organize imports", "source.organizeimports", "gopls.organize_imports", "gopls.organizeimports":
+		case "organize go imports", "organize imports", "source.organizeimports", "source.organizeimports.go", "source.addmissingimports", "source.addmissingimports.go", "source.removeunusedimports", "source.removeunusedimports.go", "gopls.organize_imports", "gopls.organizeimports":
 			organized, err := codeintel.OrganizeGoImports(t.Workspace, rel, false)
 			if err != nil {
 				return "", err
 			}
 			resolved := map[string]any{"title": "Organize Go imports", "kind": "source.organizeImports", "path": rel, "edit": organized}
 			return pretty(staticLSPToolReport(action, fallback, map[string]any{"path": rel, "selected": title, "resolved": resolved})), nil
-		case "fix all go source", "fix all", "source.fixall", "gopls.fixall":
+		case "fix all go source", "fix all", "source.fixall", "source.fixall.go", "source.fixall.gopls", "gopls.fixall":
 			fixAll, err := codeintel.FixAllGoFile(t.Workspace, rel, false)
 			if err != nil {
 				return "", err
