@@ -24,6 +24,31 @@ func TestRunSnippetAndStatus(t *testing.T) {
 	require.False(t, report.Installed)
 }
 
+func TestRunSuggestsUnknownActionAndShell(t *testing.T) {
+	_, err := Run(Options{Action: "instal", Shell: "zsh", Path: filepath.Join(t.TempDir(), ".zshrc")})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown terminal setup action "instal"`)
+	require.Contains(t, err.Error(), `suggestions:`)
+	require.Contains(t, err.Error(), `install`)
+
+	_, err = Run(Options{Action: "status", Shell: "zs", Path: filepath.Join(t.TempDir(), ".zshrc")})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unsupported shell "zs"`)
+	require.Contains(t, err.Error(), `did you mean "zsh"?`)
+}
+
+func TestShellHelpersSuggestUnsupportedShell(t *testing.T) {
+	_, err := Snippet("pwershell")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unsupported shell "pwershell"`)
+	require.Contains(t, err.Error(), `did you mean "powershell"?`)
+
+	_, err = DefaultPath("baash")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unsupported shell "baash"`)
+	require.Contains(t, err.Error(), `did you mean "bash"?`)
+}
+
 func TestRunInstallIsIdempotentAndUninstallRemovesBlock(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".zshrc")
 	require.NoError(t, os.WriteFile(path, []byte("export EXISTING=1\n"), 0o644))

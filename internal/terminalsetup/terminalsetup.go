@@ -7,12 +7,17 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 const (
 	startMarker = "# >>> codog shell integration >>>"
 	endMarker   = "# <<< codog shell integration <<<"
 )
+
+var actionNames = []string{"status", "snippet", "print", "install", "uninstall", "remove"}
+var shellNames = []string{"zsh", "bash", "fish", "powershell", "pwsh"}
 
 type Options struct {
 	Action string
@@ -38,7 +43,11 @@ func Run(opts Options) (Report, error) {
 	if action == "" {
 		action = "status"
 	}
-	shell := NormalizeShell(opts.Shell)
+	rawShell := strings.TrimSpace(opts.Shell)
+	shell := NormalizeShell(rawShell)
+	if rawShell != "" && shell == "" {
+		return Report{}, suggestedValueError("unsupported shell", rawShell, shellNames)
+	}
 	if shell == "" {
 		shell = DetectShell(os.Getenv("SHELL"))
 	}
@@ -101,7 +110,7 @@ func Run(opts Options) (Report, error) {
 			report.Message = "Codog shell integration was not installed."
 		}
 	default:
-		return Report{}, fmt.Errorf("unknown terminal setup action %q", action)
+		return Report{}, suggestedValueError("unknown terminal setup action", action, actionNames)
 	}
 	return report, nil
 }
@@ -127,8 +136,12 @@ func DetectShell(envShell string) string {
 }
 
 func DefaultPath(shell string) (string, error) {
+	rawShell := strings.TrimSpace(shell)
 	shell = NormalizeShell(shell)
 	if shell == "" {
+		if rawShell != "" {
+			return "", suggestedValueError("unsupported shell", rawShell, shellNames)
+		}
 		return "", errors.New("supported shell is required")
 	}
 	home, err := os.UserHomeDir()
@@ -148,11 +161,12 @@ func DefaultPath(shell string) (string, error) {
 		}
 		return filepath.Join(home, ".config", "powershell", "Microsoft.PowerShell_profile.ps1"), nil
 	default:
-		return "", fmt.Errorf("unsupported shell %q", shell)
+		return "", suggestedValueError("unsupported shell", rawShell, shellNames)
 	}
 }
 
 func Snippet(shell string) (string, error) {
+	rawShell := strings.TrimSpace(shell)
 	shell = NormalizeShell(shell)
 	switch shell {
 	case "zsh", "bash":
@@ -187,7 +201,22 @@ func Snippet(shell string) (string, error) {
 			"",
 		}, "\n"), nil
 	default:
-		return "", fmt.Errorf("unsupported shell %q", shell)
+		if rawShell == "" {
+			return "", errors.New("supported shell is required")
+		}
+		return "", suggestedValueError("unsupported shell", rawShell, shellNames)
+	}
+}
+
+func suggestedValueError(prefix string, value string, candidates []string) error {
+	suggestions := toolnames.Suggestions(value, candidates, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("%s %q", prefix, value)
+	case 1:
+		return fmt.Errorf("%s %q; did you mean %q?", prefix, value, suggestions[0])
+	default:
+		return fmt.Errorf("%s %q; suggestions: %s", prefix, value, strings.Join(suggestions, ", "))
 	}
 }
 
