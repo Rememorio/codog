@@ -1399,6 +1399,12 @@ type mcpAuthInput struct {
 	Action string `json:"action,omitempty"`
 }
 
+var mcpAuthActionNames = []string{
+	"status",
+	"refresh", "login", "log-in", "signin", "sign-in", "authenticate", "auth", "reauth", "reauthenticate",
+	"clear", "logout", "signout", "sign-out", "disconnect", "revoke", "reset",
+}
+
 func (MCPAuthTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "mcp_auth",
@@ -1413,7 +1419,7 @@ func (MCPAuthTool) Definition() anthropic.ToolDefinition {
 				},
 				"action": map[string]any{
 					"type":        "string",
-					"enum":        []string{"status", "refresh", "login", "signin", "authenticate", "clear", "logout", "signout", "disconnect", "revoke"},
+					"enum":        append([]string(nil), mcpAuthActionNames...),
 					"description": "status inspects readiness; refresh/login/signin/authenticate refresh a saved OAuth token when possible; clear/logout/signout/disconnect/revoke revoke when possible and delete the saved token.",
 				},
 			},
@@ -1436,7 +1442,7 @@ func (t MCPAuthTool) Execute(ctx context.Context, input json.RawMessage) (string
 	}
 	action := normalizeMCPAuthAction(payload.Action)
 	if action != "status" && action != "refresh" && action != "clear" && action != "logout" {
-		return "", fmt.Errorf("unsupported mcp_auth action %q", payload.Action)
+		return "", unknownMCPAuthActionError(payload.Action)
 	}
 	now := time.Now().UTC()
 	server, ok := t.Servers[payload.Server]
@@ -1461,6 +1467,18 @@ func (t MCPAuthTool) Execute(ctx context.Context, input json.RawMessage) (string
 		return pretty(mcpauthdiag.Clear(ctx, result, t.ConfigHome, t.OAuthProfile, now)), nil
 	}
 	return pretty(mcpauthdiag.Build(result, t.ConfigHome, t.OAuthProfile, now)), nil
+}
+
+func unknownMCPAuthActionError(action string) error {
+	suggestions := toolnames.Suggestions(action, mcpAuthActionNames, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unsupported mcp_auth action %q", action)
+	case 1:
+		return fmt.Errorf("unsupported mcp_auth action %q; did you mean %q?", action, suggestions[0])
+	default:
+		return fmt.Errorf("unsupported mcp_auth action %q; suggestions: %s", action, strings.Join(suggestions, ", "))
+	}
 }
 
 func normalizeMCPAuthAction(action string) string {

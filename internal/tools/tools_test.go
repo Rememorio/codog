@@ -2733,7 +2733,9 @@ func TestMCPAuthToolReportsRecoveryActions(t *testing.T) {
 	require.Contains(t, properties, "action")
 	actionSchema := properties["action"].(map[string]any)
 	require.Contains(t, actionSchema["enum"], "login")
+	require.Contains(t, actionSchema["enum"], "auth")
 	require.Contains(t, actionSchema["enum"], "signout")
+	require.Contains(t, actionSchema["enum"], "reset")
 
 	out, err := tool.Execute(context.Background(), []byte(`{"server":"missing"}`))
 	require.NoError(t, err)
@@ -2753,9 +2755,10 @@ func TestMCPAuthToolReportsRecoveryActions(t *testing.T) {
 	require.Contains(t, out, `"server": "missing"`)
 	require.Contains(t, out, `"cleared": true`)
 
-	_, err = tool.Execute(context.Background(), []byte(`{"server":"missing","action":"bogus"}`))
+	_, err = tool.Execute(context.Background(), []byte(`{"server":"missing","action":"refesh"}`))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "unsupported mcp_auth action")
+	require.Contains(t, err.Error(), `unsupported mcp_auth action "refesh"`)
+	require.Contains(t, err.Error(), `did you mean "refresh"?`)
 }
 
 func TestNotebookEditToolUpdatesNotebook(t *testing.T) {
