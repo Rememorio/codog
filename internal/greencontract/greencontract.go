@@ -3,6 +3,8 @@ package greencontract
 import (
 	"fmt"
 	"strings"
+
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 const (
@@ -20,6 +22,27 @@ const (
 	StatusSatisfied                   = "satisfied"
 	StatusUnsatisfied                 = "unsatisfied"
 )
+
+var levelNames = []string{
+	LevelTargetedTests,
+	"targeted",
+	"targeted_test",
+	LevelPackage,
+	"pkg",
+	LevelWorkspace,
+	"repo",
+	"repository",
+	LevelMergeReady,
+	"merge-ready",
+	"merge",
+	"ready",
+}
+var requirementNames = []string{
+	RequirementRequiredLevel,
+	RequirementTestCommandProvenance,
+	RequirementBaseBranchFreshness,
+	RequirementRecoveryAttemptContext,
+}
 
 type Contract struct {
 	RequiredLevel    string   `json:"required_level"`
@@ -125,7 +148,7 @@ func (c Contract) EvaluateEvidence(e Evidence) (Outcome, error) {
 			}
 		case "":
 		default:
-			return Outcome{}, fmt.Errorf("unknown green contract requirement %q", requirement)
+			return Outcome{}, suggestedValueError("unknown green contract requirement", requirement, requirementNames)
 		}
 	}
 	blockingFlakes := []KnownFlake{}
@@ -180,7 +203,19 @@ func NormalizeLevel(level string) (string, error) {
 	case "merge_ready", "merge", "ready":
 		return LevelMergeReady, nil
 	default:
-		return "", fmt.Errorf("unknown green level %q", level)
+		return "", suggestedValueError("unknown green level", level, levelNames)
+	}
+}
+
+func suggestedValueError(prefix string, value string, candidates []string) error {
+	suggestions := toolnames.Suggestions(value, candidates, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("%s %q", prefix, value)
+	case 1:
+		return fmt.Errorf("%s %q; did you mean %q?", prefix, value, suggestions[0])
+	default:
+		return fmt.Errorf("%s %q; suggestions: %s", prefix, value, strings.Join(suggestions, ", "))
 	}
 }
 

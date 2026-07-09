@@ -79,3 +79,10 @@ func TestInitializeCodogTargetAndNoMarkers(t *testing.T) {
 	require.Contains(t, report.Created, ".codog/skills/verifier-cli/SKILL.md")
 	require.FileExists(t, filepath.Join(workspace, ".codog", "skills", "verifier-cli", "SKILL.md"))
 }
+
+func TestInitializeSuggestsUnknownTarget(t *testing.T) {
+	_, err := Initialize(Options{Workspace: t.TempDir(), Target: "cluade"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown verifier target "cluade"`)
+	require.Contains(t, err.Error(), `did you mean "claude"?`)
+}

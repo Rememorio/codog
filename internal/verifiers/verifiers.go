@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 const (
@@ -15,6 +17,8 @@ const (
 	StatusUpdated = "updated"
 	StatusSkipped = "skipped"
 )
+
+var targetNames = []string{"claude", "codog", "workspace"}
 
 type Options struct {
 	Workspace string
@@ -226,7 +230,19 @@ func targetRoot(workspace, target string) (string, error) {
 	case "codog", "workspace":
 		return filepath.Join(workspace, ".codog", "skills"), nil
 	default:
-		return "", fmt.Errorf("unknown verifier target %q", target)
+		return "", suggestedValueError("unknown verifier target", target, targetNames)
+	}
+}
+
+func suggestedValueError(prefix string, value string, candidates []string) error {
+	suggestions := toolnames.Suggestions(value, candidates, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("%s %q", prefix, value)
+	case 1:
+		return fmt.Errorf("%s %q; did you mean %q?", prefix, value, suggestions[0])
+	default:
+		return fmt.Errorf("%s %q; suggestions: %s", prefix, value, strings.Join(suggestions, ", "))
 	}
 }
 

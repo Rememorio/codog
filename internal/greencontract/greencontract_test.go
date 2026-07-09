@@ -97,6 +97,16 @@ func TestNormalizeLevelAliases(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, LevelMergeReady, level)
 
-	_, err = NormalizeLevel("unknown")
+	_, err = NormalizeLevel("workspce")
 	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown green level "workspce"`)
+	require.Contains(t, err.Error(), `did you mean "workspace"?`)
+}
+
+func TestEvaluateEvidenceSuggestsUnknownRequirement(t *testing.T) {
+	contract := Contract{RequiredLevel: LevelPackage, Requirements: []string{"base_branch_freshnes"}}
+	_, err := contract.EvaluateEvidence(Evidence{ObservedLevel: LevelPackage})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown green contract requirement "base_branch_freshnes"`)
+	require.Contains(t, err.Error(), `did you mean "base_branch_freshness"?`)
 }
