@@ -5145,6 +5145,11 @@ func TestRecoveryToolsRecordLedger(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, listOut, `"kind": "recovery_ledger"`)
 	require.Contains(t, listOut, `"scenario": "stale_branch"`)
+
+	_, err = RecoveryRecipeTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"scenario":"stale-brnch"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown recovery scenario "stale_brnch"`)
+	require.Contains(t, err.Error(), `did you mean "stale_branch"`)
 }
 
 func TestRecoveryAttemptToolRecordsFailedStep(t *testing.T) {

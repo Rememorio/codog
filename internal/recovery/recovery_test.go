@@ -92,6 +92,11 @@ func TestScenarioParsingAndStartupClassificationMapping(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ScenarioPromptDeliveredToShell, scenario)
 
+	_, err = ParseScenario("stale-brnch")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown recovery scenario "stale_brnch"`)
+	require.Contains(t, err.Error(), `did you mean "stale_branch"`)
+
 	scenario, ok := ScenarioFromStartupClassification("trust_required")
 	require.True(t, ok)
 	require.Equal(t, ScenarioTrustPromptUnresolved, scenario)

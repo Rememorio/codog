@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 type Scenario string
@@ -163,6 +165,15 @@ func AllScenarios() []Scenario {
 	}
 }
 
+func AllScenarioNames() []string {
+	scenarios := AllScenarios()
+	names := make([]string, 0, len(scenarios))
+	for _, scenario := range scenarios {
+		names = append(names, string(scenario))
+	}
+	return names
+}
+
 func ParseScenario(value string) (Scenario, error) {
 	value = strings.TrimSpace(strings.ToLower(value))
 	value = strings.ReplaceAll(value, "-", "_")
@@ -178,7 +189,7 @@ func ParseScenario(value string) (Scenario, error) {
 			return scenario, nil
 		}
 	}
-	return "", fmt.Errorf("unknown recovery scenario %q", value)
+	return "", unknownScenarioError(value)
 }
 
 func ScenarioFromStartupClassification(classification string) (Scenario, bool) {
@@ -213,7 +224,19 @@ func RecipeFor(scenario Scenario) (Recipe, error) {
 	case ScenarioProviderFailure:
 		return Recipe{ID: string(scenario), Scenario: scenario, Steps: []Step{{Kind: StepRestartWorker}}, MaxAttempts: 1, EscalationPolicy: EscalationAlertHuman}, nil
 	default:
-		return Recipe{}, fmt.Errorf("unknown recovery scenario %q", scenario)
+		return Recipe{}, unknownScenarioError(string(scenario))
+	}
+}
+
+func unknownScenarioError(value string) error {
+	suggestions := toolnames.Suggestions(value, AllScenarioNames(), 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("unknown recovery scenario %q", value)
+	case 1:
+		return fmt.Errorf("unknown recovery scenario %q; did you mean %q?", value, suggestions[0])
+	default:
+		return fmt.Errorf("unknown recovery scenario %q; suggestions: %s", value, strings.Join(suggestions, ", "))
 	}
 }
 
