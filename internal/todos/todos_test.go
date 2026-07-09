@@ -45,11 +45,13 @@ func TestAddUpdateReplaceClearAndRender(t *testing.T) {
 }
 
 func TestReplaceValidatesItems(t *testing.T) {
-	_, err := Replace(t.TempDir(), []Item{{Content: "x", Status: "blocked"}})
+	_, err := Replace(t.TempDir(), []Item{{Content: "x", Status: "complete"}})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid todo status")
+	require.Contains(t, err.Error(), `invalid todo status "complete"`)
+	require.Contains(t, err.Error(), `did you mean "completed"`)
 
-	_, err = Replace(t.TempDir(), []Item{{Content: "x", Priority: "urgent"}})
+	_, err = Replace(t.TempDir(), []Item{{Content: "x", Priority: "hgh"}})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid todo priority")
+	require.Contains(t, err.Error(), `invalid todo priority "hgh"`)
+	require.Contains(t, err.Error(), `did you mean "high"`)
 }

@@ -9,9 +9,16 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Rememorio/codog/internal/toolnames"
 )
 
 const FileName = "todos.json"
+
+var (
+	statusNames   = []string{"pending", "in_progress", "completed"}
+	priorityNames = []string{"low", "medium", "high"}
+)
 
 type Item struct {
 	ID         string    `json:"id"`
@@ -106,10 +113,10 @@ func Replace(workspace string, items []Item) (Report, error) {
 			return Report{}, errors.New("todo content is required")
 		}
 		if !validStatus(item.Status) {
-			return Report{}, fmt.Errorf("invalid todo status %q", item.Status)
+			return Report{}, invalidStatusError(item.Status)
 		}
 		if !validPriority(item.Priority) {
-			return Report{}, fmt.Errorf("invalid todo priority %q", item.Priority)
+			return Report{}, invalidPriorityError(item.Priority)
 		}
 	}
 	state := State{Kind: "todos", Items: normalized}
@@ -128,7 +135,7 @@ func Add(workspace string, content string, priority string) (Report, error) {
 		priority = "medium"
 	}
 	if !validPriority(priority) {
-		return Report{}, fmt.Errorf("invalid todo priority %q", priority)
+		return Report{}, invalidPriorityError(priority)
 	}
 	state, err := Load(workspace)
 	if err != nil {
@@ -154,7 +161,7 @@ func UpdateStatus(workspace string, id string, status string) (Report, error) {
 		return Report{}, errors.New("todo id is required")
 	}
 	if !validStatus(status) {
-		return Report{}, fmt.Errorf("invalid todo status %q", status)
+		return Report{}, invalidStatusError(status)
 	}
 	state, err := Load(workspace)
 	if err != nil {
@@ -267,5 +274,25 @@ func validPriority(priority string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func invalidStatusError(status string) error {
+	return suggestedTodoValueError("invalid todo status", status, statusNames)
+}
+
+func invalidPriorityError(priority string) error {
+	return suggestedTodoValueError("invalid todo priority", priority, priorityNames)
+}
+
+func suggestedTodoValueError(prefix, value string, candidates []string) error {
+	suggestions := toolnames.Suggestions(value, candidates, 4)
+	switch len(suggestions) {
+	case 0:
+		return fmt.Errorf("%s %q", prefix, value)
+	case 1:
+		return fmt.Errorf("%s %q; did you mean %q?", prefix, value, suggestions[0])
+	default:
+		return fmt.Errorf("%s %q; suggestions: %s", prefix, value, strings.Join(suggestions, ", "))
 	}
 }
