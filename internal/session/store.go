@@ -1,6 +1,8 @@
 package session
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -478,7 +480,8 @@ func (s *Store) CreateWithIdentity(id string, identity SessionIdentity) (*Sessio
 		return nil, err
 	}
 	id = strings.TrimSpace(id)
-	if id == "" {
+	autoID := id == ""
+	if autoID {
 		id = newID()
 	}
 	if IsSessionReferenceAlias(id) {
@@ -492,8 +495,17 @@ func (s *Store) CreateWithIdentity(id string, identity SessionIdentity) (*Sessio
 	} else if exists {
 		return nil, fmt.Errorf("session %q already exists", id)
 	}
-	path := filepath.Join(s.Dir, id+primarySessionExtension)
-	return s.createAtPath(id, path, identity)
+	for attempts := 0; ; attempts++ {
+		path := filepath.Join(s.Dir, id+primarySessionExtension)
+		sess, err := s.createAtPath(id, path, identity)
+		if err == nil {
+			return sess, nil
+		}
+		if !autoID || !os.IsExist(err) || attempts >= 8 {
+			return nil, err
+		}
+		id = newID()
+	}
 }
 
 func (s *Store) createAtPath(id string, path string, identity SessionIdentity) (*Session, error) {
@@ -2171,7 +2183,15 @@ func writeRecord(file *os.File, record Record) error {
 
 func newID() string {
 	now := time.Now().UTC()
-	return fmt.Sprintf("%s-%06d", now.Format("20060102T150405Z"), now.Nanosecond()/1000)
+	return fmt.Sprintf("%s-%06d-%s", now.Format("20060102T150405Z"), now.Nanosecond()/1000, randomIDSuffix())
+}
+
+func randomIDSuffix() string {
+	var data [3]byte
+	if _, err := rand.Read(data[:]); err == nil {
+		return hex.EncodeToString(data[:])
+	}
+	return fmt.Sprintf("%06d", os.Getpid()%1_000_000)
 }
 
 func canonicalWorkspace(workspace string) string {

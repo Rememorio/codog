@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +27,20 @@ func TestRealBinaryDirectSlashHelp(t *testing.T) {
 	require.Contains(t, result.Combined(), "repl")
 }
 
+func TestRealBinaryHelpAfterGlobalFlagsShortCircuits(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+
+	result := runCodog(t, bin, workspace, configHome, nil, "--model", "openai/gpt-5.5", "--help")
+
+	require.Equal(t, 0, result.Code, result.Combined())
+	require.Contains(t, result.Stdout, "Usage:")
+	require.Contains(t, result.Stdout, "repl")
+	require.NotContains(t, result.Combined(), "config_load_failed")
+	require.NotContains(t, result.Combined(), "missing_credentials")
+}
+
 func TestRealBinaryReplSlashHelpAndExit(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()
@@ -38,6 +53,43 @@ func TestRealBinaryReplSlashHelpAndExit(t *testing.T) {
 	require.Contains(t, result.Combined(), "/status")
 	require.Contains(t, result.Combined(), "/exit")
 	require.NotContains(t, result.Combined(), "missing_credentials")
+}
+
+func TestRealBinaryReplBareHelpAndQuitAreLocal(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+
+	result := runCodog(t, bin, workspace, configHome, []byte("help\nquit\n"), "--model", "openai/gpt-5.5", "repl")
+
+	require.Equal(t, 0, result.Code, result.Combined())
+	require.Contains(t, result.Combined(), "Type /help for commands")
+	require.Contains(t, result.Combined(), "/status")
+	require.Contains(t, result.Combined(), "/exit")
+	require.NotContains(t, result.Combined(), "missing_credentials")
+}
+
+func TestRealBinaryConcurrentReplSessionsDoNotCollide(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	const count = 8
+	results := make([]commandResult, count)
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			results[index] = runCodog(t, bin, workspace, configHome, []byte("/exit\n"), "--model", "openai/gpt-5.5", "repl")
+		}(i)
+	}
+	wg.Wait()
+
+	for _, result := range results {
+		require.Equal(t, 0, result.Code, result.Combined())
+		require.NotContains(t, result.Combined(), "file exists")
+		require.NotContains(t, result.Combined(), "already exists")
+	}
 }
 
 func TestRealBinaryCapabilitiesExposeTerminalContract(t *testing.T) {

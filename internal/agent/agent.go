@@ -192,6 +192,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	}
 	overrides, command, rest, err := parseFlags(args, baseOverrides)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return renderHelpCommand(os.Stdout, nil)
+		}
 		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 	}
 	restoreCWD, err := applyGlobalCWD(overrides.CWD)
@@ -39116,10 +39119,10 @@ func (a *App) replScanner(ctx context.Context, sess *session.Session) error {
 		if line == "" {
 			continue
 		}
-		if line == "/exit" || line == "/quit" {
+		if isREPLExitCommand(line) {
 			return nil
 		}
-		if line == "/help" {
+		if isREPLHelpCommand(line) {
 			a.renderSlashHelp(a.Err)
 			continue
 		}
@@ -39160,10 +39163,10 @@ func (a *App) replReadline(ctx context.Context, sess *session.Session, rl *readl
 		if a.promptHistoryEnabled() {
 			_ = rl.SaveHistory(line)
 		}
-		if line == "/exit" || line == "/quit" {
+		if isREPLExitCommand(line) {
 			return nil
 		}
-		if line == "/help" {
+		if isREPLHelpCommand(line) {
 			a.renderSlashHelp(a.Err)
 			continue
 		}
@@ -39177,6 +39180,24 @@ func (a *App) replReadline(ctx context.Context, sess *session.Session, rl *readl
 			fmt.Fprintln(a.Err, "error:", err)
 			continue
 		}
+	}
+}
+
+func isREPLExitCommand(line string) bool {
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "/exit", "/quit", "exit", "quit":
+		return true
+	default:
+		return false
+	}
+}
+
+func isREPLHelpCommand(line string) bool {
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "/help", "help", "?":
+		return true
+	default:
+		return false
 	}
 }
 
