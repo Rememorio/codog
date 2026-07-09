@@ -55,47 +55,27 @@ command reference.
 
 ## Current State
 
-Codog is usable for local experimentation and ordinary repository workflows,
-but the surface area is intentionally labeled by reliability.
+Codog is usable for local experimentation and ordinary repository workflows.
+Its compatibility surface is measured by deterministic tests instead of
+described as a blanket claim.
 
-Stable enough for daily local use:
+The current mock-parity contract covers 90 scenarios across 41 categories and
+31 capability groups. That contract exercises the real run loop, tool runtime,
+permission checks, hooks, sessions, MCP paths, and reporting surfaces without
+calling a live provider. Passing it means the implemented Claude-Code-style
+workflows remain compatible with Codog's published behavior; it does not mean
+Codog is identical to Claude Code.
 
-- one-shot prompts, REPL, text output, JSON output, and streaming JSON output;
-- Anthropic-compatible streaming, plus configurable routes for
-  OpenAI-compatible APIs, Ollama, xAI, DashScope, and custom base URLs;
-- local shell, read, write, edit, grep, glob, git, and notebook tools;
-- JSONL sessions with resume, search, history, rewind, summaries, exports,
-  usage reporting, compaction, hygiene audits, and oversized-log rotation;
-- permission modes, allow and deny rules, workspace boundary checks, hooks,
-  audit events, and setup diagnostics;
-- `codog doctor`, `codog status`, `codog onboarding`, and `codog mock-parity`
-  as repeatable health and compatibility checks.
-
-Useful but still experimental:
-
-- Bubble Tea TUI, slash commands, skills, templates, output styles, and
-  Markdown agent definitions;
-- MCP client and server paths, including lifecycle diagnostics and auth
-  recovery reporting;
-- code intelligence and LSP routing for symbols, diagnostics, hover,
-  references, completion, formatting, code actions, and notebook cells;
-- background tasks, task boards, team runs, subagents, branch freshness checks,
-  and remote-control surfaces;
-- OAuth helpers, provider profiles, updater manifests, policy reports,
-  marketplace metadata, desktop/mobile handoff manifests, and bridge commands.
-
-Not production-hardened yet:
-
-- hosted remote sessions and remote identity management;
-- organization-wide policy rollout and enterprise administration;
-- plugin marketplace trust, signing, distribution, and update channels;
-- cross-platform sandbox enforcement for hostile repositories or commands;
-- IDE extensions, notebook/LSP integrations, and multi-agent orchestration at
-  the level expected from a commercial tool.
+| Maturity | Scope |
+| --- | --- |
+| Daily local use | One-shot prompts, REPL, streaming output, Anthropic-compatible requests, OpenAI-compatible routing, shell/file/search/edit/git tools, JSONL sessions, resume, usage reporting, compaction, permission modes, workspace boundaries, hooks, and diagnostics. |
+| Experimental | Bubble Tea TUI, slash commands, skills, templates, output styles, Markdown agent definitions, MCP client/server paths, code intelligence, LSP routing, notebook helpers, background tasks, subagents, branch freshness checks, and remote-control surfaces. |
+| Not production-hardened | Hosted remote sessions, remote identity management, organization-wide policy rollout, enterprise administration, plugin signing and distribution, update channels, hostile-repository sandboxing, IDE extensions, and large multi-agent operations. |
 
 The CLI exposes many compatibility commands because they are useful for testing
 and migration work. A command being present does not mean the surrounding
-product workflow is finished.
+product workflow is finished. It is not yet a polished drop-in replacement for
+commercial coding agents.
 
 ## Design Principles
 
