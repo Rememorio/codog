@@ -1402,6 +1402,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "reset")
 	require.Contains(t, report.Commands, "settings")
 	require.Contains(t, report.Commands, "skill")
+	require.Contains(t, report.Commands, "slash")
 	require.Contains(t, report.Commands, "temperature")
 	require.Contains(t, report.Commands, "telemetry")
 	require.Contains(t, report.Commands, "workspace")
@@ -1701,6 +1702,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, capabilityReportHasSlash(report, "/settings"))
 	require.True(t, capabilityReportHasSlash(report, "/skill"))
 	require.True(t, capabilityReportHasSlash(report, "/workspace"))
+	require.True(t, capabilityReportHasSlash(report, "/good-claude"))
 	require.True(t, capabilityReportHasMCPResource(report, "codog://workspace"))
 	require.True(t, capabilityReportHasMCPPrompt(report, "review_changes"))
 	require.True(t, commandAcceptsGlobalOutputFormat("addCommand"))
@@ -1727,6 +1729,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("ValidatePlugin"))
 	require.True(t, commandAcceptsGlobalOutputFormat("settings"))
 	require.True(t, commandAcceptsGlobalOutputFormat("skill"))
+	require.True(t, commandAcceptsGlobalOutputFormat("slash"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ultrareviewEnabled"))
 	require.True(t, commandAcceptsGlobalOutputFormat("xaaIdpCommand"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bug"))
@@ -1833,6 +1836,55 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, 1, sourceAudit.Tools.MissingCount)
 	require.Contains(t, sourceAudit.Tools.Covered, referenceAuditMatch{Name: "BashTool", SourceHint: "tools/BashTool/BashTool.tsx", Matched: "bash"})
 	require.Contains(t, sourceAudit.Tools.Covered, referenceAuditMatch{Name: "Bash", SourceHint: "tools/BashTool/toolName.ts", Matched: "bash"})
+}
+
+func TestSlashCommandDiscoveryCLI(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "slash", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report slashCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "slash", report.Kind)
+	require.Equal(t, "list", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Greater(t, report.CommandCount, 100)
+	require.NotEmpty(t, report.ResumeSafe)
+	require.Contains(t, report.ResumeSafe, "/good-claude")
+	require.True(t, slashCommandReportHasCommand(report, "/good-claude"))
+	require.True(t, slashCommandReportHasCommand(report, "/status"))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "slash", "candidates", "/go", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "candidates", report.Action)
+	require.Equal(t, "/go", report.Query)
+	require.Contains(t, report.Candidates, "/good-claude")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "help", "slash", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var help helpReport
+	require.NoError(t, json.Unmarshal([]byte(out), &help))
+	require.Equal(t, "slash", help.Topic)
+	require.Contains(t, help.Help, "codog slash candidates /st")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--cwd", workspace, "/good-claude", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "feedback"`)
+	require.Contains(t, out, `"action": "good_claude"`)
 }
 
 func TestCapabilitiesResolveProjectsExecutionRegistry(t *testing.T) {
@@ -9398,6 +9450,15 @@ func capabilityReportTool(report capabilitiesReport, name string) (capabilityToo
 func capabilityReportHasSlash(report capabilitiesReport, name string) bool {
 	_, ok := capabilityReportSlash(report, name)
 	return ok
+}
+
+func slashCommandReportHasCommand(report slashCommandReport, name string) bool {
+	for _, command := range report.Commands {
+		if command.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func capabilityReportResumeSafeSlashNames(report capabilitiesReport) []string {

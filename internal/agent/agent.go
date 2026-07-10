@@ -748,6 +748,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	case "slash":
+		if err := app.Slash(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "templates":
 		if err := app.Templates(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -31754,6 +31759,7 @@ func builtInCommandNames() []string {
 		"setupGitHubActions",
 		"sessions",
 		"share",
+		"slash",
 		"skill",
 		"skills",
 		"speak",
@@ -62124,8 +62130,180 @@ func (a *App) customSlashCompletionCandidates() []string {
 }
 
 type runtimeSlashHelpEntry struct {
-	Usage       string
-	Description string
+	Usage       string `json:"usage"`
+	Description string `json:"description"`
+}
+
+type slashCommandReport struct {
+	Kind              string                  `json:"kind"`
+	Action            string                  `json:"action"`
+	Status            string                  `json:"status"`
+	Query             string                  `json:"query,omitempty"`
+	CommandCount      int                     `json:"command_count"`
+	Commands          []capabilitySlash       `json:"commands"`
+	RuntimeCount      int                     `json:"runtime_count"`
+	Runtime           []runtimeSlashHelpEntry `json:"runtime,omitempty"`
+	CandidateCount    int                     `json:"candidate_count"`
+	Candidates        []string                `json:"candidates,omitempty"`
+	ResumeSafeCount   int                     `json:"resume_safe_count"`
+	ResumeSafe        []string                `json:"resume_safe,omitempty"`
+	CompletionExample string                  `json:"completion_example,omitempty"`
+}
+
+func (a *App) Slash(args []string) error {
+	req, err := parseSlashArgs(args)
+	if err != nil {
+		return err
+	}
+	report := a.slashCommandReport(req)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	if req.Action == "candidates" {
+		for _, candidate := range report.Candidates {
+			fmt.Fprintln(a.Out, candidate)
+		}
+		return nil
+	}
+	if req.Action == "show" && req.Query != "" {
+		renderSlashCommandShow(a.Out, report)
+		return nil
+	}
+	a.renderSlashHelp(a.Out)
+	return nil
+}
+
+type slashCommandRequest struct {
+	Action string
+	Query  string
+	Format string
+}
+
+func parseSlashArgs(args []string) (slashCommandRequest, error) {
+	req := slashCommandRequest{Action: "list", Format: "text"}
+	positionals := []string{}
+	usage := "codog slash [list|show COMMAND|candidates PREFIX] [--json|--output-format text|json]"
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+			continue
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "slash", Flag: arg, Usage: usage}
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case isHelpFlag(arg):
+			return req, flag.ErrHelp
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: "slash", Option: arg, Usage: usage}
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "slash"); err != nil {
+		return req, err
+	}
+	if len(positionals) == 0 {
+		return req, nil
+	}
+	action := strings.ToLower(strings.TrimSpace(positionals[0]))
+	switch action {
+	case "list", "ls", "commands", "show-all":
+		if len(positionals) > 1 {
+			return req, unexpectedExtraArgsError{Command: "slash " + action, Args: positionals[1:], Usage: usage}
+		}
+		req.Action = "list"
+	case "show", "info", "describe":
+		if len(positionals) != 2 {
+			return req, requiredArgumentError{Command: "slash " + action, Argument: "COMMAND", Usage: usage}
+		}
+		req.Action = "show"
+		req.Query = positionals[1]
+	case "candidates", "complete", "completion":
+		if len(positionals) != 2 {
+			return req, requiredArgumentError{Command: "slash " + action, Argument: "PREFIX", Usage: usage}
+		}
+		req.Action = "candidates"
+		req.Query = positionals[1]
+	default:
+		if strings.HasPrefix(positionals[0], "/") {
+			if len(positionals) > 1 {
+				return req, unexpectedExtraArgsError{Command: "slash show", Args: positionals[1:], Usage: usage}
+			}
+			req.Action = "show"
+			req.Query = positionals[0]
+			break
+		}
+		return req, unknownOptionError{Command: "slash", Option: positionals[0], Usage: usage}
+	}
+	return req, nil
+}
+
+func (a *App) slashCommandReport(req slashCommandRequest) slashCommandReport {
+	allCommands := slashCapabilities()
+	allRuntime := a.runtimeSlashHelpEntries()
+	commands := allCommands
+	runtime := allRuntime
+	candidates := []string{}
+	if req.Action == "candidates" {
+		query := req.Query
+		if !strings.HasPrefix(query, "/") {
+			query = "/" + query
+		}
+		candidates = slash.FilterCandidates(query, a.slashCompletionCandidates(""))
+		commands = nil
+		runtime = nil
+	}
+	if req.Action == "show" && req.Query != "" {
+		query := req.Query
+		if !strings.HasPrefix(query, "/") {
+			query = "/" + query
+		}
+		filtered := []capabilitySlash{}
+		for _, command := range allCommands {
+			if strings.EqualFold(command.Name, query) {
+				filtered = append(filtered, command)
+			}
+		}
+		commands = filtered
+		runtime = nil
+	}
+	return slashCommandReport{
+		Kind:              "slash",
+		Action:            req.Action,
+		Status:            "ok",
+		Query:             req.Query,
+		CommandCount:      len(commands),
+		Commands:          commands,
+		RuntimeCount:      len(runtime),
+		Runtime:           runtime,
+		CandidateCount:    len(candidates),
+		Candidates:        candidates,
+		ResumeSafeCount:   len(slash.ResumeSupportedNames()),
+		ResumeSafe:        slash.ResumeSupportedNames(),
+		CompletionExample: "Type / in the TUI or REPL, then press Tab to complete.",
+	}
+}
+
+func renderSlashCommandShow(out io.Writer, report slashCommandReport) {
+	if len(report.Commands) == 0 {
+		fmt.Fprintf(out, "Slash command not found: %s\n", report.Query)
+		return
+	}
+	for _, command := range report.Commands {
+		fmt.Fprintf(out, "%s\n", command.Name)
+		fmt.Fprintf(out, "  Usage            %s\n", command.Usage)
+		fmt.Fprintf(out, "  Description      %s\n", command.Description)
+		fmt.Fprintf(out, "  Resume supported %t\n", command.ResumeSupported)
+	}
 }
 
 func (a *App) renderSlashHelp(out io.Writer) {
@@ -63097,7 +63275,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "open", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "pr_comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote", "remote-control", "remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "safer-scope", "sandbox-toggle",
-		"references", "scope", "search", "security-review", "self-test", "server", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "ssh", "state", "status", "statusline", "symbols",
+		"references", "scope", "search", "security-review", "self-test", "server", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "slash", "skill", "skills", "speak", "ssh", "state", "status", "statusline", "symbols",
 		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "terminalsetup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"teleport", "ultraplan", "ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "unpin", "upgrade", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
@@ -64468,6 +64646,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"Commands\n\nUsage:\n  codog commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec|add|install|uninstall|remove|rm]\n  codog commands search QUERY [--output-format text|json]\n  codog commands audit [--output-format text|json]\n  codog commands install [--project|--user|--claude] [--name NAME] SOURCE [--output-format text|json]\n\nLists, searches, audits sources, shows, renders, installs, or removes custom Markdown slash commands from Codog and compatible Claude command directories. `ls` is an alias for `list`; `search`, `find`, `query`, and `lookup` filter commands by name, source, preview, or body; `audit`, `doctor`, `check`, and `validate` report source health, active and shadowed commands, and frontmatter parse errors; `root` and `roots` are aliases for `sources`; `info`, `describe`, `get`, `view`, and `cat` are aliases for `show`; `render`, `exec`, `execute`, `call`, and `invoke` are aliases for `run`; `add` is an alias for `install`; `remove`, `rm`, and `del` are aliases for `uninstall`.\n",
 			[]string{"commands", "roots", "sources", "query", "name", "path", "body", "active", "shadowed_by", "frontmatter_errors", "frontmatter_error_count"},
 			[]string{"ok", "degraded", "error"},
+			false,
+		), true
+	case "slash":
+		return localCommandHelpSpec(
+			"slash",
+			"slash",
+			"codog slash [list|show COMMAND|candidates PREFIX] [--output-format text|json]",
+			"Slash\n\nUsage:\n  codog slash [list] [--output-format text|json]\n  codog slash show /status [--output-format text|json]\n  codog slash candidates /st [--output-format text|json]\n\nLists built-in slash commands, runtime custom command entries, resume-safe slash commands, and TUI/REPL completion candidates. This is a non-interactive discovery surface for the same slash registry used by the REPL and TUI.\n",
+			[]string{"commands", "runtime", "candidates", "resume_safe"},
+			[]string{"ok", "error"},
 			false,
 		), true
 	case "templates":
