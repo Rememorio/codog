@@ -3156,12 +3156,6 @@ func (m *model) refreshCompletionMenu() {
 		m.selected = 0
 		return
 	}
-	if isBashModeInput(value) {
-		m.matches = nil
-		m.selected = 0
-		m.status = "bash"
-		return
-	}
 	m.commandArgumentHint = slashCommandArgumentHint(value)
 	candidates := m.filteredCompletionCandidates(value)
 	if len(candidates) == 0 && !strings.HasPrefix(value, "/") {
@@ -3187,6 +3181,12 @@ func (m *model) refreshCompletionMenu() {
 }
 
 func (m model) filteredCompletionCandidates(value string) []string {
+	if isBashModeInput(value) {
+		if prefix, ok := activeBashPathPrefix(value); ok {
+			return filterBashPathCandidates(prefix, m.fileCandidates)
+		}
+		return nil
+	}
 	if strings.HasPrefix(value, "/") {
 		return slash.FilterCandidates(value, m.completionCandidates())
 	}
@@ -3322,6 +3322,9 @@ func (m model) acceptSelectedCompletion() model {
 }
 
 func (m model) completeValue(value string, candidate string) string {
+	if isBashModeInput(value) {
+		return completeBashPathValue(value, candidate)
+	}
 	if strings.HasPrefix(candidate, "@") {
 		return completeFileReferenceValue(value, candidate)
 	}
@@ -3372,6 +3375,51 @@ func filterFileReferenceCandidates(prefix string, files []string) []string {
 		}
 		seen[candidate] = true
 		out = append(out, candidate)
+		if len(out) >= 8 {
+			break
+		}
+	}
+	return out
+}
+
+func activeBashPathPrefix(value string) (string, bool) {
+	value = strings.TrimRight(value, "\r\n\t")
+	if !isBashModeInput(value) {
+		return "", false
+	}
+	body := strings.TrimPrefix(strings.TrimSpace(value), "!")
+	if strings.TrimSpace(body) == "" || strings.HasSuffix(body, " ") || strings.HasSuffix(body, "\t") {
+		return "", false
+	}
+	index := strings.LastIndexAny(body, " \t\n")
+	if index >= 0 {
+		body = body[index+1:]
+	}
+	body = strings.Trim(body, `"'`)
+	if body == "" || strings.HasPrefix(body, "-") || strings.HasPrefix(body, "$") {
+		return "", false
+	}
+	return filepathToSlash(body), true
+}
+
+func filterBashPathCandidates(prefix string, files []string) []string {
+	query := strings.ToLower(strings.TrimSpace(filepathToSlash(prefix)))
+	if query == "" {
+		return nil
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, file := range files {
+		file = strings.TrimSpace(filepathToSlash(file))
+		if file == "" || seen[file] {
+			continue
+		}
+		lower := strings.ToLower(file)
+		if !strings.HasPrefix(lower, query) && !strings.Contains(lower, "/"+query) {
+			continue
+		}
+		seen[file] = true
+		out = append(out, file)
 		if len(out) >= 8 {
 			break
 		}
@@ -3437,6 +3485,24 @@ func completeFileReferenceValue(value string, candidate string) string {
 		return completeValue(candidate)
 	}
 	return value[:index] + completeValue(candidate)
+}
+
+func completeBashPathValue(value string, candidate string) string {
+	candidate = strings.TrimSpace(filepathToSlash(candidate))
+	if candidate == "" {
+		return value
+	}
+	trimmedRight := strings.TrimRight(value, "\r\n\t")
+	searchStart := strings.LastIndexAny(trimmedRight, " \t\n")
+	if searchStart < 0 {
+		searchStart = 0
+	} else {
+		searchStart++
+	}
+	if searchStart < len(trimmedRight) && (trimmedRight[searchStart] == '"' || trimmedRight[searchStart] == '\'') {
+		searchStart++
+	}
+	return trimmedRight[:searchStart] + completeValue(candidate)
 }
 
 func insertWithComposerSpacing(base string, insert string) string {
@@ -3519,6 +3585,9 @@ func completionDisplayLine(candidate string) string {
 	if !ok || strings.TrimSpace(spec.Description) == "" {
 		if strings.HasPrefix(candidate, "@") {
 			return truncateForComposer(candidate+"  -  file reference", 120)
+		}
+		if !strings.HasPrefix(candidate, "/") && (strings.Contains(candidate, "/") || strings.Contains(candidate, ".")) {
+			return truncateForComposer(candidate+"  -  file path", 120)
 		}
 		return candidate
 	}
@@ -5425,15 +5494,15 @@ func (m model) mode() string {
 		}
 		return "diff"
 	}
+	value := strings.TrimSpace(m.textarea.Value())
+	if isBashModeInput(value) {
+		return "bash"
+	}
 	if len(m.matches) > 0 {
 		return fmt.Sprintf("%d completions", len(m.matches))
 	}
-	value := strings.TrimSpace(m.textarea.Value())
 	if strings.HasPrefix(value, "/") {
 		return "slash"
-	}
-	if isBashModeInput(value) {
-		return "bash"
 	}
 	if value == "" {
 		return "ready"

@@ -5422,6 +5422,10 @@ func tuiPromptCompletionScenario() scenario {
 			if bashMode.Mode != "bash" || len(bashMode.Matches) != 0 || !strings.Contains(bashMode.View, "! for bash mode") {
 				return localScenarioResult{}, fmt.Errorf("expected TUI bash mode without prompt completions, got %#v", bashMode)
 			}
+			bashPath := tui.PreviewWithFileCandidates("!cat internal/t", []string{"internal/tui/tui.go", "internal/agent/agent.go"}, 96, 24, true)
+			if bashPath.Value != "!cat internal/tui/tui.go " || strings.Contains(bashPath.Value, "@") {
+				return localScenarioResult{}, fmt.Errorf("expected bash path completion without @ prefix, got value=%q view=%s", bashPath.Value, bashPath.View)
+			}
 			bashRun := tui.PreviewWithBashMode("!printf codog", 96, 24)
 			if bashRun.Prompt != "/run printf codog" || !strings.Contains(bashRun.View, "bash ok: /run printf codog") {
 				return localScenarioResult{}, fmt.Errorf("expected bash mode to route through /run, got %#v", bashRun)
@@ -5635,6 +5639,7 @@ func tuiPromptCompletionScenario() scenario {
 				"automatic":                    automatic.Matches,
 				"footer_hints":                 strings.Contains(automatic.View, "? for shortcuts") && strings.Contains(automatic.View, "Ctrl+T tasks"),
 				"bash_mode":                    bashMode.Mode == "bash" && len(bashMode.Matches) == 0,
+				"bash_path_completion":         bashPath.Value == "!cat internal/tui/tui.go ",
 				"bash_mode_run":                bashRun.Prompt == "/run printf codog",
 				"escape_clear":                 !escapeClear.Quit && escapeClear.Value == "" && strings.Contains(escapeClear.View, "input cleared"),
 				"escape_double_exit":           escapeExit.Quit,

@@ -590,6 +590,34 @@ func TestFileReferenceCompletionIgnoresEmailLikeAtSigns(t *testing.T) {
 	require.Empty(t, preview.Matches)
 }
 
+func TestBashModeFilePathCompletionDoesNotUseAtPrefix(t *testing.T) {
+	preview := PreviewWithFileCandidates("!cat internal/t", []string{
+		"internal/tui/tui.go",
+		"internal/agent/agent.go",
+	}, 96, 24, false)
+
+	require.Equal(t, "bash", preview.Mode)
+	require.Equal(t, []string{"internal/tui/tui.go"}, preview.Matches)
+	require.Contains(t, preview.View, "internal/tui/tui.go  -  file path")
+
+	completed := PreviewWithFileCandidates("!cat internal/t", []string{
+		"internal/tui/tui.go",
+		"internal/agent/agent.go",
+	}, 96, 24, true)
+	require.Equal(t, "!cat internal/tui/tui.go ", completed.Value)
+	require.Empty(t, completed.Matches)
+}
+
+func TestBashModeAtSymbolDoesNotTriggerFileReferenceCompletion(t *testing.T) {
+	preview := PreviewWithFileCandidates("!echo @internal/t", []string{
+		"internal/tui/tui.go",
+	}, 96, 24, false)
+
+	require.Equal(t, "bash", preview.Mode)
+	require.Empty(t, preview.Matches)
+	require.Contains(t, preview.View, "! for bash mode")
+}
+
 func TestQuickOpenFiltersAndInsertsFileReference(t *testing.T) {
 	t.Chdir(t.TempDir())
 	require.NoError(t, os.MkdirAll("internal/tui", 0o755))

@@ -794,6 +794,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, "tui prompt completion harness ok", tuiPrompt.FinalMessage)
 	require.Contains(t, tuiPrompt.Output, `"footer_hints":true`)
 	require.Contains(t, tuiPrompt.Output, `"bash_mode":true`)
+	require.Contains(t, tuiPrompt.Output, `"bash_path_completion":true`)
 	require.Contains(t, tuiPrompt.Output, `"bash_mode_run":true`)
 	require.Contains(t, tuiPrompt.Output, `"escape_clear":true`)
 	require.Contains(t, tuiPrompt.Output, `"escape_double_exit":true`)
