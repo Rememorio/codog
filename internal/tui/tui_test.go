@@ -474,6 +474,45 @@ func TestHistorySearchEscapeRestoresDraft(t *testing.T) {
 	require.Equal(t, "unfinished draft", m.textarea.Value())
 }
 
+func TestCtrlSStashesAndRestoresComposer(t *testing.T) {
+	ta := newPromptTextarea("draft prompt")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.attachments = []string{"notes.txt"}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(model)
+
+	require.Nil(t, cmd)
+	require.Empty(t, m.textarea.Value())
+	require.Empty(t, m.attachments)
+	require.NotNil(t, m.stashedPrompt)
+	require.Equal(t, "prompt stashed", m.status)
+	require.Contains(t, m.View(), "stashed prompt")
+	require.Contains(t, m.View(), "Ctrl+S restore")
+	require.Contains(t, m.View(), "attachments: 1")
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, "draft prompt", m.textarea.Value())
+	require.Equal(t, []string{"notes.txt"}, m.attachments)
+	require.Nil(t, m.stashedPrompt)
+	require.Equal(t, "stash restored", m.status)
+}
+
+func TestCtrlSWithoutDraftReportsNothingToStash(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, "nothing to stash", m.status)
+	require.Nil(t, m.stashedPrompt)
+}
+
 func TestSubmittingPromptAppendsTUIHistory(t *testing.T) {
 	ta := newPromptTextarea("new prompt")
 	m := newModel(context.Background(), ta, nil, nil)

@@ -100,6 +100,12 @@ type Preview struct {
 	Attachments []string
 	Mode        string
 	HelpOpen    bool
+	HasStash    bool
+}
+
+type composerStash struct {
+	Text        string
+	Attachments []string
 }
 
 type model struct {
@@ -135,6 +141,7 @@ type model struct {
 	draft                   string
 	queuedPrompts           []string
 	attachments             []string
+	stashedPrompt           *composerStash
 	searchOpen              bool
 	searchHits              []string
 	searchPos               int
@@ -210,6 +217,7 @@ func PreviewWithCandidates(input string, candidates []string, width int, height 
 		Attachments: append([]string(nil), m.result.Attachments...),
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
 	}
 }
 
@@ -236,6 +244,7 @@ func PreviewWithFileCandidates(input string, files []string, width int, height i
 		Attachments: append([]string(nil), m.attachments...),
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
 	}
 }
 
@@ -260,6 +269,34 @@ func PreviewWithQueued(input string, queued []string, width int, height int) Pre
 		Attachments: append([]string(nil), m.attachments...),
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
+	}
+}
+
+// PreviewWithStash renders a deterministic TUI state after stashing the current
+// composer draft.
+func PreviewWithStash(input string, attachments []string, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	m.attachments = append([]string(nil), attachments...)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
 	}
 }
 
@@ -282,6 +319,7 @@ func PreviewWithAttachments(input string, attachments []string, width int, heigh
 		Attachments: append([]string(nil), m.attachments...),
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
 	}
 }
 
@@ -307,6 +345,7 @@ func PreviewWithPaste(input string, clipboardText string, width int, height int)
 		Attachments: append([]string(nil), m.attachments...),
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
 	}
 }
 
@@ -332,6 +371,7 @@ func PreviewWithPasteAttachment(input string, attachmentPath string, width int, 
 		Attachments: append([]string(nil), m.attachments...),
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
 	}
 }
 
@@ -640,7 +680,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.textarea.InsertString("\n")
 			return m, nil
 		case "ctrl+s":
-			return m.submitCurrentInput()
+			m.togglePromptStash()
+			return m, nil
 		case "ctrl+g":
 			if m.busy || m.externalEditor == nil {
 				return m, nil
@@ -907,6 +948,9 @@ func (m model) View() string {
 	if len(m.attachments) > 0 {
 		composer += "\n" + renderPendingAttachments(m.attachments)
 	}
+	if m.stashedPrompt != nil {
+		composer += "\n" + renderStashNotice(m.stashedPrompt)
+	}
 	statusText := appendStatusMode(statusBarText(m.visibleStatus(), m.width), m.modeLabel, m.width)
 	status := statusStyle().Width(max(40, m.width)).Render(statusText)
 	return strings.Join([]string{title, body, composer, status}, "\n")
@@ -1059,6 +1103,43 @@ func (m *model) editQueuedPrompts() {
 	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Editing %d queued %s.", count, plural("prompt", count))})
 	m.refreshViewport()
 	m.viewport.GotoBottom()
+}
+
+func (m *model) togglePromptStash() {
+	if m.searchOpen || m.awaitingPermission || m.awaitingQuestion {
+		return
+	}
+	if m.helpOpen {
+		m.helpOpen = false
+	}
+	value := m.textarea.Value()
+	hasDraft := strings.TrimSpace(value) != "" || len(m.attachments) > 0
+	if !hasDraft {
+		if m.stashedPrompt == nil {
+			m.status = "nothing to stash"
+			return
+		}
+		m.textarea.SetValue(m.stashedPrompt.Text)
+		m.textarea.CursorEnd()
+		m.attachments = append([]string(nil), m.stashedPrompt.Attachments...)
+		m.stashedPrompt = nil
+		m.matches = nil
+		m.selected = 0
+		m.historyPos = -1
+		m.status = "stash restored"
+		m.refreshCompletionMenu()
+		return
+	}
+	m.stashedPrompt = &composerStash{
+		Text:        value,
+		Attachments: append([]string(nil), m.attachments...),
+	}
+	m.textarea.SetValue("")
+	m.attachments = nil
+	m.matches = nil
+	m.selected = 0
+	m.historyPos = -1
+	m.status = "prompt stashed"
 }
 
 func (m *model) handleAttachmentInput(value string) bool {
@@ -1650,6 +1731,22 @@ func renderPendingAttachments(attachments []string) string {
 	return strings.Join(lines, "\n")
 }
 
+func renderStashNotice(stash *composerStash) string {
+	if stash == nil {
+		return ""
+	}
+	summary := truncateForComposer(strings.Join(strings.Fields(stash.Text), " "), 80)
+	if summary == "" {
+		summary = fmt.Sprintf("%d pending %s", len(stash.Attachments), plural("attachment", len(stash.Attachments)))
+	}
+	lines := []string{completionTitleStyle().Render(" stashed prompt ")}
+	lines = append(lines, completionStyle().Render("  Ctrl+S restore: "+summary))
+	if len(stash.Attachments) > 0 {
+		lines = append(lines, completionStyle().Render(fmt.Sprintf("  attachments: %d", len(stash.Attachments))))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func renderAttachmentSummary(attachments []string) string {
 	if len(attachments) == 0 {
 		return "No pending attachments."
@@ -2066,6 +2163,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Shift+Enter insert newline",
 		"  Alt+Enter   insert newline fallback",
 		"  \\+Enter     replace trailing backslash with newline",
+		"  Ctrl+S      stash or restore composer",
 		"  Ctrl+G      edit composer in $EDITOR",
 		"  Ctrl+V      paste clipboard text or image",
 		"  Ctrl+L      clear screen",
