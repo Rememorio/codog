@@ -6449,6 +6449,22 @@ func risky(value any) {
 	require.Equal(t, "terminal_setup", resumedTerminalAlias.Kind)
 	require.Equal(t, "status", resumedTerminalAlias.Action)
 
+	terminalKeybindingsPath := filepath.Join(workspace, "keybindings.json")
+	out, err = runResumedJSON("/terminal-setup", "install", "--target", "vscode", "--path", terminalKeybindingsPath)
+	require.NoError(t, err)
+	var resumedTerminalTarget terminalsetup.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTerminalTarget))
+	require.Equal(t, "terminal_setup", resumedTerminalTarget.Kind)
+	require.Equal(t, "install", resumedTerminalTarget.Action)
+	require.Equal(t, "vscode", resumedTerminalTarget.Target)
+	require.Equal(t, terminalKeybindingsPath, resumedTerminalTarget.Path)
+	require.True(t, resumedTerminalTarget.Installed)
+	require.True(t, resumedTerminalTarget.Changed)
+	keybindingData, err := os.ReadFile(terminalKeybindingsPath)
+	require.NoError(t, err)
+	require.Contains(t, string(keybindingData), `"key": "shift+enter"`)
+	require.Contains(t, string(keybindingData), `workbench.action.terminal.sendSequence`)
+
 	out, err = runResumedJSON("/model")
 	require.NoError(t, err)
 	var resumedModel modelReport

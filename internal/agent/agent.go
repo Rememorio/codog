@@ -28557,6 +28557,7 @@ type terminalSetupRequest struct {
 	Action string
 	Format string
 	Shell  string
+	Target string
 	Path   string
 	Force  bool
 }
@@ -28566,6 +28567,7 @@ type setupRequest struct {
 	Format         string
 	TerminalAction string
 	Shell          string
+	Target         string
 	Path           string
 	Force          bool
 }
@@ -28674,7 +28676,7 @@ func (a *App) Setup(ctx context.Context, args []string) error {
 }
 
 func parseSetupArgs(args []string) (setupRequest, error) {
-	const usage = "codog setup [status|init|terminal [ACTION]|all] [--shell SHELL] [--path PATH] [--force] [--json|--output-format text|json]"
+	const usage = "codog setup [status|init|terminal [ACTION]|all] [--shell SHELL] [--target shell|vscode|cursor|windsurf|zed|alacritty|apple-terminal] [--path PATH] [--force] [--json|--output-format text|json]"
 	req := setupRequest{Action: "status", Format: "text", TerminalAction: "status"}
 	var rest []string
 	for index := 0; index < len(args); index++ {
@@ -28698,6 +28700,14 @@ func parseSetupArgs(args []string) (setupRequest, error) {
 			req.Shell = args[index]
 		case strings.HasPrefix(arg, "--shell="):
 			req.Shell = strings.TrimPrefix(arg, "--shell=")
+		case arg == "--target":
+			index++
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "setup", Flag: arg, Usage: usage}
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
 			if missingFlagValueAt(args, index) {
@@ -28787,6 +28797,7 @@ func (a *App) buildSetupReport(ctx context.Context, req setupRequest) (setupRepo
 		terminal, err := terminalsetup.Run(terminalsetup.Options{
 			Action: terminalAction,
 			Shell:  req.Shell,
+			Target: req.Target,
 			Path:   req.Path,
 			Force:  req.Force,
 		})
@@ -28952,6 +28963,7 @@ func (a *App) TerminalSetup(args []string) error {
 	report, err := terminalsetup.Run(terminalsetup.Options{
 		Action: req.Action,
 		Shell:  req.Shell,
+		Target: req.Target,
 		Path:   req.Path,
 		Force:  req.Force,
 	})
@@ -28968,7 +28980,7 @@ func (a *App) TerminalSetup(args []string) error {
 }
 
 func parseTerminalSetupArgs(args []string) (terminalSetupRequest, error) {
-	const usage = "codog terminal-setup [status|install|uninstall|snippet] [--shell SHELL] [--path PATH] [--force] [--json|--output-format text|json]"
+	const usage = "codog terminal-setup [status|install|uninstall|snippet] [--shell SHELL] [--target shell|vscode|cursor|windsurf|zed|alacritty|apple-terminal] [--path PATH] [--force] [--json|--output-format text|json]"
 	req := terminalSetupRequest{Action: "status", Format: "text"}
 	var rest []string
 	for index := 0; index < len(args); index++ {
@@ -28992,6 +29004,14 @@ func parseTerminalSetupArgs(args []string) (terminalSetupRequest, error) {
 			req.Shell = args[index]
 		case strings.HasPrefix(arg, "--shell="):
 			req.Shell = strings.TrimPrefix(arg, "--shell=")
+		case arg == "--target":
+			index++
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "terminal-setup", Flag: arg, Usage: usage}
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
 			if missingFlagValueAt(args, index) {
@@ -29025,7 +29045,12 @@ func parseTerminalSetupArgs(args []string) (terminalSetupRequest, error) {
 func renderTerminalSetupReport(out io.Writer, report terminalsetup.Report) {
 	fmt.Fprintln(out, "Terminal Setup")
 	fmt.Fprintf(out, "  Status           %s\n", report.Status)
-	fmt.Fprintf(out, "  Shell            %s\n", report.Shell)
+	if report.Target != "" {
+		fmt.Fprintf(out, "  Target           %s\n", report.Target)
+	}
+	if report.Shell != "" {
+		fmt.Fprintf(out, "  Shell            %s\n", report.Shell)
+	}
 	if report.Path != "" {
 		fmt.Fprintf(out, "  Path             %s\n", report.Path)
 	}

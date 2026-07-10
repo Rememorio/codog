@@ -5240,6 +5240,25 @@ func diagnosticsStatusScenario() scenario {
 			if terminalSnippet.Action != "snippet" || !strings.Contains(terminalSnippet.Snippet, "CODOG_SHELL_INTEGRATION") {
 				return localScenarioResult{}, fmt.Errorf("unexpected terminal setup snippet report: %#v", terminalSnippet)
 			}
+			terminalKeybindingsPath := filepath.Join(workspace, "keybindings.json")
+			terminalTargetInstall, err := terminalsetup.Run(terminalsetup.Options{
+				Action: "install",
+				Target: "vscode",
+				Path:   terminalKeybindingsPath,
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if terminalTargetInstall.Target != "vscode" || !terminalTargetInstall.Installed || !terminalTargetInstall.Changed {
+				return localScenarioResult{}, fmt.Errorf("unexpected terminal target install report: %#v", terminalTargetInstall)
+			}
+			keybindingsData, err := os.ReadFile(terminalKeybindingsPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(keybindingsData), `"key": "shift+enter"`) || !strings.Contains(string(keybindingsData), "workbench.action.terminal.sendSequence") {
+				return localScenarioResult{}, fmt.Errorf("terminal target keybinding was not installed: %s", string(keybindingsData))
+			}
 
 			report := map[string]any{
 				"kind": "diagnostics_status",
@@ -5274,6 +5293,8 @@ func diagnosticsStatusScenario() scenario {
 					"installed":      terminalStatus.Installed,
 					"snippet_action": terminalSnippet.Action,
 					"snippet":        strings.Contains(terminalSnippet.Snippet, "codog_statusline"),
+					"target":         terminalTargetInstall.Target,
+					"target_install": terminalTargetInstall.Installed,
 				},
 			}
 			data, err := json.Marshal(report)
