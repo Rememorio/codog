@@ -5464,6 +5464,14 @@ func tuiPromptCompletionScenario() scenario {
 			if !strings.Contains(undoControl.View, "Undo") || !strings.Contains(undoControl.View, "Path: notes.txt") {
 				return localScenarioResult{}, fmt.Errorf("expected undo control preview, got view=%s", undoControl.View)
 			}
+			exportControl := tui.PreviewWithRuntimeControl("", "ctrl+x ctrl+s", tui.RuntimeControlResult{
+				Title:  "Conversation Exported",
+				Status: "exported",
+				Lines:  []string{"Session: session-1", "File: .codog/exports/session-1.md"},
+			}, 96, 24)
+			if !strings.Contains(exportControl.View, "Conversation Exported") || !strings.Contains(exportControl.View, ".codog/exports/session-1.md") {
+				return localScenarioResult{}, fmt.Errorf("expected export control preview, got view=%s", exportControl.View)
+			}
 			messageActions := tui.PreviewWithMessageActions([]tui.Entry{{Role: "assistant", Text: "Use message actions"}}, 96, 24, -1)
 			if !messageActions.MessageMenu || !strings.Contains(messageActions.View, "message actions") || !strings.Contains(messageActions.View, "copy to composer") {
 				return localScenarioResult{}, fmt.Errorf("expected message actions preview, got view=%s", messageActions.View)

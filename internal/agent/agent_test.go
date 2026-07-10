@@ -30390,6 +30390,30 @@ func TestExportCommandAvoidsOverwritingExistingOutput(t *testing.T) {
 	require.Contains(t, string(exported), `"id": "source"`)
 }
 
+func TestExportTUIConversationWritesMarkdownFile(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "export from tui")))
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+	app := &App{Sessions: store, Workspace: workspace, Out: io.Discard, Err: io.Discard}
+
+	result, err := app.exportTUIConversation(context.Background(), sess)
+	require.NoError(t, err)
+	require.Equal(t, "Conversation Exported", result.Title)
+	require.Equal(t, "exported", result.Status)
+	require.Contains(t, result.Lines, "Session: source")
+	require.Contains(t, result.Lines, "File: .codog/exports/source.md")
+	require.Contains(t, result.Lines, "Format: markdown")
+	require.Contains(t, result.Lines, "Messages: 1")
+
+	data, err := os.ReadFile(filepath.Join(workspace, ".codog", "exports", "source.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "# Conversation Export")
+	require.Contains(t, string(data), "export from tui")
+}
+
 func TestExportRejectsRelativePathTraversal(t *testing.T) {
 	configHome := t.TempDir()
 	parent := t.TempDir()

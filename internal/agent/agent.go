@@ -39238,6 +39238,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		UndoLast: func(ctx context.Context) (tui.RuntimeControlResult, error) {
 			return a.undoTUIChange(ctx)
 		},
+		ExportConversation: func(ctx context.Context) (tui.RuntimeControlResult, error) {
+			return a.exportTUIConversation(ctx, sess)
+		},
 		RestoreConversation: func(ctx context.Context, keepMessages int) (tui.RuntimeControlResult, error) {
 			return a.restoreTUIConversation(ctx, sess, keepMessages)
 		},
@@ -39482,6 +39485,61 @@ func (a *App) undoTUIChange(ctx context.Context) (tui.RuntimeControlResult, erro
 		Status: status,
 		Lines:  lines,
 	}, nil
+}
+
+func (a *App) exportTUIConversation(ctx context.Context, sess *session.Session) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if sess == nil || strings.TrimSpace(sess.ID) == "" {
+		return tui.RuntimeControlResult{}, errors.New("session is required")
+	}
+	outputDir := filepath.Join(a.Workspace, ".codog", "exports")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	output := filepath.Join(".codog", "exports", safeTUIExportName(sess.ID)+".md")
+	var out bytes.Buffer
+	oldOut, oldErr := a.Out, a.Err
+	a.Out, a.Err = &out, &out
+	err := a.ExportWithOverrides([]string{"--format", "markdown", "--output", output}, config.FlagOverrides{SessionID: sess.ID})
+	a.Out, a.Err = oldOut, oldErr
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	var report struct {
+		SessionID string `json:"session_id"`
+		File      string `json:"file"`
+		Format    string `json:"format"`
+		Messages  int    `json:"messages"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	displayPath := report.File
+	if rel, err := filepath.Rel(a.Workspace, report.File); err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		displayPath = filepath.ToSlash(rel)
+	}
+	lines := []string{
+		"Session: " + report.SessionID,
+		"File: " + displayPath,
+		"Format: " + report.Format,
+		fmt.Sprintf("Messages: %d", report.Messages),
+	}
+	return tui.RuntimeControlResult{
+		Title:  "Conversation Exported",
+		Status: "exported",
+		Lines:  lines,
+	}, nil
+}
+
+func safeTUIExportName(value string) string {
+	name := regexp.MustCompile(`[^A-Za-z0-9_.-]+`).ReplaceAllString(strings.TrimSpace(value), "-")
+	name = strings.Trim(name, "-.")
+	if name == "" {
+		return "session"
+	}
+	return name
 }
 
 func (a *App) restoreTUIConversation(ctx context.Context, sess *session.Session, keepMessages int) (tui.RuntimeControlResult, error) {

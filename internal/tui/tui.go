@@ -121,6 +121,7 @@ type ShellOptions struct {
 	StopBackground            RuntimeControlFunc
 	CompactSession            RuntimeControlFunc
 	UndoLast                  RuntimeControlFunc
+	ExportConversation        RuntimeControlFunc
 	RestoreConversation       ConversationRestoreFunc
 	ForkConversation          ConversationForkFunc
 	SummarizeConversation     ConversationSummarizeFunc
@@ -222,6 +223,7 @@ type model struct {
 	stopBackground            RuntimeControlFunc
 	compactSession            RuntimeControlFunc
 	undoLast                  RuntimeControlFunc
+	exportConversation        RuntimeControlFunc
 	restoreConversation       ConversationRestoreFunc
 	forkConversation          ConversationForkFunc
 	summarizeConversation     ConversationSummarizeFunc
@@ -754,6 +756,8 @@ func PreviewWithRuntimeControl(input string, key string, result RuntimeControlRe
 		m.toggleThinking = control
 	case "ctrl+x ctrl+u":
 		m.undoLast = control
+	case "ctrl+x ctrl+s":
+		m.exportConversation = control
 	}
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -762,7 +766,7 @@ func PreviewWithRuntimeControl(input string, key string, result RuntimeControlRe
 		}
 	}
 	updated, cmd := m.Update(runtimeControlPreviewKey(key, false))
-	if strings.EqualFold(strings.TrimSpace(key), "ctrl+x ctrl+u") {
+	if runtimeControlPreviewChord(key) {
 		if next, ok := updated.(model); ok {
 			m = next
 		}
@@ -800,7 +804,22 @@ func runtimeControlPreviewKey(key string, chordSecond bool) tea.KeyMsg {
 		}
 		return tea.KeyMsg{Type: tea.KeyCtrlX}
 	}
+	if key == "ctrl+x ctrl+s" {
+		if chordSecond {
+			return tea.KeyMsg{Type: tea.KeyCtrlS}
+		}
+		return tea.KeyMsg{Type: tea.KeyCtrlX}
+	}
 	return altRuneKey(key)
+}
+
+func runtimeControlPreviewChord(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "ctrl+x ctrl+u", "ctrl+x ctrl+s":
+		return true
+	default:
+		return false
+	}
 }
 
 // PreviewWithMessageActions renders a deterministic TUI state after opening
@@ -986,6 +1005,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.stopBackground = options.StopBackground
 	m.compactSession = options.CompactSession
 	m.undoLast = options.UndoLast
+	m.exportConversation = options.ExportConversation
 	m.restoreConversation = options.RestoreConversation
 	m.forkConversation = options.ForkConversation
 	m.summarizeConversation = options.SummarizeConversation
@@ -1331,6 +1351,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.status = "undoing"
 				return m, runRuntimeControlCommand(m.ctx, m.undoLast)
+			case "ctrl+s":
+				if m.exportConversation == nil {
+					m.status = "no export"
+					return m, nil
+				}
+				m.status = "exporting"
+				return m, runRuntimeControlCommand(m.ctx, m.exportConversation)
 			case "backspace", "delete":
 				m.removeLastAttachment()
 				return m, nil
@@ -4325,6 +4352,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+X Ctrl+K stop background tasks",
 		"  Ctrl+X Ctrl+C compact session",
 		"  Ctrl+X Ctrl+U undo last file change",
+		"  Ctrl+X Ctrl+S export conversation",
 		"  Ctrl+X Backspace remove last attachment",
 		"  Ctrl+_      undo composer edit",
 		"  Ctrl+Shift+- undo composer edit",
