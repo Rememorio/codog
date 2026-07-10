@@ -446,7 +446,33 @@ func TestSlashMenuDoesNotInterceptExactLocalHelp(t *testing.T) {
 
 	require.True(t, m.helpOpen)
 	require.Empty(t, m.textarea.Value())
-	require.Contains(t, m.View(), "Common commands")
+	require.Contains(t, m.View(), "Core commands")
+}
+
+func TestDefaultTUIWelcomeMatchesInteractiveAgentWorkflow(t *testing.T) {
+	preview := PreviewWithCandidates("", nil, 100, 24, false, false)
+
+	require.Contains(t, preview.View, "codog")
+	require.Contains(t, preview.View, "Interactive coding agent ready.")
+	require.Contains(t, preview.View, "mention @files")
+	require.Contains(t, preview.View, "run !shell commands")
+	require.Contains(t, preview.View, "Enter sends")
+	require.Contains(t, preview.View, "Shift+Enter inserts a newline")
+	require.Contains(t, preview.View, "Ask codog to inspect, edit, test, or explain this repository...")
+}
+
+func TestHelpPanelDescribesCoreInteractiveInputs(t *testing.T) {
+	help := helpPanel([]string{"/status", "/diff"}, 120)
+
+	require.Contains(t, help, "interactive coding agent")
+	require.Contains(t, help, "@path")
+	require.Contains(t, help, "!command")
+	require.Contains(t, help, "/attach PATH")
+	require.Contains(t, help, "/paste")
+	require.Contains(t, help, "Enter sends the composer")
+	require.Contains(t, help, "Shift+Enter")
+	require.Contains(t, help, "/status")
+	require.Contains(t, help, "/diff")
 }
 
 func TestStatusBarUsesCompactHintsAtTerminalWidth(t *testing.T) {
@@ -651,7 +677,7 @@ func TestPromptTextareaUsesPrefill(t *testing.T) {
 
 	require.Equal(t, "review this diff", ta.Value())
 	require.Equal(t, 16000, ta.CharLimit)
-	require.Equal(t, "Ask Codog to work on this repository...", ta.Placeholder)
+	require.Equal(t, "Ask codog to inspect, edit, test, or explain this repository...", ta.Placeholder)
 }
 
 func TestPreviewWithCandidatesRendersMultipleMatches(t *testing.T) {
@@ -1762,7 +1788,7 @@ func TestCtrlXCtrlYCopiesConversation(t *testing.T) {
 func TestPreviewTogglesHelpPanel(t *testing.T) {
 	preview := PreviewWithCandidates("/help", []string{"/status", "/context"}, 100, 24, false, false)
 	require.True(t, preview.HelpOpen)
-	require.Contains(t, preview.View, "Common commands")
+	require.Contains(t, preview.View, "Core commands")
 
 	ta := newPromptTextarea("/help")
 	m := newModel(context.Background(), ta, []string{"/status", "/context"}, nil)
@@ -1771,7 +1797,7 @@ func TestPreviewTogglesHelpPanel(t *testing.T) {
 
 	require.True(t, next.helpOpen)
 	require.Empty(t, next.textarea.Value())
-	require.Contains(t, next.View(), "Common commands")
+	require.Contains(t, next.View(), "Core commands")
 	require.Contains(t, next.View(), "/status")
 }
 
@@ -2275,11 +2301,13 @@ func TestPreviewQuestionMarkOpensHelpWhenComposerEmpty(t *testing.T) {
 	next := updated.(model)
 
 	require.True(t, next.helpOpen)
-	require.Contains(t, next.View(), "Keys")
+	require.Contains(t, next.View(), "Common workflows")
 	require.Contains(t, next.View(), "/status")
-	require.Contains(t, next.View(), "Shift+Enter")
-	require.Contains(t, next.View(), "Alt+Enter")
-	require.Contains(t, helpPanel([]string{"/status"}, 100), "\\+Enter")
+	help := helpPanel([]string{"/status"}, 100)
+	require.Contains(t, help, "Keys")
+	require.Contains(t, help, "Shift+Enter")
+	require.Contains(t, help, "Alt+Enter")
+	require.Contains(t, help, "\\+Enter")
 }
 
 func TestEnterSubmitsAndNewlineShortcutsInsertNewline(t *testing.T) {

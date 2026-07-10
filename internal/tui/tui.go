@@ -1620,9 +1620,7 @@ func newModel(ctx context.Context, ta textarea.Model, candidates []string, entri
 		ctx = context.Background()
 	}
 	if len(entries) == 0 {
-		entries = []transcriptEntry{
-			{Role: "system", Text: "Codog TUI is ready. Compose a prompt, open /help, or use Tab for slash commands."},
-		}
+		entries = defaultTranscriptEntries()
 	}
 	m := model{
 		ctx:            ctx,
@@ -1640,13 +1638,28 @@ func newModel(ctx context.Context, ta textarea.Model, candidates []string, entri
 
 func newPromptTextarea(input string) textarea.Model {
 	ta := textarea.New()
-	ta.Placeholder = "Ask Codog to work on this repository..."
+	ta.Placeholder = "Ask codog to inspect, edit, test, or explain this repository..."
 	ta.Focus()
 	ta.SetWidth(80)
 	ta.SetHeight(8)
 	ta.CharLimit = 16000
 	ta.SetValue(input)
 	return ta
+}
+
+func defaultTranscriptEntries() []transcriptEntry {
+	return []transcriptEntry{
+		{
+			Role: "system",
+			Text: strings.Join([]string{
+				"codog",
+				"Interactive coding agent ready.",
+				"",
+				"Start with a task, paste context, mention @files, run !shell commands, or type /help.",
+				"Enter sends. Shift+Enter inserts a newline. Esc clears panels or exits after a second press.",
+			}, "\n"),
+		},
+	}
 }
 
 func (m model) Init() tea.Cmd {
@@ -6936,9 +6949,17 @@ func helpPanel(candidates []string, width int) string {
 	}
 	sections := []string{
 		panelTitleStyle().Render(" help "),
-		"Type a prompt, @path file reference, or slash command. Enter submits.",
+		"Codog is an interactive coding agent. Type a task, reference @files, run !shell commands, or use slash commands.",
+		"Enter sends the composer. Shift+Enter, Alt+Enter, Ctrl+J, or a trailing backslash inserts a newline.",
 		"",
-		"Common commands",
+		"Common workflows",
+		"  ask normally       describe the code change, investigation, or test you want",
+		"  @path              attach a file reference to the next prompt",
+		"  !command           run a local shell command through the permission flow",
+		"  /attach PATH       stage files or images for the next prompt",
+		"  /paste             insert clipboard text or stage clipboard images",
+		"",
+		"Core commands",
 		"  /status   inspect workspace and runtime",
 		"  /context  inspect context; /attach files; /paste clipboard",
 		"  /diff     view git changes",
