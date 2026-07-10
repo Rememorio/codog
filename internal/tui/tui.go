@@ -153,6 +153,8 @@ type Preview struct {
 	MessageMenu     bool
 	AttachmentsOpen bool
 	DiffDialog      bool
+	CommandHint     string
+	InlineHint      string
 }
 
 // DiffSource describes one diff source rendered by the TUI diff dialog.
@@ -190,6 +192,8 @@ type model struct {
 	height                    int
 	matches                   []string
 	selected                  int
+	commandArgumentHint       string
+	inlineGhostText           string
 	candidates                []string
 	fileCandidates            []string
 	helpOpen                  bool
@@ -343,6 +347,8 @@ func PreviewWithCandidates(input string, candidates []string, width int, height 
 		QuickOpen:    m.quickOpen,
 		GlobalSearch: m.globalSearch,
 		TodosOpen:    m.todosOpen,
+		CommandHint:  m.commandArgumentHint,
+		InlineHint:   m.inlineGhostText,
 	}
 }
 
@@ -374,6 +380,8 @@ func PreviewWithFileCandidates(input string, files []string, width int, height i
 		QuickOpen:    m.quickOpen,
 		GlobalSearch: m.globalSearch,
 		TodosOpen:    m.todosOpen,
+		CommandHint:  m.commandArgumentHint,
+		InlineHint:   m.inlineGhostText,
 	}
 }
 
@@ -1628,6 +1636,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.matches) > 0 {
 				m.matches = nil
 				m.selected = 0
+				m.commandArgumentHint = ""
+				m.inlineGhostText = ""
 				m.status = m.mode()
 				return m, nil
 			}
@@ -2045,6 +2055,9 @@ func (m model) View() string {
 	body := m.viewport.View()
 	composerTitle := panelTitleStyle().Render(" composer ")
 	composer := composerTitle + "\n" + m.textarea.View()
+	if m.commandArgumentHint != "" || m.inlineGhostText != "" {
+		composer += "\n" + renderCommandAssist(m.commandArgumentHint, m.inlineGhostText)
+	}
 	if len(m.matches) > 0 {
 		composer += "\n" + renderCompletions(m.matches, m.selected)
 	}
@@ -2857,6 +2870,8 @@ func (m *model) clearScreen() {
 	m.helpOpen = false
 	m.matches = nil
 	m.selected = 0
+	m.commandArgumentHint = ""
+	m.inlineGhostText = ""
 	m.searchOpen = false
 	m.searchHits = nil
 	m.searchPos = 0
@@ -2937,6 +2952,17 @@ func (m *model) finishStreamingOutput(role string, output string) {
 
 func (m model) completeSlashCommand() model {
 	value := strings.Trim(m.textarea.Value(), "\r\n\t")
+	if !strings.HasPrefix(value, "/") {
+		if completion, ok := m.midInputSlashCompletion(value); ok {
+			m.textarea.SetValue(value[:completion.start] + completeValue(completion.candidate))
+			m.textarea.CursorEnd()
+			m.matches = nil
+			m.selected = 0
+			m.commandArgumentHint = slashCommandArgumentHint(m.textarea.Value())
+			m.inlineGhostText = ""
+			return m
+		}
+	}
 	candidates := m.filteredCompletionCandidates(value)
 	switch len(candidates) {
 	case 0:
@@ -2946,6 +2972,8 @@ func (m model) completeSlashCommand() model {
 		m.textarea.SetValue(m.completeValue(value, candidates[0]))
 		m.matches = nil
 		m.selected = 0
+		m.commandArgumentHint = slashCommandArgumentHint(m.textarea.Value())
+		m.inlineGhostText = ""
 	default:
 		if len(candidates) > 8 {
 			candidates = candidates[:8]
@@ -2960,12 +2988,23 @@ func (m model) completeSlashCommand() model {
 
 func (m *model) refreshCompletionMenu() {
 	value := strings.Trim(m.textarea.Value(), "\r\n\t")
+	m.commandArgumentHint = ""
+	m.inlineGhostText = ""
 	if value == "" || m.busy || m.searchOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.messageActions || m.attachmentsOpen || m.diffDialog {
 		m.matches = nil
 		m.selected = 0
 		return
 	}
+	m.commandArgumentHint = slashCommandArgumentHint(value)
 	candidates := m.filteredCompletionCandidates(value)
+	if len(candidates) == 0 && !strings.HasPrefix(value, "/") {
+		if completion, ok := m.midInputSlashCompletion(value); ok {
+			m.inlineGhostText = completion.display()
+		}
+		m.matches = nil
+		m.selected = 0
+		return
+	}
 	candidates = automaticCompletionCandidates(value, candidates)
 	if len(candidates) > 8 {
 		candidates = candidates[:8]
@@ -2988,6 +3027,101 @@ func (m model) filteredCompletionCandidates(value string) []string {
 		return filterFileReferenceCandidates(prefix, m.fileCandidates)
 	}
 	return nil
+}
+
+type midInputSlashCompletion struct {
+	start     int
+	token     string
+	candidate string
+	suffix    string
+}
+
+func (m model) midInputSlashCompletion(value string) (midInputSlashCompletion, bool) {
+	token, start, ok := trailingMidInputSlashToken(value)
+	if !ok {
+		return midInputSlashCompletion{}, false
+	}
+	candidates := slash.FilterCandidates(token, m.completionCandidates())
+	if len(candidates) == 0 {
+		candidates = slash.SuggestWithCandidates(token, 1, m.completionCandidates())
+	}
+	if len(candidates) == 0 {
+		return midInputSlashCompletion{}, false
+	}
+	candidate := firstSlashCommandToken(candidates[0])
+	if candidate == "" || !strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(token)) {
+		return midInputSlashCompletion{}, false
+	}
+	suffix := candidate[len(token):]
+	if suffix == "" {
+		return midInputSlashCompletion{}, false
+	}
+	return midInputSlashCompletion{start: start, token: token, candidate: candidate, suffix: suffix}, true
+}
+
+func (completion midInputSlashCompletion) display() string {
+	if completion.token == "" || completion.suffix == "" {
+		return ""
+	}
+	return completion.token + completion.suffix
+}
+
+func trailingMidInputSlashToken(value string) (string, int, bool) {
+	if strings.HasPrefix(value, "/") {
+		return "", 0, false
+	}
+	trimmed := strings.TrimRight(value, " \t\r\n")
+	if trimmed == "" || len(trimmed) != len(value) {
+		return "", 0, false
+	}
+	start := strings.LastIndexAny(trimmed, " \t\r\n")
+	if start < 0 {
+		return "", 0, false
+	}
+	tokenStart := start + 1
+	token := trimmed[tokenStart:]
+	if len(token) <= 1 || !strings.HasPrefix(token, "/") {
+		return "", 0, false
+	}
+	if strings.ContainsAny(strings.TrimPrefix(token, "/"), `/\ "'`) {
+		return "", 0, false
+	}
+	return token, tokenStart, true
+}
+
+func firstSlashCommandToken(candidate string) string {
+	fields := strings.Fields(strings.TrimSpace(candidate))
+	if len(fields) == 0 || !strings.HasPrefix(fields[0], "/") {
+		return ""
+	}
+	return fields[0]
+}
+
+func slashCommandArgumentHint(value string) string {
+	if !strings.HasPrefix(strings.TrimSpace(value), "/") {
+		return ""
+	}
+	trimmedRight := strings.TrimRight(value, "\r\n\t")
+	fields := strings.Fields(trimmedRight)
+	if len(fields) == 0 {
+		return ""
+	}
+	if !strings.ContainsAny(trimmedRight, " \t") {
+		return ""
+	}
+	spec, ok := slash.Lookup(fields[0])
+	if !ok {
+		return ""
+	}
+	usage := strings.TrimSpace(spec.Usage)
+	if usage == "" {
+		usage = spec.Name
+	}
+	args := strings.TrimSpace(strings.TrimPrefix(usage, spec.Name))
+	if args == "" {
+		return "usage: " + usage
+	}
+	return "arguments: " + args + "  ·  " + spec.Description
 }
 
 func automaticCompletionCandidates(value string, candidates []string) []string {
@@ -3015,6 +3149,8 @@ func (m model) acceptSelectedCompletion() model {
 	m.textarea.SetValue(m.completeValue(m.textarea.Value(), m.matches[m.selected]))
 	m.matches = nil
 	m.selected = 0
+	m.commandArgumentHint = slashCommandArgumentHint(m.textarea.Value())
+	m.inlineGhostText = ""
 	return m
 }
 
@@ -3203,6 +3339,7 @@ func renderCompletions(matches []string, selected int) string {
 		}
 		lines = append(lines, style.Render(prefix+completionDisplayLine(match)))
 	}
+	lines = append(lines, completionStyle().Render("  Enter accept · Tab complete · Esc close"))
 	return strings.Join(lines, "\n")
 }
 
@@ -3219,6 +3356,21 @@ func completionDisplayLine(candidate string) string {
 		return candidate
 	}
 	return truncateForComposer(candidate+"  -  "+spec.Description, 120)
+}
+
+func renderCommandAssist(argumentHint string, inlineHint string) string {
+	lines := []string{}
+	if argumentHint != "" {
+		lines = append(lines, completionTitleStyle().Render(" command args "))
+		lines = append(lines, completionStyle().Render("  "+truncateForComposer(argumentHint, 120)))
+	}
+	if inlineHint != "" {
+		if len(lines) == 0 {
+			lines = append(lines, completionTitleStyle().Render(" command hint "))
+		}
+		lines = append(lines, completionStyle().Render("  "+truncateForComposer("ghost: "+inlineHint+"  ·  Tab accept", 120)))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func renderHistorySearch(matches []string, selected int, query string) string {

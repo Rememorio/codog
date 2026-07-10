@@ -88,10 +88,31 @@ func TestCompletionListRendersSelectedSuggestion(t *testing.T) {
 	require.Contains(t, view, "> /memory list")
 	require.Contains(t, view, "Show or switch the current model.")
 	require.Contains(t, view, "List, search, show")
+	require.Contains(t, view, "Enter accept")
 }
 
 func TestCompletionDisplayLineFallsBackForCustomCandidate(t *testing.T) {
 	require.Equal(t, "/custom thing", completionDisplayLine("/custom thing"))
+}
+
+func TestSlashCommandArgumentHintRendersAfterCommandSpace(t *testing.T) {
+	preview := PreviewWithCandidates("/model ", []string{"/model claude-test"}, 96, 24, false, false)
+
+	require.Contains(t, preview.CommandHint, "arguments: [name]")
+	require.Contains(t, preview.CommandHint, "Show or switch the current model.")
+	require.Contains(t, preview.View, "command args")
+	require.Contains(t, preview.View, "arguments: [name]")
+}
+
+func TestMidInputSlashCommandGhostCompletesWithTab(t *testing.T) {
+	preview := PreviewWithCandidates("please /sta", []string{"/status"}, 96, 24, false, false)
+
+	require.Equal(t, "/status", preview.InlineHint)
+	require.Contains(t, preview.View, "ghost: /status")
+
+	completed := PreviewWithCandidates("please /sta", []string{"/status"}, 96, 24, true, false)
+	require.Equal(t, "please /status ", completed.Value)
+	require.Empty(t, completed.InlineHint)
 }
 
 func TestQueuedPromptsRenderBelowComposer(t *testing.T) {

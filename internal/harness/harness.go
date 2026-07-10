@@ -5415,6 +5415,18 @@ func tuiPromptCompletionScenario() scenario {
 			if len(automatic.Matches) != 3 || !strings.Contains(automatic.View, "suggestions") {
 				return localScenarioResult{}, fmt.Errorf("expected automatic TUI slash menu, got %#v", automatic.Matches)
 			}
+			commandArgs := tui.PreviewWithCandidates("/model ", []string{"/model claude-test"}, 96, 24, false, false)
+			if !strings.Contains(commandArgs.CommandHint, "arguments: [name]") || !strings.Contains(commandArgs.View, "command args") {
+				return localScenarioResult{}, fmt.Errorf("expected slash command argument hint, got hint=%q view=%s", commandArgs.CommandHint, commandArgs.View)
+			}
+			midInputCommand := tui.PreviewWithCandidates("please /sta", []string{"/status"}, 96, 24, false, false)
+			if midInputCommand.InlineHint != "/status" || !strings.Contains(midInputCommand.View, "ghost: /status") {
+				return localScenarioResult{}, fmt.Errorf("expected mid-input slash command hint, got hint=%q view=%s", midInputCommand.InlineHint, midInputCommand.View)
+			}
+			midInputCompleted := tui.PreviewWithCandidates("please /sta", []string{"/status"}, 96, 24, true, false)
+			if midInputCompleted.Value != "please /status " {
+				return localScenarioResult{}, fmt.Errorf("expected mid-input slash command completion, got value=%q", midInputCompleted.Value)
+			}
 			queued := tui.PreviewWithQueued("", []string{"review auth flow", "write tests"}, 96, 24)
 			if !strings.Contains(queued.View, "queued prompts: 2") || !strings.Contains(queued.View, "2 queued") {
 				return localScenarioResult{}, fmt.Errorf("expected queued prompt preview, got %s", queued.View)
@@ -5599,6 +5611,9 @@ func tuiPromptCompletionScenario() scenario {
 				"kind":                         "tui_prompt_completion",
 				"matches":                      multiple.Matches,
 				"automatic":                    automatic.Matches,
+				"command_args":                 strings.Contains(commandArgs.CommandHint, "arguments: [name]"),
+				"mid_input_command":            midInputCommand.InlineHint == "/status",
+				"mid_input_command_completion": midInputCompleted.Value == "please /status ",
 				"queued_preview":               strings.Contains(queued.View, "queued prompts: 2"),
 				"stash_preview":                stash.HasStash,
 				"transcript_preview":           transcript.Transcript,
