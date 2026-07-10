@@ -314,9 +314,9 @@ func TestStreamedTurnDeltasRenderBeforeDone(t *testing.T) {
 func TestRunStreamSubmitCommandEmitsDeltasBeforeDone(t *testing.T) {
 	ctx := context.Background()
 	messages := make(chan tea.Msg, 4)
-	cmd := runStreamSubmitCommand(ctx, func(_ context.Context, prompt string, emit func(string)) (string, error) {
-		emit("first ")
-		emit(prompt)
+	cmd := runStreamSubmitCommand(ctx, func(_ context.Context, prompt string, emit func(Entry)) (string, error) {
+		emit(Entry{Role: "assistant", Text: "first "})
+		emit(Entry{Role: "assistant", Text: prompt})
 		return "", nil
 	}, "chunk", messages)
 
@@ -326,6 +326,26 @@ func TestRunStreamSubmitCommandEmitsDeltasBeforeDone(t *testing.T) {
 	require.Equal(t, turnStreamMsg{Role: "assistant", Delta: "chunk"}, second)
 	done := waitTurnMessage(messages)()
 	require.IsType(t, turnDoneMsg{}, done)
+}
+
+func TestToolStreamEntryDoesNotMergeIntoAssistantText(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, _ := m.Update(turnStreamMsg{Role: "assistant", Delta: "thinking"})
+	m = updated.(model)
+	updated, _ = m.Update(turnStreamMsg{Role: "tool", Delta: "Tools\n- bash ok"})
+	m = updated.(model)
+	updated, _ = m.Update(turnStreamMsg{Role: "assistant", Delta: "done"})
+	m = updated.(model)
+
+	require.Len(t, m.transcript, 4)
+	require.Equal(t, "assistant", m.transcript[1].Role)
+	require.Equal(t, "thinking", m.transcript[1].Text)
+	require.Equal(t, "tool", m.transcript[2].Role)
+	require.Contains(t, m.transcript[2].Text, "bash ok")
+	require.Equal(t, "assistant", m.transcript[3].Role)
+	require.Equal(t, "done", m.transcript[3].Text)
 }
 
 func TestCanceledSlashCommandRendersInterrupted(t *testing.T) {

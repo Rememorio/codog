@@ -3574,6 +3574,7 @@ func TestWorktreeToolsAllocateAndRemove(t *testing.T) {
 	}
 	workspace := t.TempDir()
 	runToolTestGit(t, workspace, "init", "-q")
+	runToolTestGit(t, workspace, "branch", "-M", "main")
 	runToolTestGit(t, workspace, "config", "user.email", "codog@example.test")
 	runToolTestGit(t, workspace, "config", "user.name", "Codog Test")
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("hello\n"), 0o644))
@@ -3604,7 +3605,9 @@ func TestGitToolsReadRepositoryState(t *testing.T) {
 		t.Skip("git is not installed")
 	}
 	workspace := t.TempDir()
+	baseBranch := "main"
 	runToolTestGit(t, workspace, "init", "-q")
+	runToolTestGit(t, workspace, "branch", "-M", baseBranch)
 	runToolTestGit(t, workspace, "config", "user.email", "codog@example.test")
 	runToolTestGit(t, workspace, "config", "user.name", "Codog Test")
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("alpha\n"), 0o644))
@@ -3640,11 +3643,11 @@ func TestGitToolsReadRepositoryState(t *testing.T) {
 
 	runToolTestGit(t, workspace, "restore", "notes.txt")
 	runToolTestGit(t, workspace, "switch", "-q", "-c", "topic")
-	runToolTestGit(t, workspace, "switch", "-q", "master")
+	runToolTestGit(t, workspace, "switch", "-q", baseBranch)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "fix.txt"), []byte("fix\n"), 0o644))
 	runToolTestGit(t, workspace, "add", "fix.txt")
 	runToolTestGit(t, workspace, "commit", "-q", "-m", "fix: main update")
-	freshnessOut, err := BranchFreshnessTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"branch":"topic","base":"master"}`))
+	freshnessOut, err := BranchFreshnessTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"branch":"topic","base":"`+baseBranch+`"}`))
 	require.NoError(t, err)
 	require.Contains(t, freshnessOut, `"kind": "branch_freshness"`)
 	require.Contains(t, freshnessOut, `"status": "stale"`)

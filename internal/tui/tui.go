@@ -30,7 +30,7 @@ type SubmitFunc func(context.Context, string) (string, error)
 
 // StreamSubmitFunc runs one user prompt and can emit assistant deltas while the
 // turn is still running.
-type StreamSubmitFunc func(context.Context, string, func(string)) (string, error)
+type StreamSubmitFunc func(context.Context, string, func(Entry)) (string, error)
 
 // SlashFunc runs one slash command and returns local command output. handled is
 // true when the command should not be sent to the model.
@@ -461,12 +461,15 @@ func runSubmitCommand(ctx context.Context, submit SubmitFunc, prompt string) tea
 
 func runStreamSubmitCommand(ctx context.Context, submit StreamSubmitFunc, prompt string, messages chan tea.Msg) tea.Cmd {
 	go func() {
-		output, err := submit(ctx, prompt, func(delta string) {
-			if delta == "" {
+		output, err := submit(ctx, prompt, func(entry Entry) {
+			if strings.TrimSpace(entry.Role) == "" {
+				entry.Role = "assistant"
+			}
+			if entry.Text == "" {
 				return
 			}
 			select {
-			case messages <- turnStreamMsg{Role: "assistant", Delta: delta}:
+			case messages <- turnStreamMsg{Role: entry.Role, Delta: entry.Text}:
 			case <-ctx.Done():
 			}
 		})
@@ -516,7 +519,7 @@ func (m *model) appendStreamDelta(role string, delta string) {
 	if delta == "" {
 		return
 	}
-	if m.streamingIndex < 0 || m.streamingIndex >= len(m.transcript) {
+	if m.streamingIndex < 0 || m.streamingIndex >= len(m.transcript) || !strings.EqualFold(m.transcript[m.streamingIndex].Role, role) {
 		m.transcript = append(m.transcript, transcriptEntry{Role: role, Text: delta})
 		m.streamingIndex = len(m.transcript) - 1
 		return
@@ -529,7 +532,7 @@ func (m *model) finishStreamingOutput(role string, output string) {
 	if output == "" {
 		return
 	}
-	if m.streamingIndex < 0 || m.streamingIndex >= len(m.transcript) {
+	if m.streamingIndex < 0 || m.streamingIndex >= len(m.transcript) || !strings.EqualFold(m.transcript[m.streamingIndex].Role, role) {
 		m.transcript = append(m.transcript, transcriptEntry{Role: role, Text: output})
 		return
 	}
@@ -1040,6 +1043,8 @@ func roleStyle(role string) lipgloss.Style {
 	switch strings.ToLower(role) {
 	case "assistant":
 		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+	case "tool":
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
 	case "user":
 		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
 	default:

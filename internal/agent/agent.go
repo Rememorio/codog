@@ -39037,27 +39037,32 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		entries = append(entries, tui.Entry{Role: "system", Text: banner})
 	}
 	history := a.tuiPromptHistory(sess.ID)
-	submit := func(ctx context.Context, prompt string, emit func(string)) (string, error) {
+	submit := func(ctx context.Context, prompt string, emit func(tui.Entry)) (string, error) {
 		var out bytes.Buffer
 		streamOut := tuiStreamWriter{buffer: &out, emit: emit}
 		toolCalls := []runloop.ToolCall{}
+		liveToolEvents := false
 		err := a.runSessionTurnWithOptions(ctx, "tui", sess, prompt, "idle", turnOptions{
 			Out: &streamOut,
 			OnToolUse: func(call runloop.ToolCall) {
 				toolCalls = append(toolCalls, call)
+				if summary := renderTUIToolSummary([]runloop.ToolCall{call}); summary != "" {
+					liveToolEvents = true
+					emit(tui.Entry{Role: "tool", Text: summary})
+				}
 			},
 		})
 		response := strings.TrimSpace(out.String())
 		if response == "" {
 			response = strings.TrimSpace(lastAssistantText(sess.Messages))
 		}
-		if toolSummary := renderTUIToolSummary(toolCalls); toolSummary != "" {
+		if toolSummary := renderTUIToolSummary(toolCalls); toolSummary != "" && !liveToolEvents {
 			if streamOut.Emitted() {
 				return toolSummary, err
 			}
 			response = strings.TrimSpace(strings.Join([]string{toolSummary, response}, "\n\n"))
 		}
-		if streamOut.Emitted() {
+		if streamOut.Emitted() || liveToolEvents {
 			return "", err
 		}
 		return response, err
@@ -39085,7 +39090,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 
 type tuiStreamWriter struct {
 	buffer  *bytes.Buffer
-	emit    func(string)
+	emit    func(tui.Entry)
 	emitted bool
 }
 
@@ -39096,7 +39101,7 @@ func (w *tuiStreamWriter) Write(data []byte) (int, error) {
 	text := string(data)
 	if text != "" && w.emit != nil {
 		w.emitted = true
-		w.emit(text)
+		w.emit(tui.Entry{Role: "assistant", Text: text})
 	}
 	return len(data), nil
 }
