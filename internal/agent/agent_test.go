@@ -20716,7 +20716,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), `"ctrl+l": "clear screen"`)
 	require.Contains(t, string(data), `"ctrl+d": "exit when composer is empty"`)
 	require.Contains(t, string(data), `"ctrl+b": "run composer prompt in background"`)
-	require.Contains(t, string(data), `"up": "edit latest queued prompt, choose completion, or recall history"`)
+	require.Contains(t, string(data), `"up": "edit queued prompts, choose completion, or recall history"`)
 	out.Reset()
 
 	require.NoError(t, app.Keybindings([]string{"validate", "--json"}))

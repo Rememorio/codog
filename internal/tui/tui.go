@@ -467,8 +467,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveHistorySearch(-1)
 				return m, nil
 			}
-			if m.canEditQueuedPrompt() {
-				m.editLatestQueuedPrompt()
+			if m.canEditQueuedPrompts() {
+				m.editQueuedPrompts()
 				return m, nil
 			}
 			if len(m.matches) > 0 {
@@ -759,30 +759,33 @@ func (m *model) queueCurrentInput() {
 	m.viewport.GotoBottom()
 }
 
-func (m model) canEditQueuedPrompt() bool {
+func (m model) canEditQueuedPrompts() bool {
 	return m.busy &&
 		!m.awaitingPermission &&
 		!m.awaitingQuestion &&
 		!m.searchOpen &&
 		len(m.matches) == 0 &&
-		len(m.queuedPrompts) > 0 &&
-		strings.TrimSpace(m.textarea.Value()) == ""
+		len(m.queuedPrompts) > 0
 }
 
-func (m *model) editLatestQueuedPrompt() {
+func (m *model) editQueuedPrompts() {
 	if len(m.queuedPrompts) == 0 {
 		return
 	}
-	index := len(m.queuedPrompts) - 1
-	value := m.queuedPrompts[index]
-	m.queuedPrompts = append([]string(nil), m.queuedPrompts[:index]...)
+	count := len(m.queuedPrompts)
+	parts := append([]string(nil), m.queuedPrompts...)
+	if current := strings.TrimSpace(m.textarea.Value()); current != "" {
+		parts = append(parts, current)
+	}
+	value := strings.Join(parts, "\n")
+	m.queuedPrompts = nil
 	m.textarea.SetValue(value)
 	m.textarea.CursorEnd()
 	m.matches = nil
 	m.selected = 0
 	m.historyPos = -1
-	m.status = "editing queued prompt"
-	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Editing queued prompt %d: %s", index+1, truncateForComposer(value, 120))})
+	m.status = "editing queued prompts"
+	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Editing %d queued %s.", count, plural("prompt", count))})
 	m.refreshViewport()
 	m.viewport.GotoBottom()
 }
@@ -1521,7 +1524,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+R      search prompt history",
 		"  Tab         complete slash command",
 		"  Up/Down     choose a shown completion",
-		"  Up          edit latest queued prompt while a turn is running",
+		"  Up          edit queued prompts while a turn is running",
 		"  Up/Down     recall prompt history when composer is empty",
 		"  Ctrl+J      insert newline",
 		"  PgUp/PgDn   scroll transcript",
