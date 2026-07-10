@@ -21100,6 +21100,25 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"normalized_key": "backspace"`)
 	out.Reset()
 
+	require.NoError(t, os.WriteFile(keybindingsPath, []byte(`{
+  "bindings": [
+    {
+      "context": "tui",
+      "bindings": {
+        "ctrl+e": "edit composer in $EDITOR",
+        "alt+q": "quick open files"
+      }
+    }
+  ]
+}
+`), 0o644))
+	require.NoError(t, app.Keybindings([]string{"resolve", "tui", "Ctrl-E", "--json"}))
+	require.Contains(t, out.String(), `"source": "user"`)
+	require.Contains(t, out.String(), `"binding_action": "edit composer in $EDITOR"`)
+	out.Reset()
+	require.Equal(t, []string{"alt+q"}, app.tuiKeybindings()["quick open files"])
+	require.Equal(t, []string{"ctrl+e"}, app.tuiKeybindings()["edit composer in $EDITOR"])
+
 	require.NoError(t, os.WriteFile(keybindingsPath, []byte("custom\n"), 0o644))
 	require.Error(t, app.Keybindings([]string{"validate", "--json"}))
 	require.Contains(t, out.String(), `"status": "invalid"`)

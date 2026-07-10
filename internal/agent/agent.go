@@ -39460,6 +39460,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		ModeLabel:     modeState.Label(),
 		RuntimeBadges: a.tuiRuntimeBadges(),
 		VimMode:       a.readlineVimMode(),
+		Keybindings:   a.tuiKeybindings(),
 		CycleMode: func() string {
 			return modeState.Cycle()
 		},
@@ -39577,6 +39578,26 @@ func (a *App) tuiRuntimeBadges() []string {
 	badges = append(badges, "fast: "+onOff(fastModeEnabled(a.Config.FastMode)))
 	badges = append(badges, "thinking: "+effectiveEffort(a.Config.ReasoningEffort))
 	return badges
+}
+
+func (a *App) tuiKeybindings() map[string][]string {
+	bindings, validationErrors := a.effectiveKeybindings("")
+	if len(validationErrors) != 0 {
+		return nil
+	}
+	out := map[string][]string{}
+	for _, binding := range bindings {
+		if binding.Context != "tui" || binding.Disabled || binding.Source != "user" {
+			continue
+		}
+		action := strings.TrimSpace(binding.Entry.Action)
+		key := strings.TrimSpace(binding.Entry.NormalizedKey)
+		if action == "" || key == "" {
+			continue
+		}
+		out[action] = append(out[action], key)
+	}
+	return out
 }
 
 func (a *App) stopTUIBackground(ctx context.Context) (tui.RuntimeControlResult, error) {

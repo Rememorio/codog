@@ -1112,6 +1112,52 @@ func TestRuntimeToggleShortcutsAppendStatus(t *testing.T) {
 	require.Contains(t, copied.View, "Clipboard: pbcopy")
 }
 
+func TestCustomTUIKeybindingsTriggerComposerActions(t *testing.T) {
+	ta := newPromptTextarea("draft")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.keybindings = normalizeTUIKeybindings(map[string][]string{
+		"edit composer in $EDITOR": {"ctrl+e"},
+	})
+	m.externalEditor = func(_ context.Context, value string) (string, error) {
+		require.Equal(t, "draft", value)
+		return "edited", nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlE})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.Equal(t, "edited", m.textarea.Value())
+	require.Equal(t, "editor updated", m.status)
+}
+
+func TestCustomTUIKeybindingsOpenQuickSearchAndStash(t *testing.T) {
+	ta := newPromptTextarea("draft")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = []string{"internal/tui/tui.go"}
+	m.keybindings = normalizeTUIKeybindings(map[string][]string{
+		"quick open files":          {"alt+q"},
+		"stash or restore composer": {"ctrl+y"},
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}, Alt: true})
+	m = updated.(model)
+	require.True(t, m.quickOpen)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.False(t, m.quickOpen)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlY})
+	m = updated.(model)
+	require.Empty(t, m.textarea.Value())
+	require.NotNil(t, m.stashedPrompt)
+	require.Equal(t, "prompt stashed", m.status)
+}
+
 func TestPreviewWithModelPicker(t *testing.T) {
 	preview := PreviewWithModelPicker("inspect", []string{"sonnet", "opus"}, "sonnet", 96, 24, false)
 

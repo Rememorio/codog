@@ -5595,6 +5595,14 @@ func tuiPromptCompletionScenario() scenario {
 			if vimOperatorEdited.Value != "n" {
 				return localScenarioResult{}, fmt.Errorf("expected vim operator edit preview, got %#v", vimOperatorEdited)
 			}
+			customQuickOpen := tui.PreviewWithKeybindings("inspect", map[string][]string{"quick open files": {"alt+q"}}, []string{"internal/tui/tui.go"}, "alt+q", 96, 24)
+			if !customQuickOpen.QuickOpen || !strings.Contains(customQuickOpen.View, "quick open") {
+				return localScenarioResult{}, fmt.Errorf("expected custom keybinding quick open preview, got %#v", customQuickOpen)
+			}
+			customEditor := tui.PreviewWithKeybindings("draft", map[string][]string{"edit composer in $EDITOR": {"ctrl+e"}}, nil, "ctrl+e", 96, 24)
+			if customEditor.Value != "edited: draft" {
+				return localScenarioResult{}, fmt.Errorf("expected custom keybinding editor preview, got %#v", customEditor)
+			}
 			undoControl := tui.PreviewWithRuntimeControl("", "ctrl+x ctrl+u", tui.RuntimeControlResult{
 				Title:  "Undo",
 				Status: "restored",
@@ -5701,6 +5709,8 @@ func tuiPromptCompletionScenario() scenario {
 				"vim_normal_edit":              vimEdited.Value == "bc!",
 				"vim_word_edit":                vimWordEdited.Value == "one wo three!",
 				"vim_operator_edit":            vimOperatorEdited.Value == "n",
+				"custom_keybinding_quick_open": customQuickOpen.QuickOpen,
+				"custom_keybinding_editor":     customEditor.Value == "edited: draft",
 				"message_actions":              messageActions.MessageMenu,
 				"message_action_copy":          messageCopy.Value == "copy me",
 				"message_action_target":        messageTargetCopy.Value == "first target",

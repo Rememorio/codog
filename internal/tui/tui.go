@@ -134,6 +134,7 @@ type ShellOptions struct {
 	ModeLabel                 string
 	RuntimeBadges             []string
 	VimMode                   bool
+	Keybindings               map[string][]string
 	CycleMode                 func() string
 }
 
@@ -224,6 +225,7 @@ type model struct {
 	vimEnabled                bool
 	vimNormal                 bool
 	vimOperator               string
+	keybindings               map[string]map[string]bool
 	cycleMode                 func() string
 	history                   []string
 	historyPos                int
@@ -1111,7 +1113,52 @@ func PreviewWithVimMode(input string, keys []string, width int, height int) Prev
 	}
 }
 
+// PreviewWithKeybindings renders a deterministic TUI state after applying one
+// custom TUI keybinding.
+func PreviewWithKeybindings(input string, bindings map[string][]string, files []string, key string, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = append([]string(nil), files...)
+	m.keybindings = normalizeTUIKeybindings(bindings)
+	m.externalEditor = func(_ context.Context, value string) (string, error) {
+		return "edited: " + value, nil
+	}
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	updated, cmd := m.Update(previewKey(key))
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	if cmd != nil {
+		updated, _ = m.Update(cmd())
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:         m.View(),
+		Value:        m.textarea.Value(),
+		Matches:      append([]string(nil), m.matches...),
+		Attachments:  append([]string(nil), m.attachments...),
+		Mode:         m.mode(),
+		HelpOpen:     m.helpOpen,
+		HasStash:     m.stashedPrompt != nil,
+		Transcript:   m.transcriptMode,
+		QuickOpen:    m.quickOpen,
+		GlobalSearch: m.globalSearch,
+		TodosOpen:    m.todosOpen,
+	}
+}
+
 func vimPreviewKey(key string) tea.KeyMsg {
+	return previewKey(key)
+}
+
+func previewKey(key string) tea.KeyMsg {
 	switch strings.ToLower(strings.TrimSpace(key)) {
 	case "esc", "escape":
 		return tea.KeyMsg{Type: tea.KeyEsc}
@@ -1123,6 +1170,12 @@ func vimPreviewKey(key string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyRight}
 	case "delete":
 		return tea.KeyMsg{Type: tea.KeyDelete}
+	case "ctrl+e":
+		return tea.KeyMsg{Type: tea.KeyCtrlE}
+	case "ctrl+y":
+		return tea.KeyMsg{Type: tea.KeyCtrlY}
+	case "alt+q", "meta+q":
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}, Alt: true}
 	default:
 		runes := []rune(key)
 		if len(runes) == 0 {
@@ -1365,6 +1418,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.runtimeBadges = normalizeRuntimeBadges(options.RuntimeBadges)
 	m.vimEnabled = options.VimMode
 	m.vimNormal = false
+	m.keybindings = normalizeTUIKeybindings(options.Keybindings)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
@@ -1809,6 +1863,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.String() != "esc" {
 			m.exitPending = false
+		}
+		if next, handled, cmd := m.handleBoundTUIAction(msg); handled {
+			return next, cmd
 		}
 		switch msg.String() {
 		case "ctrl+c":
@@ -2689,6 +2746,154 @@ func (m model) handleVimNormalKey(msg tea.KeyMsg) (model, bool, tea.Cmd) {
 	}
 }
 
+func (m model) handleBoundTUIAction(msg tea.KeyMsg) (model, bool, tea.Cmd) {
+	key := normalizeTUIKey(msg.String())
+	if key == "" || len(m.keybindings) == 0 {
+		return m, false, nil
+	}
+	switch {
+	case m.isBoundTUIAction("submit prompt", key):
+		if m.busy && m.awaitingQuestion {
+			m.answerQuestion()
+			return m, true, nil
+		}
+		if m.busy {
+			m.queueCurrentInput()
+			return m, true, nil
+		}
+		if m.searchOpen {
+			m.closeHistorySearch(true)
+			return m, true, nil
+		}
+		if m.convertTrailingBackslashToNewline() {
+			return m, true, nil
+		}
+		if len(m.matches) > 0 {
+			m.pushComposerUndo()
+			m = m.acceptSelectedCompletion()
+			return m, true, nil
+		}
+		if isLocalHelpInput(m.textarea.Value()) {
+			m.helpOpen = true
+			m.textarea.SetValue("")
+			m.matches = nil
+			m.status = "help"
+			m.refreshViewport()
+			return m, true, nil
+		}
+		next, cmd := m.submitCurrentInput()
+		if modelNext, ok := next.(model); ok {
+			return modelNext, true, cmd
+		}
+		return m, true, cmd
+	case m.isBoundTUIAction("insert newline", key) || m.isBoundTUIAction("insert newline fallback", key):
+		if m.busy {
+			return m, true, nil
+		}
+		m.pushComposerUndo()
+		m.textarea.InsertString("\n")
+		return m, true, nil
+	case m.isBoundTUIAction("stash or restore composer", key):
+		m.togglePromptStash()
+		return m, true, nil
+	case m.isBoundTUIAction("edit composer in $EDITOR", key):
+		next, cmd := m.openExternalEditor()
+		if modelNext, ok := next.(model); ok {
+			return modelNext, true, cmd
+		}
+		return m, true, cmd
+	case m.isBoundTUIAction("undo composer edit", key):
+		if m.busy || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+			return m, true, nil
+		}
+		m.undoComposer()
+		return m, true, nil
+	case m.isBoundTUIAction("quick open files", key) || m.isBoundTUIAction("quick open fallback", key):
+		if m.busy || m.backgrounding || m.searchOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion || len(m.fileCandidates) == 0 {
+			return m, true, nil
+		}
+		m.openQuickOpen()
+		return m, true, nil
+	case m.isBoundTUIAction("search workspace", key) || m.isBoundTUIAction("search workspace fallback", key):
+		if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.todosOpen || m.awaitingPermission || m.awaitingQuestion || len(m.fileCandidates) == 0 {
+			return m, true, nil
+		}
+		m.openGlobalSearch()
+		return m, true, nil
+	case m.isBoundTUIAction("cycle permission mode fallback", key):
+		if m.busy || m.cycleMode == nil {
+			return m, true, nil
+		}
+		if label := strings.TrimSpace(m.cycleMode()); label != "" {
+			m.modeLabel = label
+			m.status = m.mode()
+			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Mode: " + label})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+		}
+		return m, true, nil
+	case m.isBoundTUIAction("open model picker", key):
+		if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+			return m, true, nil
+		}
+		m.openModelPicker()
+		return m, true, nil
+	case m.isBoundTUIAction("toggle fast mode", key):
+		if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.awaitingPermission || m.awaitingQuestion || m.toggleFast == nil {
+			return m, true, nil
+		}
+		m.status = "fast mode"
+		return m, true, runRuntimeControlCommand(m.ctx, m.toggleFast)
+	case m.isBoundTUIAction("cycle thinking effort", key):
+		if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.awaitingPermission || m.awaitingQuestion || m.toggleThinking == nil {
+			return m, true, nil
+		}
+		m.status = "thinking"
+		return m, true, runRuntimeControlCommand(m.ctx, m.toggleThinking)
+	case m.isBoundTUIAction("toggle expanded transcript", key):
+		if m.helpOpen {
+			m.helpOpen = false
+		}
+		if m.todosOpen {
+			m.closeTodos()
+		}
+		m.transcriptMode = !m.transcriptMode
+		if m.transcriptMode {
+			m.status = "transcript"
+		} else {
+			m.status = "ready"
+		}
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		return m, true, nil
+	case m.isBoundTUIAction("clear screen", key):
+		if m.busy {
+			return m, true, nil
+		}
+		m.clearScreen()
+		return m, true, nil
+	case m.isBoundTUIAction("paste clipboard text or image", key):
+		if m.paste == nil || m.busy || m.backgrounding || m.awaitingPermission || m.awaitingQuestion {
+			return m, true, nil
+		}
+		if m.helpOpen {
+			m.helpOpen = false
+			m.refreshViewport()
+		}
+		m.matches = nil
+		m.selected = 0
+		m.status = "pasting"
+		return m, true, runPasteCommand(m.ctx, m.paste)
+	default:
+		return m, false, nil
+	}
+}
+
+func (m model) isBoundTUIAction(action string, key string) bool {
+	keys := m.keybindings[normalizeTUIAction(action)]
+	return keys != nil && keys[key]
+}
+
 func (m model) handleVimOperatorKey(key string) (model, bool, tea.Cmd) {
 	operator := m.vimOperator
 	m.vimOperator = ""
@@ -2796,6 +3001,109 @@ func (m model) vimCursorColumn() int {
 
 func isVimWordRune(r rune) bool {
 	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+func normalizeTUIKeybindings(bindings map[string][]string) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	for action, keys := range bindings {
+		normalizedAction := normalizeTUIAction(action)
+		if normalizedAction == "" {
+			continue
+		}
+		for _, key := range keys {
+			normalizedKey := normalizeTUIKey(key)
+			if normalizedKey == "" {
+				continue
+			}
+			if out[normalizedAction] == nil {
+				out[normalizedAction] = map[string]bool{}
+			}
+			out[normalizedAction][normalizedKey] = true
+		}
+	}
+	return out
+}
+
+func normalizeTUIAction(action string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(action)), " "))
+}
+
+func normalizeTUIKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	fields := strings.Fields(key)
+	if len(fields) > 1 {
+		normalized := make([]string, 0, len(fields))
+		for _, field := range fields {
+			part := normalizeTUIKey(field)
+			if part == "" {
+				return ""
+			}
+			normalized = append(normalized, part)
+		}
+		return strings.Join(normalized, " ")
+	}
+	lower := strings.ToLower(key)
+	lower = strings.ReplaceAll(lower, " ", "")
+	lower = strings.ReplaceAll(lower, "-", "+")
+	parts := strings.Split(lower, "+")
+	if len(parts) == 0 {
+		return ""
+	}
+	modSeen := map[string]bool{}
+	keyPart := ""
+	for _, part := range parts {
+		token := normalizeTUIKeyToken(part)
+		if token == "" {
+			continue
+		}
+		if isTUIKeyModifier(token) {
+			modSeen[token] = true
+			continue
+		}
+		keyPart = token
+	}
+	if keyPart == "" {
+		return ""
+	}
+	normalized := []string{}
+	for _, modifier := range []string{"ctrl", "alt", "shift", "meta"} {
+		if modSeen[modifier] {
+			normalized = append(normalized, modifier)
+		}
+	}
+	normalized = append(normalized, keyPart)
+	return strings.Join(normalized, "+")
+}
+
+func normalizeTUIKeyToken(token string) string {
+	switch strings.TrimSpace(token) {
+	case "control", "ctl":
+		return "ctrl"
+	case "cmd", "command", "super":
+		return "meta"
+	case "option":
+		return "alt"
+	case "escape":
+		return "esc"
+	case "return":
+		return "enter"
+	case "spacebar":
+		return "space"
+	default:
+		return token
+	}
+}
+
+func isTUIKeyModifier(token string) bool {
+	switch token {
+	case "ctrl", "alt", "shift", "meta":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m model) openExternalEditor() (tea.Model, tea.Cmd) {

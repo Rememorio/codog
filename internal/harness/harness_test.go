@@ -826,6 +826,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, tuiPrompt.Output, `"vim_normal_edit":true`)
 	require.Contains(t, tuiPrompt.Output, `"vim_word_edit":true`)
 	require.Contains(t, tuiPrompt.Output, `"vim_operator_edit":true`)
+	require.Contains(t, tuiPrompt.Output, `"custom_keybinding_quick_open":true`)
+	require.Contains(t, tuiPrompt.Output, `"custom_keybinding_editor":true`)
 	require.Contains(t, tuiPrompt.Output, `"message_actions":true`)
 	require.Contains(t, tuiPrompt.Output, `"message_action_copy":true`)
 	require.Contains(t, tuiPrompt.Output, `"message_action_target":true`)
