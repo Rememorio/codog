@@ -732,6 +732,43 @@ func TestMessageActionsCopyQuoteAndStash(t *testing.T) {
 	require.Equal(t, "message stashed", m.status)
 }
 
+func TestMessageActionsRestoreBeforeTurn(t *testing.T) {
+	entries := []transcriptEntry{
+		{Role: "system", Text: "ready"},
+		{Role: "user", Text: "first prompt"},
+		{Role: "assistant", Text: "first answer"},
+		{Role: "user", Text: "second prompt"},
+		{Role: "assistant", Text: "second answer"},
+	}
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, entries)
+	var keep int
+	m.restoreConversation = func(_ context.Context, keepMessages int) (RuntimeControlResult, error) {
+		keep = keepMessages
+		return RuntimeControlResult{Title: "Conversation Restored", Status: "restored 2", Lines: []string{"Remaining: 2", "Removed: 2"}}, nil
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	m = updated.(model)
+	for range 3 {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(model)
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "restoring", m.status)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.Equal(t, 2, keep)
+	require.False(t, m.messageActions)
+	require.Equal(t, "restored 2", m.status)
+	require.Contains(t, m.View(), "Conversation Restored")
+	require.Contains(t, m.View(), "Removed: 2")
+}
+
 func TestPreviewWithMessageActions(t *testing.T) {
 	preview := PreviewWithMessageActions([]Entry{{Role: "assistant", Text: "copy me"}}, 96, 24, -1)
 
@@ -743,6 +780,10 @@ func TestPreviewWithMessageActions(t *testing.T) {
 
 	require.False(t, copied.MessageMenu)
 	require.Equal(t, "copy me", copied.Value)
+
+	restored := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 3)
+	require.False(t, restored.MessageMenu)
+	require.Contains(t, restored.View, "Conversation Restored")
 }
 
 func TestCtrlXCtrlKStopsBackgroundTasks(t *testing.T) {

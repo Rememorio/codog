@@ -39235,6 +39235,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		CompactSession: func(ctx context.Context) (tui.RuntimeControlResult, error) {
 			return a.compactTUISession(ctx, sess)
 		},
+		RestoreConversation: func(ctx context.Context, keepMessages int) (tui.RuntimeControlResult, error) {
+			return a.restoreTUIConversation(ctx, sess, keepMessages)
+		},
 		ModeLabel: modeState.Label(),
 		CycleMode: func() string {
 			return modeState.Cycle()
@@ -39432,6 +39435,49 @@ func (a *App) compactTUISession(ctx context.Context, sess *session.Session) (tui
 	}
 	return tui.RuntimeControlResult{
 		Title:  "Session Compacted",
+		Status: status,
+		Lines:  lines,
+	}, nil
+}
+
+func (a *App) restoreTUIConversation(ctx context.Context, sess *session.Session, keepMessages int) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if sess == nil || strings.TrimSpace(sess.ID) == "" {
+		return tui.RuntimeControlResult{}, errors.New("session is required")
+	}
+	if keepMessages < 0 {
+		return tui.RuntimeControlResult{}, errors.New("restore point is invalid")
+	}
+	current, err := a.Sessions.Open(sess.ID)
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if keepMessages > len(current.Messages) {
+		keepMessages = len(current.Messages)
+	}
+	retained := append([]anthropic.Message(nil), current.Messages[:keepMessages]...)
+	result, err := a.Sessions.ReplaceMessages(current, retained)
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	refreshed, err := a.Sessions.Open(sess.ID)
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	*sess = *refreshed
+	lines := []string{
+		"Session: " + result.SessionID,
+		fmt.Sprintf("Remaining: %d", result.RemainingMessages),
+		fmt.Sprintf("Removed: %d", result.RemovedMessages),
+	}
+	status := "conversation restored"
+	if result.RemovedMessages > 0 {
+		status = fmt.Sprintf("restored %d", result.RemovedMessages)
+	}
+	return tui.RuntimeControlResult{
+		Title:  "Conversation Restored",
 		Status: status,
 		Lines:  lines,
 	}, nil

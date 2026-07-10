@@ -74,6 +74,7 @@ type TaskBoardFunc func(context.Context) (string, error)
 type TodoListFunc func(context.Context) ([]TodoItem, error)
 type RuntimeControlFunc func(context.Context) (RuntimeControlResult, error)
 type ModelSelectFunc func(context.Context, string) (RuntimeControlResult, error)
+type ConversationRestoreFunc func(context.Context, int) (RuntimeControlResult, error)
 
 // TodoItem is the small display model used by the TUI todo panel.
 type TodoItem struct {
@@ -117,6 +118,7 @@ type ShellOptions struct {
 	ToggleThinking          RuntimeControlFunc
 	StopBackground          RuntimeControlFunc
 	CompactSession          RuntimeControlFunc
+	RestoreConversation     ConversationRestoreFunc
 	ModeLabel               string
 	CycleMode               func() string
 }
@@ -213,6 +215,7 @@ type model struct {
 	toggleThinking           RuntimeControlFunc
 	stopBackground           RuntimeControlFunc
 	compactSession           RuntimeControlFunc
+	restoreConversation      ConversationRestoreFunc
 	messageActions           bool
 	messageActionTarget      int
 	messageActionSelected    int
@@ -739,6 +742,13 @@ func PreviewWithMessageActions(entries []Entry, width int, height int, action in
 		modelEntries = append(modelEntries, transcriptEntry{Role: entry.Role, Text: entry.Text})
 	}
 	m := newModel(context.Background(), ta, nil, modelEntries)
+	m.restoreConversation = func(_ context.Context, keepMessages int) (RuntimeControlResult, error) {
+		return RuntimeControlResult{
+			Title:  "Conversation Restored",
+			Status: "restored",
+			Lines:  []string{fmt.Sprintf("Remaining: %d", keepMessages)},
+		}, nil
+	}
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 		if next, ok := updated.(model); ok {
@@ -756,9 +766,16 @@ func PreviewWithMessageActions(entries []Entry, width int, height int, action in
 		}
 	}
 	if action >= 0 {
-		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		var cmd tea.Cmd
+		updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		if next, ok := updated.(model); ok {
 			m = next
+		}
+		if cmd != nil {
+			updated, _ = m.Update(cmd())
+			if next, ok := updated.(model); ok {
+				m = next
+			}
 		}
 	}
 	return Preview{
@@ -855,6 +872,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.toggleThinking = options.ToggleThinking
 	m.stopBackground = options.StopBackground
 	m.compactSession = options.CompactSession
+	m.restoreConversation = options.RestoreConversation
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
@@ -1104,8 +1122,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveMessageAction(1)
 				return m, nil
 			case "enter", "tab":
-				m.applyMessageAction()
-				return m, nil
+				return m.applyMessageAction()
 			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
 				return m, nil
 			}
@@ -2117,6 +2134,13 @@ func runModelSelectCommand(ctx context.Context, selectModel ModelSelectFunc, mod
 	}
 }
 
+func runConversationRestoreCommand(ctx context.Context, restore ConversationRestoreFunc, keepMessages int) tea.Cmd {
+	return func() tea.Msg {
+		result, err := restore(ctx, keepMessages)
+		return runtimeControlDoneMsg{Result: result, Err: err}
+	}
+}
+
 func runPasteCommand(ctx context.Context, paste PasteFunc) tea.Cmd {
 	return func() tea.Msg {
 		content, err := paste(ctx)
@@ -2728,6 +2752,7 @@ var messageActionLabels = []string{
 	"copy to composer",
 	"quote in composer",
 	"stash message",
+	"restore before turn",
 }
 
 func (m *model) openMessageActions() {
@@ -2763,12 +2788,12 @@ func (m *model) moveMessageAction(delta int) {
 	m.status = "message actions"
 }
 
-func (m *model) applyMessageAction() {
+func (m model) applyMessageAction() (tea.Model, tea.Cmd) {
 	entry := m.messageActionEntry()
 	text := strings.TrimSpace(entry.Text)
 	if text == "" {
 		m.closeMessageActions()
-		return
+		return m, nil
 	}
 	switch m.messageActionSelected {
 	case 1:
@@ -2779,6 +2804,27 @@ func (m *model) applyMessageAction() {
 	case 2:
 		m.stashedPrompt = &composerStash{Text: text}
 		m.status = "message stashed"
+	case 3:
+		if m.restoreConversation == nil {
+			m.status = "restore unavailable"
+			m.messageActions = false
+			m.messageActionSelected = 0
+			return m, nil
+		}
+		keepMessages := m.restoreMessageKeepCount()
+		if keepMessages < 0 {
+			m.status = "restore unavailable"
+			m.messageActions = false
+			m.messageActionSelected = 0
+			return m, nil
+		}
+		m.messageActions = false
+		m.messageActionSelected = 0
+		m.matches = nil
+		m.selected = 0
+		m.historyPos = -1
+		m.status = "restoring"
+		return m, runConversationRestoreCommand(m.ctx, m.restoreConversation, keepMessages)
 	default:
 		m.pushComposerUndo()
 		m.textarea.SetValue(text)
@@ -2791,6 +2837,7 @@ func (m *model) applyMessageAction() {
 	m.selected = 0
 	m.historyPos = -1
 	m.refreshCompletionMenu()
+	return m, nil
 }
 
 func (m model) lastTranscriptIndex() int {
@@ -2807,6 +2854,32 @@ func (m model) messageActionEntry() transcriptEntry {
 		return m.transcript[m.messageActionTarget]
 	}
 	return transcriptEntry{}
+}
+
+func (m model) restoreMessageKeepCount() int {
+	if m.messageActionTarget < 0 || m.messageActionTarget >= len(m.transcript) {
+		return -1
+	}
+	restoreTarget := m.messageActionTarget
+	if strings.EqualFold(m.transcript[restoreTarget].Role, "assistant") {
+		for index := restoreTarget - 1; index >= 0; index-- {
+			if strings.EqualFold(m.transcript[index].Role, "user") {
+				restoreTarget = index
+				break
+			}
+		}
+	}
+	keep := 0
+	for index := 0; index < restoreTarget && index < len(m.transcript); index++ {
+		if transcriptEntryCountsAsSessionMessage(m.transcript[index]) {
+			keep++
+		}
+	}
+	return keep
+}
+
+func transcriptEntryCountsAsSessionMessage(entry transcriptEntry) bool {
+	return strings.EqualFold(entry.Role, "user") || strings.EqualFold(entry.Role, "assistant")
 }
 
 func quoteMessageText(text string) string {

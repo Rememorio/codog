@@ -5460,6 +5460,10 @@ func tuiPromptCompletionScenario() scenario {
 			if messageCopy.MessageMenu || messageCopy.Value != "copy me" {
 				return localScenarioResult{}, fmt.Errorf("expected message copied into composer, got value=%q view=%s", messageCopy.Value, messageCopy.View)
 			}
+			messageRestore := tui.PreviewWithMessageActions([]tui.Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 3)
+			if messageRestore.MessageMenu || !strings.Contains(messageRestore.View, "Conversation Restored") {
+				return localScenarioResult{}, fmt.Errorf("expected message restore preview, got view=%s", messageRestore.View)
+			}
 
 			submitted := tui.PreviewWithCandidates("/mo", []string{"/model claude-test"}, 96, 24, true, true)
 			if !submitted.Submitted {
@@ -5473,31 +5477,32 @@ func tuiPromptCompletionScenario() scenario {
 			}
 
 			report := map[string]any{
-				"kind":                  "tui_prompt_completion",
-				"matches":               multiple.Matches,
-				"automatic":             automatic.Matches,
-				"queued_preview":        strings.Contains(queued.View, "queued prompts: 2"),
-				"stash_preview":         stash.HasStash,
-				"transcript_preview":    transcript.Transcript,
-				"todos_preview":         todosPreview.TodosOpen && strings.Contains(todosPreview.View, "write focused parity test"),
-				"undo_preview":          undoPreview.Value == "" && strings.Contains(undoPreview.View, "undo"),
-				"attachment_preview":    strings.Contains(attachments.View, "attachments: 2"),
-				"paste_preview":         strings.Contains(paste.View, "pasted 1 line"),
-				"paste_image_preview":   strings.Contains(pasteImage.View, "clipboard image attached"),
-				"file_ref_completion":   strings.Contains(fileRef.Value, "@internal/tui/tui.go"),
-				"quick_open_preview":    strings.Contains(quickOpenPreview.View, "package quick"),
-				"quick_open":            strings.Contains(quickOpen.Value, "@internal/tui/tui.go"),
-				"global_search_preview": strings.Contains(globalSearchPreview.View, "NeedleValue"),
-				"global_search":         strings.Contains(globalSearch.Value, "#L4"),
-				"model_picker":          modelPicker.ModelPicker,
-				"runtime_fast_toggle":   strings.Contains(fastToggle.View, "Fast mode: on"),
-				"runtime_thinking":      strings.Contains(thinkingToggle.View, "Reasoning: medium"),
-				"message_actions":       messageActions.MessageMenu,
-				"message_action_copy":   messageCopy.Value == "copy me",
-				"attachments":           attachments.Attachments,
-				"submitted":             submitted.Submitted,
-				"submitted_prompt":      submitted.Prompt,
-				"view_contains":         []string{"Codog TUI", "Enter send"},
+				"kind":                   "tui_prompt_completion",
+				"matches":                multiple.Matches,
+				"automatic":              automatic.Matches,
+				"queued_preview":         strings.Contains(queued.View, "queued prompts: 2"),
+				"stash_preview":          stash.HasStash,
+				"transcript_preview":     transcript.Transcript,
+				"todos_preview":          todosPreview.TodosOpen && strings.Contains(todosPreview.View, "write focused parity test"),
+				"undo_preview":           undoPreview.Value == "" && strings.Contains(undoPreview.View, "undo"),
+				"attachment_preview":     strings.Contains(attachments.View, "attachments: 2"),
+				"paste_preview":          strings.Contains(paste.View, "pasted 1 line"),
+				"paste_image_preview":    strings.Contains(pasteImage.View, "clipboard image attached"),
+				"file_ref_completion":    strings.Contains(fileRef.Value, "@internal/tui/tui.go"),
+				"quick_open_preview":     strings.Contains(quickOpenPreview.View, "package quick"),
+				"quick_open":             strings.Contains(quickOpen.Value, "@internal/tui/tui.go"),
+				"global_search_preview":  strings.Contains(globalSearchPreview.View, "NeedleValue"),
+				"global_search":          strings.Contains(globalSearch.Value, "#L4"),
+				"model_picker":           modelPicker.ModelPicker,
+				"runtime_fast_toggle":    strings.Contains(fastToggle.View, "Fast mode: on"),
+				"runtime_thinking":       strings.Contains(thinkingToggle.View, "Reasoning: medium"),
+				"message_actions":        messageActions.MessageMenu,
+				"message_action_copy":    messageCopy.Value == "copy me",
+				"message_action_restore": strings.Contains(messageRestore.View, "Conversation Restored"),
+				"attachments":            attachments.Attachments,
+				"submitted":              submitted.Submitted,
+				"submitted_prompt":       submitted.Prompt,
+				"view_contains":          []string{"Codog TUI", "Enter send"},
 			}
 			data, err := json.Marshal(report)
 			if err != nil {

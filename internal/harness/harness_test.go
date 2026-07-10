@@ -799,6 +799,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, tuiPrompt.Output, `"runtime_thinking":true`)
 	require.Contains(t, tuiPrompt.Output, `"message_actions":true`)
 	require.Contains(t, tuiPrompt.Output, `"message_action_copy":true`)
+	require.Contains(t, tuiPrompt.Output, `"message_action_restore":true`)
 	require.Contains(t, tuiPrompt.Output, `"submitted":true`)
 	interactiveUI := findCategory(t, report, "interactive-ui")
 	require.True(t, interactiveUI.OK)
