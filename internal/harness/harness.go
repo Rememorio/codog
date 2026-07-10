@@ -3577,7 +3577,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+o"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
+			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+o"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
 				return localScenarioResult{}, fmt.Errorf("keybindings template missing expected entries: %s", string(keybindingsData))
 			}
 
@@ -3589,7 +3589,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 35 {
+			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 37 {
 				return localScenarioResult{}, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
 			}
 
@@ -3643,6 +3643,7 @@ func privacyKeybindingsScenario() scenario {
 					"external_editor":     strings.Contains(string(keybindingsData), `"ctrl+g"`),
 					"clipboard_paste_key": strings.Contains(string(keybindingsData), `"ctrl+v"`),
 					"quick_open_key":      strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) && strings.Contains(string(keybindingsData), `"ctrl+p"`),
+					"global_search_key":   strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) && strings.Contains(string(keybindingsData), `"ctrl+f"`),
 					"transcript_key":      strings.Contains(string(keybindingsData), `"ctrl+o"`),
 					"terminal_keys":       strings.Contains(string(keybindingsData), `"ctrl+l"`) && strings.Contains(string(keybindingsData), `"ctrl+d"`),
 					"background_key":      strings.Contains(string(keybindingsData), `"ctrl+b"`),
@@ -5394,7 +5395,7 @@ func tuiPromptCompletionScenario() scenario {
 			if err := os.MkdirAll(filepath.Dir(previewFile), 0o755); err != nil {
 				return localScenarioResult{}, err
 			}
-			if err := os.WriteFile(previewFile, []byte("package quick\n\nfunc PreviewTarget() {}\n"), 0o644); err != nil {
+			if err := os.WriteFile(previewFile, []byte("package quick\n\nfunc PreviewTarget() {}\nconst NeedleValue = \"workspace-search\"\n"), 0o644); err != nil {
 				return localScenarioResult{}, err
 			}
 			quickOpenPreview := tui.PreviewWithQuickOpen("inspect", []string{previewFile, filepath.Join(workspace, "src", "other.go")}, "quick", 96, 24, false)
@@ -5404,6 +5405,14 @@ func tuiPromptCompletionScenario() scenario {
 			quickOpen := tui.PreviewWithQuickOpen("inspect", []string{"internal/tui/tui.go", "internal/agent/agent.go"}, "tui", 96, 24, true)
 			if quickOpen.QuickOpen || quickOpen.Value != "inspect @internal/tui/tui.go " {
 				return localScenarioResult{}, fmt.Errorf("expected quick open file reference, got value=%q view=%s", quickOpen.Value, quickOpen.View)
+			}
+			globalSearchPreview := tui.PreviewWithGlobalSearch("inspect", []string{previewFile}, "NeedleValue", 96, 24, false)
+			if !globalSearchPreview.GlobalSearch || !strings.Contains(globalSearchPreview.View, "global search: NeedleValue") || !strings.Contains(globalSearchPreview.View, "NeedleValue") || !strings.Contains(globalSearchPreview.View, "preview") {
+				return localScenarioResult{}, fmt.Errorf("expected global search preview, got view=%s", globalSearchPreview.View)
+			}
+			globalSearch := tui.PreviewWithGlobalSearch("inspect", []string{previewFile}, "NeedleValue", 96, 24, true)
+			if globalSearch.GlobalSearch || !strings.Contains(globalSearch.Value, "@"+previewFile+"#L4 ") {
+				return localScenarioResult{}, fmt.Errorf("expected global search line reference, got value=%q view=%s", globalSearch.Value, globalSearch.View)
 			}
 
 			submitted := tui.PreviewWithCandidates("/mo", []string{"/model claude-test"}, 96, 24, true, true)
@@ -5418,22 +5427,24 @@ func tuiPromptCompletionScenario() scenario {
 			}
 
 			report := map[string]any{
-				"kind":                "tui_prompt_completion",
-				"matches":             multiple.Matches,
-				"automatic":           automatic.Matches,
-				"queued_preview":      strings.Contains(queued.View, "queued prompts: 2"),
-				"stash_preview":       stash.HasStash,
-				"transcript_preview":  transcript.Transcript,
-				"attachment_preview":  strings.Contains(attachments.View, "attachments: 2"),
-				"paste_preview":       strings.Contains(paste.View, "pasted 1 line"),
-				"paste_image_preview": strings.Contains(pasteImage.View, "clipboard image attached"),
-				"file_ref_completion": strings.Contains(fileRef.Value, "@internal/tui/tui.go"),
-				"quick_open_preview":  strings.Contains(quickOpenPreview.View, "package quick"),
-				"quick_open":          strings.Contains(quickOpen.Value, "@internal/tui/tui.go"),
-				"attachments":         attachments.Attachments,
-				"submitted":           submitted.Submitted,
-				"submitted_prompt":    submitted.Prompt,
-				"view_contains":       []string{"Codog TUI", "Enter send"},
+				"kind":                  "tui_prompt_completion",
+				"matches":               multiple.Matches,
+				"automatic":             automatic.Matches,
+				"queued_preview":        strings.Contains(queued.View, "queued prompts: 2"),
+				"stash_preview":         stash.HasStash,
+				"transcript_preview":    transcript.Transcript,
+				"attachment_preview":    strings.Contains(attachments.View, "attachments: 2"),
+				"paste_preview":         strings.Contains(paste.View, "pasted 1 line"),
+				"paste_image_preview":   strings.Contains(pasteImage.View, "clipboard image attached"),
+				"file_ref_completion":   strings.Contains(fileRef.Value, "@internal/tui/tui.go"),
+				"quick_open_preview":    strings.Contains(quickOpenPreview.View, "package quick"),
+				"quick_open":            strings.Contains(quickOpen.Value, "@internal/tui/tui.go"),
+				"global_search_preview": strings.Contains(globalSearchPreview.View, "NeedleValue"),
+				"global_search":         strings.Contains(globalSearch.Value, "#L4"),
+				"attachments":           attachments.Attachments,
+				"submitted":             submitted.Submitted,
+				"submitted_prompt":      submitted.Prompt,
+				"view_contains":         []string{"Codog TUI", "Enter send"},
 			}
 			data, err := json.Marshal(report)
 			if err != nil {

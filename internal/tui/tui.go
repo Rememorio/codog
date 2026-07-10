@@ -95,17 +95,18 @@ type ShellOptions struct {
 // Preview captures a deterministic TUI model state for tests and parity
 // harnesses without taking over the terminal.
 type Preview struct {
-	View        string
-	Value       string
-	Matches     []string
-	Submitted   bool
-	Prompt      string
-	Attachments []string
-	Mode        string
-	HelpOpen    bool
-	HasStash    bool
-	Transcript  bool
-	QuickOpen   bool
+	View         string
+	Value        string
+	Matches      []string
+	Submitted    bool
+	Prompt       string
+	Attachments  []string
+	Mode         string
+	HelpOpen     bool
+	HasStash     bool
+	Transcript   bool
+	QuickOpen    bool
+	GlobalSearch bool
 }
 
 type composerStash struct {
@@ -113,57 +114,70 @@ type composerStash struct {
 	Attachments []string
 }
 
+type globalSearchMatch struct {
+	File string
+	Line int
+	Text string
+}
+
 type model struct {
-	ctx                     context.Context
-	textarea                textarea.Model
-	viewport                viewport.Model
-	result                  Result
-	width                   int
-	height                  int
-	matches                 []string
-	selected                int
-	candidates              []string
-	fileCandidates          []string
-	helpOpen                bool
-	transcriptMode          bool
-	quickOpen               bool
-	busy                    bool
-	status                  string
-	transcript              []transcriptEntry
-	submit                  SubmitFunc
-	submitStream            StreamSubmitFunc
-	submitAttachments       SubmitWithAttachmentsFunc
-	submitStreamAttachments StreamSubmitWithAttachmentsFunc
-	slash                   SlashFunc
-	permissionAnswer        func(string)
-	questionAnswer          func(string)
-	externalEditor          ExternalEditorFunc
-	paste                   PasteFunc
-	background              BackgroundFunc
-	taskBoard               TaskBoardFunc
-	modeLabel               string
-	cycleMode               func() string
-	history                 []string
-	historyPos              int
-	draft                   string
-	quickOpenDraft          string
-	quickOpenMatches        []string
-	quickOpenSelected       int
-	quickOpenPreviewPath    string
-	quickOpenPreviewLines   []string
-	queuedPrompts           []string
-	attachments             []string
-	stashedPrompt           *composerStash
-	searchOpen              bool
-	searchHits              []string
-	searchPos               int
-	turnCancel              context.CancelFunc
-	backgrounding           bool
-	backgroundCancel        context.CancelFunc
-	turnMessages            <-chan tea.Msg
-	streamingIndex          int
-	awaitingPermission      bool
-	awaitingQuestion        bool
+	ctx                      context.Context
+	textarea                 textarea.Model
+	viewport                 viewport.Model
+	result                   Result
+	width                    int
+	height                   int
+	matches                  []string
+	selected                 int
+	candidates               []string
+	fileCandidates           []string
+	helpOpen                 bool
+	transcriptMode           bool
+	quickOpen                bool
+	busy                     bool
+	status                   string
+	transcript               []transcriptEntry
+	submit                   SubmitFunc
+	submitStream             StreamSubmitFunc
+	submitAttachments        SubmitWithAttachmentsFunc
+	submitStreamAttachments  StreamSubmitWithAttachmentsFunc
+	slash                    SlashFunc
+	permissionAnswer         func(string)
+	questionAnswer           func(string)
+	externalEditor           ExternalEditorFunc
+	paste                    PasteFunc
+	background               BackgroundFunc
+	taskBoard                TaskBoardFunc
+	modeLabel                string
+	cycleMode                func() string
+	history                  []string
+	historyPos               int
+	draft                    string
+	quickOpenDraft           string
+	quickOpenMatches         []string
+	quickOpenSelected        int
+	quickOpenPreviewPath     string
+	quickOpenPreviewLines    []string
+	globalSearch             bool
+	globalSearchDraft        string
+	globalSearchMatches      []globalSearchMatch
+	globalSearchSelected     int
+	globalSearchPreviewPath  string
+	globalSearchPreviewLine  int
+	globalSearchPreviewLines []string
+	queuedPrompts            []string
+	attachments              []string
+	stashedPrompt            *composerStash
+	searchOpen               bool
+	searchHits               []string
+	searchPos                int
+	turnCancel               context.CancelFunc
+	backgrounding            bool
+	backgroundCancel         context.CancelFunc
+	turnMessages             <-chan tea.Msg
+	streamingIndex           int
+	awaitingPermission       bool
+	awaitingQuestion         bool
 }
 
 type transcriptEntry struct {
@@ -221,17 +235,18 @@ func PreviewWithCandidates(input string, candidates []string, width int, height 
 		}
 	}
 	return Preview{
-		View:        m.View(),
-		Value:       m.textarea.Value(),
-		Matches:     append([]string(nil), m.matches...),
-		Submitted:   m.result.Submitted,
-		Prompt:      m.result.Prompt,
-		Attachments: append([]string(nil), m.result.Attachments...),
-		Mode:        m.mode(),
-		HelpOpen:    m.helpOpen,
-		HasStash:    m.stashedPrompt != nil,
-		Transcript:  m.transcriptMode,
-		QuickOpen:   m.quickOpen,
+		View:         m.View(),
+		Value:        m.textarea.Value(),
+		Matches:      append([]string(nil), m.matches...),
+		Submitted:    m.result.Submitted,
+		Prompt:       m.result.Prompt,
+		Attachments:  append([]string(nil), m.result.Attachments...),
+		Mode:         m.mode(),
+		HelpOpen:     m.helpOpen,
+		HasStash:     m.stashedPrompt != nil,
+		Transcript:   m.transcriptMode,
+		QuickOpen:    m.quickOpen,
+		GlobalSearch: m.globalSearch,
 	}
 }
 
@@ -252,15 +267,16 @@ func PreviewWithFileCandidates(input string, files []string, width int, height i
 		m = m.completeSlashCommand()
 	}
 	return Preview{
-		View:        m.View(),
-		Value:       m.textarea.Value(),
-		Matches:     append([]string(nil), m.matches...),
-		Attachments: append([]string(nil), m.attachments...),
-		Mode:        m.mode(),
-		HelpOpen:    m.helpOpen,
-		HasStash:    m.stashedPrompt != nil,
-		Transcript:  m.transcriptMode,
-		QuickOpen:   m.quickOpen,
+		View:         m.View(),
+		Value:        m.textarea.Value(),
+		Matches:      append([]string(nil), m.matches...),
+		Attachments:  append([]string(nil), m.attachments...),
+		Mode:         m.mode(),
+		HelpOpen:     m.helpOpen,
+		HasStash:     m.stashedPrompt != nil,
+		Transcript:   m.transcriptMode,
+		QuickOpen:    m.quickOpen,
+		GlobalSearch: m.globalSearch,
 	}
 }
 
@@ -279,15 +295,16 @@ func PreviewWithQueued(input string, queued []string, width int, height int) Pre
 		}
 	}
 	return Preview{
-		View:        m.View(),
-		Value:       m.textarea.Value(),
-		Matches:     append([]string(nil), m.matches...),
-		Attachments: append([]string(nil), m.attachments...),
-		Mode:        m.mode(),
-		HelpOpen:    m.helpOpen,
-		HasStash:    m.stashedPrompt != nil,
-		Transcript:  m.transcriptMode,
-		QuickOpen:   m.quickOpen,
+		View:         m.View(),
+		Value:        m.textarea.Value(),
+		Matches:      append([]string(nil), m.matches...),
+		Attachments:  append([]string(nil), m.attachments...),
+		Mode:         m.mode(),
+		HelpOpen:     m.helpOpen,
+		HasStash:     m.stashedPrompt != nil,
+		Transcript:   m.transcriptMode,
+		QuickOpen:    m.quickOpen,
+		GlobalSearch: m.globalSearch,
 	}
 }
 
@@ -308,15 +325,16 @@ func PreviewWithStash(input string, attachments []string, width int, height int)
 		m = next
 	}
 	return Preview{
-		View:        m.View(),
-		Value:       m.textarea.Value(),
-		Matches:     append([]string(nil), m.matches...),
-		Attachments: append([]string(nil), m.attachments...),
-		Mode:        m.mode(),
-		HelpOpen:    m.helpOpen,
-		HasStash:    m.stashedPrompt != nil,
-		Transcript:  m.transcriptMode,
-		QuickOpen:   m.quickOpen,
+		View:         m.View(),
+		Value:        m.textarea.Value(),
+		Matches:      append([]string(nil), m.matches...),
+		Attachments:  append([]string(nil), m.attachments...),
+		Mode:         m.mode(),
+		HelpOpen:     m.helpOpen,
+		HasStash:     m.stashedPrompt != nil,
+		Transcript:   m.transcriptMode,
+		QuickOpen:    m.quickOpen,
+		GlobalSearch: m.globalSearch,
 	}
 }
 
@@ -340,15 +358,16 @@ func PreviewWithTranscript(entries []Entry, width int, height int) Preview {
 		m = next
 	}
 	return Preview{
-		View:        m.View(),
-		Value:       m.textarea.Value(),
-		Matches:     append([]string(nil), m.matches...),
-		Attachments: append([]string(nil), m.attachments...),
-		Mode:        m.mode(),
-		HelpOpen:    m.helpOpen,
-		HasStash:    m.stashedPrompt != nil,
-		Transcript:  m.transcriptMode,
-		QuickOpen:   m.quickOpen,
+		View:         m.View(),
+		Value:        m.textarea.Value(),
+		Matches:      append([]string(nil), m.matches...),
+		Attachments:  append([]string(nil), m.attachments...),
+		Mode:         m.mode(),
+		HelpOpen:     m.helpOpen,
+		HasStash:     m.stashedPrompt != nil,
+		Transcript:   m.transcriptMode,
+		QuickOpen:    m.quickOpen,
+		GlobalSearch: m.globalSearch,
 	}
 }
 
@@ -381,15 +400,16 @@ func PreviewWithQuickOpen(input string, files []string, query string, width int,
 		}
 	}
 	return Preview{
-		View:        m.View(),
-		Value:       m.textarea.Value(),
-		Matches:     append([]string(nil), m.quickOpenMatches...),
-		Attachments: append([]string(nil), m.attachments...),
-		Mode:        m.mode(),
-		HelpOpen:    m.helpOpen,
-		HasStash:    m.stashedPrompt != nil,
-		Transcript:  m.transcriptMode,
-		QuickOpen:   m.quickOpen,
+		View:         m.View(),
+		Value:        m.textarea.Value(),
+		Matches:      append([]string(nil), m.quickOpenMatches...),
+		Attachments:  append([]string(nil), m.attachments...),
+		Mode:         m.mode(),
+		HelpOpen:     m.helpOpen,
+		HasStash:     m.stashedPrompt != nil,
+		Transcript:   m.transcriptMode,
+		QuickOpen:    m.quickOpen,
+		GlobalSearch: m.globalSearch,
 	}
 }
 
@@ -406,15 +426,58 @@ func PreviewWithAttachments(input string, attachments []string, width int, heigh
 		}
 	}
 	return Preview{
-		View:        m.View(),
-		Value:       m.textarea.Value(),
-		Matches:     append([]string(nil), m.matches...),
-		Attachments: append([]string(nil), m.attachments...),
-		Mode:        m.mode(),
-		HelpOpen:    m.helpOpen,
-		HasStash:    m.stashedPrompt != nil,
-		Transcript:  m.transcriptMode,
-		QuickOpen:   m.quickOpen,
+		View:         m.View(),
+		Value:        m.textarea.Value(),
+		Matches:      append([]string(nil), m.matches...),
+		Attachments:  append([]string(nil), m.attachments...),
+		Mode:         m.mode(),
+		HelpOpen:     m.helpOpen,
+		HasStash:     m.stashedPrompt != nil,
+		Transcript:   m.transcriptMode,
+		QuickOpen:    m.quickOpen,
+		GlobalSearch: m.globalSearch,
+	}
+}
+
+// PreviewWithGlobalSearch renders a deterministic TUI state after opening
+// workspace search, typing a query, and optionally accepting the selected match.
+func PreviewWithGlobalSearch(input string, files []string, query string, width int, height int, accept bool) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = append([]string(nil), files...)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	if query != "" {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(query)})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	if accept {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:         m.View(),
+		Value:        m.textarea.Value(),
+		Matches:      globalSearchMatchLabels(m.globalSearchMatches),
+		Attachments:  append([]string(nil), m.attachments...),
+		Mode:         m.mode(),
+		HelpOpen:     m.helpOpen,
+		HasStash:     m.stashedPrompt != nil,
+		Transcript:   m.transcriptMode,
+		QuickOpen:    m.quickOpen,
+		GlobalSearch: m.globalSearch,
 	}
 }
 
@@ -694,6 +757,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Paste {
 			return m.handlePastedInput(msg)
 		}
+		if m.globalSearch {
+			switch msg.String() {
+			case "ctrl+c", "esc":
+				m.closeGlobalSearch(false, false)
+				return m, nil
+			case "up", "ctrl+p":
+				m.moveGlobalSearch(-1)
+				return m, nil
+			case "down", "ctrl+n":
+				m.moveGlobalSearch(1)
+				return m, nil
+			case "enter", "tab":
+				m.closeGlobalSearch(true, true)
+				return m, nil
+			case "shift+tab":
+				m.closeGlobalSearch(true, false)
+				return m, nil
+			case "ctrl+r", "ctrl+s", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+v", "ctrl+l", "ctrl+d":
+				return m, nil
+			}
+			var cmd tea.Cmd
+			var viewportCmd tea.Cmd
+			m.viewport, viewportCmd = m.viewport.Update(msg)
+			m.textarea, cmd = m.textarea.Update(msg)
+			m.updateGlobalSearch()
+			return m, tea.Batch(cmd, viewportCmd)
+		}
 		if m.quickOpen {
 			switch msg.String() {
 			case "ctrl+c", "esc":
@@ -711,7 +801,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "shift+tab":
 				m.closeQuickOpen(true, false)
 				return m, nil
-			case "ctrl+r", "ctrl+s", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+v", "ctrl+l", "ctrl+d":
+			case "ctrl+r", "ctrl+s", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+v", "ctrl+l", "ctrl+d":
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -749,7 +839,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "ctrl+d":
-			if !m.busy && !m.searchOpen && !m.quickOpen && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
+			if !m.busy && !m.searchOpen && !m.quickOpen && !m.globalSearch && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
 				return m, tea.Quit
 			}
 		case "ctrl+l":
@@ -771,7 +861,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "pasting"
 			return m, runPasteCommand(m.ctx, m.paste)
 		case "ctrl+b":
-			if m.backgrounding || m.background == nil || m.searchOpen || m.quickOpen || m.awaitingPermission || m.awaitingQuestion {
+			if m.backgrounding || m.background == nil || m.searchOpen || m.quickOpen || m.globalSearch || m.awaitingPermission || m.awaitingQuestion {
 				return m, nil
 			}
 			value := strings.TrimSpace(m.textarea.Value())
@@ -791,7 +881,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 			return m, runBackgroundCommand(ctx, m.background, value)
 		case "ctrl+t":
-			if m.taskBoard == nil || m.searchOpen || m.quickOpen || m.awaitingPermission || m.awaitingQuestion {
+			if m.taskBoard == nil || m.searchOpen || m.quickOpen || m.globalSearch || m.awaitingPermission || m.awaitingQuestion {
 				return m, nil
 			}
 			if m.helpOpen {
@@ -822,10 +912,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 			return m, nil
 		case "ctrl+shift+p", "ctrl+p":
-			if m.busy || m.backgrounding || m.searchOpen || m.awaitingPermission || m.awaitingQuestion || len(m.fileCandidates) == 0 {
+			if m.busy || m.backgrounding || m.searchOpen || m.globalSearch || m.awaitingPermission || m.awaitingQuestion || len(m.fileCandidates) == 0 {
 				return m, nil
 			}
 			m.openQuickOpen()
+			return m, nil
+		case "ctrl+shift+f", "ctrl+f":
+			if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.awaitingPermission || m.awaitingQuestion || len(m.fileCandidates) == 0 {
+				return m, nil
+			}
+			m.openGlobalSearch()
 			return m, nil
 		case "ctrl+g":
 			if m.busy || m.externalEditor == nil {
@@ -957,6 +1053,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateQuickOpen()
 		return m, tea.Batch(cmd, viewportCmd)
 	}
+	if m.globalSearch {
+		m.updateGlobalSearch()
+		return m, tea.Batch(cmd, viewportCmd)
+	}
 	m.refreshCompletionMenu()
 	if isLocalHelpInput(m.textarea.Value()) {
 		m.status = "help ready"
@@ -1001,6 +1101,10 @@ func (m model) insertPastedText(text string) (tea.Model, tea.Cmd) {
 	}
 	if m.quickOpen {
 		m.updateQuickOpen()
+		return m, nil
+	}
+	if m.globalSearch {
+		m.updateGlobalSearch()
 		return m, nil
 	}
 	m.refreshCompletionMenu()
@@ -1097,6 +1201,9 @@ func (m model) View() string {
 	}
 	if m.quickOpen {
 		composer += "\n" + renderQuickOpen(m.quickOpenMatches, m.quickOpenSelected, m.textarea.Value(), m.width, m.quickOpenPreviewPath, m.quickOpenPreviewLines)
+	}
+	if m.globalSearch {
+		composer += "\n" + renderGlobalSearch(m.globalSearchMatches, m.globalSearchSelected, m.textarea.Value(), m.width, m.globalSearchPreviewPath, m.globalSearchPreviewLine, m.globalSearchPreviewLines)
 	}
 	if len(m.queuedPrompts) > 0 {
 		composer += "\n" + renderQueuedPrompts(m.queuedPrompts)
@@ -1262,7 +1369,7 @@ func (m *model) editQueuedPrompts() {
 }
 
 func (m *model) togglePromptStash() {
-	if m.searchOpen || m.quickOpen || m.awaitingPermission || m.awaitingQuestion {
+	if m.searchOpen || m.quickOpen || m.globalSearch || m.awaitingPermission || m.awaitingQuestion {
 		return
 	}
 	if m.helpOpen {
@@ -1597,6 +1704,13 @@ func (m *model) clearScreen() {
 	m.quickOpenDraft = ""
 	m.quickOpenPreviewPath = ""
 	m.quickOpenPreviewLines = nil
+	m.globalSearch = false
+	m.globalSearchMatches = nil
+	m.globalSearchSelected = 0
+	m.globalSearchDraft = ""
+	m.globalSearchPreviewPath = ""
+	m.globalSearchPreviewLine = 0
+	m.globalSearchPreviewLines = nil
 	m.transcript = []transcriptEntry{{Role: "system", Text: "Screen cleared."}}
 	m.status = "cleared"
 	m.refreshViewport()
@@ -1673,7 +1787,7 @@ func (m model) completeSlashCommand() model {
 
 func (m *model) refreshCompletionMenu() {
 	value := strings.Trim(m.textarea.Value(), "\r\n\t")
-	if value == "" || m.busy || m.searchOpen {
+	if value == "" || m.busy || m.searchOpen || m.globalSearch {
 		m.matches = nil
 		m.selected = 0
 		return
@@ -1982,6 +2096,50 @@ func renderQuickOpen(matches []string, selected int, query string, width int, pr
 	return strings.Join(lines, "\n")
 }
 
+func renderGlobalSearch(matches []globalSearchMatch, selected int, query string, width int, previewPath string, previewLine int, previewLines []string) string {
+	query = strings.TrimSpace(query)
+	title := " global search "
+	if query != "" {
+		title = fmt.Sprintf(" global search: %s ", query)
+	}
+	lines := []string{completionTitleStyle().Render(title)}
+	if query == "" {
+		return strings.Join(append(lines, completionStyle().Render("  type to search workspace")), "\n")
+	}
+	if len(matches) == 0 {
+		return strings.Join(append(lines, completionStyle().Render("  no matches")), "\n")
+	}
+	if selected < 0 || selected >= len(matches) {
+		selected = 0
+	}
+	limit := 120
+	if width > 0 {
+		limit = max(40, width-8)
+	}
+	for index, match := range matches {
+		prefix := "  "
+		style := completionStyle()
+		if index == selected {
+			prefix = "> "
+			style = selectedCompletionStyle()
+		}
+		label := fmt.Sprintf("%s:%d  %s", match.File, match.Line, strings.TrimSpace(match.Text))
+		lines = append(lines, style.Render(prefix+truncateForComposer(label, limit)))
+	}
+	if previewPath != "" {
+		lines = append(lines, completionTitleStyle().Render(" preview "))
+		lines = append(lines, completionStyle().Render("  "+truncateForComposer(fmt.Sprintf("%s:%d", previewPath, previewLine), limit)))
+		if len(previewLines) == 0 {
+			lines = append(lines, completionStyle().Render("  (empty file)"))
+		}
+		for _, line := range previewLines {
+			lines = append(lines, completionStyle().Render("  "+truncateForComposer(line, limit)))
+		}
+	}
+	lines = append(lines, completionStyle().Render("  Enter/Tab insert @file#Lline · Shift+Tab insert path:line · Esc cancel"))
+	return strings.Join(lines, "\n")
+}
+
 func readQuickOpenPreview(path string, maxLines int, maxBytes int64) []string {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -2030,6 +2188,136 @@ func readQuickOpenPreview(path string, maxLines int, maxBytes int64) []string {
 		lines = append(lines, "(preview truncated)")
 	}
 	return lines
+}
+
+func searchWorkspaceFiles(query string, files []string, limit int, maxMatchesPerFile int, maxBytes int64) []globalSearchMatch {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if maxMatchesPerFile <= 0 {
+		maxMatchesPerFile = 5
+	}
+	if maxBytes <= 0 {
+		maxBytes = 256 * 1024
+	}
+	out := []globalSearchMatch{}
+	seen := map[string]bool{}
+	for _, file := range files {
+		file = strings.TrimSpace(filepathToSlash(file))
+		if file == "" || seen[file] {
+			continue
+		}
+		seen[file] = true
+		info, err := os.Stat(file)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		if int64(len(data)) > maxBytes {
+			data = data[:maxBytes]
+		}
+		if bytes.Contains(data, []byte{0}) || !utf8.Valid(data) {
+			continue
+		}
+		text := strings.ReplaceAll(string(data), "\r\n", "\n")
+		text = strings.ReplaceAll(text, "\r", "\n")
+		perFile := 0
+		for index, line := range strings.Split(text, "\n") {
+			if !strings.Contains(strings.ToLower(line), query) {
+				continue
+			}
+			out = append(out, globalSearchMatch{File: file, Line: index + 1, Text: line})
+			perFile++
+			if len(out) >= limit {
+				return out
+			}
+			if perFile >= maxMatchesPerFile {
+				break
+			}
+		}
+	}
+	return out
+}
+
+func readGlobalSearchPreview(path string, line int, contextLines int, maxBytes int64) []string {
+	path = strings.TrimSpace(path)
+	if path == "" || line <= 0 {
+		return nil
+	}
+	if contextLines < 0 {
+		contextLines = 2
+	}
+	if maxBytes <= 0 {
+		maxBytes = 64 * 1024
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return []string{"(preview unavailable)"}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []string{"(preview unavailable)"}
+	}
+	truncated := false
+	if int64(len(data)) > maxBytes {
+		data = data[:maxBytes]
+		truncated = true
+	}
+	if bytes.Contains(data, []byte{0}) || !utf8.Valid(data) {
+		return []string{"(binary file)"}
+	}
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	parts := strings.Split(text, "\n")
+	if len(parts) > 0 && parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	index := line - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(parts) {
+		index = len(parts) - 1
+	}
+	start := max(0, index-contextLines)
+	end := min(len(parts), index+contextLines+1)
+	out := make([]string, 0, end-start+1)
+	for current := start; current < end; current++ {
+		marker := " "
+		if current == index {
+			marker = ">"
+		}
+		out = append(out, fmt.Sprintf("%s%4d: %s", marker, current+1, parts[current]))
+	}
+	if truncated {
+		out = append(out, "(preview truncated)")
+	}
+	return out
+}
+
+func globalSearchMatchLabels(matches []globalSearchMatch) []string {
+	out := make([]string, 0, len(matches))
+	for _, match := range matches {
+		out = append(out, fmt.Sprintf("%s:%d", match.File, match.Line))
+	}
+	return out
+}
+
+func globalSearchReference(match globalSearchMatch, mention bool) string {
+	if mention {
+		return fmt.Sprintf("@%s#L%d ", match.File, match.Line)
+	}
+	return fmt.Sprintf("%s:%d ", match.File, match.Line)
 }
 
 func renderPendingAttachments(attachments []string) string {
@@ -2126,6 +2414,14 @@ func statusBarText(status string, width int) string {
 			return "quick open · type to search · Enter/Tab insert @file · Shift+Tab path · Esc cancel"
 		}
 	}
+	if strings.HasPrefix(strings.ToLower(status), "global search") {
+		switch {
+		case width > 0 && width < 80:
+			return "global search · type · Enter · Esc"
+		default:
+			return "global search · type to search · Enter/Tab insert @line · Shift+Tab path:line · Esc cancel"
+		}
+	}
 	switch {
 	case width > 0 && width < 70:
 		return fmt.Sprintf("%s · Enter · Tab · Ctrl-R · Esc", status)
@@ -2134,7 +2430,7 @@ func statusBarText(status string, width int) string {
 	case width > 0 && width < 110:
 		return fmt.Sprintf("%s · Enter send · Shift+Enter newline · Tab complete · Ctrl-R history · Ctrl-L clear · Ctrl-D exit", status)
 	default:
-		return fmt.Sprintf("%s · Enter send · Shift+Enter or \\+Enter newline · Tab complete · Ctrl-R history · Ctrl+Shift+P files · Ctrl-O transcript · Ctrl-L clear · Ctrl-D exit", status)
+		return fmt.Sprintf("%s · Enter send · Shift+Enter or \\+Enter newline · Tab complete · Ctrl-R history · Ctrl+Shift+P files · Ctrl+Shift+F search · Ctrl-O transcript · Ctrl-L clear · Ctrl-D exit", status)
 	}
 }
 
@@ -2191,7 +2487,7 @@ func normalizeHistory(history []string) []string {
 }
 
 func (m model) canNavigateHistory() bool {
-	if len(m.history) == 0 || m.busy || m.helpOpen || m.searchOpen || m.quickOpen {
+	if len(m.history) == 0 || m.busy || m.helpOpen || m.searchOpen || m.quickOpen || m.globalSearch {
 		return false
 	}
 	if strings.Contains(m.textarea.Value(), "\n") {
@@ -2372,6 +2668,100 @@ func (m *model) closeQuickOpen(accept bool, mention bool) {
 	m.refreshCompletionMenu()
 }
 
+func (m *model) openGlobalSearch() {
+	if m.globalSearch {
+		return
+	}
+	m.globalSearch = true
+	m.globalSearchDraft = m.textarea.Value()
+	m.textarea.SetValue("")
+	m.matches = nil
+	m.selected = 0
+	m.historyPos = -1
+	m.searchOpen = false
+	m.searchHits = nil
+	m.searchPos = 0
+	if m.helpOpen {
+		m.helpOpen = false
+		m.refreshViewport()
+	}
+	m.updateGlobalSearch()
+}
+
+func (m *model) updateGlobalSearch() {
+	m.globalSearchMatches = searchWorkspaceFiles(m.textarea.Value(), m.fileCandidates, 50, 5, 256*1024)
+	if m.globalSearchSelected < 0 || m.globalSearchSelected >= len(m.globalSearchMatches) {
+		m.globalSearchSelected = 0
+	}
+	if len(m.globalSearchMatches) == 0 {
+		m.globalSearchPreviewPath = ""
+		m.globalSearchPreviewLine = 0
+		m.globalSearchPreviewLines = nil
+		m.status = "global search"
+		return
+	}
+	m.refreshGlobalSearchPreview()
+	m.status = fmt.Sprintf("global search %d/%d", m.globalSearchSelected+1, len(m.globalSearchMatches))
+}
+
+func (m *model) moveGlobalSearch(delta int) {
+	if len(m.globalSearchMatches) == 0 {
+		return
+	}
+	m.globalSearchSelected = (m.globalSearchSelected + delta + len(m.globalSearchMatches)) % len(m.globalSearchMatches)
+	m.refreshGlobalSearchPreview()
+	m.status = fmt.Sprintf("global search %d/%d", m.globalSearchSelected+1, len(m.globalSearchMatches))
+}
+
+func (m *model) refreshGlobalSearchPreview() {
+	if len(m.globalSearchMatches) == 0 {
+		m.globalSearchPreviewPath = ""
+		m.globalSearchPreviewLine = 0
+		m.globalSearchPreviewLines = nil
+		return
+	}
+	if m.globalSearchSelected < 0 || m.globalSearchSelected >= len(m.globalSearchMatches) {
+		m.globalSearchSelected = 0
+	}
+	selected := m.globalSearchMatches[m.globalSearchSelected]
+	if selected.File == m.globalSearchPreviewPath && selected.Line == m.globalSearchPreviewLine && len(m.globalSearchPreviewLines) > 0 {
+		return
+	}
+	m.globalSearchPreviewPath = selected.File
+	m.globalSearchPreviewLine = selected.Line
+	m.globalSearchPreviewLines = readGlobalSearchPreview(selected.File, selected.Line, 2, 64*1024)
+}
+
+func (m *model) closeGlobalSearch(accept bool, mention bool) {
+	if accept && len(m.globalSearchMatches) > 0 {
+		if m.globalSearchSelected < 0 || m.globalSearchSelected >= len(m.globalSearchMatches) {
+			m.globalSearchSelected = 0
+		}
+		insert := globalSearchReference(m.globalSearchMatches[m.globalSearchSelected], mention)
+		m.textarea.SetValue(insertWithComposerSpacing(m.globalSearchDraft, insert))
+		m.textarea.CursorEnd()
+		if mention {
+			m.status = "line referenced"
+		} else {
+			m.status = "location inserted"
+		}
+	} else {
+		m.textarea.SetValue(m.globalSearchDraft)
+		m.textarea.CursorEnd()
+		m.status = m.mode()
+	}
+	m.globalSearch = false
+	m.globalSearchDraft = ""
+	m.globalSearchMatches = nil
+	m.globalSearchSelected = 0
+	m.globalSearchPreviewPath = ""
+	m.globalSearchPreviewLine = 0
+	m.globalSearchPreviewLines = nil
+	m.matches = nil
+	m.selected = 0
+	m.refreshCompletionMenu()
+}
+
 func filterHistory(history []string, query string, limit int) []string {
 	if limit <= 0 {
 		limit = 8
@@ -2465,6 +2855,9 @@ func (m model) mode() string {
 	}
 	if m.quickOpen {
 		return "quick open"
+	}
+	if m.globalSearch {
+		return "global search"
 	}
 	if len(m.matches) > 0 {
 		return fmt.Sprintf("%d completions", len(m.matches))
@@ -2612,6 +3005,8 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+V      paste clipboard text or image",
 		"  Ctrl+Shift+P quick open files",
 		"  Ctrl+P      quick open fallback",
+		"  Ctrl+Shift+F search workspace",
+		"  Ctrl+F      search workspace fallback",
 		"  Ctrl+O      toggle expanded transcript",
 		"  Ctrl+L      clear screen",
 		"  Ctrl+U      delete before cursor",

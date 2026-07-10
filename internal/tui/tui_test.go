@@ -521,6 +521,106 @@ func TestPreviewWithQuickOpen(t *testing.T) {
 	require.Equal(t, "inspect @internal/tui/tui.go ", accepted.Value)
 }
 
+func TestGlobalSearchFindsContentAndInsertsLineReference(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.MkdirAll("internal/tui", 0o755))
+	require.NoError(t, os.WriteFile("internal/tui/tui.go", []byte("package tui\n\nfunc SearchTarget() {}\n"), 0o644))
+
+	ta := newPromptTextarea("review")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = []string{"internal/agent/agent.go", "internal/tui/tui.go"}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	m = updated.(model)
+
+	require.True(t, m.globalSearch)
+	require.Equal(t, "review", m.globalSearchDraft)
+	require.Contains(t, m.View(), "type to search workspace")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("SearchTarget")})
+	m = updated.(model)
+
+	require.Len(t, m.globalSearchMatches, 1)
+	require.Equal(t, "internal/tui/tui.go", m.globalSearchMatches[0].File)
+	require.Equal(t, 3, m.globalSearchMatches[0].Line)
+	require.Contains(t, m.View(), "global search: SearchTarget")
+	require.Contains(t, m.View(), "internal/tui/tui.go:3")
+	require.Contains(t, m.View(), "func SearchTarget")
+	require.Contains(t, m.View(), "Enter/Tab insert @file#Lline")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	require.False(t, m.globalSearch)
+	require.Equal(t, "review @internal/tui/tui.go#L3 ", m.textarea.Value())
+	require.Equal(t, "line referenced", m.status)
+}
+
+func TestGlobalSearchShiftTabInsertsBareLocation(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("main.go", []byte("package main\n\nconst Needle = true\n"), 0o644))
+
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = []string{"main.go"}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Needle")})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = updated.(model)
+
+	require.False(t, m.globalSearch)
+	require.Equal(t, "main.go:3 ", m.textarea.Value())
+	require.Equal(t, "location inserted", m.status)
+}
+
+func TestGlobalSearchEscapeRestoresDraft(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("main.go", []byte("package main\n"), 0o644))
+
+	ta := newPromptTextarea("unfinished")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = []string{"main.go"}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("package")})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+
+	require.False(t, m.globalSearch)
+	require.Equal(t, "unfinished", m.textarea.Value())
+}
+
+func TestGlobalSearchSkipsBinaryFiles(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("image.bin", []byte{0x89, 0x00, 0x01}, 0o644))
+
+	preview := PreviewWithGlobalSearch("", []string{"image.bin"}, "image", 96, 24, false)
+
+	require.True(t, preview.GlobalSearch)
+	require.Empty(t, preview.Matches)
+	require.Contains(t, preview.View, "no matches")
+}
+
+func TestPreviewWithGlobalSearch(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("main.go", []byte("package main\n\nconst Needle = true\n"), 0o644))
+
+	preview := PreviewWithGlobalSearch("inspect", []string{"main.go"}, "needle", 96, 24, false)
+
+	require.True(t, preview.GlobalSearch)
+	require.Equal(t, []string{"main.go:3"}, preview.Matches)
+	require.Contains(t, preview.View, "global search: needle")
+
+	accepted := PreviewWithGlobalSearch("inspect", []string{"main.go"}, "needle", 96, 24, true)
+	require.False(t, accepted.GlobalSearch)
+	require.Equal(t, "inspect @main.go#L3 ", accepted.Value)
+}
+
 func TestPreviewTogglesHelpPanel(t *testing.T) {
 	preview := PreviewWithCandidates("/help", []string{"/status", "/context"}, 100, 24, false, false)
 	require.True(t, preview.HelpOpen)
