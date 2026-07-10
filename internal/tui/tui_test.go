@@ -136,11 +136,19 @@ func TestPreviewWithPasteInsertsClipboardText(t *testing.T) {
 	require.Contains(t, preview.View, "pasted 2 lines")
 }
 
+func TestPreviewWithPasteAttachmentStagesAttachment(t *testing.T) {
+	preview := PreviewWithPasteAttachment("", "clipboard.png", 96, 24)
+
+	require.Equal(t, []string{"clipboard.png"}, preview.Attachments)
+	require.Contains(t, preview.View, "attachments: 1")
+	require.Contains(t, preview.View, "clipboard image attached")
+}
+
 func TestCtrlVPastesClipboardIntoComposer(t *testing.T) {
 	ta := newPromptTextarea("prefix ")
 	m := newModel(context.Background(), ta, nil, nil)
-	m.paste = func(context.Context) (string, error) {
-		return "clipboard\ntext", nil
+	m.paste = func(context.Context) (PasteContent, error) {
+		return PasteContent{Text: "clipboard\ntext"}, nil
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
@@ -154,11 +162,29 @@ func TestCtrlVPastesClipboardIntoComposer(t *testing.T) {
 	require.Equal(t, "pasted 2 lines", m.status)
 }
 
+func TestCtrlVPasteImageStagesAttachment(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.paste = func(context.Context) (PasteContent, error) {
+		return PasteContent{AttachmentPath: "clipboard.png", MediaType: "image/png"}, nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.Equal(t, []string{"clipboard.png"}, m.attachments)
+	require.Equal(t, "clipboard image attached", m.status)
+	require.Contains(t, m.View(), "attachments: 1")
+}
+
 func TestSlashPasteInsertsClipboardIntoComposer(t *testing.T) {
 	ta := newPromptTextarea("/paste")
 	m := newModel(context.Background(), ta, nil, nil)
-	m.paste = func(context.Context) (string, error) {
-		return "clipboard text", nil
+	m.paste = func(context.Context) (PasteContent, error) {
+		return PasteContent{Text: "clipboard text"}, nil
 	}
 	m.slash = func(context.Context, string) (string, bool, error) {
 		t.Fatal("bare /paste should be handled by the TUI")
@@ -181,9 +207,9 @@ func TestSlashPasteWithArgsFallsThroughToSlash(t *testing.T) {
 	ta := newPromptTextarea("/paste --json")
 	m := newModel(context.Background(), ta, nil, nil)
 	called := false
-	m.paste = func(context.Context) (string, error) {
+	m.paste = func(context.Context) (PasteContent, error) {
 		t.Fatal("/paste with args should stay a slash command")
-		return "", nil
+		return PasteContent{}, nil
 	}
 	m.slash = func(_ context.Context, line string) (string, bool, error) {
 		called = true

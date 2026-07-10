@@ -48,9 +48,17 @@ type SlashFunc func(context.Context, string) (output string, handled bool, err e
 // returns the replacement composer text.
 type ExternalEditorFunc func(context.Context, string) (string, error)
 
-// PasteFunc returns the current system clipboard text for insertion into the
-// composer.
-type PasteFunc func(context.Context) (string, error)
+// PasteContent is clipboard content ready for the TUI composer. Text is
+// inserted into the composer; AttachmentPath is staged for the next prompt.
+type PasteContent struct {
+	Text           string
+	AttachmentPath string
+	MediaType      string
+}
+
+// PasteFunc returns the current system clipboard content for insertion into
+// the composer or staging as an attachment.
+type PasteFunc func(context.Context) (PasteContent, error)
 
 // BackgroundFunc starts the current composer prompt in a detached background
 // task and returns a user-facing status line.
@@ -260,7 +268,32 @@ func PreviewWithPaste(input string, clipboardText string, width int, height int)
 			m = next
 		}
 	}
-	updated, _ := m.Update(pasteDoneMsg{Text: clipboardText})
+	updated, _ := m.Update(pasteDoneMsg{Content: PasteContent{Text: clipboardText}})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+	}
+}
+
+// PreviewWithPasteAttachment renders a deterministic TUI state after staging a
+// clipboard attachment for the next prompt.
+func PreviewWithPasteAttachment(input string, attachmentPath string, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	updated, _ := m.Update(pasteDoneMsg{Content: PasteContent{AttachmentPath: attachmentPath, MediaType: "image/png"}})
 	if next, ok := updated.(model); ok {
 		m = next
 	}
@@ -403,14 +436,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 			return m, nil
 		}
-		if msg.Text == "" {
+		if msg.Content.Text == "" && msg.Content.AttachmentPath == "" {
 			m.status = "paste empty"
 			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Clipboard is empty."})
 			m.refreshViewport()
 			m.viewport.GotoBottom()
 			return m, nil
 		}
-		return m.insertPastedText(msg.Text)
+		return m.insertPasteContent(msg.Content)
 	case backgroundDoneMsg:
 		m.backgrounding = false
 		if m.backgroundCancel != nil {
@@ -728,6 +761,13 @@ func (m model) handlePastedInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.insertPastedText(text)
 }
 
+func (m model) insertPasteContent(content PasteContent) (tea.Model, tea.Cmd) {
+	if content.AttachmentPath != "" {
+		return m.stagePastedAttachment(content)
+	}
+	return m.insertPastedText(content.Text)
+}
+
 func (m model) insertPastedText(text string) (tea.Model, tea.Cmd) {
 	if m.helpOpen {
 		m.helpOpen = false
@@ -751,6 +791,30 @@ func (m model) insertPastedText(text string) (tea.Model, tea.Cmd) {
 		lines := pastedLineCount(text)
 		m.status = fmt.Sprintf("pasted %d %s", lines, plural("line", lines))
 	}
+	return m, nil
+}
+
+func (m model) stagePastedAttachment(content PasteContent) (tea.Model, tea.Cmd) {
+	if m.helpOpen {
+		m.helpOpen = false
+	}
+	added := addUniqueAttachment(&m.attachments, content.AttachmentPath)
+	m.matches = nil
+	m.selected = 0
+	m.historyPos = -1
+	label := "clipboard attachment"
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(content.MediaType)), "image/") {
+		label = "clipboard image"
+	}
+	if added {
+		m.status = label + " attached"
+		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Added %s for the next prompt.\n%s", label, renderAttachmentSummary(m.attachments))})
+	} else {
+		m.status = "attachment already staged"
+		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: renderAttachmentSummary(m.attachments)})
+	}
+	m.refreshViewport()
+	m.viewport.GotoBottom()
 	return m, nil
 }
 
@@ -1158,8 +1222,8 @@ type externalEditorDoneMsg struct {
 }
 
 type pasteDoneMsg struct {
-	Text string
-	Err  error
+	Content PasteContent
+	Err     error
 }
 
 type backgroundDoneMsg struct {
@@ -1195,8 +1259,8 @@ func runTaskBoardCommand(ctx context.Context, taskBoard TaskBoardFunc) tea.Cmd {
 
 func runPasteCommand(ctx context.Context, paste PasteFunc) tea.Cmd {
 	return func() tea.Msg {
-		text, err := paste(ctx)
-		return pasteDoneMsg{Text: text, Err: err}
+		content, err := paste(ctx)
+		return pasteDoneMsg{Content: content, Err: err}
 	}
 }
 
@@ -1898,7 +1962,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Alt+Enter   insert newline fallback",
 		"  \\+Enter     replace trailing backslash with newline",
 		"  Ctrl+G      edit composer in $EDITOR",
-		"  Ctrl+V      paste clipboard into composer",
+		"  Ctrl+V      paste clipboard text or image",
 		"  Ctrl+L      clear screen",
 		"  Ctrl+U      delete before cursor",
 		"  Ctrl+K      delete after cursor",

@@ -20811,7 +20811,7 @@ func defaultKeybindingsTemplate() []byte {
 					"alt+enter":   "insert newline fallback",
 					"ctrl+j":      "insert newline",
 					"ctrl+g":      "edit composer in $EDITOR",
-					"ctrl+v":      "paste clipboard into composer",
+					"ctrl+v":      "paste clipboard text or image",
 					"ctrl+l":      "clear screen",
 					"ctrl+u":      "delete before cursor",
 					"ctrl+k":      "delete after cursor",
@@ -20886,7 +20886,7 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Alt-Enter", Action: "insert newline fallback"},
 					{Key: "Ctrl-J", Action: "insert newline"},
 					{Key: "Ctrl-G", Action: "edit composer in $EDITOR"},
-					{Key: "Ctrl-V", Action: "paste clipboard into composer"},
+					{Key: "Ctrl-V", Action: "paste clipboard text or image"},
 					{Key: "Ctrl-L", Action: "clear screen"},
 					{Key: "Ctrl-U", Action: "delete before cursor"},
 					{Key: "Ctrl-K", Action: "delete after cursor"},
@@ -39152,7 +39152,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		ExternalEditor: func(ctx context.Context, value string) (string, error) {
 			return a.editTUIComposer(ctx, value)
 		},
-		Paste: func(ctx context.Context) (string, error) {
+		Paste: func(ctx context.Context) (tui.PasteContent, error) {
 			return a.readTUIClipboard(ctx)
 		},
 		Background: func(ctx context.Context, prompt string) (string, error) {
@@ -39219,12 +39219,69 @@ func (a *App) renderTUITaskBoard(ctx context.Context) (string, error) {
 	return renderTUILaneBoard(board), nil
 }
 
-func (a *App) readTUIClipboard(ctx context.Context) (string, error) {
+func (a *App) readTUIClipboard(ctx context.Context) (tui.PasteContent, error) {
+	if image, err := readClipboardImage(ctx); err == nil {
+		path, err := a.storeTUIClipboardImage(image)
+		if err != nil {
+			return tui.PasteContent{}, err
+		}
+		return tui.PasteContent{
+			AttachmentPath: path,
+			MediaType:      image.MediaType,
+		}, nil
+	} else if !errors.Is(err, errNoClipboardImage) {
+		return tui.PasteContent{}, err
+	}
 	data, _, err := readClipboard(ctx)
 	if err != nil {
+		return tui.PasteContent{}, err
+	}
+	return tui.PasteContent{Text: string(data)}, nil
+}
+
+func (a *App) storeTUIClipboardImage(image clipboardImage) (string, error) {
+	if len(image.Data) == 0 {
+		return "", errNoClipboardImage
+	}
+	workspace := strings.TrimSpace(a.Workspace)
+	if workspace == "" {
+		workspace = "."
+	}
+	extension := strings.ToLower(strings.TrimSpace(image.Extension))
+	if extension == "" {
+		extension = extensionForClipboardImageMediaType(image.MediaType)
+	}
+	if extension == "" {
+		extension = ".png"
+	}
+	if !strings.HasPrefix(extension, ".") {
+		extension = "." + extension
+	}
+	dir := filepath.Join(workspace, ".codog", "attachments", "clipboard")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	return string(data), nil
+	name := "clipboard-" + time.Now().UTC().Format("20060102T150405.000000000Z0700") + extension
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, image.Data, 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func extensionForClipboardImageMediaType(mediaType string) string {
+	switch cleanMediaType(mediaType) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/png":
+		return ".png"
+	default:
+		return ""
+	}
 }
 
 func renderTUILaneBoard(board background.LaneBoard) string {
@@ -47713,6 +47770,13 @@ type pasteReport struct {
 	Preview   string `json:"preview,omitempty"`
 }
 
+type clipboardImage struct {
+	Data      []byte
+	MediaType string
+	Extension string
+	Clipboard string
+}
+
 type pinRequest struct {
 	SessionID    string
 	Format       string
@@ -47733,6 +47797,9 @@ type pinReport struct {
 
 var writeClipboard = writeSystemClipboard
 var readClipboard = readSystemClipboard
+var readClipboardImage = readSystemClipboardImage
+
+var errNoClipboardImage = errors.New("clipboard does not contain an image")
 
 func (a *App) GenerateSessionName(args []string, overrides config.FlagOverrides) error {
 	report, format, err := a.generateSessionNameReport(args, overrides)
@@ -48898,6 +48965,120 @@ func readSystemClipboard(ctx context.Context) ([]byte, string, error) {
 		return data, candidate[0], nil
 	}
 	return nil, "", errors.New("no clipboard command found")
+}
+
+func readSystemClipboardImage(ctx context.Context) (clipboardImage, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		return readDarwinClipboardImage(ctx)
+	case "windows":
+		return readWindowsClipboardImage(ctx)
+	default:
+		return readUnixClipboardImage(ctx)
+	}
+}
+
+func readDarwinClipboardImage(ctx context.Context) (clipboardImage, error) {
+	if _, err := exec.LookPath("osascript"); err != nil {
+		return clipboardImage{}, errNoClipboardImage
+	}
+	file, err := os.CreateTemp("", "codog-clipboard-*.png")
+	if err != nil {
+		return clipboardImage{}, err
+	}
+	path := file.Name()
+	_ = file.Close()
+	defer os.Remove(path)
+	escapedPath := strings.ReplaceAll(path, `"`, `\"`)
+	args := []string{
+		"-e", `set outputPath to "` + escapedPath + `"`,
+		"-e", `set imageData to the clipboard as «class PNGf»`,
+		"-e", `set outputFile to open for access POSIX file outputPath with write permission`,
+		"-e", `set eof outputFile to 0`,
+		"-e", `write imageData to outputFile`,
+		"-e", `close access outputFile`,
+	}
+	if err := exec.CommandContext(ctx, "osascript", args...).Run(); err != nil {
+		return clipboardImage{}, errNoClipboardImage
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return clipboardImage{}, err
+	}
+	if !looksLikeClipboardImage(data, "image/png") {
+		return clipboardImage{}, errNoClipboardImage
+	}
+	return clipboardImage{Data: data, MediaType: "image/png", Extension: ".png", Clipboard: "osascript"}, nil
+}
+
+func readWindowsClipboardImage(ctx context.Context) (clipboardImage, error) {
+	command, ok := firstAvailableCommand([]string{"powershell", "pwsh"})
+	if !ok {
+		return clipboardImage{}, errNoClipboardImage
+	}
+	file, err := os.CreateTemp("", "codog-clipboard-*.png")
+	if err != nil {
+		return clipboardImage{}, err
+	}
+	path := file.Name()
+	_ = file.Close()
+	defer os.Remove(path)
+	script := `$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; if (-not [System.Windows.Forms.Clipboard]::ContainsImage()) { exit 3 }; $img = [System.Windows.Forms.Clipboard]::GetImage(); $img.Save('` + strings.ReplaceAll(path, `'`, `''`) + `', [System.Drawing.Imaging.ImageFormat]::Png)`
+	if err := exec.CommandContext(ctx, command, "-NoProfile", "-Command", script).Run(); err != nil {
+		return clipboardImage{}, errNoClipboardImage
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return clipboardImage{}, err
+	}
+	if !looksLikeClipboardImage(data, "image/png") {
+		return clipboardImage{}, errNoClipboardImage
+	}
+	return clipboardImage{Data: data, MediaType: "image/png", Extension: ".png", Clipboard: command}, nil
+}
+
+func readUnixClipboardImage(ctx context.Context) (clipboardImage, error) {
+	candidates := []struct {
+		Command   []string
+		MediaType string
+		Extension string
+	}{
+		{Command: []string{"wl-paste", "--type", "image/png"}, MediaType: "image/png", Extension: ".png"},
+		{Command: []string{"wl-paste", "--type", "image/jpeg"}, MediaType: "image/jpeg", Extension: ".jpg"},
+		{Command: []string{"xclip", "-selection", "clipboard", "-t", "image/png", "-out"}, MediaType: "image/png", Extension: ".png"},
+		{Command: []string{"xclip", "-selection", "clipboard", "-t", "image/jpeg", "-out"}, MediaType: "image/jpeg", Extension: ".jpg"},
+	}
+	for _, candidate := range candidates {
+		if _, err := exec.LookPath(candidate.Command[0]); err != nil {
+			continue
+		}
+		data, err := exec.CommandContext(ctx, candidate.Command[0], candidate.Command[1:]...).Output()
+		if err != nil || !looksLikeClipboardImage(data, candidate.MediaType) {
+			continue
+		}
+		return clipboardImage{Data: data, MediaType: candidate.MediaType, Extension: candidate.Extension, Clipboard: candidate.Command[0]}, nil
+	}
+	return clipboardImage{}, errNoClipboardImage
+}
+
+func firstAvailableCommand(commands []string) (string, bool) {
+	for _, command := range commands {
+		if _, err := exec.LookPath(command); err == nil {
+			return command, true
+		}
+	}
+	return "", false
+}
+
+func looksLikeClipboardImage(data []byte, mediaType string) bool {
+	if len(data) == 0 {
+		return false
+	}
+	detected := cleanMediaType(http.DetectContentType(data))
+	if isPromptImageMediaType(detected) {
+		return true
+	}
+	return isPromptImageMediaType(mediaType)
 }
 
 func clipboardCommands() [][]string {

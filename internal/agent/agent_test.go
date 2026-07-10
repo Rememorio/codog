@@ -20695,7 +20695,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"action": "resolve"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+v"`)
 	require.Contains(t, out.String(), `"found": true`)
-	require.Contains(t, out.String(), `"binding_action": "paste clipboard into composer"`)
+	require.Contains(t, out.String(), `"binding_action": "paste clipboard text or image"`)
 	out.Reset()
 
 	require.NoError(t, app.Keybindings([]string{"resolve", "tui", "Ctrl-L", "--json"}))
@@ -20727,7 +20727,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), `"context": "repl"`)
 	require.Contains(t, string(data), `"shift+enter": "insert newline"`)
 	require.Contains(t, string(data), `"ctrl+g": "edit composer in $EDITOR"`)
-	require.Contains(t, string(data), `"ctrl+v": "paste clipboard into composer"`)
+	require.Contains(t, string(data), `"ctrl+v": "paste clipboard text or image"`)
 	require.Contains(t, string(data), `"ctrl+l": "clear screen"`)
 	require.Contains(t, string(data), `"ctrl+d": "exit when composer is empty"`)
 	require.Contains(t, string(data), `"ctrl+b": "run composer prompt in background"`)
@@ -30245,6 +30245,60 @@ func TestPasteCommandAndSlashPrint(t *testing.T) {
 	out.Reset()
 
 	require.ErrorContains(t, app.Paste(context.Background(), []string{"--max-bytes", "4"}, config.FlagOverrides{}), "over paste max")
+}
+
+func TestReadTUIClipboardStagesImageAttachment(t *testing.T) {
+	workspace := t.TempDir()
+	previousReadClipboardImage := readClipboardImage
+	previousReadClipboard := readClipboard
+	readClipboardImage = func(context.Context) (clipboardImage, error) {
+		return clipboardImage{
+			Data:      []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
+			MediaType: "image/png",
+			Extension: ".png",
+			Clipboard: "test-image-clipboard",
+		}, nil
+	}
+	readClipboard = func(context.Context) ([]byte, string, error) {
+		t.Fatal("text clipboard should not be read when an image is available")
+		return nil, "", nil
+	}
+	t.Cleanup(func() {
+		readClipboardImage = previousReadClipboardImage
+		readClipboard = previousReadClipboard
+	})
+	app := &App{Workspace: workspace}
+
+	content, err := app.readTUIClipboard(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, content.Text)
+	require.Equal(t, "image/png", content.MediaType)
+	require.NotEmpty(t, content.AttachmentPath)
+	require.Contains(t, content.AttachmentPath, filepath.Join(".codog", "attachments", "clipboard"))
+	data, err := os.ReadFile(content.AttachmentPath)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, data)
+}
+
+func TestReadTUIClipboardFallsBackToText(t *testing.T) {
+	previousReadClipboardImage := readClipboardImage
+	previousReadClipboard := readClipboard
+	readClipboardImage = func(context.Context) (clipboardImage, error) {
+		return clipboardImage{}, errNoClipboardImage
+	}
+	readClipboard = func(context.Context) ([]byte, string, error) {
+		return []byte("clipboard text"), "test-text-clipboard", nil
+	}
+	t.Cleanup(func() {
+		readClipboardImage = previousReadClipboardImage
+		readClipboard = previousReadClipboard
+	})
+	app := &App{Workspace: t.TempDir()}
+
+	content, err := app.readTUIClipboard(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "clipboard text", content.Text)
+	require.Empty(t, content.AttachmentPath)
 }
 
 func TestPinCommandSlashAndCompactPreservesPinnedMessages(t *testing.T) {

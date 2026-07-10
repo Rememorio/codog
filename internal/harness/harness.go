@@ -5369,6 +5369,10 @@ func tuiPromptCompletionScenario() scenario {
 			if paste.Value != "prefix clipboard text" || !strings.Contains(paste.View, "pasted 1 line") {
 				return localScenarioResult{}, fmt.Errorf("expected paste preview, got value=%q view=%s", paste.Value, paste.View)
 			}
+			pasteImage := tui.PreviewWithPasteAttachment("", "clipboard.png", 96, 24)
+			if len(pasteImage.Attachments) != 1 || !strings.Contains(pasteImage.View, "clipboard image attached") {
+				return localScenarioResult{}, fmt.Errorf("expected paste image preview, got attachments=%#v view=%s", pasteImage.Attachments, pasteImage.View)
+			}
 
 			submitted := tui.PreviewWithCandidates("/mo", []string{"/model claude-test"}, 96, 24, true, true)
 			if !submitted.Submitted {
@@ -5382,16 +5386,17 @@ func tuiPromptCompletionScenario() scenario {
 			}
 
 			report := map[string]any{
-				"kind":               "tui_prompt_completion",
-				"matches":            multiple.Matches,
-				"automatic":          automatic.Matches,
-				"queued_preview":     strings.Contains(queued.View, "queued prompts: 2"),
-				"attachment_preview": strings.Contains(attachments.View, "attachments: 2"),
-				"paste_preview":      strings.Contains(paste.View, "pasted 1 line"),
-				"attachments":        attachments.Attachments,
-				"submitted":          submitted.Submitted,
-				"submitted_prompt":   submitted.Prompt,
-				"view_contains":      []string{"Codog TUI", "Enter send"},
+				"kind":                "tui_prompt_completion",
+				"matches":             multiple.Matches,
+				"automatic":           automatic.Matches,
+				"queued_preview":      strings.Contains(queued.View, "queued prompts: 2"),
+				"attachment_preview":  strings.Contains(attachments.View, "attachments: 2"),
+				"paste_preview":       strings.Contains(paste.View, "pasted 1 line"),
+				"paste_image_preview": strings.Contains(pasteImage.View, "clipboard image attached"),
+				"attachments":         attachments.Attachments,
+				"submitted":           submitted.Submitted,
+				"submitted_prompt":    submitted.Prompt,
+				"view_contains":       []string{"Codog TUI", "Enter send"},
 			}
 			data, err := json.Marshal(report)
 			if err != nil {
