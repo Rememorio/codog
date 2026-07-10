@@ -30223,9 +30223,24 @@ type capabilitiesReport struct {
 	Bridge                  bridgeparity.Report        `json:"bridge"`
 	Orchestration           orchestrationparity.Report `json:"orchestration"`
 	Release                 releaseparity.Report       `json:"release"`
+	CommandSurface          commandSurfaceReport       `json:"command_surface"`
 	Features                []string                   `json:"features"`
 	Protocols               []string                   `json:"protocols"`
 	OutputFormats           []string                   `json:"output_formats"`
+}
+
+type commandSurfaceReport struct {
+	Status                         string   `json:"status"`
+	CommandCount                   int      `json:"command_count"`
+	HelpTopicCount                 int      `json:"help_topic_count"`
+	MissingHelpTopicCount          int      `json:"missing_help_topic_count"`
+	MissingHelpTopics              []string `json:"missing_help_topics,omitempty"`
+	CompletionCommandCount         int      `json:"completion_command_count"`
+	MissingCompletionCommandCount  int      `json:"missing_completion_command_count"`
+	MissingCompletionCommands      []string `json:"missing_completion_commands,omitempty"`
+	GlobalOutputFormatCommandCount int      `json:"global_output_format_command_count"`
+	NoGlobalOutputFormatCount      int      `json:"no_global_output_format_count"`
+	NoGlobalOutputFormatCommands   []string `json:"no_global_output_format_commands,omitempty"`
 }
 
 type capabilityResolveReport struct {
@@ -30542,9 +30557,10 @@ func (a *App) capabilitiesReport() capabilitiesReport {
 			EnterprisePolicyPath:      a.Config.Future.EnterprisePolicy,
 			EnterprisePolicyPublicKey: a.Config.Future.EnterprisePolicyPublicKey,
 		}),
-		Features:      codogCapabilityFeatures(),
-		Protocols:     codogCapabilityProtocols(),
-		OutputFormats: []string{"text", "json", "stream-json"},
+		CommandSurface: commandSurface(),
+		Features:       codogCapabilityFeatures(),
+		Protocols:      codogCapabilityProtocols(),
+		OutputFormats:  []string{"text", "json", "stream-json"},
 	}
 }
 
@@ -31397,10 +31413,58 @@ func renderCapabilitiesText(out io.Writer, report capabilitiesReport) {
 	fmt.Fprintf(out, "  Bridge parity     %s (%d methods, %d routes)\n", report.Bridge.Status, report.Bridge.BridgeMethodCount, report.Bridge.ControlRouteCount)
 	fmt.Fprintf(out, "  Orchestration     %s (%d skills, %d plugins, %d MCP servers)\n", report.Orchestration.Status, report.Orchestration.SkillCount, report.Orchestration.PluginCount, report.Orchestration.ConfiguredMCPCount)
 	fmt.Fprintf(out, "  Release hardening %s (%s)\n", report.Release.Status, report.Release.Platform)
+	fmt.Fprintf(out, "  Command surface   %s (%d help topics, %d completions, %d global JSON)\n", report.CommandSurface.Status, report.CommandSurface.HelpTopicCount, report.CommandSurface.CompletionCommandCount, report.CommandSurface.GlobalOutputFormatCommandCount)
 	fmt.Fprintln(out, "  Features")
 	for _, feature := range report.Features {
 		fmt.Fprintf(out, "    - %s\n", feature)
 	}
+}
+
+func commandSurface() commandSurfaceReport {
+	commands := builtInCommandNames()
+	completionSet := stringSet(shellCompletionCommands())
+	missingHelp := []string{}
+	missingCompletion := []string{}
+	noGlobalOutput := []string{}
+	for _, command := range commands {
+		if _, ok := commandHelpSpecFor(command); !ok {
+			missingHelp = append(missingHelp, command)
+		}
+		if !completionSet[command] {
+			missingCompletion = append(missingCompletion, command)
+		}
+		if !commandAcceptsGlobalOutputFormat(command) {
+			noGlobalOutput = append(noGlobalOutput, command)
+		}
+	}
+	sort.Strings(missingHelp)
+	sort.Strings(missingCompletion)
+	sort.Strings(noGlobalOutput)
+	report := commandSurfaceReport{
+		Status:                         "ready",
+		CommandCount:                   len(commands),
+		HelpTopicCount:                 len(commands) - len(missingHelp),
+		MissingHelpTopicCount:          len(missingHelp),
+		MissingHelpTopics:              missingHelp,
+		CompletionCommandCount:         len(commands) - len(missingCompletion),
+		MissingCompletionCommandCount:  len(missingCompletion),
+		MissingCompletionCommands:      missingCompletion,
+		GlobalOutputFormatCommandCount: len(commands) - len(noGlobalOutput),
+		NoGlobalOutputFormatCount:      len(noGlobalOutput),
+		NoGlobalOutputFormatCommands:   noGlobalOutput,
+	}
+	if len(missingCompletion) > 0 {
+		report.Status = "gap"
+	}
+	return report
+}
+
+func stringSet(values []string) map[string]bool {
+	out := make(map[string]bool, len(values))
+	for _, value := range values {
+		out[strings.TrimSpace(value)] = true
+	}
+	return out
 }
 
 func capabilityToolAliasesByCanonical(aliases map[string]string, infos []tools.ToolInfo) map[string][]string {
@@ -31460,6 +31524,7 @@ func codogCapabilityFeatures() []string {
 		"config_layers",
 		"config_load_degraded",
 		"config_reset",
+		"command_surface_audit",
 		"cost_token_tracking",
 		"deferred_init",
 		"doctor_config_load_degraded",
@@ -64845,7 +64910,46 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			StatusValues:            []string{"ok", "error"},
 		}, true
 	default:
+		if isBuiltInCommandName(topic) {
+			return genericBuiltInCommandHelpSpec(topic), true
+		}
 		return commandHelpSpec{}, false
+	}
+}
+
+func isBuiltInCommandName(topic string) bool {
+	topic = strings.TrimSpace(topic)
+	if topic == "" {
+		return false
+	}
+	for _, command := range builtInCommandNames() {
+		if strings.EqualFold(topic, command) {
+			return true
+		}
+	}
+	return false
+}
+
+func genericBuiltInCommandHelpSpec(topic string) commandHelpSpec {
+	command := strings.TrimSpace(topic)
+	usage := "codog " + command + " [ARGS...]"
+	if commandAcceptsGlobalOutputFormat(command) {
+		usage += " [--output-format text|json]"
+	}
+	return commandHelpSpec{
+		Topic:                   command,
+		Command:                 command,
+		Usage:                   usage,
+		Text:                    fmt.Sprintf("%s\n\nUsage:\n  %s\n\nThis built-in command is part of Codog's declared command surface. Detailed command-specific help has not been specialized yet; use `codog capabilities resolve %s --output-format json` for registry metadata and `codog --help` for the global command list.\n", titleCaseASCII(command), usage, shellQuote(command)),
+		SchemaVersion:           "codog.help.generic.v1",
+		LocalOnly:               true,
+		RequiresCredentials:     false,
+		RequiresProviderRequest: false,
+		RequiresSessionResume:   false,
+		MutatesWorkspace:        false,
+		OutputFields:            []string{"status", "command"},
+		StatusValues:            []string{"ok", "error"},
+		Related:                 []string{"codog capabilities", "codog capabilities resolve " + command},
 	}
 }
 
