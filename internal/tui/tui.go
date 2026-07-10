@@ -48,6 +48,10 @@ type SlashFunc func(context.Context, string) (output string, handled bool, err e
 // returns the replacement composer text.
 type ExternalEditorFunc func(context.Context, string) (string, error)
 
+// PasteFunc returns the current system clipboard text for insertion into the
+// composer.
+type PasteFunc func(context.Context) (string, error)
+
 // BackgroundFunc starts the current composer prompt in a detached background
 // task and returns a user-facing status line.
 type BackgroundFunc func(context.Context, string) (string, error)
@@ -69,6 +73,7 @@ type ShellOptions struct {
 	PermissionAnswer        func(string)
 	QuestionAnswer          func(string)
 	ExternalEditor          ExternalEditorFunc
+	Paste                   PasteFunc
 	Background              BackgroundFunc
 	TaskBoard               TaskBoardFunc
 	ModeLabel               string
@@ -110,6 +115,7 @@ type model struct {
 	permissionAnswer        func(string)
 	questionAnswer          func(string)
 	externalEditor          ExternalEditorFunc
+	paste                   PasteFunc
 	background              BackgroundFunc
 	taskBoard               TaskBoardFunc
 	modeLabel               string
@@ -243,6 +249,31 @@ func PreviewWithAttachments(input string, attachments []string, width int, heigh
 	}
 }
 
+// PreviewWithPaste renders a deterministic TUI state after inserting clipboard
+// text into the composer.
+func PreviewWithPaste(input string, clipboardText string, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	updated, _ := m.Update(pasteDoneMsg{Text: clipboardText})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+	}
+}
+
 // Shell starts the full-screen interactive TUI loop.
 func Shell(ctx context.Context, options ShellOptions) error {
 	if ctx == nil {
@@ -262,6 +293,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.permissionAnswer = options.PermissionAnswer
 	m.questionAnswer = options.QuestionAnswer
 	m.externalEditor = options.ExternalEditor
+	m.paste = options.Paste
 	m.background = options.Background
 	m.taskBoard = options.TaskBoard
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
@@ -363,6 +395,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "editor updated"
 		m.refreshSlashMenu()
 		return m, nil
+	case pasteDoneMsg:
+		if msg.Err != nil {
+			m.status = "paste error"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return m, nil
+		}
+		if msg.Text == "" {
+			m.status = "paste empty"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Clipboard is empty."})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return m, nil
+		}
+		return m.insertPastedText(msg.Text)
 	case backgroundDoneMsg:
 		m.backgrounding = false
 		if m.backgroundCancel != nil {
@@ -482,6 +530,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.clearScreen()
 			return m, nil
+		case "ctrl+v":
+			if m.paste == nil || m.busy || m.backgrounding || m.awaitingPermission || m.awaitingQuestion {
+				return m, nil
+			}
+			if m.helpOpen {
+				m.helpOpen = false
+				m.refreshViewport()
+			}
+			m.matches = nil
+			m.selected = 0
+			m.status = "pasting"
+			return m, runPasteCommand(m.ctx, m.paste)
 		case "ctrl+b":
 			if m.backgrounding || m.background == nil || m.searchOpen || m.awaitingPermission || m.awaitingQuestion {
 				return m, nil
@@ -665,6 +725,10 @@ func (m model) handlePastedInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if text == "" {
 		return m, nil
 	}
+	return m.insertPastedText(text)
+}
+
+func (m model) insertPastedText(text string) (tea.Model, tea.Cmd) {
 	if m.helpOpen {
 		m.helpOpen = false
 	}
@@ -785,6 +849,22 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 	}
 	if m.handleAttachmentInput(value) {
 		return m, nil
+	}
+	if isLocalPasteInput(value) && m.paste != nil {
+		if m.busy || m.backgrounding || m.awaitingPermission || m.awaitingQuestion {
+			m.status = "paste unavailable"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Finish the current turn before pasting clipboard content."})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return m, nil
+		}
+		m.appendHistory(value)
+		m.textarea.SetValue("")
+		m.matches = nil
+		m.selected = 0
+		m.historyPos = -1
+		m.status = "pasting"
+		return m, runPasteCommand(m.ctx, m.paste)
 	}
 	if strings.HasPrefix(value, "/") && m.slash != nil {
 		ctx, cancel := context.WithCancel(m.ctx)
@@ -968,6 +1048,11 @@ func (m *model) handleAttachmentInput(value string) bool {
 	return true
 }
 
+func isLocalPasteInput(value string) bool {
+	fields := strings.Fields(value)
+	return len(fields) == 1 && strings.EqualFold(fields[0], "/paste")
+}
+
 func (m *model) removeAttachment(indexText string) bool {
 	var index int
 	if _, err := fmt.Sscanf(strings.TrimSpace(indexText), "%d", &index); err != nil || index < 1 || index > len(m.attachments) {
@@ -1072,6 +1157,11 @@ type externalEditorDoneMsg struct {
 	Err  error
 }
 
+type pasteDoneMsg struct {
+	Text string
+	Err  error
+}
+
 type backgroundDoneMsg struct {
 	Output string
 	Err    error
@@ -1100,6 +1190,13 @@ func runTaskBoardCommand(ctx context.Context, taskBoard TaskBoardFunc) tea.Cmd {
 	return func() tea.Msg {
 		output, err := taskBoard(ctx)
 		return taskBoardDoneMsg{Output: output, Err: err}
+	}
+}
+
+func runPasteCommand(ctx context.Context, paste PasteFunc) tea.Cmd {
+	return func() tea.Msg {
+		text, err := paste(ctx)
+		return pasteDoneMsg{Text: text, Err: err}
 	}
 }
 
@@ -1790,7 +1887,7 @@ func helpPanel(candidates []string, width int) string {
 		"",
 		"Common commands",
 		"  /status   inspect workspace and runtime",
-		"  /context  inspect prompt context; /attach stages files",
+		"  /context  inspect context; /attach files; /paste clipboard",
 		"  /diff     view git changes",
 		"  /review   review current diff",
 		"  /exit     quit",
@@ -1801,6 +1898,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Alt+Enter   insert newline fallback",
 		"  \\+Enter     replace trailing backslash with newline",
 		"  Ctrl+G      edit composer in $EDITOR",
+		"  Ctrl+V      paste clipboard into composer",
 		"  Ctrl+L      clear screen",
 		"  Ctrl+U      delete before cursor",
 		"  Ctrl+K      delete after cursor",

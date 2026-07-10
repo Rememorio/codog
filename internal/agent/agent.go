@@ -20811,6 +20811,7 @@ func defaultKeybindingsTemplate() []byte {
 					"alt+enter":   "insert newline fallback",
 					"ctrl+j":      "insert newline",
 					"ctrl+g":      "edit composer in $EDITOR",
+					"ctrl+v":      "paste clipboard into composer",
 					"ctrl+l":      "clear screen",
 					"ctrl+u":      "delete before cursor",
 					"ctrl+k":      "delete after cursor",
@@ -20885,6 +20886,7 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Alt-Enter", Action: "insert newline fallback"},
 					{Key: "Ctrl-J", Action: "insert newline"},
 					{Key: "Ctrl-G", Action: "edit composer in $EDITOR"},
+					{Key: "Ctrl-V", Action: "paste clipboard into composer"},
 					{Key: "Ctrl-L", Action: "clear screen"},
 					{Key: "Ctrl-U", Action: "delete before cursor"},
 					{Key: "Ctrl-K", Action: "delete after cursor"},
@@ -39150,6 +39152,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		ExternalEditor: func(ctx context.Context, value string) (string, error) {
 			return a.editTUIComposer(ctx, value)
 		},
+		Paste: func(ctx context.Context) (string, error) {
+			return a.readTUIClipboard(ctx)
+		},
 		Background: func(ctx context.Context, prompt string) (string, error) {
 			return a.startTUIBackgroundPrompt(ctx, sess.ID, prompt)
 		},
@@ -39212,6 +39217,14 @@ func (a *App) renderTUITaskBoard(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return renderTUILaneBoard(board), nil
+}
+
+func (a *App) readTUIClipboard(ctx context.Context) (string, error) {
+	data, _, err := readClipboard(ctx)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 func renderTUILaneBoard(board background.LaneBoard) string {

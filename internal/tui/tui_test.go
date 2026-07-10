@@ -129,6 +129,89 @@ func TestPreviewWithAttachmentsRendersPendingAttachments(t *testing.T) {
 	require.Contains(t, preview.View, "2 attached")
 }
 
+func TestPreviewWithPasteInsertsClipboardText(t *testing.T) {
+	preview := PreviewWithPaste("prefix ", "clipboard\ntext", 96, 24)
+
+	require.Equal(t, "prefix clipboard\ntext", preview.Value)
+	require.Contains(t, preview.View, "pasted 2 lines")
+}
+
+func TestCtrlVPastesClipboardIntoComposer(t *testing.T) {
+	ta := newPromptTextarea("prefix ")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.paste = func(context.Context) (string, error) {
+		return "clipboard\ntext", nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "pasting", m.status)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.Equal(t, "prefix clipboard\ntext", m.textarea.Value())
+	require.Equal(t, "pasted 2 lines", m.status)
+}
+
+func TestSlashPasteInsertsClipboardIntoComposer(t *testing.T) {
+	ta := newPromptTextarea("/paste")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.paste = func(context.Context) (string, error) {
+		return "clipboard text", nil
+	}
+	m.slash = func(context.Context, string) (string, bool, error) {
+		t.Fatal("bare /paste should be handled by the TUI")
+		return "", false, nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "", m.textarea.Value())
+	require.Equal(t, "pasting", m.status)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.Equal(t, "clipboard text", m.textarea.Value())
+	require.Equal(t, "pasted 1 line", m.status)
+}
+
+func TestSlashPasteWithArgsFallsThroughToSlash(t *testing.T) {
+	ta := newPromptTextarea("/paste --json")
+	m := newModel(context.Background(), ta, nil, nil)
+	called := false
+	m.paste = func(context.Context) (string, error) {
+		t.Fatal("/paste with args should stay a slash command")
+		return "", nil
+	}
+	m.slash = func(_ context.Context, line string) (string, bool, error) {
+		called = true
+		require.Equal(t, "/paste --json", line)
+		return "{}", true, nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.True(t, called)
+	require.Contains(t, m.View(), "{}")
+}
+
+func TestPasteErrorRendersTranscript(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, _ := m.Update(pasteDoneMsg{Err: errors.New("clipboard unavailable")})
+	m = updated.(model)
+
+	require.Equal(t, "paste error", m.status)
+	require.Contains(t, m.View(), "clipboard unavailable")
+}
+
 func TestSlashMenuOpensAndFiltersWhileTyping(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, []string{"/memory list", "/model claude-test", "/status"}, nil)

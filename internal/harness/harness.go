@@ -3577,7 +3577,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
+			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
 				return localScenarioResult{}, fmt.Errorf("keybindings template missing expected entries: %s", string(keybindingsData))
 			}
 
@@ -3589,7 +3589,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 30 {
+			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 31 {
 				return localScenarioResult{}, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
 			}
 
@@ -3632,21 +3632,22 @@ func privacyKeybindingsScenario() scenario {
 					"text_rendered":          strings.Contains(privacyText, "Prompt history"),
 				},
 				"keybindings": map[string]any{
-					"initial_exists":  initialKeybindings.KeybindingsExists,
-					"path":            strings.HasSuffix(pathReport.Path, "keybindings.json"),
-					"created":         initReport.Created,
-					"valid":           validateReport.Valid,
-					"contexts":        validateReport.ContextCount,
-					"bindings":        validateReport.BindingCount,
-					"shift_enter":     strings.Contains(string(keybindingsData), `"shift+enter"`),
-					"external_editor": strings.Contains(string(keybindingsData), `"ctrl+g"`),
-					"terminal_keys":   strings.Contains(string(keybindingsData), `"ctrl+l"`) && strings.Contains(string(keybindingsData), `"ctrl+d"`),
-					"background_key":  strings.Contains(string(keybindingsData), `"ctrl+b"`),
-					"task_board_key":  strings.Contains(string(keybindingsData), `"ctrl+t"`),
-					"queue_edit_key":  strings.Contains(string(keybindingsData), `"up"`),
-					"resolved":        resolveReport.Found,
-					"source":          resolveReport.Source,
-					"text_rendered":   strings.Contains(keybindingsText, "User valid"),
+					"initial_exists":      initialKeybindings.KeybindingsExists,
+					"path":                strings.HasSuffix(pathReport.Path, "keybindings.json"),
+					"created":             initReport.Created,
+					"valid":               validateReport.Valid,
+					"contexts":            validateReport.ContextCount,
+					"bindings":            validateReport.BindingCount,
+					"shift_enter":         strings.Contains(string(keybindingsData), `"shift+enter"`),
+					"external_editor":     strings.Contains(string(keybindingsData), `"ctrl+g"`),
+					"clipboard_paste_key": strings.Contains(string(keybindingsData), `"ctrl+v"`),
+					"terminal_keys":       strings.Contains(string(keybindingsData), `"ctrl+l"`) && strings.Contains(string(keybindingsData), `"ctrl+d"`),
+					"background_key":      strings.Contains(string(keybindingsData), `"ctrl+b"`),
+					"task_board_key":      strings.Contains(string(keybindingsData), `"ctrl+t"`),
+					"queue_edit_key":      strings.Contains(string(keybindingsData), `"up"`),
+					"resolved":            resolveReport.Found,
+					"source":              resolveReport.Source,
+					"text_rendered":       strings.Contains(keybindingsText, "User valid"),
 				},
 			}
 			data, err := json.Marshal(report)
@@ -5364,6 +5365,10 @@ func tuiPromptCompletionScenario() scenario {
 			if !strings.Contains(attachments.View, "attachments: 2") || !strings.Contains(attachments.View, "2 attached") || len(attachments.Attachments) != 2 {
 				return localScenarioResult{}, fmt.Errorf("expected attachment preview, got %s", attachments.View)
 			}
+			paste := tui.PreviewWithPaste("prefix ", "clipboard text", 96, 24)
+			if paste.Value != "prefix clipboard text" || !strings.Contains(paste.View, "pasted 1 line") {
+				return localScenarioResult{}, fmt.Errorf("expected paste preview, got value=%q view=%s", paste.Value, paste.View)
+			}
 
 			submitted := tui.PreviewWithCandidates("/mo", []string{"/model claude-test"}, 96, 24, true, true)
 			if !submitted.Submitted {
@@ -5382,6 +5387,7 @@ func tuiPromptCompletionScenario() scenario {
 				"automatic":          automatic.Matches,
 				"queued_preview":     strings.Contains(queued.View, "queued prompts: 2"),
 				"attachment_preview": strings.Contains(attachments.View, "attachments: 2"),
+				"paste_preview":      strings.Contains(paste.View, "pasted 1 line"),
 				"attachments":        attachments.Attachments,
 				"submitted":          submitted.Submitted,
 				"submitted_prompt":   submitted.Prompt,
