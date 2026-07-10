@@ -20778,6 +20778,13 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"action": "resolve"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+t"`)
 	require.Contains(t, out.String(), `"found": true`)
+	require.Contains(t, out.String(), `"binding_action": "toggle tasks"`)
+	out.Reset()
+
+	require.NoError(t, app.Keybindings([]string{"resolve", "tui", "Ctrl-Shift-T", "--json"}))
+	require.Contains(t, out.String(), `"action": "resolve"`)
+	require.Contains(t, out.String(), `"normalized_key": "ctrl+shift+t"`)
+	require.Contains(t, out.String(), `"found": true`)
 	require.Contains(t, out.String(), `"binding_action": "show background task board"`)
 	out.Reset()
 
@@ -20799,7 +20806,8 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), `"ctrl+l": "clear screen"`)
 	require.Contains(t, string(data), `"ctrl+d": "exit when composer is empty"`)
 	require.Contains(t, string(data), `"ctrl+b": "run composer prompt in background"`)
-	require.Contains(t, string(data), `"ctrl+t": "show background task board"`)
+	require.Contains(t, string(data), `"ctrl+t": "toggle tasks"`)
+	require.Contains(t, string(data), `"ctrl+shift+t": "show background task board"`)
 	require.Contains(t, string(data), `"up": "edit queued prompts, choose completion, or recall history"`)
 	out.Reset()
 
@@ -20807,7 +20815,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"action": "validate"`)
 	require.Contains(t, out.String(), `"valid": true`)
 	require.Contains(t, out.String(), `"context_count": 4`)
-	require.Contains(t, out.String(), `"binding_count": 37`)
+	require.Contains(t, out.String(), `"binding_count": 38`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+r"`)
 	require.Contains(t, out.String(), `"normalized_key": "shift+enter"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+s"`)
@@ -20821,6 +20829,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+l"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+b"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+t"`)
+	require.Contains(t, out.String(), `"normalized_key": "ctrl+shift+t"`)
 	require.Contains(t, out.String(), `"normalized_key": "up"`)
 	out.Reset()
 
@@ -20872,7 +20881,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "REPL vim")
 	require.Contains(t, out.String(), "Config exists    true")
 	require.Contains(t, out.String(), "User valid       true")
-	require.Contains(t, out.String(), "User bindings    37")
+	require.Contains(t, out.String(), "User bindings    38")
 	require.Contains(t, out.String(), "Shift-Enter")
 	require.Contains(t, out.String(), "Ctrl-S")
 	require.Contains(t, out.String(), "Ctrl-G")
@@ -20886,6 +20895,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Ctrl-D")
 	require.Contains(t, out.String(), "Ctrl-B")
 	require.Contains(t, out.String(), "Ctrl-T")
+	require.Contains(t, out.String(), "Ctrl-Shift-T")
 	require.Contains(t, out.String(), "Up")
 	require.Empty(t, errOut.String())
 }
@@ -20907,6 +20917,22 @@ func TestRenderTUITaskBoard(t *testing.T) {
 	require.Contains(t, out, task.ID)
 	require.Contains(t, out, "review background board")
 	require.Contains(t, out, "session=session-tui")
+}
+
+func TestReadTUITodosUsesWorkspaceState(t *testing.T) {
+	workspace := t.TempDir()
+	app := &App{Workspace: workspace}
+	_, err := todos.Replace(workspace, []todos.Item{
+		{ID: "todo-1", Content: "write tests", ActiveForm: "writing tests", Status: "in_progress", Priority: "high"},
+		{ID: "todo-2", Content: "run smoke", Status: "pending", Priority: "medium"},
+	})
+	require.NoError(t, err)
+
+	items, err := app.readTUITodos(context.Background())
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	require.Equal(t, tui.TodoItem{ID: "todo-1", Content: "write tests", ActiveForm: "writing tests", Status: "in_progress", Priority: "high"}, items[0])
+	require.Equal(t, tui.TodoItem{ID: "todo-2", Content: "run smoke", ActiveForm: "run smoke", Status: "pending", Priority: "medium"}, items[1])
 }
 
 func TestDetachedPromptCommandCarriesConfigHome(t *testing.T) {

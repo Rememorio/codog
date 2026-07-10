@@ -20823,7 +20823,8 @@ func defaultKeybindingsTemplate() []byte {
 					"ctrl+k":       "delete after cursor",
 					"ctrl+d":       "exit when composer is empty",
 					"ctrl+b":       "run composer prompt in background",
-					"ctrl+t":       "show background task board",
+					"ctrl+t":       "toggle tasks",
+					"ctrl+shift+t": "show background task board",
 					"tab":          "complete slash command",
 					"up":           "edit queued prompts, choose completion, or recall history",
 					"esc":          "quit",
@@ -20904,7 +20905,8 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Ctrl-K", Action: "delete after cursor"},
 					{Key: "Ctrl-D", Action: "exit when composer is empty"},
 					{Key: "Ctrl-B", Action: "run composer prompt in background"},
-					{Key: "Ctrl-T", Action: "show background task board"},
+					{Key: "Ctrl-T", Action: "toggle tasks"},
+					{Key: "Ctrl-Shift-T", Action: "show background task board"},
 					{Key: "Tab", Action: "complete slash command"},
 					{Key: "Up", Action: "edit queued prompts, choose completion, or recall history"},
 					{Key: "Esc", Action: "quit"},
@@ -39175,6 +39177,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		TaskBoard: func(ctx context.Context) (string, error) {
 			return a.renderTUITaskBoard(ctx)
 		},
+		Todos: func(ctx context.Context) ([]tui.TodoItem, error) {
+			return a.readTUITodos(ctx)
+		},
 		ModeLabel: modeState.Label(),
 		CycleMode: func() string {
 			return modeState.Cycle()
@@ -39193,6 +39198,27 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		},
 	})
 	return a.finishREPL(ctx, sess, loopErr)
+}
+
+func (a *App) readTUITodos(ctx context.Context) ([]tui.TodoItem, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	state, err := todos.Load(a.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]tui.TodoItem, 0, len(state.Items))
+	for _, item := range state.Items {
+		items = append(items, tui.TodoItem{
+			ID:         item.ID,
+			Content:    item.Content,
+			ActiveForm: item.ActiveForm,
+			Status:     item.Status,
+			Priority:   item.Priority,
+		})
+	}
+	return items, nil
 }
 
 func (a *App) startTUIBackgroundPrompt(ctx context.Context, sessionID string, prompt string) (string, error) {

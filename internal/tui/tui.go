@@ -70,6 +70,18 @@ type BackgroundFunc func(context.Context, string) (string, error)
 // TaskBoardFunc returns a user-facing snapshot of detached background tasks.
 type TaskBoardFunc func(context.Context) (string, error)
 
+// TodoListFunc returns the current workspace todo list for the TUI task panel.
+type TodoListFunc func(context.Context) ([]TodoItem, error)
+
+// TodoItem is the small display model used by the TUI todo panel.
+type TodoItem struct {
+	ID         string
+	Content    string
+	ActiveForm string
+	Status     string
+	Priority   string
+}
+
 // ShellOptions configures the full-screen TUI shell.
 type ShellOptions struct {
 	Candidates              []string
@@ -88,6 +100,7 @@ type ShellOptions struct {
 	Paste                   PasteFunc
 	Background              BackgroundFunc
 	TaskBoard               TaskBoardFunc
+	Todos                   TodoListFunc
 	ModeLabel               string
 	CycleMode               func() string
 }
@@ -107,6 +120,7 @@ type Preview struct {
 	Transcript   bool
 	QuickOpen    bool
 	GlobalSearch bool
+	TodosOpen    bool
 }
 
 type composerStash struct {
@@ -148,6 +162,7 @@ type model struct {
 	paste                    PasteFunc
 	background               BackgroundFunc
 	taskBoard                TaskBoardFunc
+	todos                    TodoListFunc
 	modeLabel                string
 	cycleMode                func() string
 	history                  []string
@@ -165,6 +180,10 @@ type model struct {
 	globalSearchPreviewPath  string
 	globalSearchPreviewLine  int
 	globalSearchPreviewLines []string
+	todosOpen                bool
+	todosLoading             bool
+	todoItems                []TodoItem
+	todoErr                  string
 	queuedPrompts            []string
 	attachments              []string
 	stashedPrompt            *composerStash
@@ -247,6 +266,7 @@ func PreviewWithCandidates(input string, candidates []string, width int, height 
 		Transcript:   m.transcriptMode,
 		QuickOpen:    m.quickOpen,
 		GlobalSearch: m.globalSearch,
+		TodosOpen:    m.todosOpen,
 	}
 }
 
@@ -277,6 +297,7 @@ func PreviewWithFileCandidates(input string, files []string, width int, height i
 		Transcript:   m.transcriptMode,
 		QuickOpen:    m.quickOpen,
 		GlobalSearch: m.globalSearch,
+		TodosOpen:    m.todosOpen,
 	}
 }
 
@@ -305,6 +326,7 @@ func PreviewWithQueued(input string, queued []string, width int, height int) Pre
 		Transcript:   m.transcriptMode,
 		QuickOpen:    m.quickOpen,
 		GlobalSearch: m.globalSearch,
+		TodosOpen:    m.todosOpen,
 	}
 }
 
@@ -335,6 +357,7 @@ func PreviewWithStash(input string, attachments []string, width int, height int)
 		Transcript:   m.transcriptMode,
 		QuickOpen:    m.quickOpen,
 		GlobalSearch: m.globalSearch,
+		TodosOpen:    m.todosOpen,
 	}
 }
 
@@ -368,6 +391,7 @@ func PreviewWithTranscript(entries []Entry, width int, height int) Preview {
 		Transcript:   m.transcriptMode,
 		QuickOpen:    m.quickOpen,
 		GlobalSearch: m.globalSearch,
+		TodosOpen:    m.todosOpen,
 	}
 }
 
@@ -410,6 +434,7 @@ func PreviewWithQuickOpen(input string, files []string, query string, width int,
 		Transcript:   m.transcriptMode,
 		QuickOpen:    m.quickOpen,
 		GlobalSearch: m.globalSearch,
+		TodosOpen:    m.todosOpen,
 	}
 }
 
@@ -436,6 +461,7 @@ func PreviewWithAttachments(input string, attachments []string, width int, heigh
 		Transcript:   m.transcriptMode,
 		QuickOpen:    m.quickOpen,
 		GlobalSearch: m.globalSearch,
+		TodosOpen:    m.todosOpen,
 	}
 }
 
@@ -478,6 +504,7 @@ func PreviewWithGlobalSearch(input string, files []string, query string, width i
 		Transcript:   m.transcriptMode,
 		QuickOpen:    m.quickOpen,
 		GlobalSearch: m.globalSearch,
+		TodosOpen:    m.todosOpen,
 	}
 }
 
@@ -506,6 +533,7 @@ func PreviewWithPaste(input string, clipboardText string, width int, height int)
 		HasStash:    m.stashedPrompt != nil,
 		Transcript:  m.transcriptMode,
 		QuickOpen:   m.quickOpen,
+		TodosOpen:   m.todosOpen,
 	}
 }
 
@@ -534,6 +562,45 @@ func PreviewWithPasteAttachment(input string, attachmentPath string, width int, 
 		HasStash:    m.stashedPrompt != nil,
 		Transcript:  m.transcriptMode,
 		QuickOpen:   m.quickOpen,
+		TodosOpen:   m.todosOpen,
+	}
+}
+
+// PreviewWithTodos renders a deterministic TUI state after toggling the todo
+// panel with the provided items.
+func PreviewWithTodos(input string, items []TodoItem, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	m.todos = func(context.Context) ([]TodoItem, error) {
+		return append([]TodoItem(nil), items...), nil
+	}
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	if cmd != nil {
+		updated, _ = m.Update(cmd())
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
+		TodosOpen:   m.todosOpen,
 	}
 }
 
@@ -560,6 +627,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.paste = options.Paste
 	m.background = options.Background
 	m.taskBoard = options.TaskBoard
+	m.todos = options.Todos
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
@@ -728,6 +796,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		m.viewport.GotoBottom()
 		return m, nil
+	case todoListDoneMsg:
+		m.todosLoading = false
+		if msg.Err != nil {
+			m.todoErr = msg.Err.Error()
+			m.status = "todos error"
+			return m, nil
+		}
+		m.todoErr = ""
+		m.todoItems = normalizeTUITodoItems(msg.Items)
+		m.status = fmt.Sprintf("todos %d", len(m.todoItems))
+		return m, nil
 	case turnStreamMsg:
 		m.appendStreamDelta(msg.Role, msg.Delta)
 		if strings.EqualFold(msg.Role, "permission") {
@@ -774,7 +853,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "shift+tab":
 				m.closeGlobalSearch(true, false)
 				return m, nil
-			case "ctrl+r", "ctrl+s", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+v", "ctrl+l", "ctrl+d":
+			case "ctrl+r", "ctrl+s", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d":
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -801,7 +880,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "shift+tab":
 				m.closeQuickOpen(true, false)
 				return m, nil
-			case "ctrl+r", "ctrl+s", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+v", "ctrl+l", "ctrl+d":
+			case "ctrl+r", "ctrl+s", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d":
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -831,6 +910,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.closeHistorySearch(false)
 				return m, nil
 			}
+			if m.todosOpen {
+				m.closeTodos()
+				return m, nil
+			}
 			if m.helpOpen {
 				m.helpOpen = false
 				m.status = "ready"
@@ -839,7 +922,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "ctrl+d":
-			if !m.busy && !m.searchOpen && !m.quickOpen && !m.globalSearch && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
+			if !m.busy && !m.searchOpen && !m.quickOpen && !m.globalSearch && !m.todosOpen && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
 				return m, tea.Quit
 			}
 		case "ctrl+l":
@@ -861,7 +944,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "pasting"
 			return m, runPasteCommand(m.ctx, m.paste)
 		case "ctrl+b":
-			if m.backgrounding || m.background == nil || m.searchOpen || m.quickOpen || m.globalSearch || m.awaitingPermission || m.awaitingQuestion {
+			if m.backgrounding || m.background == nil || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
 				return m, nil
 			}
 			value := strings.TrimSpace(m.textarea.Value())
@@ -881,17 +964,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 			return m, runBackgroundCommand(ctx, m.background, value)
 		case "ctrl+t":
-			if m.taskBoard == nil || m.searchOpen || m.quickOpen || m.globalSearch || m.awaitingPermission || m.awaitingQuestion {
+			if m.searchOpen || m.quickOpen || m.globalSearch || m.awaitingPermission || m.awaitingQuestion {
 				return m, nil
 			}
-			if m.helpOpen {
-				m.helpOpen = false
+			if m.todos != nil {
+				return m.toggleTodos()
 			}
-			m.matches = nil
-			m.selected = 0
-			m.status = "loading tasks"
-			m.refreshViewport()
-			return m, runTaskBoardCommand(m.ctx, m.taskBoard)
+			if m.taskBoard == nil {
+				return m, nil
+			}
+			return m.openTaskBoard()
+		case "ctrl+shift+t":
+			if m.taskBoard == nil || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+				return m, nil
+			}
+			return m.openTaskBoard()
+		case "ctrl+shift+p", "ctrl+p":
+			if m.busy || m.backgrounding || m.searchOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion || len(m.fileCandidates) == 0 {
+				return m, nil
+			}
+			m.openQuickOpen()
+			return m, nil
+		case "ctrl+shift+f", "ctrl+f":
+			if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.todosOpen || m.awaitingPermission || m.awaitingQuestion || len(m.fileCandidates) == 0 {
+				return m, nil
+			}
+			m.openGlobalSearch()
+			return m, nil
 		case "shift+enter", "alt+enter", "ctrl+j":
 			m.textarea.InsertString("\n")
 			return m, nil
@@ -902,6 +1001,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.helpOpen {
 				m.helpOpen = false
 			}
+			if m.todosOpen {
+				m.closeTodos()
+			}
 			m.transcriptMode = !m.transcriptMode
 			if m.transcriptMode {
 				m.status = "transcript"
@@ -911,20 +1013,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewport()
 			m.viewport.GotoBottom()
 			return m, nil
-		case "ctrl+shift+p", "ctrl+p":
-			if m.busy || m.backgrounding || m.searchOpen || m.globalSearch || m.awaitingPermission || m.awaitingQuestion || len(m.fileCandidates) == 0 {
-				return m, nil
-			}
-			m.openQuickOpen()
-			return m, nil
-		case "ctrl+shift+f", "ctrl+f":
-			if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.awaitingPermission || m.awaitingQuestion || len(m.fileCandidates) == 0 {
-				return m, nil
-			}
-			m.openGlobalSearch()
-			return m, nil
 		case "ctrl+g":
-			if m.busy || m.externalEditor == nil {
+			if m.busy || m.todosOpen || m.externalEditor == nil {
 				return m, nil
 			}
 			if m.helpOpen {
@@ -994,7 +1084,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "ctrl+r":
-			if len(m.history) > 0 {
+			if !m.todosOpen && len(m.history) > 0 {
 				m.openHistorySearch()
 				return m, nil
 			}
@@ -1205,6 +1295,9 @@ func (m model) View() string {
 	if m.globalSearch {
 		composer += "\n" + renderGlobalSearch(m.globalSearchMatches, m.globalSearchSelected, m.textarea.Value(), m.width, m.globalSearchPreviewPath, m.globalSearchPreviewLine, m.globalSearchPreviewLines)
 	}
+	if m.todosOpen {
+		composer += "\n" + renderTodosPanel(m.todoItems, m.todosLoading, m.todoErr, m.width)
+	}
 	if len(m.queuedPrompts) > 0 {
 		composer += "\n" + renderQueuedPrompts(m.queuedPrompts)
 	}
@@ -1369,7 +1462,7 @@ func (m *model) editQueuedPrompts() {
 }
 
 func (m *model) togglePromptStash() {
-	if m.searchOpen || m.quickOpen || m.globalSearch || m.awaitingPermission || m.awaitingQuestion {
+	if m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
 		return
 	}
 	if m.helpOpen {
@@ -1609,6 +1702,11 @@ type taskBoardDoneMsg struct {
 	Err    error
 }
 
+type todoListDoneMsg struct {
+	Items []TodoItem
+	Err   error
+}
+
 func runExternalEditorCommand(ctx context.Context, editor ExternalEditorFunc, value string) tea.Cmd {
 	return func() tea.Msg {
 		text, err := editor(ctx, value)
@@ -1627,6 +1725,13 @@ func runTaskBoardCommand(ctx context.Context, taskBoard TaskBoardFunc) tea.Cmd {
 	return func() tea.Msg {
 		output, err := taskBoard(ctx)
 		return taskBoardDoneMsg{Output: output, Err: err}
+	}
+}
+
+func runTodoListCommand(ctx context.Context, todos TodoListFunc) tea.Cmd {
+	return func() tea.Msg {
+		items, err := todos(ctx)
+		return todoListDoneMsg{Items: items, Err: err}
 	}
 }
 
@@ -1711,6 +1816,10 @@ func (m *model) clearScreen() {
 	m.globalSearchPreviewPath = ""
 	m.globalSearchPreviewLine = 0
 	m.globalSearchPreviewLines = nil
+	m.todosOpen = false
+	m.todosLoading = false
+	m.todoItems = nil
+	m.todoErr = ""
 	m.transcript = []transcriptEntry{{Role: "system", Text: "Screen cleared."}}
 	m.status = "cleared"
 	m.refreshViewport()
@@ -1787,7 +1896,7 @@ func (m model) completeSlashCommand() model {
 
 func (m *model) refreshCompletionMenu() {
 	value := strings.Trim(m.textarea.Value(), "\r\n\t")
-	if value == "" || m.busy || m.searchOpen || m.globalSearch {
+	if value == "" || m.busy || m.searchOpen || m.globalSearch || m.todosOpen {
 		m.matches = nil
 		m.selected = 0
 		return
@@ -2094,6 +2203,103 @@ func renderQuickOpen(matches []string, selected int, query string, width int, pr
 	}
 	lines = append(lines, completionStyle().Render("  Enter/Tab insert @file · Shift+Tab insert path · Esc cancel"))
 	return strings.Join(lines, "\n")
+}
+
+func renderTodosPanel(items []TodoItem, loading bool, errText string, width int) string {
+	limit := 120
+	if width > 0 {
+		limit = max(40, width-8)
+	}
+	title := " tasks "
+	if len(items) > 0 {
+		completed, inProgress, pending := todoCounts(items)
+		title = fmt.Sprintf(" tasks: %d total, %d done, %d active, %d open ", len(items), completed, inProgress, pending)
+	}
+	lines := []string{completionTitleStyle().Render(title)}
+	switch {
+	case loading:
+		lines = append(lines, completionStyle().Render("  loading tasks..."))
+	case strings.TrimSpace(errText) != "":
+		lines = append(lines, completionStyle().Render("  error: "+truncateForComposer(errText, limit)))
+	case len(items) == 0:
+		lines = append(lines, completionStyle().Render("  no tasks"))
+	default:
+		visible := items
+		if len(visible) > 10 {
+			visible = visible[:10]
+		}
+		for _, item := range visible {
+			lines = append(lines, completionStyle().Render("  "+truncateForComposer(renderTodoLine(item), limit)))
+		}
+		if hidden := len(items) - len(visible); hidden > 0 {
+			lines = append(lines, completionStyle().Render(fmt.Sprintf("  ... %d more", hidden)))
+		}
+	}
+	lines = append(lines, completionStyle().Render("  Ctrl+T close · /todos manage tasks · Ctrl+Shift+T background tasks"))
+	return strings.Join(lines, "\n")
+}
+
+func renderTodoLine(item TodoItem) string {
+	status := strings.ToLower(strings.TrimSpace(item.Status))
+	marker := "[ ]"
+	switch status {
+	case "completed":
+		marker = "[x]"
+	case "in_progress":
+		marker = "[~]"
+	}
+	content := strings.TrimSpace(item.ActiveForm)
+	if content == "" {
+		content = strings.TrimSpace(item.Content)
+	}
+	if content == "" {
+		content = "(empty task)"
+	}
+	priority := strings.TrimSpace(item.Priority)
+	if priority != "" {
+		priority = " " + priority
+	}
+	id := strings.TrimSpace(item.ID)
+	if id != "" {
+		id += " "
+	}
+	return fmt.Sprintf("%s %s%s%s", marker, id, content, priority)
+}
+
+func todoCounts(items []TodoItem) (completed int, inProgress int, pending int) {
+	for _, item := range items {
+		switch strings.ToLower(strings.TrimSpace(item.Status)) {
+		case "completed":
+			completed++
+		case "in_progress":
+			inProgress++
+		default:
+			pending++
+		}
+	}
+	return completed, inProgress, pending
+}
+
+func normalizeTUITodoItems(items []TodoItem) []TodoItem {
+	out := make([]TodoItem, 0, len(items))
+	for index, item := range items {
+		item.ID = strings.TrimSpace(item.ID)
+		if item.ID == "" {
+			item.ID = fmt.Sprintf("todo-%d", index+1)
+		}
+		item.Content = strings.TrimSpace(item.Content)
+		item.ActiveForm = strings.TrimSpace(item.ActiveForm)
+		item.Status = strings.TrimSpace(item.Status)
+		if item.Status == "" {
+			item.Status = "pending"
+		}
+		item.Priority = strings.TrimSpace(item.Priority)
+		if item.Priority == "" {
+			item.Priority = "medium"
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func renderGlobalSearch(matches []globalSearchMatch, selected int, query string, width int, previewPath string, previewLine int, previewLines []string) string {
@@ -2422,6 +2628,14 @@ func statusBarText(status string, width int) string {
 			return "global search · type to search · Enter/Tab insert @line · Shift+Tab path:line · Esc cancel"
 		}
 	}
+	if strings.HasPrefix(strings.ToLower(status), "todos") || strings.EqualFold(status, "loading todos") {
+		switch {
+		case width > 0 && width < 80:
+			return "tasks · Ctrl+T close"
+		default:
+			return "tasks · Ctrl+T close · /todos manage tasks · Ctrl+Shift+T background tasks"
+		}
+	}
 	switch {
 	case width > 0 && width < 70:
 		return fmt.Sprintf("%s · Enter · Tab · Ctrl-R · Esc", status)
@@ -2430,7 +2644,7 @@ func statusBarText(status string, width int) string {
 	case width > 0 && width < 110:
 		return fmt.Sprintf("%s · Enter send · Shift+Enter newline · Tab complete · Ctrl-R history · Ctrl-L clear · Ctrl-D exit", status)
 	default:
-		return fmt.Sprintf("%s · Enter send · Shift+Enter or \\+Enter newline · Tab complete · Ctrl-R history · Ctrl+Shift+P files · Ctrl+Shift+F search · Ctrl-O transcript · Ctrl-L clear · Ctrl-D exit", status)
+		return fmt.Sprintf("%s · Enter send · Shift+Enter or \\+Enter newline · Tab complete · Ctrl-R history · Ctrl+Shift+P files · Ctrl+Shift+F search · Ctrl+T tasks · Ctrl-O transcript · Ctrl-L clear · Ctrl-D exit", status)
 	}
 }
 
@@ -2487,7 +2701,7 @@ func normalizeHistory(history []string) []string {
 }
 
 func (m model) canNavigateHistory() bool {
-	if len(m.history) == 0 || m.busy || m.helpOpen || m.searchOpen || m.quickOpen || m.globalSearch {
+	if len(m.history) == 0 || m.busy || m.helpOpen || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen {
 		return false
 	}
 	if strings.Contains(m.textarea.Value(), "\n") {
@@ -2572,6 +2786,45 @@ func (m *model) closeHistorySearch(accept bool) {
 	m.searchOpen = false
 	m.searchHits = nil
 	m.searchPos = 0
+}
+
+func (m model) openTaskBoard() (tea.Model, tea.Cmd) {
+	if m.helpOpen {
+		m.helpOpen = false
+	}
+	m.matches = nil
+	m.selected = 0
+	m.status = "loading tasks"
+	m.refreshViewport()
+	return m, runTaskBoardCommand(m.ctx, m.taskBoard)
+}
+
+func (m model) toggleTodos() (tea.Model, tea.Cmd) {
+	if m.todosOpen {
+		m.closeTodos()
+		return m, nil
+	}
+	m.todosOpen = true
+	m.todosLoading = true
+	m.todoErr = ""
+	m.todoItems = nil
+	m.matches = nil
+	m.selected = 0
+	m.historyPos = -1
+	if m.helpOpen {
+		m.helpOpen = false
+		m.refreshViewport()
+	}
+	m.status = "loading todos"
+	return m, runTodoListCommand(m.ctx, m.todos)
+}
+
+func (m *model) closeTodos() {
+	m.todosOpen = false
+	m.todosLoading = false
+	m.todoErr = ""
+	m.todoItems = nil
+	m.status = m.mode()
 }
 
 func (m *model) openQuickOpen() {
@@ -2859,6 +3112,9 @@ func (m model) mode() string {
 	if m.globalSearch {
 		return "global search"
 	}
+	if m.todosOpen {
+		return "todos"
+	}
 	if len(m.matches) > 0 {
 		return fmt.Sprintf("%d completions", len(m.matches))
 	}
@@ -3007,6 +3263,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+P      quick open fallback",
 		"  Ctrl+Shift+F search workspace",
 		"  Ctrl+F      search workspace fallback",
+		"  Ctrl+T      toggle tasks",
 		"  Ctrl+O      toggle expanded transcript",
 		"  Ctrl+L      clear screen",
 		"  Ctrl+U      delete before cursor",
@@ -3020,7 +3277,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+J      insert newline",
 		"  PgUp/PgDn   scroll transcript",
 		"  Ctrl+B      run composer prompt in background",
-		"  Ctrl+T      show background task board",
+		"  Ctrl+Shift+T show background task board",
 		"  ?           toggle this help panel",
 		"  Esc         cancel a running turn, close help, or quit",
 	}

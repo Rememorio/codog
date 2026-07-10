@@ -3577,7 +3577,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+o"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
+			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+o"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
 				return localScenarioResult{}, fmt.Errorf("keybindings template missing expected entries: %s", string(keybindingsData))
 			}
 
@@ -3589,7 +3589,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 37 {
+			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 38 {
 				return localScenarioResult{}, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
 			}
 
@@ -3647,7 +3647,8 @@ func privacyKeybindingsScenario() scenario {
 					"transcript_key":      strings.Contains(string(keybindingsData), `"ctrl+o"`),
 					"terminal_keys":       strings.Contains(string(keybindingsData), `"ctrl+l"`) && strings.Contains(string(keybindingsData), `"ctrl+d"`),
 					"background_key":      strings.Contains(string(keybindingsData), `"ctrl+b"`),
-					"task_board_key":      strings.Contains(string(keybindingsData), `"ctrl+t"`),
+					"todo_panel_key":      strings.Contains(string(keybindingsData), `"ctrl+t"`),
+					"task_board_key":      strings.Contains(string(keybindingsData), `"ctrl+shift+t"`),
 					"queue_edit_key":      strings.Contains(string(keybindingsData), `"up"`),
 					"resolved":            resolveReport.Found,
 					"source":              resolveReport.Source,
@@ -5375,6 +5376,13 @@ func tuiPromptCompletionScenario() scenario {
 			if !transcript.Transcript || !strings.Contains(transcript.View, "001/001 tool") || !strings.Contains(transcript.View, "2 lines") {
 				return localScenarioResult{}, fmt.Errorf("expected expanded transcript preview, got %#v", transcript)
 			}
+			todosPreview := tui.PreviewWithTodos("", []tui.TodoItem{
+				{ID: "todo-1", Content: "write focused parity test", Status: "in_progress", Priority: "high"},
+				{ID: "todo-2", Content: "run validation", Status: "pending", Priority: "medium"},
+			}, 96, 24)
+			if !todosPreview.TodosOpen || !strings.Contains(todosPreview.View, "tasks: 2 total") || !strings.Contains(todosPreview.View, "write focused parity test") {
+				return localScenarioResult{}, fmt.Errorf("expected todos preview, got %#v", todosPreview)
+			}
 			attachments := tui.PreviewWithAttachments("describe", []string{"notes.txt", "pixel.png"}, 96, 24)
 			if !strings.Contains(attachments.View, "attachments: 2") || !strings.Contains(attachments.View, "2 attached") || len(attachments.Attachments) != 2 {
 				return localScenarioResult{}, fmt.Errorf("expected attachment preview, got %s", attachments.View)
@@ -5433,6 +5441,7 @@ func tuiPromptCompletionScenario() scenario {
 				"queued_preview":        strings.Contains(queued.View, "queued prompts: 2"),
 				"stash_preview":         stash.HasStash,
 				"transcript_preview":    transcript.Transcript,
+				"todos_preview":         todosPreview.TodosOpen && strings.Contains(todosPreview.View, "write focused parity test"),
 				"attachment_preview":    strings.Contains(attachments.View, "attachments: 2"),
 				"paste_preview":         strings.Contains(paste.View, "pasted 1 line"),
 				"paste_image_preview":   strings.Contains(pasteImage.View, "clipboard image attached"),

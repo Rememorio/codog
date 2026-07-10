@@ -1285,14 +1285,75 @@ func TestPendingAttachmentsCannotBeQueuedWhileBusy(t *testing.T) {
 	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "Send or clear pending attachments")
 }
 
-func TestCtrlTShowsTaskBoard(t *testing.T) {
+func TestCtrlTShowsTodos(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.todos = func(context.Context) ([]TodoItem, error) {
+		return []TodoItem{
+			{ID: "todo-1", Content: "write tests", ActiveForm: "writing tests", Status: "in_progress", Priority: "high"},
+			{ID: "todo-2", Content: "run smoke", Status: "pending", Priority: "medium"},
+			{ID: "todo-3", Content: "push main", Status: "completed", Priority: "low"},
+		}, nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	next := updated.(model)
+	require.True(t, next.todosOpen)
+	require.True(t, next.todosLoading)
+	require.Equal(t, "loading todos", next.status)
+	require.NotNil(t, cmd)
+
+	updated, _ = next.Update(cmd())
+	next = updated.(model)
+	require.True(t, next.todosOpen)
+	require.False(t, next.todosLoading)
+	require.Equal(t, "todos 3", next.status)
+	require.Contains(t, next.View(), "tasks: 3 total, 1 done, 1 active, 1 open")
+	require.Contains(t, next.View(), "[~] todo-1 writing tests high")
+	require.Contains(t, next.View(), "[ ] todo-2 run smoke medium")
+	require.Contains(t, next.View(), "[x] todo-3 push main low")
+
+	updated, _ = next.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	next = updated.(model)
+	require.False(t, next.todosOpen)
+}
+
+func TestCtrlTShowsTodoErrors(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.todos = func(context.Context) ([]TodoItem, error) {
+		return nil, errors.New("todos failed")
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	next := updated.(model)
+	require.NotNil(t, cmd)
+
+	updated, _ = next.Update(cmd())
+	next = updated.(model)
+	require.True(t, next.todosOpen)
+	require.Equal(t, "todos error", next.status)
+	require.Contains(t, next.View(), "error: todos failed")
+}
+
+func TestPreviewWithTodos(t *testing.T) {
+	preview := PreviewWithTodos("", []TodoItem{
+		{ID: "todo-1", Content: "review implementation", Status: "in_progress", Priority: "high"},
+	}, 96, 24)
+
+	require.True(t, preview.TodosOpen)
+	require.Contains(t, preview.View, "tasks: 1 total")
+	require.Contains(t, preview.View, "review implementation")
+}
+
+func TestCtrlShiftTShowsTaskBoard(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, nil)
 	m.taskBoard = func(context.Context) (string, error) {
 		return "Background tasks\n  Active   1", nil
 	}
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	updated, cmd := m.Update(teaKey("ctrl+shift+t"))
 	next := updated.(model)
 	require.Equal(t, "loading tasks", next.status)
 	require.NotNil(t, cmd)
@@ -1305,14 +1366,14 @@ func TestCtrlTShowsTaskBoard(t *testing.T) {
 	require.Contains(t, next.View(), "Active")
 }
 
-func TestCtrlTRendersTaskBoardErrors(t *testing.T) {
+func TestCtrlShiftTRendersTaskBoardErrors(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, nil)
 	m.taskBoard = func(context.Context) (string, error) {
 		return "", errors.New("task board failed")
 	}
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	updated, cmd := m.Update(teaKey("ctrl+shift+t"))
 	next := updated.(model)
 	require.NotNil(t, cmd)
 
