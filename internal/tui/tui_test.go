@@ -739,7 +739,8 @@ func TestCtrlBStartsBackgroundPrompt(t *testing.T) {
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
 	next := updated.(model)
-	require.True(t, next.busy)
+	require.False(t, next.busy)
+	require.True(t, next.backgrounding)
 	require.Equal(t, "backgrounding", next.status)
 	require.NotNil(t, cmd)
 	require.Equal(t, "review this diff", next.textarea.Value())
@@ -748,6 +749,7 @@ func TestCtrlBStartsBackgroundPrompt(t *testing.T) {
 	updated, _ = next.Update(cmd())
 	next = updated.(model)
 	require.False(t, next.busy)
+	require.False(t, next.backgrounding)
 	require.Empty(t, next.textarea.Value())
 	require.Equal(t, "backgrounded", next.status)
 	require.Equal(t, "system", next.transcript[len(next.transcript)-1].Role)
@@ -768,10 +770,80 @@ func TestCtrlBBackgroundErrorKeepsComposer(t *testing.T) {
 	updated, _ = next.Update(cmd())
 	next = updated.(model)
 	require.False(t, next.busy)
+	require.False(t, next.backgrounding)
 	require.Equal(t, "review this diff", next.textarea.Value())
 	require.Equal(t, "background error", next.status)
 	require.Equal(t, "error", next.transcript[len(next.transcript)-1].Role)
 	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "background failed")
+}
+
+func TestCtrlBStartsBackgroundWhileTurnIsBusy(t *testing.T) {
+	ta := newPromptTextarea("foreground prompt")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.submit = func(context.Context, string) (string, error) {
+		return "foreground done", nil
+	}
+	m.background = func(_ context.Context, prompt string) (string, error) {
+		require.Equal(t, "background prompt", prompt)
+		return "Background task started: task-2", nil
+	}
+
+	updated, foregroundCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.True(t, m.busy)
+	require.NotNil(t, foregroundCmd)
+
+	m.textarea.SetValue("background prompt")
+	updated, backgroundCmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	m = updated.(model)
+	require.True(t, m.busy)
+	require.True(t, m.backgrounding)
+	require.Equal(t, "backgrounding", m.status)
+	require.NotNil(t, backgroundCmd)
+
+	updated, _ = m.Update(backgroundCmd())
+	m = updated.(model)
+	require.True(t, m.busy)
+	require.False(t, m.backgrounding)
+	require.Equal(t, "running", m.status)
+	require.Empty(t, m.textarea.Value())
+
+	updated, _ = m.Update(foregroundCmd())
+	m = updated.(model)
+	require.False(t, m.busy)
+	require.Equal(t, "ready", m.status)
+}
+
+func TestEscapeCancelsBackgroundStart(t *testing.T) {
+	ta := newPromptTextarea("background prompt")
+	m := newModel(context.Background(), ta, nil, nil)
+	var seen context.Context
+	m.background = func(ctx context.Context, prompt string) (string, error) {
+		seen = ctx
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	m = updated.(model)
+	require.True(t, m.backgrounding)
+	require.NotNil(t, m.backgroundCancel)
+	require.NotNil(t, cmd)
+
+	updated, quit := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.Nil(t, quit)
+	require.True(t, m.backgrounding)
+	require.Equal(t, "canceling background", m.status)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.False(t, m.backgrounding)
+	require.Nil(t, m.backgroundCancel)
+	require.Equal(t, "background prompt", m.textarea.Value())
+	require.Equal(t, "background canceled", m.status)
+	require.ErrorIs(t, seen.Err(), context.Canceled)
+	require.Contains(t, m.View(), "Background prompt canceled.")
 }
 
 func TestPastedMultilineInputDoesNotSubmitUntilEnter(t *testing.T) {

@@ -104,6 +104,8 @@ type model struct {
 	searchHits         []string
 	searchPos          int
 	turnCancel         context.CancelFunc
+	backgrounding      bool
+	backgroundCancel   context.CancelFunc
 	turnMessages       <-chan tea.Msg
 	streamingIndex     int
 	awaitingPermission bool
@@ -265,6 +267,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "ready"
 		}
 		m.streamingIndex = -1
+		if m.backgrounding {
+			m.status = "backgrounding"
+		}
 		m.refreshViewport()
 		m.viewport.GotoBottom()
 		if len(m.queuedPrompts) > 0 && msg.Err == nil && !msg.Interrupted {
@@ -290,10 +295,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshSlashMenu()
 		return m, nil
 	case backgroundDoneMsg:
-		m.busy = false
+		m.backgrounding = false
+		if m.backgroundCancel != nil {
+			m.backgroundCancel()
+			m.backgroundCancel = nil
+		}
 		if msg.Err != nil {
-			m.status = "background error"
-			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
+			if errors.Is(msg.Err, context.Canceled) {
+				m.status = "background canceled"
+				m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Background prompt canceled."})
+			} else {
+				m.status = "background error"
+				m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
+			}
+			if m.busy {
+				m.status = "running"
+			}
 			m.refreshViewport()
 			m.viewport.GotoBottom()
 			return m, nil
@@ -303,6 +320,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selected = 0
 		m.historyPos = -1
 		m.status = "backgrounded"
+		if m.busy {
+			m.status = "running"
+		}
 		if strings.TrimSpace(msg.Output) == "" {
 			msg.Output = "Background task started."
 		}
@@ -345,6 +365,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.interruptTurn()
 				return m, nil
 			}
+			if m.backgrounding {
+				m.interruptBackground()
+				return m, nil
+			}
 			if len(m.matches) > 0 {
 				m.matches = nil
 				m.selected = 0
@@ -373,7 +397,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clearScreen()
 			return m, nil
 		case "ctrl+b":
-			if m.busy || m.background == nil || m.searchOpen {
+			if m.backgrounding || m.background == nil || m.searchOpen || m.awaitingPermission || m.awaitingQuestion {
 				return m, nil
 			}
 			value := strings.TrimSpace(m.textarea.Value())
@@ -384,12 +408,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.matches = nil
 			m.selected = 0
 			m.historyPos = -1
-			m.busy = true
+			ctx, cancel := context.WithCancel(m.ctx)
+			m.backgrounding = true
+			m.backgroundCancel = cancel
 			m.status = "backgrounding"
 			m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: value})
 			m.refreshViewport()
 			m.viewport.GotoBottom()
-			return m, runBackgroundCommand(m.ctx, m.background, value)
+			return m, runBackgroundCommand(ctx, m.background, value)
 		case "shift+enter", "alt+enter", "ctrl+j":
 			m.textarea.InsertString("\n")
 			return m, nil
@@ -522,6 +548,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "help ready"
 	} else if m.awaitingQuestion {
 		m.status = "question"
+	} else if m.backgrounding {
+		m.status = "backgrounding"
 	} else if m.busy {
 		m.status = "running"
 	} else {
@@ -783,6 +811,16 @@ func (m *model) interruptTurn() {
 		m.turnCancel()
 	}
 	m.status = "interrupting"
+}
+
+func (m *model) interruptBackground() {
+	if !m.backgrounding {
+		return
+	}
+	if m.backgroundCancel != nil {
+		m.backgroundCancel()
+	}
+	m.status = "canceling background"
 }
 
 func (m *model) answerPermission(answer string) {
@@ -1074,7 +1112,7 @@ func appendStatusMode(status string, mode string, width int) string {
 
 func isBusyStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "running", "running slash", "interrupting", "backgrounding":
+	case "running", "running slash", "interrupting", "backgrounding", "canceling background":
 		return true
 	default:
 		return false
