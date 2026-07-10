@@ -793,6 +793,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, "interactive-ui", tuiPrompt.Category)
 	require.Equal(t, "tui prompt completion harness ok", tuiPrompt.FinalMessage)
 	require.Contains(t, tuiPrompt.Output, `"footer_hints":true`)
+	require.Contains(t, tuiPrompt.Output, `"escape_clear":true`)
+	require.Contains(t, tuiPrompt.Output, `"escape_double_exit":true`)
 	require.Contains(t, tuiPrompt.Output, `"command_args":true`)
 	require.Contains(t, tuiPrompt.Output, `"mid_input_command":true`)
 	require.Contains(t, tuiPrompt.Output, `"mid_input_command_completion":true`)

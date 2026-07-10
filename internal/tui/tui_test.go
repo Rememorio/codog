@@ -300,6 +300,56 @@ func TestSlashMenuEscapeClosesSuggestionsBeforeQuitting(t *testing.T) {
 	require.False(t, m.result.Submitted)
 }
 
+func TestEscapeClearsComposerBeforeExit(t *testing.T) {
+	ta := newPromptTextarea("draft prompt")
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+
+	require.Nil(t, cmd)
+	require.Empty(t, m.textarea.Value())
+	require.Equal(t, "input cleared", m.status)
+	require.Contains(t, m.View(), "Esc again to exit")
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.Equal(t, "press esc again to exit", m.status)
+	require.Contains(t, m.View(), "Esc again exit")
+
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	require.NotNil(t, cmd)
+	_, ok := cmd().(tea.QuitMsg)
+	require.True(t, ok)
+}
+
+func TestEscapeExitPendingResetsAfterTyping(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.True(t, m.exitPending)
+
+	updated, _ = m.Update(teaKey("x"))
+	m = updated.(model)
+	require.False(t, m.exitPending)
+	require.Equal(t, "x", m.textarea.Value())
+}
+
+func TestControlCStillExitsImmediately(t *testing.T) {
+	ta := newPromptTextarea("draft prompt")
+	m := newModel(context.Background(), ta, nil, nil)
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+
+	require.NotNil(t, cmd)
+	_, ok := cmd().(tea.QuitMsg)
+	require.True(t, ok)
+}
+
 func TestSlashMenuDoesNotInterceptExactLocalHelp(t *testing.T) {
 	ta := newPromptTextarea("/help")
 	m := newModel(context.Background(), ta, []string{"/help"}, nil)

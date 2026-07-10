@@ -5418,6 +5418,14 @@ func tuiPromptCompletionScenario() scenario {
 			if !strings.Contains(automatic.View, "? for shortcuts") || !strings.Contains(automatic.View, "Ctrl+T tasks") {
 				return localScenarioResult{}, fmt.Errorf("expected TUI footer hints, got %s", automatic.View)
 			}
+			escapeClear := tui.PreviewWithEscape("draft prompt", 1, 96, 24)
+			if escapeClear.Quit || escapeClear.Value != "" || !strings.Contains(escapeClear.View, "input cleared") {
+				return localScenarioResult{}, fmt.Errorf("expected escape to clear composer before exit, got %#v", escapeClear)
+			}
+			escapeExit := tui.PreviewWithEscape("", 2, 96, 24)
+			if !escapeExit.Quit {
+				return localScenarioResult{}, fmt.Errorf("expected double escape to exit from empty composer, got %#v", escapeExit)
+			}
 			commandArgs := tui.PreviewWithCandidates("/model ", []string{"/model claude-test"}, 96, 24, false, false)
 			if !strings.Contains(commandArgs.CommandHint, "arguments: [name]") || !strings.Contains(commandArgs.View, "command args") {
 				return localScenarioResult{}, fmt.Errorf("expected slash command argument hint, got hint=%q view=%s", commandArgs.CommandHint, commandArgs.View)
@@ -5615,6 +5623,8 @@ func tuiPromptCompletionScenario() scenario {
 				"matches":                      multiple.Matches,
 				"automatic":                    automatic.Matches,
 				"footer_hints":                 strings.Contains(automatic.View, "? for shortcuts") && strings.Contains(automatic.View, "Ctrl+T tasks"),
+				"escape_clear":                 !escapeClear.Quit && escapeClear.Value == "" && strings.Contains(escapeClear.View, "input cleared"),
+				"escape_double_exit":           escapeExit.Quit,
 				"command_args":                 strings.Contains(commandArgs.CommandHint, "arguments: [name]"),
 				"mid_input_command":            midInputCommand.InlineHint == "/status",
 				"mid_input_command_completion": midInputCompleted.Value == "please /status ",

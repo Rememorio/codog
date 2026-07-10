@@ -155,6 +155,7 @@ type Preview struct {
 	DiffDialog      bool
 	CommandHint     string
 	InlineHint      string
+	Quit            bool
 }
 
 // DiffSource describes one diff source rendered by the TUI diff dialog.
@@ -266,6 +267,7 @@ type model struct {
 	diffSourceSelected        int
 	diffFileSelected          int
 	diffDetail                bool
+	exitPending               bool
 	stashedPrompt             *composerStash
 	searchOpen                bool
 	searchHits                []string
@@ -411,6 +413,47 @@ func PreviewWithQueued(input string, queued []string, width int, height int) Pre
 		QuickOpen:    m.quickOpen,
 		GlobalSearch: m.globalSearch,
 		TodosOpen:    m.todosOpen,
+	}
+}
+
+// PreviewWithEscape renders the TUI after pressing Escape the requested number
+// of times. It is used to verify safe clear/exit behavior without owning a
+// terminal.
+func PreviewWithEscape(input string, presses int, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	quit := false
+	for index := 0; index < presses; index++ {
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+		if cmd != nil {
+			if _, ok := cmd().(tea.QuitMsg); ok {
+				quit = true
+			}
+		}
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
+		TodosOpen:   m.todosOpen,
+		CommandHint: m.commandArgumentHint,
+		InlineHint:  m.inlineGhostText,
+		Quit:        quit,
 	}
 }
 
@@ -1623,8 +1666,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+		if msg.String() != "esc" {
+			m.exitPending = false
+		}
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
+			if m.busy {
+				m.interruptTurn()
+				return m, nil
+			}
+			if m.backgrounding {
+				m.interruptBackground()
+				return m, nil
+			}
+			return m, tea.Quit
+		case "esc":
 			if m.busy {
 				m.interruptTurn()
 				return m, nil
@@ -1638,24 +1694,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selected = 0
 				m.commandArgumentHint = ""
 				m.inlineGhostText = ""
+				m.exitPending = false
 				m.status = m.mode()
 				return m, nil
 			}
 			if m.searchOpen {
+				m.exitPending = false
 				m.closeHistorySearch(false)
 				return m, nil
 			}
 			if m.todosOpen {
+				m.exitPending = false
 				m.closeTodos()
 				return m, nil
 			}
 			if m.helpOpen {
+				m.exitPending = false
 				m.helpOpen = false
 				m.status = "ready"
 				m.refreshViewport()
 				return m, nil
 			}
-			return m, tea.Quit
+			if strings.TrimSpace(m.textarea.Value()) != "" {
+				m.pushComposerUndo()
+				m.textarea.SetValue("")
+				m.matches = nil
+				m.selected = 0
+				m.commandArgumentHint = ""
+				m.inlineGhostText = ""
+				m.historyPos = -1
+				m.exitPending = false
+				m.status = "input cleared"
+				return m, nil
+			}
+			if m.exitPending {
+				return m, tea.Quit
+			}
+			m.exitPending = true
+			m.status = "press esc again to exit"
+			return m, nil
 		case "ctrl+d":
 			if !m.busy && !m.searchOpen && !m.quickOpen && !m.globalSearch && !m.todosOpen && !m.modelPicker && !m.messageActions && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
 				return m, tea.Quit
@@ -2872,6 +2949,7 @@ func (m *model) clearScreen() {
 	m.selected = 0
 	m.commandArgumentHint = ""
 	m.inlineGhostText = ""
+	m.exitPending = false
 	m.searchOpen = false
 	m.searchHits = nil
 	m.searchPos = 0
@@ -4585,6 +4663,18 @@ func (m model) promptFooterHints(width int) []string {
 		add("@ for files")
 		return trimFooterHints(hints, width)
 	}
+	if status == "press esc again to exit" {
+		add("Esc again exit")
+		add("type to continue")
+		add("Ctrl+C exits immediately")
+		return trimFooterHints(hints, width)
+	}
+	if status == "input cleared" {
+		add("Esc again to exit")
+		add("Ctrl+_ undo")
+		add("? for shortcuts")
+		return trimFooterHints(hints, width)
+	}
 	if m.searchOpen {
 		add("Enter restore")
 		add("Esc close")
@@ -5399,7 +5489,8 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+B      run composer prompt in background",
 		"  Ctrl+Shift+T show background task board",
 		"  ?           toggle this help panel",
-		"  Esc         cancel a running turn, close help, or quit",
+		"  Esc         clear input, close panels, or press twice to exit",
+		"  Ctrl+C      interrupt running work or exit immediately",
 	}
 	if len(candidates) > 0 {
 		sections = append(sections, "", "Completions")
