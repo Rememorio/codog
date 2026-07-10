@@ -5485,30 +5485,34 @@ func tuiPromptCompletionScenario() scenario {
 				return localScenarioResult{}, fmt.Errorf("expected copy control preview, got view=%s", copyControl.View)
 			}
 			messageActions := tui.PreviewWithMessageActions([]tui.Entry{{Role: "assistant", Text: "Use message actions"}}, 96, 24, -1)
-			if !messageActions.MessageMenu || !strings.Contains(messageActions.View, "message actions") || !strings.Contains(messageActions.View, "copy to composer") {
+			if !messageActions.MessageMenu || !strings.Contains(messageActions.View, "message actions") || !strings.Contains(messageActions.View, "copy to composer") || !strings.Contains(messageActions.View, "copy to clipboard") {
 				return localScenarioResult{}, fmt.Errorf("expected message actions preview, got view=%s", messageActions.View)
 			}
 			messageCopy := tui.PreviewWithMessageActions([]tui.Entry{{Role: "assistant", Text: "copy me"}}, 96, 24, 0)
 			if messageCopy.MessageMenu || messageCopy.Value != "copy me" {
 				return localScenarioResult{}, fmt.Errorf("expected message copied into composer, got value=%q view=%s", messageCopy.Value, messageCopy.View)
 			}
+			messageClipboardCopy := tui.PreviewWithMessageActions([]tui.Entry{{Role: "assistant", Text: "copy me"}}, 96, 24, 1)
+			if messageClipboardCopy.MessageMenu || !strings.Contains(messageClipboardCopy.View, "Message Copied") {
+				return localScenarioResult{}, fmt.Errorf("expected message copied to clipboard preview, got view=%s", messageClipboardCopy.View)
+			}
 			messageTargetCopy := tui.PreviewWithMessageActionTarget([]tui.Entry{{Role: "assistant", Text: "first target"}, {Role: "assistant", Text: "second target"}}, 96, 24, 0, -1)
 			if messageTargetCopy.MessageMenu || messageTargetCopy.Value != "first target" {
 				return localScenarioResult{}, fmt.Errorf("expected selected earlier message copied, got value=%q view=%s", messageTargetCopy.Value, messageTargetCopy.View)
 			}
-			messageRestore := tui.PreviewWithMessageActions([]tui.Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 3)
+			messageRestore := tui.PreviewWithMessageActions([]tui.Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 4)
 			if messageRestore.MessageMenu || !strings.Contains(messageRestore.View, "Conversation Restored") {
 				return localScenarioResult{}, fmt.Errorf("expected message restore preview, got view=%s", messageRestore.View)
 			}
-			messageFork := tui.PreviewWithMessageActions([]tui.Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 4)
+			messageFork := tui.PreviewWithMessageActions([]tui.Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 5)
 			if messageFork.MessageMenu || !strings.Contains(messageFork.View, "Conversation Forked") {
 				return localScenarioResult{}, fmt.Errorf("expected message fork preview, got view=%s", messageFork.View)
 			}
-			messageSummarize := tui.PreviewWithMessageActions([]tui.Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 5)
+			messageSummarize := tui.PreviewWithMessageActions([]tui.Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 6)
 			if messageSummarize.MessageMenu || !strings.Contains(messageSummarize.View, "Conversation Summarized") {
 				return localScenarioResult{}, fmt.Errorf("expected message summarize preview, got view=%s", messageSummarize.View)
 			}
-			messageSummarizeUpTo := tui.PreviewWithMessageActions([]tui.Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 6)
+			messageSummarizeUpTo := tui.PreviewWithMessageActions([]tui.Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 7)
 			if messageSummarizeUpTo.MessageMenu || !strings.Contains(messageSummarizeUpTo.View, "Earlier Conversation Summarized") {
 				return localScenarioResult{}, fmt.Errorf("expected message summarize up-to preview, got view=%s", messageSummarizeUpTo.View)
 			}

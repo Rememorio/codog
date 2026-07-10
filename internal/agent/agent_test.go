@@ -30484,6 +30484,26 @@ func TestCopyTUIConversationWritesClipboard(t *testing.T) {
 	require.Contains(t, string(copied), "copied response")
 }
 
+func TestCopyTUIMessageWritesClipboard(t *testing.T) {
+	workspace := t.TempDir()
+	var copied []byte
+	previousClipboard := writeClipboard
+	writeClipboard = func(_ context.Context, data []byte) (string, error) {
+		copied = append([]byte(nil), data...)
+		return "test-clipboard", nil
+	}
+	t.Cleanup(func() { writeClipboard = previousClipboard })
+	app := &App{Workspace: workspace, Out: io.Discard, Err: io.Discard}
+
+	result, err := app.copyTUIMessage(context.Background(), "  message from tui\nsecond line  ")
+	require.NoError(t, err)
+	require.Equal(t, "Message Copied", result.Title)
+	require.Equal(t, "message copied", result.Status)
+	require.Contains(t, result.Lines, "Clipboard: test-clipboard")
+	require.Contains(t, result.Lines, "Lines: 2")
+	require.Equal(t, "message from tui\nsecond line\n", string(copied))
+}
+
 func TestExportRejectsRelativePathTraversal(t *testing.T) {
 	configHome := t.TempDir()
 	parent := t.TempDir()

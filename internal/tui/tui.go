@@ -77,6 +77,7 @@ type ModelSelectFunc func(context.Context, string) (RuntimeControlResult, error)
 type ConversationRestoreFunc func(context.Context, int) (RuntimeControlResult, error)
 type ConversationForkFunc func(context.Context, int) (RuntimeControlResult, error)
 type ConversationSummarizeFunc func(context.Context, int) (RuntimeControlResult, error)
+type MessageCopyFunc func(context.Context, string) (RuntimeControlResult, error)
 
 // TodoItem is the small display model used by the TUI todo panel.
 type TodoItem struct {
@@ -127,6 +128,7 @@ type ShellOptions struct {
 	ForkConversation          ConversationForkFunc
 	SummarizeConversation     ConversationSummarizeFunc
 	SummarizeUpToConversation ConversationSummarizeFunc
+	CopyMessage               MessageCopyFunc
 	ModeLabel                 string
 	CycleMode                 func() string
 }
@@ -230,6 +232,7 @@ type model struct {
 	forkConversation          ConversationForkFunc
 	summarizeConversation     ConversationSummarizeFunc
 	summarizeUpToConversation ConversationSummarizeFunc
+	copyMessage               MessageCopyFunc
 	messageActions            bool
 	messageActionTarget       int
 	messageActionSelected     int
@@ -879,6 +882,13 @@ func previewWithMessageActions(entries []Entry, width int, height int, action in
 			Lines:  []string{fmt.Sprintf("Summarized: %d", keepMessages)},
 		}, nil
 	}
+	m.copyMessage = func(_ context.Context, text string) (RuntimeControlResult, error) {
+		return RuntimeControlResult{
+			Title:  "Message Copied",
+			Status: "message copied",
+			Lines:  []string{fmt.Sprintf("Bytes: %d", len([]byte(text)))},
+		}, nil
+	}
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 		if next, ok := updated.(model); ok {
@@ -1021,6 +1031,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.forkConversation = options.ForkConversation
 	m.summarizeConversation = options.SummarizeConversation
 	m.summarizeUpToConversation = options.SummarizeUpToConversation
+	m.copyMessage = options.CopyMessage
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
@@ -1276,6 +1287,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveMessageActionTarget(1)
 				return m, nil
 			case "enter", "tab":
+				return m.applyMessageAction()
+			case "c":
+				m.messageActionSelected = 1
 				return m.applyMessageAction()
 			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
 				return m, nil
@@ -2319,6 +2333,13 @@ func runRuntimeControlCommand(ctx context.Context, control RuntimeControlFunc) t
 	}
 }
 
+func runMessageCopyCommand(ctx context.Context, copyMessage MessageCopyFunc, text string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := copyMessage(ctx, text)
+		return runtimeControlDoneMsg{Result: result, Err: err}
+	}
+}
+
 func runModelSelectCommand(ctx context.Context, selectModel ModelSelectFunc, model string) tea.Cmd {
 	return func() tea.Msg {
 		result, err := selectModel(ctx, model)
@@ -2956,6 +2977,7 @@ func renderModelPicker(options []string, current string, selected int, width int
 
 var messageActionLabels = []string{
 	"copy to composer",
+	"copy to clipboard",
 	"quote in composer",
 	"stash message",
 	"restore before turn",
@@ -3024,14 +3046,28 @@ func (m model) applyMessageAction() (tea.Model, tea.Cmd) {
 	}
 	switch m.messageActionSelected {
 	case 1:
+		if m.copyMessage == nil {
+			m.status = "copy unavailable"
+			m.messageActions = false
+			m.messageActionSelected = 0
+			return m, nil
+		}
+		m.messageActions = false
+		m.messageActionSelected = 0
+		m.matches = nil
+		m.selected = 0
+		m.historyPos = -1
+		m.status = "copying message"
+		return m, runMessageCopyCommand(m.ctx, m.copyMessage, text)
+	case 2:
 		m.pushComposerUndo()
 		m.textarea.SetValue(insertWithComposerSpacing(m.textarea.Value(), quoteMessageText(text)))
 		m.textarea.CursorEnd()
 		m.status = "message quoted"
-	case 2:
+	case 3:
 		m.stashedPrompt = &composerStash{Text: text}
 		m.status = "message stashed"
-	case 3:
+	case 4:
 		if m.restoreConversation == nil {
 			m.status = "restore unavailable"
 			m.messageActions = false
@@ -3052,7 +3088,7 @@ func (m model) applyMessageAction() (tea.Model, tea.Cmd) {
 		m.historyPos = -1
 		m.status = "restoring"
 		return m, runConversationRestoreCommand(m.ctx, m.restoreConversation, keepMessages)
-	case 4:
+	case 5:
 		if m.forkConversation == nil {
 			m.status = "fork unavailable"
 			m.messageActions = false
@@ -3073,7 +3109,7 @@ func (m model) applyMessageAction() (tea.Model, tea.Cmd) {
 		m.historyPos = -1
 		m.status = "forking"
 		return m, runConversationForkCommand(m.ctx, m.forkConversation, keepMessages)
-	case 5:
+	case 6:
 		if m.summarizeConversation == nil {
 			m.status = "summarize unavailable"
 			m.messageActions = false
@@ -3094,7 +3130,7 @@ func (m model) applyMessageAction() (tea.Model, tea.Cmd) {
 		m.historyPos = -1
 		m.status = "summarizing"
 		return m, runConversationSummarizeCommand(m.ctx, m.summarizeConversation, keepMessages)
-	case 6:
+	case 7:
 		if m.summarizeUpToConversation == nil {
 			m.status = "summarize unavailable"
 			m.messageActions = false
@@ -3234,9 +3270,9 @@ func renderMessageActions(entry transcriptEntry, selected int, width int, target
 		}
 		lines = append(lines, style.Render(prefix+action))
 	}
-	hint := "  Enter apply · Up/Down choose · Esc cancel"
+	hint := "  Enter apply · c copy · Up/Down choose · Esc cancel"
 	if targetCount > 1 {
-		hint = "  Enter apply · Up/Down choose · Left/Right message · Esc cancel"
+		hint = "  Enter apply · c copy · Up/Down choose · Left/Right message · Esc cancel"
 	}
 	lines = append(lines, completionStyle().Render(hint))
 	return strings.Join(lines, "\n")

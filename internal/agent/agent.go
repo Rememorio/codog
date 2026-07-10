@@ -39264,6 +39264,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		SummarizeUpToConversation: func(ctx context.Context, keepMessages int) (tui.RuntimeControlResult, error) {
 			return a.summarizeUpToTUIConversation(ctx, sess, keepMessages)
 		},
+		CopyMessage: func(ctx context.Context, text string) (tui.RuntimeControlResult, error) {
+			return a.copyTUIMessage(ctx, text)
+		},
 		ModeLabel: modeState.Label(),
 		CycleMode: func() string {
 			return modeState.Cycle()
@@ -39579,6 +39582,31 @@ func (a *App) copyTUIConversation(ctx context.Context, sess *session.Session) (t
 	return tui.RuntimeControlResult{
 		Title:  "Conversation Copied",
 		Status: "copied",
+		Lines:  lines,
+	}, nil
+}
+
+func (a *App) copyTUIMessage(ctx context.Context, text string) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return tui.RuntimeControlResult{}, errors.New("message is empty")
+	}
+	data := []byte(text + "\n")
+	clipboard, err := writeClipboard(ctx, data)
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	lines := []string{
+		"Clipboard: " + clipboard,
+		fmt.Sprintf("Lines: %d", countTextLines(text)),
+		fmt.Sprintf("Bytes: %d", len(data)),
+	}
+	return tui.RuntimeControlResult{
+		Title:  "Message Copied",
+		Status: "message copied",
 		Lines:  lines,
 	}, nil
 }

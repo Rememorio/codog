@@ -731,6 +731,11 @@ func TestMessageActionsCopyQuoteAndStash(t *testing.T) {
 	entries := []transcriptEntry{{Role: "assistant", Text: "first line\nsecond line"}}
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, entries)
+	var copiedMessage string
+	m.copyMessage = func(_ context.Context, text string) (RuntimeControlResult, error) {
+		copiedMessage = text
+		return RuntimeControlResult{Title: "Message Copied", Status: "message copied", Lines: []string{"Clipboard: test-clipboard"}}, nil
+	}
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
 	m = updated.(model)
@@ -738,6 +743,7 @@ func TestMessageActionsCopyQuoteAndStash(t *testing.T) {
 	require.True(t, m.messageActions)
 	require.Contains(t, m.View(), "message actions")
 	require.Contains(t, m.View(), "copy to composer")
+	require.Contains(t, m.View(), "copy to clipboard")
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
@@ -748,8 +754,27 @@ func TestMessageActionsCopyQuoteAndStash(t *testing.T) {
 	m.textarea.SetValue("")
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
 	m = updated.(model)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "copying message", m.status)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.False(t, m.messageActions)
+	require.Equal(t, "first line\nsecond line", copiedMessage)
+	require.Equal(t, "", m.textarea.Value())
+	require.Equal(t, "message copied", m.status)
+	require.Contains(t, m.View(), "Message Copied")
+	require.Contains(t, m.View(), "Clipboard: test-clipboard")
+
+	ta = newPromptTextarea("")
+	m = newModel(context.Background(), ta, nil, entries)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	m = updated.(model)
+	for range 2 {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(model)
+	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	require.Equal(t, "> first line\n> second line", m.textarea.Value())
@@ -758,10 +783,10 @@ func TestMessageActionsCopyQuoteAndStash(t *testing.T) {
 	m.textarea.SetValue("")
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
 	m = updated.(model)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m = updated.(model)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m = updated.(model)
+	for range 3 {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(model)
+	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	require.NotNil(t, m.stashedPrompt)
@@ -820,7 +845,7 @@ func TestMessageActionsRestoreBeforeTurn(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
 	m = updated.(model)
-	for range 3 {
+	for range 4 {
 		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 		m = updated.(model)
 	}
@@ -857,7 +882,7 @@ func TestMessageActionsForkBeforeTurn(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
 	m = updated.(model)
-	for range 4 {
+	for range 5 {
 		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 		m = updated.(model)
 	}
@@ -894,7 +919,7 @@ func TestMessageActionsSummarizeFromTurn(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
 	m = updated.(model)
-	for range 5 {
+	for range 6 {
 		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 		m = updated.(model)
 	}
@@ -931,7 +956,7 @@ func TestMessageActionsSummarizeUpToTurn(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
 	m = updated.(model)
-	for range 6 {
+	for range 7 {
 		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 		m = updated.(model)
 	}
@@ -962,19 +987,23 @@ func TestPreviewWithMessageActions(t *testing.T) {
 	require.False(t, copied.MessageMenu)
 	require.Equal(t, "copy me", copied.Value)
 
-	restored := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 3)
+	copiedClipboard := PreviewWithMessageActions([]Entry{{Role: "assistant", Text: "copy me"}}, 96, 24, 1)
+	require.False(t, copiedClipboard.MessageMenu)
+	require.Contains(t, copiedClipboard.View, "Message Copied")
+
+	restored := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 4)
 	require.False(t, restored.MessageMenu)
 	require.Contains(t, restored.View, "Conversation Restored")
 
-	forked := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 4)
+	forked := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 5)
 	require.False(t, forked.MessageMenu)
 	require.Contains(t, forked.View, "Conversation Forked")
 
-	summarized := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 5)
+	summarized := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 6)
 	require.False(t, summarized.MessageMenu)
 	require.Contains(t, summarized.View, "Conversation Summarized")
 
-	summarizedUpTo := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 6)
+	summarizedUpTo := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 7)
 	require.False(t, summarizedUpTo.MessageMenu)
 	require.Contains(t, summarizedUpTo.View, "Earlier Conversation Summarized")
 
