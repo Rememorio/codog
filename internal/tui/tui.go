@@ -2152,6 +2152,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.undoComposer()
 			return m, nil
+		case "ctrl+u":
+			if m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+				return m, nil
+			}
+			m.deleteComposerBeforeCursor()
+			return m, nil
+		case "ctrl+k":
+			if m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+				return m, nil
+			}
+			m.deleteComposerAfterCursor()
+			return m, nil
 		case "ctrl+x":
 			if m.busy || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
 				return m, nil
@@ -3062,6 +3074,18 @@ func (m model) handleBoundTUIActionKey(key string) (model, bool, tea.Cmd) {
 			return m, true, nil
 		}
 		m.undoComposer()
+		return m, true, nil
+	case m.isBoundTUIAction("delete before cursor", key):
+		if m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+			return m, true, nil
+		}
+		m.deleteComposerBeforeCursor()
+		return m, true, nil
+	case m.isBoundTUIAction("delete after cursor", key):
+		if m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+			return m, true, nil
+		}
+		m.deleteComposerAfterCursor()
 		return m, true, nil
 	case m.isBoundTUIAction("quick open files", key) || m.isBoundTUIAction("quick open fallback", key):
 		if m.busy || m.backgrounding || m.searchOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion || len(m.fileCandidates) == 0 {
@@ -4753,6 +4777,32 @@ func (m *model) undoComposer() {
 		return
 	}
 	m.status = "nothing to undo"
+}
+
+func (m *model) deleteComposerBeforeCursor() {
+	m.deleteComposerWithTextareaKey(tea.KeyMsg{Type: tea.KeyCtrlU}, "deleted before cursor")
+}
+
+func (m *model) deleteComposerAfterCursor() {
+	m.deleteComposerWithTextareaKey(tea.KeyMsg{Type: tea.KeyCtrlK}, "deleted after cursor")
+}
+
+func (m *model) deleteComposerWithTextareaKey(key tea.KeyMsg, status string) {
+	before := m.textarea.Value()
+	m.textarea, _ = m.textarea.Update(key)
+	after := m.textarea.Value()
+	if after == before {
+		m.status = "nothing to delete"
+		return
+	}
+	m.pushComposerUndoValue(before)
+	m.matches = nil
+	m.selected = 0
+	m.commandArgumentHint = ""
+	m.inlineGhostText = ""
+	m.historyPos = -1
+	m.status = status
+	m.refreshCompletionMenu()
 }
 
 func filepathToSlash(path string) string {

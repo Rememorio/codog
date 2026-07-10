@@ -1184,6 +1184,28 @@ func TestCustomTUIKeybindingsOpenQuickSearchAndStash(t *testing.T) {
 	require.Equal(t, "prompt stashed", m.status)
 }
 
+func TestCustomTUIKeybindingsDeleteAroundCursor(t *testing.T) {
+	ta := newPromptTextarea("first second")
+	ta.SetCursor(len("first"))
+	m := newModel(context.Background(), ta, nil, nil)
+	m.keybindings = normalizeTUIKeybindings(map[string][]string{
+		"delete before cursor": {"alt+u"},
+		"delete after cursor":  {"alt+k"},
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}, Alt: true})
+	m = updated.(model)
+	require.Equal(t, " second", m.textarea.Value())
+	require.Equal(t, "deleted before cursor", m.status)
+
+	m.textarea.SetValue("first second")
+	m.textarea.SetCursor(len("first"))
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}, Alt: true})
+	m = updated.(model)
+	require.Equal(t, "first", m.textarea.Value())
+	require.Equal(t, "deleted after cursor", m.status)
+}
+
 func TestCustomTUIKeybindingChordOpensEditor(t *testing.T) {
 	preview := PreviewWithKeybindings("draft", map[string][]string{
 		"edit composer in $EDITOR": {"ctrl+x ctrl+e"},
@@ -2819,12 +2841,37 @@ func TestCtrlUAndCtrlKEditComposer(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
 	next := updated.(model)
 	require.Empty(t, next.textarea.Value())
+	require.Equal(t, "deleted before cursor", next.status)
 
 	next.textarea.SetValue("first second")
 	next.textarea.CursorStart()
 	updated, _ = next.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
 	next = updated.(model)
 	require.Empty(t, next.textarea.Value())
+	require.Equal(t, "deleted after cursor", next.status)
+}
+
+func TestCtrlUAndCtrlKPreserveCurrentLineSideAndUndo(t *testing.T) {
+	ta := newPromptTextarea("first second")
+	ta.SetCursor(len("first"))
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	m = updated.(model)
+	require.Equal(t, " second", m.textarea.Value())
+	require.Equal(t, "deleted before cursor", m.status)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ctrl+_")})
+	m = updated.(model)
+	require.Equal(t, "first second", m.textarea.Value())
+	require.Equal(t, "undo", m.status)
+
+	m.textarea.SetValue("first second")
+	m.textarea.SetCursor(len("first"))
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	m = updated.(model)
+	require.Equal(t, "first", m.textarea.Value())
+	require.Equal(t, "deleted after cursor", m.status)
 }
 
 func TestCtrlBStartsBackgroundPrompt(t *testing.T) {
