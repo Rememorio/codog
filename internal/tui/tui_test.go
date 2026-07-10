@@ -1173,6 +1173,36 @@ func TestExternalEditorShortcutUpdatesComposer(t *testing.T) {
 	next = updated.(model)
 	require.Equal(t, "edited\nvalue", next.textarea.Value())
 	require.Equal(t, "editor updated", next.status)
+
+	updated, _ = next.Update(teaKey("ctrl+_"))
+	next = updated.(model)
+	require.Equal(t, "draft", next.textarea.Value())
+	require.Equal(t, "undo", next.status)
+}
+
+func TestExternalEditorChordUpdatesComposer(t *testing.T) {
+	ta := newPromptTextarea("draft")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.externalEditor = func(_ context.Context, value string) (string, error) {
+		require.Equal(t, "draft", value)
+		return "edited by chord", nil
+	}
+
+	updated, cmd := m.Update(teaKey("ctrl+x"))
+	next := updated.(model)
+	require.Nil(t, cmd)
+	require.True(t, next.ctrlXChord)
+	require.Equal(t, "ctrl+x", next.status)
+
+	updated, cmd = next.Update(teaKey("ctrl+e"))
+	next = updated.(model)
+	require.Equal(t, "editing", next.status)
+	require.NotNil(t, cmd)
+
+	updated, _ = next.Update(cmd())
+	next = updated.(model)
+	require.Equal(t, "edited by chord", next.textarea.Value())
+	require.Equal(t, "editor updated", next.status)
 }
 
 func TestExternalEditorShortcutRendersErrors(t *testing.T) {
@@ -1192,6 +1222,36 @@ func TestExternalEditorShortcutRendersErrors(t *testing.T) {
 	require.Equal(t, "editor error", next.status)
 	require.Equal(t, "error", next.transcript[len(next.transcript)-1].Role)
 	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "editor failed")
+}
+
+func TestComposerUndoRestoresTypingPasteAndCompletion(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, []string{"/model claude-test"}, nil)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("abc")})
+	next := updated.(model)
+	require.Equal(t, "abc", next.textarea.Value())
+
+	updated, _ = next.Update(teaKey("ctrl+_"))
+	next = updated.(model)
+	require.Equal(t, "", next.textarea.Value())
+	require.Equal(t, "undo", next.status)
+
+	updated, _ = next.insertPastedText("prefix ")
+	next = updated.(model)
+	require.Equal(t, "prefix ", next.textarea.Value())
+	updated, _ = next.Update(teaKey("ctrl+shift+-"))
+	next = updated.(model)
+	require.Equal(t, "", next.textarea.Value())
+
+	next.textarea.SetValue("/mo")
+	next.refreshCompletionMenu()
+	updated, _ = next.Update(teaKey("tab"))
+	next = updated.(model)
+	require.Equal(t, "/model claude-test ", next.textarea.Value())
+	updated, _ = next.Update(teaKey("ctrl+_"))
+	next = updated.(model)
+	require.Equal(t, "/mo", next.textarea.Value())
 }
 
 func TestAttachCommandStagesAttachmentsForNextPrompt(t *testing.T) {

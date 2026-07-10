@@ -168,6 +168,8 @@ type model struct {
 	history                  []string
 	historyPos               int
 	draft                    string
+	undoStack                []string
+	ctrlXChord               bool
 	quickOpenDraft           string
 	quickOpenMatches         []string
 	quickOpenSelected        int
@@ -604,6 +606,41 @@ func PreviewWithTodos(input string, items []TodoItem, width int, height int) Pre
 	}
 }
 
+// PreviewWithUndo renders a deterministic TUI state after editing the composer
+// and invoking the undo shortcut.
+func PreviewWithUndo(input string, inserted string, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	if inserted != "" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(inserted)})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ctrl+_")})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
+		TodosOpen:   m.todosOpen,
+	}
+}
+
 // Shell starts the full-screen interactive TUI loop.
 func Shell(ctx context.Context, options ShellOptions) error {
 	if ctx == nil {
@@ -719,6 +756,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 			return m, nil
 		}
+		m.pushComposerUndo()
 		m.textarea.SetValue(msg.Text)
 		m.textarea.CursorEnd()
 		m.matches = nil
@@ -853,7 +891,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "shift+tab":
 				m.closeGlobalSearch(true, false)
 				return m, nil
-			case "ctrl+r", "ctrl+s", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d":
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d":
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -880,7 +918,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "shift+tab":
 				m.closeQuickOpen(true, false)
 				return m, nil
-			case "ctrl+r", "ctrl+s", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d":
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d":
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -889,6 +927,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.textarea, cmd = m.textarea.Update(msg)
 			m.updateQuickOpen()
 			return m, tea.Batch(cmd, viewportCmd)
+		}
+		if m.ctrlXChord {
+			m.ctrlXChord = false
+			switch msg.String() {
+			case "ctrl+e":
+				return m.openExternalEditor()
+			case "ctrl+c", "esc":
+				m.status = m.mode()
+				return m, nil
+			default:
+				m.status = "compose"
+				return m, nil
+			}
 		}
 		switch msg.String() {
 		case "ctrl+c", "esc":
@@ -943,6 +994,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected = 0
 			m.status = "pasting"
 			return m, runPasteCommand(m.ctx, m.paste)
+		case "ctrl+_", "ctrl+shift+-":
+			if m.busy || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+				return m, nil
+			}
+			m.undoComposer()
+			return m, nil
+		case "ctrl+x":
+			if m.busy || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+				return m, nil
+			}
+			m.ctrlXChord = true
+			m.status = "ctrl+x"
+			return m, nil
 		case "ctrl+b":
 			if m.backgrounding || m.background == nil || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
 				return m, nil
@@ -992,6 +1056,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openGlobalSearch()
 			return m, nil
 		case "shift+enter", "alt+enter", "ctrl+j":
+			m.pushComposerUndo()
 			m.textarea.InsertString("\n")
 			return m, nil
 		case "ctrl+s":
@@ -1014,17 +1079,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 			return m, nil
 		case "ctrl+g":
-			if m.busy || m.todosOpen || m.externalEditor == nil {
-				return m, nil
-			}
-			if m.helpOpen {
-				m.helpOpen = false
-				m.refreshViewport()
-			}
-			m.matches = nil
-			m.selected = 0
-			m.status = "editing"
-			return m, runExternalEditorCommand(m.ctx, m.externalEditor, m.textarea.Value())
+			return m.openExternalEditor()
 		case "pgup":
 			m.viewport.LineUp(max(1, m.viewport.Height/2))
 			return m, nil
@@ -1069,6 +1124,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveHistorySearch(1)
 				return m, nil
 			}
+			m.pushComposerUndo()
 			m = m.completeSlashCommand()
 			return m, nil
 		case "shift+tab":
@@ -1117,6 +1173,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if len(m.matches) > 0 {
+				m.pushComposerUndo()
 				m = m.acceptSelectedCompletion()
 				return m, nil
 			}
@@ -1134,6 +1191,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	var viewportCmd tea.Cmd
 	m.viewport, viewportCmd = m.viewport.Update(msg)
+	if !m.searchOpen && !m.quickOpen && !m.globalSearch && !m.todosOpen {
+		m.pushComposerUndo()
+	}
 	m.textarea, cmd = m.textarea.Update(msg)
 	if m.searchOpen {
 		m.updateHistorySearch()
@@ -1180,6 +1240,9 @@ func (m model) insertPasteContent(content PasteContent) (tea.Model, tea.Cmd) {
 func (m model) insertPastedText(text string) (tea.Model, tea.Cmd) {
 	if m.helpOpen {
 		m.helpOpen = false
+	}
+	if !m.searchOpen && !m.quickOpen && !m.globalSearch {
+		m.pushComposerUndo()
 	}
 	m.textarea.InsertString(text)
 	m.matches = nil
@@ -1241,6 +1304,7 @@ func (m *model) convertTrailingBackslashToNewline() bool {
 	if !endsWithOddBackslashes(trimmed) {
 		return false
 	}
+	m.pushComposerUndoValue(value)
 	suffix := value[len(trimmed):]
 	m.textarea.SetValue(trimmed[:len(trimmed)-1] + "\n" + suffix)
 	m.textarea.CursorEnd()
@@ -1353,6 +1417,7 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 		}
 		m.appendHistory(value)
 		m.textarea.SetValue("")
+		m.undoStack = nil
 		m.matches = nil
 		m.selected = 0
 		m.historyPos = -1
@@ -1383,6 +1448,7 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.turnCancel = cancel
 	m.textarea.SetValue("")
+	m.undoStack = nil
 	m.matches = nil
 	m.selected = 0
 	m.historyPos = -1
@@ -1422,6 +1488,7 @@ func (m *model) queueCurrentInput() {
 	}
 	m.queuedPrompts = append(m.queuedPrompts, value)
 	m.textarea.SetValue("")
+	m.undoStack = nil
 	m.matches = nil
 	m.selected = 0
 	m.status = "queued"
@@ -1496,6 +1563,21 @@ func (m *model) togglePromptStash() {
 	m.selected = 0
 	m.historyPos = -1
 	m.status = "prompt stashed"
+}
+
+func (m model) openExternalEditor() (tea.Model, tea.Cmd) {
+	if m.busy || m.todosOpen || m.externalEditor == nil {
+		return m, nil
+	}
+	if m.helpOpen {
+		m.helpOpen = false
+		m.refreshViewport()
+	}
+	m.matches = nil
+	m.selected = 0
+	m.ctrlXChord = false
+	m.status = "editing"
+	return m, runExternalEditorCommand(m.ctx, m.externalEditor, m.textarea.Value())
 }
 
 func (m *model) handleAttachmentInput(value string) bool {
@@ -1803,6 +1885,8 @@ func (m *model) clearScreen() {
 	m.searchOpen = false
 	m.searchHits = nil
 	m.searchPos = 0
+	m.undoStack = nil
+	m.ctrlXChord = false
 	m.quickOpen = false
 	m.quickOpenMatches = nil
 	m.quickOpenSelected = 0
@@ -2080,6 +2164,42 @@ func insertWithComposerSpacing(base string, insert string) string {
 		return base + insert
 	}
 	return base + " " + insert
+}
+
+func (m *model) pushComposerUndo() {
+	m.pushComposerUndoValue(m.textarea.Value())
+}
+
+func (m *model) pushComposerUndoValue(value string) {
+	const maxComposerUndo = 100
+	if len(m.undoStack) > 0 && m.undoStack[len(m.undoStack)-1] == value {
+		return
+	}
+	m.undoStack = append(m.undoStack, value)
+	if len(m.undoStack) > maxComposerUndo {
+		m.undoStack = append([]string(nil), m.undoStack[len(m.undoStack)-maxComposerUndo:]...)
+	}
+}
+
+func (m *model) undoComposer() {
+	current := m.textarea.Value()
+	for len(m.undoStack) > 0 {
+		last := m.undoStack[len(m.undoStack)-1]
+		m.undoStack = m.undoStack[:len(m.undoStack)-1]
+		if last == current {
+			continue
+		}
+		m.textarea.SetValue(last)
+		m.textarea.CursorEnd()
+		m.matches = nil
+		m.selected = 0
+		m.historyPos = -1
+		m.ctrlXChord = false
+		m.status = "undo"
+		m.refreshCompletionMenu()
+		return
+	}
+	m.status = "nothing to undo"
 }
 
 func filepathToSlash(path string) string {
@@ -2636,6 +2756,9 @@ func statusBarText(status string, width int) string {
 			return "tasks · Ctrl+T close · /todos manage tasks · Ctrl+Shift+T background tasks"
 		}
 	}
+	if strings.EqualFold(status, "ctrl+x") {
+		return "Ctrl+X · Ctrl+E edit in $EDITOR · Esc cancel"
+	}
 	switch {
 	case width > 0 && width < 70:
 		return fmt.Sprintf("%s · Enter · Tab · Ctrl-R · Esc", status)
@@ -2777,6 +2900,7 @@ func (m *model) closeHistorySearch(accept bool) {
 		if m.searchPos < 0 || m.searchPos >= len(m.searchHits) {
 			m.searchPos = 0
 		}
+		m.pushComposerUndoValue(m.draft)
 		m.textarea.SetValue(m.searchHits[m.searchPos])
 		m.status = "history selected"
 	} else {
@@ -2893,6 +3017,7 @@ func (m *model) closeQuickOpen(accept bool, mention bool) {
 		if m.quickOpenSelected < 0 || m.quickOpenSelected >= len(m.quickOpenMatches) {
 			m.quickOpenSelected = 0
 		}
+		m.pushComposerUndoValue(m.quickOpenDraft)
 		selected := m.quickOpenMatches[m.quickOpenSelected]
 		insert := selected + " "
 		if mention {
@@ -2990,6 +3115,7 @@ func (m *model) closeGlobalSearch(accept bool, mention bool) {
 		if m.globalSearchSelected < 0 || m.globalSearchSelected >= len(m.globalSearchMatches) {
 			m.globalSearchSelected = 0
 		}
+		m.pushComposerUndoValue(m.globalSearchDraft)
 		insert := globalSearchReference(m.globalSearchMatches[m.globalSearchSelected], mention)
 		m.textarea.SetValue(insertWithComposerSpacing(m.globalSearchDraft, insert))
 		m.textarea.CursorEnd()
@@ -3258,6 +3384,9 @@ func helpPanel(candidates []string, width int) string {
 		"  \\+Enter     replace trailing backslash with newline",
 		"  Ctrl+S      stash or restore composer",
 		"  Ctrl+G      edit composer in $EDITOR",
+		"  Ctrl+X Ctrl+E edit composer in $EDITOR",
+		"  Ctrl+_      undo composer edit",
+		"  Ctrl+Shift+- undo composer edit",
 		"  Ctrl+V      paste clipboard text or image",
 		"  Ctrl+Shift+P quick open files",
 		"  Ctrl+P      quick open fallback",

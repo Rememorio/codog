@@ -20708,19 +20708,39 @@ func normalizeShortcut(key string) string {
 	if strings.HasPrefix(key, "/") {
 		return strings.ToLower(strings.Join(strings.Fields(key), " "))
 	}
+	fields := strings.Fields(key)
+	if len(fields) > 1 {
+		normalized := make([]string, 0, len(fields))
+		for _, field := range fields {
+			part := normalizeShortcut(field)
+			if part == "" {
+				return ""
+			}
+			normalized = append(normalized, part)
+		}
+		return strings.Join(normalized, " ")
+	}
 	lower := strings.ToLower(key)
 	lower = strings.ReplaceAll(lower, " ", "")
+	keySymbol := ""
+	if strings.HasSuffix(lower, "+-") {
+		keySymbol = "-"
+		lower = strings.TrimSuffix(lower, "+-")
+	} else if strings.HasSuffix(lower, "--") {
+		keySymbol = "-"
+		lower = strings.TrimSuffix(lower, "--")
+	}
 	parts := strings.FieldsFunc(lower, func(r rune) bool {
 		return r == '+' || r == '-'
 	})
 	if len(parts) == 0 {
-		return ""
+		return keySymbol
 	}
-	if len(parts) == 1 {
+	if len(parts) == 1 && keySymbol == "" {
 		return normalizeShortcutToken(parts[0])
 	}
 	modSeen := map[string]bool{}
-	var keyPart string
+	keyPart := keySymbol
 	for _, part := range parts {
 		token := normalizeShortcutToken(part)
 		if token == "" {
@@ -20806,29 +20826,32 @@ func defaultKeybindingsTemplate() []byte {
 			{
 				Context: "tui",
 				Bindings: map[string]string{
-					"enter":        "submit prompt",
-					"shift+enter":  "insert newline",
-					"alt+enter":    "insert newline fallback",
-					"ctrl+j":       "insert newline",
-					"ctrl+s":       "stash or restore composer",
-					"ctrl+g":       "edit composer in $EDITOR",
-					"ctrl+v":       "paste clipboard text or image",
-					"ctrl+shift+p": "quick open files",
-					"ctrl+p":       "quick open fallback",
-					"ctrl+shift+f": "search workspace",
-					"ctrl+f":       "search workspace fallback",
-					"ctrl+o":       "toggle expanded transcript",
-					"ctrl+l":       "clear screen",
-					"ctrl+u":       "delete before cursor",
-					"ctrl+k":       "delete after cursor",
-					"ctrl+d":       "exit when composer is empty",
-					"ctrl+b":       "run composer prompt in background",
-					"ctrl+t":       "toggle tasks",
-					"ctrl+shift+t": "show background task board",
-					"tab":          "complete slash command",
-					"up":           "edit queued prompts, choose completion, or recall history",
-					"esc":          "quit",
-					"ctrl+c":       "quit",
+					"enter":         "submit prompt",
+					"shift+enter":   "insert newline",
+					"alt+enter":     "insert newline fallback",
+					"ctrl+j":        "insert newline",
+					"ctrl+s":        "stash or restore composer",
+					"ctrl+g":        "edit composer in $EDITOR",
+					"ctrl+x ctrl+e": "edit composer in $EDITOR",
+					"ctrl+_":        "undo composer edit",
+					"ctrl+shift+-":  "undo composer edit",
+					"ctrl+v":        "paste clipboard text or image",
+					"ctrl+shift+p":  "quick open files",
+					"ctrl+p":        "quick open fallback",
+					"ctrl+shift+f":  "search workspace",
+					"ctrl+f":        "search workspace fallback",
+					"ctrl+o":        "toggle expanded transcript",
+					"ctrl+l":        "clear screen",
+					"ctrl+u":        "delete before cursor",
+					"ctrl+k":        "delete after cursor",
+					"ctrl+d":        "exit when composer is empty",
+					"ctrl+b":        "run composer prompt in background",
+					"ctrl+t":        "toggle tasks",
+					"ctrl+shift+t":  "show background task board",
+					"tab":           "complete slash command",
+					"up":            "edit queued prompts, choose completion, or recall history",
+					"esc":           "quit",
+					"ctrl+c":        "quit",
 				},
 			},
 			{
@@ -20894,6 +20917,9 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Ctrl-J", Action: "insert newline"},
 					{Key: "Ctrl-S", Action: "stash or restore composer"},
 					{Key: "Ctrl-G", Action: "edit composer in $EDITOR"},
+					{Key: "Ctrl-X Ctrl-E", Action: "edit composer in $EDITOR"},
+					{Key: "Ctrl-_", Action: "undo composer edit"},
+					{Key: "Ctrl-Shift--", Action: "undo composer edit"},
 					{Key: "Ctrl-V", Action: "paste clipboard text or image"},
 					{Key: "Ctrl-Shift-P", Action: "quick open files"},
 					{Key: "Ctrl-P", Action: "quick open fallback"},

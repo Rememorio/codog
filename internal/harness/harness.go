@@ -3577,7 +3577,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+o"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
+			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+x ctrl+e"`) || !strings.Contains(string(keybindingsData), `"ctrl+_"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+-"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+o"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
 				return localScenarioResult{}, fmt.Errorf("keybindings template missing expected entries: %s", string(keybindingsData))
 			}
 
@@ -3589,7 +3589,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 38 {
+			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 41 {
 				return localScenarioResult{}, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
 			}
 
@@ -3632,27 +3632,29 @@ func privacyKeybindingsScenario() scenario {
 					"text_rendered":          strings.Contains(privacyText, "Prompt history"),
 				},
 				"keybindings": map[string]any{
-					"initial_exists":      initialKeybindings.KeybindingsExists,
-					"path":                strings.HasSuffix(pathReport.Path, "keybindings.json"),
-					"created":             initReport.Created,
-					"valid":               validateReport.Valid,
-					"contexts":            validateReport.ContextCount,
-					"bindings":            validateReport.BindingCount,
-					"shift_enter":         strings.Contains(string(keybindingsData), `"shift+enter"`),
-					"prompt_stash_key":    strings.Contains(string(keybindingsData), `"ctrl+s"`),
-					"external_editor":     strings.Contains(string(keybindingsData), `"ctrl+g"`),
-					"clipboard_paste_key": strings.Contains(string(keybindingsData), `"ctrl+v"`),
-					"quick_open_key":      strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) && strings.Contains(string(keybindingsData), `"ctrl+p"`),
-					"global_search_key":   strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) && strings.Contains(string(keybindingsData), `"ctrl+f"`),
-					"transcript_key":      strings.Contains(string(keybindingsData), `"ctrl+o"`),
-					"terminal_keys":       strings.Contains(string(keybindingsData), `"ctrl+l"`) && strings.Contains(string(keybindingsData), `"ctrl+d"`),
-					"background_key":      strings.Contains(string(keybindingsData), `"ctrl+b"`),
-					"todo_panel_key":      strings.Contains(string(keybindingsData), `"ctrl+t"`),
-					"task_board_key":      strings.Contains(string(keybindingsData), `"ctrl+shift+t"`),
-					"queue_edit_key":      strings.Contains(string(keybindingsData), `"up"`),
-					"resolved":            resolveReport.Found,
-					"source":              resolveReport.Source,
-					"text_rendered":       strings.Contains(keybindingsText, "User valid"),
+					"initial_exists":        initialKeybindings.KeybindingsExists,
+					"path":                  strings.HasSuffix(pathReport.Path, "keybindings.json"),
+					"created":               initReport.Created,
+					"valid":                 validateReport.Valid,
+					"contexts":              validateReport.ContextCount,
+					"bindings":              validateReport.BindingCount,
+					"shift_enter":           strings.Contains(string(keybindingsData), `"shift+enter"`),
+					"prompt_stash_key":      strings.Contains(string(keybindingsData), `"ctrl+s"`),
+					"external_editor":       strings.Contains(string(keybindingsData), `"ctrl+g"`),
+					"external_editor_chord": strings.Contains(string(keybindingsData), `"ctrl+x ctrl+e"`),
+					"composer_undo_key":     strings.Contains(string(keybindingsData), `"ctrl+_"`) && strings.Contains(string(keybindingsData), `"ctrl+shift+-"`),
+					"clipboard_paste_key":   strings.Contains(string(keybindingsData), `"ctrl+v"`),
+					"quick_open_key":        strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) && strings.Contains(string(keybindingsData), `"ctrl+p"`),
+					"global_search_key":     strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) && strings.Contains(string(keybindingsData), `"ctrl+f"`),
+					"transcript_key":        strings.Contains(string(keybindingsData), `"ctrl+o"`),
+					"terminal_keys":         strings.Contains(string(keybindingsData), `"ctrl+l"`) && strings.Contains(string(keybindingsData), `"ctrl+d"`),
+					"background_key":        strings.Contains(string(keybindingsData), `"ctrl+b"`),
+					"todo_panel_key":        strings.Contains(string(keybindingsData), `"ctrl+t"`),
+					"task_board_key":        strings.Contains(string(keybindingsData), `"ctrl+shift+t"`),
+					"queue_edit_key":        strings.Contains(string(keybindingsData), `"up"`),
+					"resolved":              resolveReport.Found,
+					"source":                resolveReport.Source,
+					"text_rendered":         strings.Contains(keybindingsText, "User valid"),
 				},
 			}
 			data, err := json.Marshal(report)
@@ -5383,6 +5385,10 @@ func tuiPromptCompletionScenario() scenario {
 			if !todosPreview.TodosOpen || !strings.Contains(todosPreview.View, "tasks: 2 total") || !strings.Contains(todosPreview.View, "write focused parity test") {
 				return localScenarioResult{}, fmt.Errorf("expected todos preview, got %#v", todosPreview)
 			}
+			undoPreview := tui.PreviewWithUndo("", "draft", 96, 24)
+			if undoPreview.Value != "" || !strings.Contains(undoPreview.View, "undo") {
+				return localScenarioResult{}, fmt.Errorf("expected undo preview, got %#v", undoPreview)
+			}
 			attachments := tui.PreviewWithAttachments("describe", []string{"notes.txt", "pixel.png"}, 96, 24)
 			if !strings.Contains(attachments.View, "attachments: 2") || !strings.Contains(attachments.View, "2 attached") || len(attachments.Attachments) != 2 {
 				return localScenarioResult{}, fmt.Errorf("expected attachment preview, got %s", attachments.View)
@@ -5442,6 +5448,7 @@ func tuiPromptCompletionScenario() scenario {
 				"stash_preview":         stash.HasStash,
 				"transcript_preview":    transcript.Transcript,
 				"todos_preview":         todosPreview.TodosOpen && strings.Contains(todosPreview.View, "write focused parity test"),
+				"undo_preview":          undoPreview.Value == "" && strings.Contains(undoPreview.View, "undo"),
 				"attachment_preview":    strings.Contains(attachments.View, "attachments: 2"),
 				"paste_preview":         strings.Contains(paste.View, "pasted 1 line"),
 				"paste_image_preview":   strings.Contains(pasteImage.View, "clipboard image attached"),
