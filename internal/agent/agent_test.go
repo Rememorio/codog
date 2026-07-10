@@ -246,6 +246,17 @@ func TestTUIModeStatePreservesBypassPermissionMode(t *testing.T) {
 	require.False(t, cfg.PlanMode)
 }
 
+func TestTUIRuntimeBadgesReflectConfig(t *testing.T) {
+	fast := true
+	app := &App{Config: config.Config{
+		Model:           "glm52",
+		FastMode:        &fast,
+		ReasoningEffort: "high",
+	}}
+
+	require.Equal(t, []string{"model: glm52", "fast: on", "thinking: high"}, app.tuiRuntimeBadges())
+}
+
 func TestEnterpriseAuditListsEvents(t *testing.T) {
 	configHome := t.TempDir()
 	require.NoError(t, audit.NewStore(configHome).Append(audit.Event{

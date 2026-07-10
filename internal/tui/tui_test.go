@@ -475,6 +475,8 @@ func TestPromptFooterShowsContextualIdleHints(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, nil)
 	m.modeLabel = "accept edits"
+	m.currentModel = "glm52"
+	m.runtimeBadges = []string{"fast: off", "thinking: medium"}
 	m.attachments = []string{"notes.txt"}
 	m.modelOptions = []string{"glm52"}
 	m.stashedPrompt = &composerStash{Text: "draft"}
@@ -489,6 +491,24 @@ func TestPromptFooterShowsContextualIdleHints(t *testing.T) {
 	require.Contains(t, footer, "Ctrl+S restore stash")
 	require.Contains(t, footer, "1 attached")
 	require.Contains(t, footer, "accept edits")
+	require.Contains(t, footer, "model: glm52")
+	require.Contains(t, footer, "fast: off")
+	require.Contains(t, footer, "thinking: medium")
+}
+
+func TestHeaderShowsRuntimeBadges(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.currentModel = "glm52"
+	m.runtimeBadges = []string{"fast: off", "thinking: medium"}
+	m.layout(120, 24)
+
+	view := m.View()
+
+	require.Contains(t, view, "Codog TUI")
+	require.Contains(t, view, "model: glm52")
+	require.Contains(t, view, "fast: off")
+	require.Contains(t, view, "thinking: medium")
 }
 
 func TestPromptFooterShowsRunningQueueHints(t *testing.T) {
@@ -1017,6 +1037,7 @@ func TestRuntimeToggleShortcutsAppendStatus(t *testing.T) {
 	require.Equal(t, "ready", preview.Mode)
 	require.Contains(t, preview.View, "Fast Mode")
 	require.Contains(t, preview.View, "Fast mode: on")
+	require.Contains(t, preview.View, "fast: on")
 
 	thinking := PreviewWithRuntimeToggle("", "alt+t", RuntimeControlResult{
 		Title:  "Thinking",
@@ -1026,6 +1047,7 @@ func TestRuntimeToggleShortcutsAppendStatus(t *testing.T) {
 
 	require.Contains(t, thinking.View, "Thinking")
 	require.Contains(t, thinking.View, "Reasoning: medium")
+	require.Contains(t, thinking.View, "thinking: medium")
 
 	undo := PreviewWithRuntimeControl("", "ctrl+x ctrl+u", RuntimeControlResult{
 		Title:  "Undo",

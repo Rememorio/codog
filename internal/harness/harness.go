@@ -5565,6 +5565,9 @@ func tuiPromptCompletionScenario() scenario {
 			if !strings.Contains(fastToggle.View, "Fast Mode") || !strings.Contains(fastToggle.View, "Fast mode: on") {
 				return localScenarioResult{}, fmt.Errorf("expected fast toggle preview, got view=%s", fastToggle.View)
 			}
+			if !strings.Contains(fastToggle.View, "fast: on") {
+				return localScenarioResult{}, fmt.Errorf("expected fast runtime badge, got view=%s", fastToggle.View)
+			}
 			thinkingToggle := tui.PreviewWithRuntimeToggle("", "alt+t", tui.RuntimeControlResult{
 				Title:  "Thinking",
 				Status: "thinking medium",
@@ -5572,6 +5575,9 @@ func tuiPromptCompletionScenario() scenario {
 			}, 96, 24)
 			if !strings.Contains(thinkingToggle.View, "Thinking") || !strings.Contains(thinkingToggle.View, "Reasoning: medium") {
 				return localScenarioResult{}, fmt.Errorf("expected thinking toggle preview, got view=%s", thinkingToggle.View)
+			}
+			if !strings.Contains(thinkingToggle.View, "thinking: medium") {
+				return localScenarioResult{}, fmt.Errorf("expected thinking runtime badge, got view=%s", thinkingToggle.View)
 			}
 			undoControl := tui.PreviewWithRuntimeControl("", "ctrl+x ctrl+u", tui.RuntimeControlResult{
 				Title:  "Undo",
@@ -5672,7 +5678,9 @@ func tuiPromptCompletionScenario() scenario {
 				"diff_dialog":                  diffDialog.DiffDialog && strings.Contains(diffDialog.View, "src/app_test.go"),
 				"model_picker":                 modelPicker.ModelPicker,
 				"runtime_fast_toggle":          strings.Contains(fastToggle.View, "Fast mode: on"),
+				"runtime_fast_badge":           strings.Contains(fastToggle.View, "fast: on"),
 				"runtime_thinking":             strings.Contains(thinkingToggle.View, "Reasoning: medium"),
+				"runtime_thinking_badge":       strings.Contains(thinkingToggle.View, "thinking: medium"),
 				"message_actions":              messageActions.MessageMenu,
 				"message_action_copy":          messageCopy.Value == "copy me",
 				"message_action_target":        messageTargetCopy.Value == "first target",

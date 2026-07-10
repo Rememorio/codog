@@ -39457,7 +39457,8 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		CopyMessage: func(ctx context.Context, text string) (tui.RuntimeControlResult, error) {
 			return a.copyTUIMessage(ctx, text)
 		},
-		ModeLabel: modeState.Label(),
+		ModeLabel:     modeState.Label(),
+		RuntimeBadges: a.tuiRuntimeBadges(),
 		CycleMode: func() string {
 			return modeState.Cycle()
 		},
@@ -39520,7 +39521,7 @@ func (a *App) selectTUIModel(ctx context.Context, selected string) (tui.RuntimeC
 	if previous != "" && !strings.EqualFold(previous, a.Config.Model) {
 		lines = append(lines, "Previous: "+previous)
 	}
-	return tui.RuntimeControlResult{Title: "Model", Status: "model selected", Lines: lines}, nil
+	return tui.RuntimeControlResult{Title: "Model", Status: "model selected", Lines: lines, Badges: []string{"model: " + strings.TrimSpace(a.Config.Model)}}, nil
 }
 
 func (a *App) toggleTUIFast(ctx context.Context) (tui.RuntimeControlResult, error) {
@@ -39541,7 +39542,7 @@ func (a *App) toggleTUIFast(ctx context.Context) (tui.RuntimeControlResult, erro
 	if previous != enabled {
 		lines = append(lines, fmt.Sprintf("Previous: %s", onOff(previous)))
 	}
-	return tui.RuntimeControlResult{Title: "Fast Mode", Status: "fast " + onOff(enabled), Lines: lines}, nil
+	return tui.RuntimeControlResult{Title: "Fast Mode", Status: "fast " + onOff(enabled), Lines: lines, Badges: []string{"fast: " + onOff(enabled)}}, nil
 }
 
 func (a *App) toggleTUIThinking(ctx context.Context) (tui.RuntimeControlResult, error) {
@@ -39563,7 +39564,18 @@ func (a *App) toggleTUIThinking(ctx context.Context) (tui.RuntimeControlResult, 
 		Title:  "Thinking",
 		Status: "thinking " + current,
 		Lines:  []string{"Reasoning: " + current, "Previous: " + previous},
+		Badges: []string{"thinking: " + current},
 	}, nil
+}
+
+func (a *App) tuiRuntimeBadges() []string {
+	badges := []string{}
+	if model := strings.TrimSpace(a.Config.Model); model != "" {
+		badges = append(badges, "model: "+model)
+	}
+	badges = append(badges, "fast: "+onOff(fastModeEnabled(a.Config.FastMode)))
+	badges = append(badges, "thinking: "+effectiveEffort(a.Config.ReasoningEffort))
+	return badges
 }
 
 func (a *App) stopTUIBackground(ctx context.Context) (tui.RuntimeControlResult, error) {

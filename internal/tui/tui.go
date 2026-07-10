@@ -93,6 +93,7 @@ type RuntimeControlResult struct {
 	Title  string
 	Status string
 	Lines  []string
+	Badges []string
 }
 
 // ShellOptions configures the full-screen TUI shell.
@@ -130,6 +131,7 @@ type ShellOptions struct {
 	SummarizeUpToConversation ConversationSummarizeFunc
 	CopyMessage               MessageCopyFunc
 	ModeLabel                 string
+	RuntimeBadges             []string
 	CycleMode                 func() string
 }
 
@@ -216,6 +218,7 @@ type model struct {
 	taskBoard                 TaskBoardFunc
 	todos                     TodoListFunc
 	modeLabel                 string
+	runtimeBadges             []string
 	cycleMode                 func() string
 	history                   []string
 	historyPos                int
@@ -1301,6 +1304,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.summarizeUpToConversation = options.SummarizeUpToConversation
 	m.copyMessage = options.CopyMessage
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
+	m.runtimeBadges = normalizeRuntimeBadges(options.RuntimeBadges)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
@@ -2205,7 +2209,7 @@ func (m model) View() string {
 	if m.width == 0 {
 		m.layout(80, 24)
 	}
-	title := headerStyle().Width(max(40, m.width)).Render("Codog TUI")
+	title := headerStyle().Width(max(40, m.width)).Render(m.headerText())
 	body := m.viewport.View()
 	composerTitle := panelTitleStyle().Render(" composer ")
 	composer := composerTitle + "\n" + m.textarea.View()
@@ -2251,6 +2255,23 @@ func (m model) View() string {
 	statusText := m.promptFooterText(m.width)
 	status := statusStyle().Width(max(40, m.width)).Render(statusText)
 	return strings.Join([]string{title, body, composer, status}, "\n")
+}
+
+func (m model) headerText() string {
+	badges := m.runtimeStatusBadges()
+	if len(badges) == 0 {
+		return "Codog TUI"
+	}
+	title := "Codog TUI · " + strings.Join(badges, " · ")
+	width := m.width
+	if width <= 0 || len([]rune(title)) <= width {
+		return title
+	}
+	runes := []rune(title)
+	if width <= 3 {
+		return string(runes[:width])
+	}
+	return string(runes[:width-3]) + "..."
 }
 
 type turnDoneMsg struct {
@@ -3821,10 +3842,102 @@ func (m *model) applyRuntimeControlResult(result RuntimeControlResult) {
 			break
 		}
 	}
+	m.runtimeBadges = mergeRuntimeBadges(m.runtimeBadges, runtimeBadgesFromResult(result))
 	m.status = status
 	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: strings.Join(lines, "\n")})
 	m.refreshViewport()
 	m.viewport.GotoBottom()
+}
+
+func (m model) runtimeStatusBadges() []string {
+	badges := []string{}
+	if current := strings.TrimSpace(m.currentModel); current != "" {
+		badges = append(badges, "model: "+current)
+	}
+	badges = append(badges, m.runtimeBadges...)
+	return normalizeRuntimeBadges(badges)
+}
+
+func runtimeBadgesFromResult(result RuntimeControlResult) []string {
+	badges := normalizeRuntimeBadges(result.Badges)
+	if len(badges) > 0 {
+		return badges
+	}
+	out := []string{}
+	for _, line := range result.Lines {
+		key, value, ok := splitRuntimeStatusLine(line)
+		if !ok {
+			continue
+		}
+		switch key {
+		case "fast mode":
+			out = append(out, "fast: "+value)
+		case "reasoning":
+			out = append(out, "thinking: "+value)
+		case "model":
+			out = append(out, "model: "+value)
+		}
+	}
+	return normalizeRuntimeBadges(out)
+}
+
+func splitRuntimeStatusLine(line string) (string, string, bool) {
+	before, after, ok := strings.Cut(strings.TrimSpace(line), ":")
+	if !ok {
+		return "", "", false
+	}
+	key := strings.ToLower(strings.TrimSpace(before))
+	value := strings.TrimSpace(after)
+	if key == "" || value == "" {
+		return "", "", false
+	}
+	return key, value, true
+}
+
+func mergeRuntimeBadges(existing []string, updates []string) []string {
+	out := normalizeRuntimeBadges(existing)
+	for _, update := range normalizeRuntimeBadges(updates) {
+		key := runtimeBadgeKey(update)
+		replaced := false
+		for index, badge := range out {
+			if runtimeBadgeKey(badge) == key {
+				out[index] = update
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			out = append(out, update)
+		}
+	}
+	return out
+}
+
+func normalizeRuntimeBadges(badges []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, badge := range badges {
+		badge = strings.Join(strings.Fields(strings.TrimSpace(badge)), " ")
+		if badge == "" {
+			continue
+		}
+		key := runtimeBadgeKey(badge)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, badge)
+	}
+	return out
+}
+
+func runtimeBadgeKey(badge string) string {
+	badge = strings.TrimSpace(badge)
+	before, _, ok := strings.Cut(badge, ":")
+	if ok && strings.TrimSpace(before) != "" {
+		return strings.ToLower(strings.TrimSpace(before))
+	}
+	return strings.ToLower(badge)
 }
 
 func normalizeModelOptions(options []string) []string {
@@ -4990,6 +5103,9 @@ func (m model) promptFooterHints(width int) []string {
 	add("? for shortcuts")
 	add("/ commands")
 	add("@ files")
+	for _, badge := range m.runtimeStatusBadges() {
+		add(badge)
+	}
 	if len(m.attachments) > 0 {
 		add(fmt.Sprintf("%d attached", len(m.attachments)))
 	}
@@ -5036,7 +5152,7 @@ func trimFooterHints(hints []string, width int) []string {
 	case width < 120:
 		limit = 5
 	case width >= 150:
-		limit = 10
+		limit = 14
 	}
 	if len(hints) > limit {
 		return hints[:limit]
