@@ -5346,7 +5346,7 @@ func styleSummaryPresent(styles []outputstyle.StyleSummary, name string, source 
 func tuiPromptCompletionScenario() scenario {
 	return scenario{
 		name: "tui_prompt_completion_roundtrip",
-		runLocal: func(_ context.Context, _ string) (localScenarioResult, error) {
+		runLocal: func(_ context.Context, workspace string) (localScenarioResult, error) {
 			multiple := tui.PreviewWithCandidates("/m", []string{"/memory list", "/model claude-test"}, 96, 24, true, false)
 			for _, expected := range []string{"Codog TUI", "Enter send", "/memory list", "/model claude-test"} {
 				if !strings.Contains(multiple.View, expected) {
@@ -5390,6 +5390,17 @@ func tuiPromptCompletionScenario() scenario {
 			if fileRef.Value != "review @internal/tui/tui.go " {
 				return localScenarioResult{}, fmt.Errorf("expected file reference completion, got value=%q view=%s", fileRef.Value, fileRef.View)
 			}
+			previewFile := filepath.Join(workspace, "src", "quick-open.go")
+			if err := os.MkdirAll(filepath.Dir(previewFile), 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(previewFile, []byte("package quick\n\nfunc PreviewTarget() {}\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			quickOpenPreview := tui.PreviewWithQuickOpen("inspect", []string{previewFile, filepath.Join(workspace, "src", "other.go")}, "quick", 96, 24, false)
+			if !quickOpenPreview.QuickOpen || !strings.Contains(quickOpenPreview.View, "preview") || !strings.Contains(quickOpenPreview.View, "package quick") {
+				return localScenarioResult{}, fmt.Errorf("expected quick open preview, got view=%s", quickOpenPreview.View)
+			}
 			quickOpen := tui.PreviewWithQuickOpen("inspect", []string{"internal/tui/tui.go", "internal/agent/agent.go"}, "tui", 96, 24, true)
 			if quickOpen.QuickOpen || quickOpen.Value != "inspect @internal/tui/tui.go " {
 				return localScenarioResult{}, fmt.Errorf("expected quick open file reference, got value=%q view=%s", quickOpen.Value, quickOpen.View)
@@ -5417,6 +5428,7 @@ func tuiPromptCompletionScenario() scenario {
 				"paste_preview":       strings.Contains(paste.View, "pasted 1 line"),
 				"paste_image_preview": strings.Contains(pasteImage.View, "clipboard image attached"),
 				"file_ref_completion": strings.Contains(fileRef.Value, "@internal/tui/tui.go"),
+				"quick_open_preview":  strings.Contains(quickOpenPreview.View, "package quick"),
 				"quick_open":          strings.Contains(quickOpen.Value, "@internal/tui/tui.go"),
 				"attachments":         attachments.Attachments,
 				"submitted":           submitted.Submitted,

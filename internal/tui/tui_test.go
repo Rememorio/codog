@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -415,6 +416,10 @@ func TestFileReferenceCompletionIgnoresEmailLikeAtSigns(t *testing.T) {
 }
 
 func TestQuickOpenFiltersAndInsertsFileReference(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.MkdirAll("internal/tui", 0o755))
+	require.NoError(t, os.WriteFile("internal/tui/tui.go", []byte("package tui\n\nfunc previewTarget() {}\n"), 0o644))
+
 	ta := newPromptTextarea("review")
 	m := newModel(context.Background(), ta, nil, nil)
 	m.fileCandidates = []string{"internal/agent/agent.go", "internal/tui/tui.go", "README.md"}
@@ -431,6 +436,9 @@ func TestQuickOpenFiltersAndInsertsFileReference(t *testing.T) {
 
 	require.Equal(t, []string{"internal/tui/tui.go"}, m.quickOpenMatches)
 	require.Contains(t, m.View(), "quick open: tui")
+	require.Contains(t, m.View(), "preview")
+	require.Contains(t, m.View(), "package tui")
+	require.Contains(t, m.View(), "func previewTarget")
 	require.Contains(t, m.View(), "Enter/Tab insert @file")
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -488,6 +496,17 @@ func TestQuickOpenTreatsQuestionMarkAsQuery(t *testing.T) {
 	require.True(t, m.quickOpen)
 	require.False(t, m.helpOpen)
 	require.Equal(t, "?", m.textarea.Value())
+}
+
+func TestQuickOpenPreviewHandlesBinaryFiles(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("image.bin", []byte{0x89, 0x00, 0x01}, 0o644))
+
+	preview := PreviewWithQuickOpen("", []string{"image.bin"}, "image", 96, 24, false)
+
+	require.True(t, preview.QuickOpen)
+	require.Contains(t, preview.View, "image.bin")
+	require.Contains(t, preview.View, "(binary file)")
 }
 
 func TestPreviewWithQuickOpen(t *testing.T) {

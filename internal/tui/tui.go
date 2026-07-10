@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Rememorio/codog/internal/slash"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -146,6 +149,8 @@ type model struct {
 	quickOpenDraft          string
 	quickOpenMatches        []string
 	quickOpenSelected       int
+	quickOpenPreviewPath    string
+	quickOpenPreviewLines   []string
 	queuedPrompts           []string
 	attachments             []string
 	stashedPrompt           *composerStash
@@ -1091,7 +1096,7 @@ func (m model) View() string {
 		composer += "\n" + renderHistorySearch(m.searchHits, m.searchPos, m.textarea.Value())
 	}
 	if m.quickOpen {
-		composer += "\n" + renderQuickOpen(m.quickOpenMatches, m.quickOpenSelected, m.textarea.Value(), m.width)
+		composer += "\n" + renderQuickOpen(m.quickOpenMatches, m.quickOpenSelected, m.textarea.Value(), m.width, m.quickOpenPreviewPath, m.quickOpenPreviewLines)
 	}
 	if len(m.queuedPrompts) > 0 {
 		composer += "\n" + renderQueuedPrompts(m.queuedPrompts)
@@ -1590,6 +1595,8 @@ func (m *model) clearScreen() {
 	m.quickOpenMatches = nil
 	m.quickOpenSelected = 0
 	m.quickOpenDraft = ""
+	m.quickOpenPreviewPath = ""
+	m.quickOpenPreviewLines = nil
 	m.transcript = []transcriptEntry{{Role: "system", Text: "Screen cleared."}}
 	m.status = "cleared"
 	m.refreshViewport()
@@ -1932,7 +1939,7 @@ func renderQueuedPrompts(queued []string) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderQuickOpen(matches []string, selected int, query string, width int) string {
+func renderQuickOpen(matches []string, selected int, query string, width int, previewPath string, previewLines []string) string {
 	query = strings.TrimSpace(query)
 	title := " quick open "
 	if query != "" {
@@ -1961,8 +1968,68 @@ func renderQuickOpen(matches []string, selected int, query string, width int) st
 		}
 		lines = append(lines, style.Render(prefix+truncateForComposer(match, limit)))
 	}
+	if previewPath != "" {
+		lines = append(lines, completionTitleStyle().Render(" preview "))
+		lines = append(lines, completionStyle().Render("  "+truncateForComposer(previewPath, limit)))
+		if len(previewLines) == 0 {
+			lines = append(lines, completionStyle().Render("  (empty file)"))
+		}
+		for _, line := range previewLines {
+			lines = append(lines, completionStyle().Render("  "+truncateForComposer(line, limit)))
+		}
+	}
 	lines = append(lines, completionStyle().Render("  Enter/Tab insert @file · Shift+Tab insert path · Esc cancel"))
 	return strings.Join(lines, "\n")
+}
+
+func readQuickOpenPreview(path string, maxLines int, maxBytes int64) []string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	if maxLines <= 0 {
+		maxLines = 8
+	}
+	if maxBytes <= 0 {
+		maxBytes = 32 * 1024
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return []string{"(preview unavailable)"}
+	}
+	if info.IsDir() {
+		return []string{"(directory)"}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []string{"(preview unavailable)"}
+	}
+	truncated := false
+	if int64(len(data)) > maxBytes {
+		data = data[:maxBytes]
+		truncated = true
+	}
+	if bytes.Contains(data, []byte{0}) || !utf8.Valid(data) {
+		return []string{"(binary file)"}
+	}
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	parts := strings.Split(text, "\n")
+	if len(parts) > 0 && parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
+	lines := make([]string, 0, min(len(parts), maxLines)+1)
+	for index, line := range parts {
+		if index >= maxLines {
+			truncated = true
+			break
+		}
+		lines = append(lines, line)
+	}
+	if truncated {
+		lines = append(lines, "(preview truncated)")
+	}
+	return lines
 }
 
 func renderPendingAttachments(attachments []string) string {
@@ -2237,9 +2304,12 @@ func (m *model) updateQuickOpen() {
 		m.quickOpenSelected = 0
 	}
 	if len(m.quickOpenMatches) == 0 {
+		m.quickOpenPreviewPath = ""
+		m.quickOpenPreviewLines = nil
 		m.status = "quick open"
 		return
 	}
+	m.refreshQuickOpenPreview()
 	m.status = fmt.Sprintf("quick open %d/%d", m.quickOpenSelected+1, len(m.quickOpenMatches))
 }
 
@@ -2248,7 +2318,25 @@ func (m *model) moveQuickOpen(delta int) {
 		return
 	}
 	m.quickOpenSelected = (m.quickOpenSelected + delta + len(m.quickOpenMatches)) % len(m.quickOpenMatches)
+	m.refreshQuickOpenPreview()
 	m.status = fmt.Sprintf("quick open %d/%d", m.quickOpenSelected+1, len(m.quickOpenMatches))
+}
+
+func (m *model) refreshQuickOpenPreview() {
+	if len(m.quickOpenMatches) == 0 {
+		m.quickOpenPreviewPath = ""
+		m.quickOpenPreviewLines = nil
+		return
+	}
+	if m.quickOpenSelected < 0 || m.quickOpenSelected >= len(m.quickOpenMatches) {
+		m.quickOpenSelected = 0
+	}
+	path := m.quickOpenMatches[m.quickOpenSelected]
+	if path == m.quickOpenPreviewPath && len(m.quickOpenPreviewLines) > 0 {
+		return
+	}
+	m.quickOpenPreviewPath = path
+	m.quickOpenPreviewLines = readQuickOpenPreview(path, 8, 32*1024)
 }
 
 func (m *model) closeQuickOpen(accept bool, mention bool) {
@@ -2277,6 +2365,8 @@ func (m *model) closeQuickOpen(accept bool, mention bool) {
 	m.quickOpenDraft = ""
 	m.quickOpenMatches = nil
 	m.quickOpenSelected = 0
+	m.quickOpenPreviewPath = ""
+	m.quickOpenPreviewLines = nil
 	m.matches = nil
 	m.selected = 0
 	m.refreshCompletionMenu()
