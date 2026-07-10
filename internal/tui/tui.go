@@ -87,6 +87,7 @@ type model struct {
 	history            []string
 	historyPos         int
 	draft              string
+	queuedPrompt       string
 	searchOpen         bool
 	searchHits         []string
 	searchPos          int
@@ -249,6 +250,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streamingIndex = -1
 		m.refreshViewport()
 		m.viewport.GotoBottom()
+		if m.queuedPrompt != "" && msg.Err == nil && !msg.Interrupted {
+			next := m.queuedPrompt
+			m.queuedPrompt = ""
+			return m.startInput(next)
+		}
 		return m, nil
 	case turnStreamMsg:
 		m.appendStreamDelta(msg.Role, msg.Delta)
@@ -375,6 +381,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.busy {
+				m.queueCurrentInput()
 				return m, nil
 			}
 			if m.searchOpen {
@@ -448,6 +455,10 @@ type turnDoneMsg struct {
 
 func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
 	value := strings.TrimSpace(m.textarea.Value())
+	return m.startInput(value)
+}
+
+func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 	if value == "" {
 		return m, nil
 	}
@@ -500,6 +511,21 @@ func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
 		return m, runStreamSubmitCommand(ctx, m.submitStream, value, messages)
 	}
 	return m, runSubmitCommand(ctx, m.submit, value)
+}
+
+func (m *model) queueCurrentInput() {
+	value := strings.TrimSpace(m.textarea.Value())
+	if value == "" || m.awaitingPermission || m.awaitingQuestion {
+		return
+	}
+	m.queuedPrompt = value
+	m.textarea.SetValue("")
+	m.matches = nil
+	m.selected = 0
+	m.status = "queued"
+	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Queued next prompt: " + truncateForComposer(value, 120)})
+	m.refreshViewport()
+	m.viewport.GotoBottom()
 }
 
 func runSubmitCommand(ctx context.Context, submit SubmitFunc, prompt string) tea.Cmd {

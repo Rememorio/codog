@@ -3,6 +3,7 @@ package acceptance
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -685,6 +686,61 @@ expect eof
 	require.Contains(t, joinedRequests, `\"answer\": \"beta\"`)
 }
 
+func TestRealBinaryTUIQueuesPromptWhileBusyWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	var mu sync.Mutex
+	requestBodies := []string{}
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		requestBodies = append(requestBodies, string(body))
+		requestCount++
+		current := requestCount
+		mu.Unlock()
+		if current == 1 {
+			time.Sleep(250 * time.Millisecond)
+			writeAcceptanceTextStream(t, w, "first queued done")
+			return
+		}
+		writeAcceptanceTextStream(t, w, "second queued done")
+	}))
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --permission-mode allow --model claude-sonnet-4-5 tui
+expect "Codog TUI"
+send "first queued prompt\r"
+expect "running"
+send "second queued prompt\r"
+expect "Queued next prompt"
+expect "first queued done"
+expect "second queued done"
+send "\003"
+expect {
+  eof {}
+  timeout { exit 1 }
+}
+`)
+
+	require.Contains(t, output, "Queued next prompt")
+	require.Contains(t, output, "first queued done")
+	require.Contains(t, output, "second queued done")
+	mu.Lock()
+	joinedRequests := strings.Join(requestBodies, "\n")
+	count := requestCount
+	mu.Unlock()
+	require.Equal(t, 2, count)
+	require.Contains(t, joinedRequests, "first queued prompt")
+	require.Contains(t, joinedRequests, "second queued prompt")
+}
+
 func TestRealBinaryTUICyclesModeBeforeTurnWithTTY(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()
@@ -838,6 +894,36 @@ func runExpectCodog(t *testing.T, bin string, workspace string, configHome strin
 	cmd.Stderr = &out
 	require.NoError(t, cmd.Run(), out.String())
 	return out.String()
+}
+
+func writeAcceptanceTextStream(t *testing.T, w http.ResponseWriter, text string) {
+	t.Helper()
+	w.Header().Set("content-type", "text/event-stream")
+	writeAcceptanceStreamEvent(t, w, map[string]any{"type": "message_start"})
+	writeAcceptanceStreamEvent(t, w, map[string]any{
+		"type":  "content_block_start",
+		"index": 0,
+		"content_block": map[string]any{
+			"type": "text",
+			"text": "",
+		},
+	})
+	for _, token := range strings.Split(text, " ") {
+		writeAcceptanceStreamEvent(t, w, map[string]any{
+			"type":  "content_block_delta",
+			"index": 0,
+			"delta": map[string]any{
+				"type": "text_delta",
+				"text": token + " ",
+			},
+		})
+	}
+	writeAcceptanceStreamEvent(t, w, map[string]any{"type": "content_block_stop", "index": 0})
+	writeAcceptanceStreamEvent(t, w, map[string]any{
+		"type":  "message_delta",
+		"usage": map[string]any{"input_tokens": 10, "output_tokens": 5},
+	})
+	writeAcceptanceStreamEvent(t, w, map[string]any{"type": "message_stop"})
 }
 
 func acceptanceEnv(configHome string) []string {

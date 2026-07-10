@@ -271,6 +271,47 @@ func TestSubmittingPromptAppendsTUIHistory(t *testing.T) {
 	require.Equal(t, -1, m.historyPos)
 }
 
+func TestBusyEnterQueuesNextPromptAndRunsAfterTurnDone(t *testing.T) {
+	ta := newPromptTextarea("first prompt")
+	m := newModel(context.Background(), ta, nil, nil)
+	prompts := []string{}
+	m.submit = func(_ context.Context, prompt string) (string, error) {
+		prompts = append(prompts, prompt)
+		return "done: " + prompt, nil
+	}
+
+	updated, firstCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.True(t, m.busy)
+	require.NotNil(t, firstCmd)
+
+	m.textarea.SetValue("second prompt")
+	updated, queueCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Nil(t, queueCmd)
+	require.Equal(t, "second prompt", m.queuedPrompt)
+	require.Equal(t, "", m.textarea.Value())
+	require.Equal(t, "queued", m.status)
+	require.Contains(t, m.View(), "Queued next prompt")
+
+	firstDone := firstCmd().(turnDoneMsg)
+	updated, secondCmd := m.Update(firstDone)
+	m = updated.(model)
+	require.True(t, m.busy)
+	require.Empty(t, m.queuedPrompt)
+	require.NotNil(t, secondCmd)
+	require.Equal(t, []string{"first prompt"}, prompts)
+	require.Equal(t, "user", m.transcript[len(m.transcript)-1].Role)
+	require.Equal(t, "second prompt", m.transcript[len(m.transcript)-1].Text)
+
+	secondDone := secondCmd().(turnDoneMsg)
+	updated, _ = m.Update(secondDone)
+	m = updated.(model)
+	require.False(t, m.busy)
+	require.Equal(t, []string{"first prompt", "second prompt"}, prompts)
+	require.Contains(t, m.View(), "done: second prompt")
+}
+
 func TestEscapeCancelsBusyTurnWithoutQuitting(t *testing.T) {
 	ta := newPromptTextarea("long running prompt")
 	m := newModel(context.Background(), ta, nil, nil)
