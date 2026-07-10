@@ -1335,6 +1335,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "ant-trace")
 	require.Contains(t, report.Commands, "api")
 	require.Contains(t, report.Commands, "ApiKeyStep")
+	require.Contains(t, report.Commands, "audit")
 	require.Contains(t, report.Commands, "break-cache")
 	require.Contains(t, report.Commands, "caches")
 	require.Contains(t, report.Commands, "CheckExistingSecretStep")
@@ -1380,6 +1381,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "mock-limits")
 	require.Contains(t, report.Commands, "mock-parity")
 	require.Contains(t, report.Commands, "onboarding")
+	require.Contains(t, report.Commands, "parity-audit")
 	require.Contains(t, report.Commands, "perf-issue")
 	require.Contains(t, report.Commands, "AddMarketplace")
 	require.Contains(t, report.Commands, "BrowseMarketplace")
@@ -1399,6 +1401,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "rc")
 	require.Contains(t, report.Commands, "rate-limit")
 	require.Contains(t, report.Commands, "reasoning")
+	require.Contains(t, report.Commands, "reference-audit")
 	require.Contains(t, report.Commands, "reset")
 	require.Contains(t, report.Commands, "settings")
 	require.Contains(t, report.Commands, "skill")
@@ -1708,6 +1711,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("addCommand"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ant-trace"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ApiKeyStep"))
+	require.True(t, commandAcceptsGlobalOutputFormat("audit"))
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
 	require.True(t, commandAcceptsGlobalOutputFormat("CheckGitHubStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("code-intel"))
@@ -1716,6 +1720,8 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("ExistingWorkflowStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("generateSessionName"))
 	require.True(t, commandAcceptsGlobalOutputFormat("good-claude"))
+	require.True(t, commandAcceptsGlobalOutputFormat("parity-audit"))
+	require.True(t, commandAcceptsGlobalOutputFormat("reference-audit"))
 	require.True(t, commandAcceptsGlobalOutputFormat("SuccessStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("onboarding"))
 	require.True(t, commandAcceptsGlobalOutputFormat("AddMarketplace"))
@@ -1836,6 +1842,49 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, 1, sourceAudit.Tools.MissingCount)
 	require.Contains(t, sourceAudit.Tools.Covered, referenceAuditMatch{Name: "BashTool", SourceHint: "tools/BashTool/BashTool.tsx", Matched: "bash"})
 	require.Contains(t, sourceAudit.Tools.Covered, referenceAuditMatch{Name: "Bash", SourceHint: "tools/BashTool/toolName.ts", Matched: "bash"})
+}
+
+func TestTopLevelParityAuditCommand(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	commandSnapshot := filepath.Join(t.TempDir(), "commands.json")
+	require.NoError(t, os.WriteFile(commandSnapshot, []byte(`[
+		{"name":"status","source_hint":"commands/status/index.ts"},
+		{"name":"missing-reference-command","source_hint":"commands/missing/index.ts"}
+	]`), 0o644))
+	toolSnapshot := filepath.Join(t.TempDir(), "tools.json")
+	require.NoError(t, os.WriteFile(toolSnapshot, []byte(`[
+		{"name":"BashTool","source_hint":"tools/BashTool/BashTool.tsx"}
+	]`), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "parity-audit", "--commands-snapshot", commandSnapshot, "--tools-snapshot", toolSnapshot, "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var audit referenceParityAuditReport
+	require.NoError(t, json.Unmarshal([]byte(out), &audit))
+	require.Equal(t, "capabilities", audit.Kind)
+	require.Equal(t, "audit", audit.Action)
+	require.Equal(t, "gap", audit.Status)
+	require.NotNil(t, audit.Commands)
+	require.Equal(t, 2, audit.Commands.ReferenceCount)
+	require.Equal(t, 1, audit.Commands.CoveredCount)
+	require.Equal(t, "missing-reference-command", audit.Commands.Missing[0].Name)
+	require.NotNil(t, audit.Tools)
+	require.Equal(t, 1, audit.Tools.ReferenceCount)
+	require.Equal(t, 1, audit.Tools.CoveredCount)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "help", "parity-audit", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var help helpReport
+	require.NoError(t, json.Unmarshal([]byte(out), &help))
+	require.Equal(t, "parity-audit", help.Topic)
+	require.Contains(t, help.Help, "codog parity-audit --reference-root PATH")
 }
 
 func TestSlashCommandDiscoveryCLI(t *testing.T) {

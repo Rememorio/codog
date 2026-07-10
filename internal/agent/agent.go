@@ -770,6 +770,12 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	case "audit", "reference-audit", "parity-audit":
+		args := append([]string{"audit"}, rest...)
+		if err := app.Capabilities(args); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "cost", "tokens":
 		if err := app.UsageOverview(command, rest, overrides); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -31566,6 +31572,7 @@ func builtInCommandNames() []string {
 		"ApiKeyStep",
 		"app",
 		"auth",
+		"audit",
 		"autofix-pr",
 		"backfill-sessions",
 		"background",
@@ -31696,6 +31703,7 @@ func builtInCommandNames() []string {
 		"open",
 		"output-style",
 		"parity",
+		"parity-audit",
 		"passes",
 		"paste",
 		"perf-issue",
@@ -31725,6 +31733,7 @@ func builtInCommandNames() []string {
 		"rate-limit",
 		"rate-limit-options",
 		"reasoning",
+		"reference-audit",
 		"references",
 		"release-notes",
 		"report-schema",
@@ -63267,14 +63276,14 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "subagent", "allowed-tools", "android", "ant-trace", "api", "api-key", "apikeystep", "app", "auth", "autofix-pr", "backfill-sessions", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
+	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "subagent", "allowed-tools", "android", "ant-trace", "api", "api-key", "apikeystep", "app", "auth", "audit", "autofix-pr", "backfill-sessions", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
 		"break-cache", "bridge", "bridge-kick", "bootstrap-plan", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "completion", "config", "continue", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "deferred-init", "definition", "desktop", "diagnostics", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "exit-plan", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
 		"format", "help", "hover", "ide", "init", "init-verifiers", "insights", "install", "install-slack-app", "ios", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "map", "marketplace", "max-tokens", "max-turns",
-		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "open", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "open", "output-style", "parity", "parity-audit", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "pr_comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
-		"remote", "remote-control", "remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "safer-scope", "sandbox-toggle",
+		"reference-audit", "remote", "remote-control", "remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "safer-scope", "sandbox-toggle",
 		"references", "scope", "search", "security-review", "self-test", "server", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "slash", "skill", "skills", "speak", "ssh", "state", "status", "statusline", "symbols",
 		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "terminalsetup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
@@ -64197,6 +64206,19 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "gap", "not_found", "error"},
 			false,
 		), true
+	case "audit", "reference-audit", "parity-audit":
+		spec := localCommandHelpSpec(
+			"parity-audit",
+			"parity-audit",
+			"codog parity-audit --reference-root PATH [--output-format text|json]",
+			"Parity Audit\n\nUsage:\n  codog parity-audit --reference-root PATH [--output-format text|json]\n  codog parity-audit --commands-snapshot PATH --tools-snapshot PATH [--output-format text|json]\n  codog reference-audit [same flags]\n  codog audit [same flags]\n\nCompares Codog's live command and tool surface against a Claude-Code-style reference source tree or exported command/tool snapshots. This is a top-level alias for `codog capabilities audit` so parity checks can run without going through the broader capabilities report.\n",
+			[]string{"commands", "tools", "covered_count", "missing_count", "missing_groups", "source"},
+			[]string{"ok", "gap", "error"},
+			false,
+		)
+		spec.Aliases = []string{"audit", "reference-audit", "capabilities audit"}
+		spec.Related = []string{"codog capabilities", "codog mock-parity", "codog slash"}
+		return spec, true
 	case "cost":
 		return localCommandHelpSpec(
 			"cost",
