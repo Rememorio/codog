@@ -20816,6 +20816,7 @@ func defaultKeybindingsTemplate() []byte {
 					"ctrl+k":      "delete after cursor",
 					"ctrl+d":      "exit when composer is empty",
 					"ctrl+b":      "run composer prompt in background",
+					"ctrl+t":      "show background task board",
 					"tab":         "complete slash command",
 					"up":          "edit queued prompts, choose completion, or recall history",
 					"esc":         "quit",
@@ -20889,6 +20890,7 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Ctrl-K", Action: "delete after cursor"},
 					{Key: "Ctrl-D", Action: "exit when composer is empty"},
 					{Key: "Ctrl-B", Action: "run composer prompt in background"},
+					{Key: "Ctrl-T", Action: "show background task board"},
 					{Key: "Tab", Action: "complete slash command"},
 					{Key: "Up", Action: "edit queued prompts, choose completion, or recall history"},
 					{Key: "Esc", Action: "quit"},
@@ -39150,6 +39152,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		Background: func(ctx context.Context, prompt string) (string, error) {
 			return a.startTUIBackgroundPrompt(ctx, sess.ID, prompt)
 		},
+		TaskBoard: func(ctx context.Context) (string, error) {
+			return a.renderTUITaskBoard(ctx)
+		},
 		ModeLabel: modeState.Label(),
 		CycleMode: func() string {
 			return modeState.Cycle()
@@ -39195,6 +39200,87 @@ func (a *App) startTUIBackgroundPrompt(ctx context.Context, sessionID string, pr
 	a.runTaskCreatedHook(context.Background(), task)
 	a.runNotificationHook(context.Background(), "background_task_started", "Background prompt started", fmt.Sprintf("Background task %s started from TUI", task.ID))
 	return fmt.Sprintf("Background task %s started. Use /background logs %s to inspect output.", task.ID, task.ID), nil
+}
+
+func (a *App) renderTUITaskBoard(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	board, err := background.NewStore(a.Config.ConfigHome).LaneBoard(30 * time.Second)
+	if err != nil {
+		return "", err
+	}
+	return renderTUILaneBoard(board), nil
+}
+
+func renderTUILaneBoard(board background.LaneBoard) string {
+	var b strings.Builder
+	total := len(board.Active) + len(board.Blocked) + len(board.Finished)
+	fmt.Fprintf(&b, "Background tasks\n")
+	fmt.Fprintf(&b, "  Active   %d\n", len(board.Active))
+	fmt.Fprintf(&b, "  Blocked  %d\n", len(board.Blocked))
+	fmt.Fprintf(&b, "  Finished %d", len(board.Finished))
+	if total == 0 {
+		b.WriteString("\n\nNo background tasks.")
+		return b.String()
+	}
+	renderTUILaneSection(&b, "Active", board.Active)
+	renderTUILaneSection(&b, "Blocked", board.Blocked)
+	renderTUILaneSection(&b, "Finished", board.Finished)
+	return b.String()
+}
+
+func renderTUILaneSection(b *strings.Builder, title string, entries []background.LaneBoardEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n\n%s\n", title)
+	for _, entry := range entries {
+		kind := strings.TrimSpace(entry.Kind)
+		if kind == "" {
+			kind = "task"
+		}
+		status := strings.TrimSpace(entry.Status)
+		if status == "" {
+			status = entry.Lifecycle.Status
+		}
+		if status == "" {
+			status = "unknown"
+		}
+		summary := tuiLaneSummary(entry)
+		fmt.Fprintf(b, "  %s  %s/%s  %s  %s", entry.TaskID, status, entry.Freshness, kind, summary)
+		if sessionID := strings.TrimSpace(entry.SessionID); sessionID != "" {
+			fmt.Fprintf(b, "  session=%s", truncateTUILaneText(sessionID, 24))
+		}
+		if entry.TerminalOutcome != nil && entry.TerminalOutcome.Actionable {
+			fmt.Fprintf(b, "  actionable")
+		}
+		b.WriteByte('\n')
+	}
+}
+
+func tuiLaneSummary(entry background.LaneBoardEntry) string {
+	for _, value := range []string{entry.Prompt, entry.Command, entry.Kind} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return truncateTUILaneText(trimmed, 96)
+		}
+	}
+	return "(task)"
+}
+
+func truncateTUILaneText(text string, limit int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if limit <= 0 {
+		limit = 80
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-3]) + "..."
 }
 
 func (a *App) editTUIComposer(ctx context.Context, value string) (string, error) {

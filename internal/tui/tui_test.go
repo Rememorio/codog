@@ -765,6 +765,44 @@ func TestExternalEditorShortcutRendersErrors(t *testing.T) {
 	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "editor failed")
 }
 
+func TestCtrlTShowsTaskBoard(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.taskBoard = func(context.Context) (string, error) {
+		return "Background tasks\n  Active   1", nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	next := updated.(model)
+	require.Equal(t, "loading tasks", next.status)
+	require.NotNil(t, cmd)
+
+	updated, _ = next.Update(cmd())
+	next = updated.(model)
+	require.Equal(t, "tasks", next.status)
+	require.Equal(t, "system", next.transcript[len(next.transcript)-1].Role)
+	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "Background tasks")
+	require.Contains(t, next.View(), "Active")
+}
+
+func TestCtrlTRendersTaskBoardErrors(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.taskBoard = func(context.Context) (string, error) {
+		return "", errors.New("task board failed")
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	next := updated.(model)
+	require.NotNil(t, cmd)
+
+	updated, _ = next.Update(cmd())
+	next = updated.(model)
+	require.Equal(t, "tasks error", next.status)
+	require.Equal(t, "error", next.transcript[len(next.transcript)-1].Role)
+	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "task board failed")
+}
+
 func TestCtrlDExitsWhenComposerIsEmpty(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, nil)

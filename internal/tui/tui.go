@@ -44,6 +44,9 @@ type ExternalEditorFunc func(context.Context, string) (string, error)
 // task and returns a user-facing status line.
 type BackgroundFunc func(context.Context, string) (string, error)
 
+// TaskBoardFunc returns a user-facing snapshot of detached background tasks.
+type TaskBoardFunc func(context.Context) (string, error)
+
 // ShellOptions configures the full-screen TUI shell.
 type ShellOptions struct {
 	Candidates       []string
@@ -57,6 +60,7 @@ type ShellOptions struct {
 	QuestionAnswer   func(string)
 	ExternalEditor   ExternalEditorFunc
 	Background       BackgroundFunc
+	TaskBoard        TaskBoardFunc
 	ModeLabel        string
 	CycleMode        func() string
 }
@@ -94,6 +98,7 @@ type model struct {
 	questionAnswer     func(string)
 	externalEditor     ExternalEditorFunc
 	background         BackgroundFunc
+	taskBoard          TaskBoardFunc
 	modeLabel          string
 	cycleMode          func() string
 	history            []string
@@ -218,6 +223,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.questionAnswer = options.QuestionAnswer
 	m.externalEditor = options.ExternalEditor
 	m.background = options.Background
+	m.taskBoard = options.TaskBoard
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
@@ -353,6 +359,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		m.viewport.GotoBottom()
 		return m, nil
+	case taskBoardDoneMsg:
+		if msg.Err != nil {
+			m.status = "tasks error"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return m, nil
+		}
+		output := strings.TrimSpace(msg.Output)
+		if output == "" {
+			output = "No background tasks."
+		}
+		m.status = "tasks"
+		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: output})
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		return m, nil
 	case turnStreamMsg:
 		m.appendStreamDelta(msg.Role, msg.Delta)
 		if strings.EqualFold(msg.Role, "permission") {
@@ -439,6 +462,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewport()
 			m.viewport.GotoBottom()
 			return m, runBackgroundCommand(ctx, m.background, value)
+		case "ctrl+t":
+			if m.taskBoard == nil || m.searchOpen || m.awaitingPermission || m.awaitingQuestion {
+				return m, nil
+			}
+			if m.helpOpen {
+				m.helpOpen = false
+			}
+			m.matches = nil
+			m.selected = 0
+			m.status = "loading tasks"
+			m.refreshViewport()
+			return m, runTaskBoardCommand(m.ctx, m.taskBoard)
 		case "shift+enter", "alt+enter", "ctrl+j":
 			m.textarea.InsertString("\n")
 			return m, nil
@@ -850,6 +885,11 @@ type backgroundDoneMsg struct {
 	Err    error
 }
 
+type taskBoardDoneMsg struct {
+	Output string
+	Err    error
+}
+
 func runExternalEditorCommand(ctx context.Context, editor ExternalEditorFunc, value string) tea.Cmd {
 	return func() tea.Msg {
 		text, err := editor(ctx, value)
@@ -861,6 +901,13 @@ func runBackgroundCommand(ctx context.Context, background BackgroundFunc, prompt
 	return func() tea.Msg {
 		output, err := background(ctx, prompt)
 		return backgroundDoneMsg{Output: output, Err: err}
+	}
+}
+
+func runTaskBoardCommand(ctx context.Context, taskBoard TaskBoardFunc) tea.Cmd {
+	return func() tea.Msg {
+		output, err := taskBoard(ctx)
+		return taskBoardDoneMsg{Output: output, Err: err}
 	}
 }
 
@@ -1529,6 +1576,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+J      insert newline",
 		"  PgUp/PgDn   scroll transcript",
 		"  Ctrl+B      run composer prompt in background",
+		"  Ctrl+T      show background task board",
 		"  ?           toggle this help panel",
 		"  Esc         cancel a running turn, close help, or quit",
 	}

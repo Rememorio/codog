@@ -20705,6 +20705,13 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"binding_action": "run composer prompt in background"`)
 	out.Reset()
 
+	require.NoError(t, app.Keybindings([]string{"resolve", "tui", "Ctrl-T", "--json"}))
+	require.Contains(t, out.String(), `"action": "resolve"`)
+	require.Contains(t, out.String(), `"normalized_key": "ctrl+t"`)
+	require.Contains(t, out.String(), `"found": true`)
+	require.Contains(t, out.String(), `"binding_action": "show background task board"`)
+	out.Reset()
+
 	require.NoError(t, app.Keybindings([]string{"init", "--json"}))
 	require.Contains(t, out.String(), `"status": "created"`)
 	require.Contains(t, out.String(), `"created": true`)
@@ -20716,6 +20723,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), `"ctrl+l": "clear screen"`)
 	require.Contains(t, string(data), `"ctrl+d": "exit when composer is empty"`)
 	require.Contains(t, string(data), `"ctrl+b": "run composer prompt in background"`)
+	require.Contains(t, string(data), `"ctrl+t": "show background task board"`)
 	require.Contains(t, string(data), `"up": "edit queued prompts, choose completion, or recall history"`)
 	out.Reset()
 
@@ -20723,12 +20731,13 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"action": "validate"`)
 	require.Contains(t, out.String(), `"valid": true`)
 	require.Contains(t, out.String(), `"context_count": 4`)
-	require.Contains(t, out.String(), `"binding_count": 29`)
+	require.Contains(t, out.String(), `"binding_count": 30`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+r"`)
 	require.Contains(t, out.String(), `"normalized_key": "shift+enter"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+g"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+l"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+b"`)
+	require.Contains(t, out.String(), `"normalized_key": "ctrl+t"`)
 	require.Contains(t, out.String(), `"normalized_key": "up"`)
 	out.Reset()
 
@@ -20780,14 +20789,34 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "REPL vim")
 	require.Contains(t, out.String(), "Config exists    true")
 	require.Contains(t, out.String(), "User valid       true")
-	require.Contains(t, out.String(), "User bindings    29")
+	require.Contains(t, out.String(), "User bindings    30")
 	require.Contains(t, out.String(), "Shift-Enter")
 	require.Contains(t, out.String(), "Ctrl-G")
 	require.Contains(t, out.String(), "Ctrl-L")
 	require.Contains(t, out.String(), "Ctrl-D")
 	require.Contains(t, out.String(), "Ctrl-B")
+	require.Contains(t, out.String(), "Ctrl-T")
 	require.Contains(t, out.String(), "Up")
 	require.Empty(t, errOut.String())
+}
+
+func TestRenderTUITaskBoard(t *testing.T) {
+	app := &App{Config: config.Config{ConfigHome: t.TempDir()}}
+	taskStore := background.NewStore(app.Config.ConfigHome)
+	task, err := taskStore.RunWithOptions("printf board", t.TempDir(), background.RunOptions{
+		Kind:      "prompt",
+		SessionID: "session-tui",
+		Prompt:    "review background board",
+	})
+	require.NoError(t, err)
+
+	out, err := app.renderTUITaskBoard(context.Background())
+	require.NoError(t, err)
+	require.Contains(t, out, "Background tasks")
+	require.Contains(t, out, "Active")
+	require.Contains(t, out, task.ID)
+	require.Contains(t, out, "review background board")
+	require.Contains(t, out, "session=session-tui")
 }
 
 func TestDetachedPromptCommandCarriesConfigHome(t *testing.T) {
