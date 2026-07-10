@@ -120,6 +120,15 @@ func TestPreviewWithQueuedRendersQueuedPrompts(t *testing.T) {
 	require.Contains(t, preview.View, "2 queued")
 }
 
+func TestPreviewWithAttachmentsRendersPendingAttachments(t *testing.T) {
+	preview := PreviewWithAttachments("describe", []string{"notes.txt", "pixel.png"}, 96, 24)
+
+	require.Equal(t, []string{"notes.txt", "pixel.png"}, preview.Attachments)
+	require.Contains(t, preview.View, "attachments: 2")
+	require.Contains(t, preview.View, "notes.txt")
+	require.Contains(t, preview.View, "2 attached")
+}
+
 func TestSlashMenuOpensAndFiltersWhileTyping(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, []string{"/memory list", "/model claude-test", "/status"}, nil)
@@ -763,6 +772,97 @@ func TestExternalEditorShortcutRendersErrors(t *testing.T) {
 	require.Equal(t, "editor error", next.status)
 	require.Equal(t, "error", next.transcript[len(next.transcript)-1].Role)
 	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "editor failed")
+}
+
+func TestAttachCommandStagesAttachmentsForNextPrompt(t *testing.T) {
+	ta := newPromptTextarea("/attach notes.txt pixel.png")
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next := updated.(model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, []string{"notes.txt", "pixel.png"}, next.attachments)
+	require.Empty(t, next.textarea.Value())
+	require.Equal(t, "2 attached", next.status)
+	require.Contains(t, next.View(), "attachments: 2")
+	require.Contains(t, next.View(), "notes.txt")
+	require.Contains(t, next.View(), "2 attached")
+	require.Equal(t, "system", next.transcript[len(next.transcript)-1].Role)
+	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "Pending attachments: 2")
+}
+
+func TestAttachmentCommandsListRemoveAndClear(t *testing.T) {
+	ta := newPromptTextarea("/attach one.txt two.txt")
+	m := newModel(context.Background(), ta, nil, nil)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	m.textarea.SetValue("/attach remove 1")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Equal(t, []string{"two.txt"}, m.attachments)
+	require.Equal(t, "attachment removed", m.status)
+	require.Contains(t, m.transcript[len(m.transcript)-1].Text, "two.txt")
+
+	m.textarea.SetValue("/attachments list")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Equal(t, "attachments", m.status)
+	require.Contains(t, m.transcript[len(m.transcript)-1].Text, "Pending attachments: 1")
+
+	m.textarea.SetValue("/attach clear")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Empty(t, m.attachments)
+	require.Equal(t, "attachments cleared", m.status)
+}
+
+func TestSubmittingWithAttachmentsPassesThemToSubmitter(t *testing.T) {
+	ta := newPromptTextarea("describe these")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.attachments = []string{"notes.txt", "pixel.png"}
+	var gotPrompt string
+	var gotAttachments []string
+	m.submitStreamAttachments = func(_ context.Context, prompt string, attachments []string, emit func(Entry)) (string, error) {
+		gotPrompt = prompt
+		gotAttachments = append([]string(nil), attachments...)
+		emit(Entry{Role: "assistant", Text: "working"})
+		return "done", nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next := updated.(model)
+	require.True(t, next.busy)
+	require.Empty(t, next.attachments)
+	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "Attachments:")
+	require.NotNil(t, cmd)
+
+	updated, cmd = next.Update(cmd())
+	next = updated.(model)
+	require.NotNil(t, cmd)
+	updated, _ = next.Update(cmd())
+	next = updated.(model)
+	require.Equal(t, "describe these", gotPrompt)
+	require.Equal(t, []string{"notes.txt", "pixel.png"}, gotAttachments)
+	require.False(t, next.busy)
+	require.Contains(t, next.View(), "working")
+}
+
+func TestPendingAttachmentsCannotBeQueuedWhileBusy(t *testing.T) {
+	ta := newPromptTextarea("queued with file")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.busy = true
+	m.attachments = []string{"notes.txt"}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next := updated.(model)
+
+	require.Nil(t, cmd)
+	require.Empty(t, next.queuedPrompts)
+	require.Equal(t, []string{"notes.txt"}, next.attachments)
+	require.Equal(t, "attachments pending", next.status)
+	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "Send or clear pending attachments")
 }
 
 func TestCtrlTShowsTaskBoard(t *testing.T) {

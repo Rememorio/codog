@@ -5360,6 +5360,10 @@ func tuiPromptCompletionScenario() scenario {
 			if !strings.Contains(queued.View, "queued prompts: 2") || !strings.Contains(queued.View, "2 queued") {
 				return localScenarioResult{}, fmt.Errorf("expected queued prompt preview, got %s", queued.View)
 			}
+			attachments := tui.PreviewWithAttachments("describe", []string{"notes.txt", "pixel.png"}, 96, 24)
+			if !strings.Contains(attachments.View, "attachments: 2") || !strings.Contains(attachments.View, "2 attached") || len(attachments.Attachments) != 2 {
+				return localScenarioResult{}, fmt.Errorf("expected attachment preview, got %s", attachments.View)
+			}
 
 			submitted := tui.PreviewWithCandidates("/mo", []string{"/model claude-test"}, 96, 24, true, true)
 			if !submitted.Submitted {
@@ -5373,13 +5377,15 @@ func tuiPromptCompletionScenario() scenario {
 			}
 
 			report := map[string]any{
-				"kind":             "tui_prompt_completion",
-				"matches":          multiple.Matches,
-				"automatic":        automatic.Matches,
-				"queued_preview":   strings.Contains(queued.View, "queued prompts: 2"),
-				"submitted":        submitted.Submitted,
-				"submitted_prompt": submitted.Prompt,
-				"view_contains":    []string{"Codog TUI", "Enter send"},
+				"kind":               "tui_prompt_completion",
+				"matches":            multiple.Matches,
+				"automatic":          automatic.Matches,
+				"queued_preview":     strings.Contains(queued.View, "queued prompts: 2"),
+				"attachment_preview": strings.Contains(attachments.View, "attachments: 2"),
+				"attachments":        attachments.Attachments,
+				"submitted":          submitted.Submitted,
+				"submitted_prompt":   submitted.Prompt,
+				"view_contains":      []string{"Codog TUI", "Enter send"},
 			}
 			data, err := json.Marshal(report)
 			if err != nil {

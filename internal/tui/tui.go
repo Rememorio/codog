@@ -14,8 +14,9 @@ import (
 )
 
 type Result struct {
-	Submitted bool
-	Prompt    string
+	Submitted   bool
+	Prompt      string
+	Attachments []string
 }
 
 // Entry is one transcript item rendered by the full-screen TUI shell.
@@ -31,6 +32,13 @@ type SubmitFunc func(context.Context, string) (string, error)
 // StreamSubmitFunc runs one user prompt and can emit assistant deltas while the
 // turn is still running.
 type StreamSubmitFunc func(context.Context, string, func(Entry)) (string, error)
+
+// SubmitWithAttachmentsFunc runs one user prompt with staged local attachments.
+type SubmitWithAttachmentsFunc func(context.Context, string, []string) (string, error)
+
+// StreamSubmitWithAttachmentsFunc runs one user prompt with staged local
+// attachments and can emit assistant deltas while the turn is still running.
+type StreamSubmitWithAttachmentsFunc func(context.Context, string, []string, func(Entry)) (string, error)
 
 // SlashFunc runs one slash command and returns local command output. handled is
 // true when the command should not be sent to the model.
@@ -49,72 +57,78 @@ type TaskBoardFunc func(context.Context) (string, error)
 
 // ShellOptions configures the full-screen TUI shell.
 type ShellOptions struct {
-	Candidates       []string
-	Prefill          string
-	History          []string
-	Entries          []Entry
-	Submit           SubmitFunc
-	SubmitStream     StreamSubmitFunc
-	Slash            SlashFunc
-	PermissionAnswer func(string)
-	QuestionAnswer   func(string)
-	ExternalEditor   ExternalEditorFunc
-	Background       BackgroundFunc
-	TaskBoard        TaskBoardFunc
-	ModeLabel        string
-	CycleMode        func() string
+	Candidates              []string
+	Prefill                 string
+	History                 []string
+	Entries                 []Entry
+	Submit                  SubmitFunc
+	SubmitStream            StreamSubmitFunc
+	SubmitAttachments       SubmitWithAttachmentsFunc
+	SubmitStreamAttachments StreamSubmitWithAttachmentsFunc
+	Slash                   SlashFunc
+	PermissionAnswer        func(string)
+	QuestionAnswer          func(string)
+	ExternalEditor          ExternalEditorFunc
+	Background              BackgroundFunc
+	TaskBoard               TaskBoardFunc
+	ModeLabel               string
+	CycleMode               func() string
 }
 
 // Preview captures a deterministic TUI model state for tests and parity
 // harnesses without taking over the terminal.
 type Preview struct {
-	View      string
-	Value     string
-	Matches   []string
-	Submitted bool
-	Prompt    string
-	Mode      string
-	HelpOpen  bool
+	View        string
+	Value       string
+	Matches     []string
+	Submitted   bool
+	Prompt      string
+	Attachments []string
+	Mode        string
+	HelpOpen    bool
 }
 
 type model struct {
-	ctx                context.Context
-	textarea           textarea.Model
-	viewport           viewport.Model
-	result             Result
-	width              int
-	height             int
-	matches            []string
-	selected           int
-	candidates         []string
-	helpOpen           bool
-	busy               bool
-	status             string
-	transcript         []transcriptEntry
-	submit             SubmitFunc
-	submitStream       StreamSubmitFunc
-	slash              SlashFunc
-	permissionAnswer   func(string)
-	questionAnswer     func(string)
-	externalEditor     ExternalEditorFunc
-	background         BackgroundFunc
-	taskBoard          TaskBoardFunc
-	modeLabel          string
-	cycleMode          func() string
-	history            []string
-	historyPos         int
-	draft              string
-	queuedPrompts      []string
-	searchOpen         bool
-	searchHits         []string
-	searchPos          int
-	turnCancel         context.CancelFunc
-	backgrounding      bool
-	backgroundCancel   context.CancelFunc
-	turnMessages       <-chan tea.Msg
-	streamingIndex     int
-	awaitingPermission bool
-	awaitingQuestion   bool
+	ctx                     context.Context
+	textarea                textarea.Model
+	viewport                viewport.Model
+	result                  Result
+	width                   int
+	height                  int
+	matches                 []string
+	selected                int
+	candidates              []string
+	helpOpen                bool
+	busy                    bool
+	status                  string
+	transcript              []transcriptEntry
+	submit                  SubmitFunc
+	submitStream            StreamSubmitFunc
+	submitAttachments       SubmitWithAttachmentsFunc
+	submitStreamAttachments StreamSubmitWithAttachmentsFunc
+	slash                   SlashFunc
+	permissionAnswer        func(string)
+	questionAnswer          func(string)
+	externalEditor          ExternalEditorFunc
+	background              BackgroundFunc
+	taskBoard               TaskBoardFunc
+	modeLabel               string
+	cycleMode               func() string
+	history                 []string
+	historyPos              int
+	draft                   string
+	queuedPrompts           []string
+	attachments             []string
+	searchOpen              bool
+	searchHits              []string
+	searchPos               int
+	turnCancel              context.CancelFunc
+	backgrounding           bool
+	backgroundCancel        context.CancelFunc
+	turnMessages            <-chan tea.Msg
+	streamingIndex          int
+	awaitingPermission      bool
+	awaitingQuestion        bool
 }
 
 type transcriptEntry struct {
@@ -172,13 +186,14 @@ func PreviewWithCandidates(input string, candidates []string, width int, height 
 		}
 	}
 	return Preview{
-		View:      m.View(),
-		Value:     m.textarea.Value(),
-		Matches:   append([]string(nil), m.matches...),
-		Submitted: m.result.Submitted,
-		Prompt:    m.result.Prompt,
-		Mode:      m.mode(),
-		HelpOpen:  m.helpOpen,
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Submitted:   m.result.Submitted,
+		Prompt:      m.result.Prompt,
+		Attachments: append([]string(nil), m.result.Attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
 	}
 }
 
@@ -197,11 +212,34 @@ func PreviewWithQueued(input string, queued []string, width int, height int) Pre
 		}
 	}
 	return Preview{
-		View:     m.View(),
-		Value:    m.textarea.Value(),
-		Matches:  append([]string(nil), m.matches...),
-		Mode:     m.mode(),
-		HelpOpen: m.helpOpen,
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+	}
+}
+
+// PreviewWithAttachments renders a deterministic TUI state with pending
+// attachments staged for the next user prompt.
+func PreviewWithAttachments(input string, attachments []string, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	m.attachments = append([]string(nil), attachments...)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
 	}
 }
 
@@ -218,6 +256,8 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m := newModel(ctx, ta, options.Candidates, entries)
 	m.submit = options.Submit
 	m.submitStream = options.SubmitStream
+	m.submitAttachments = options.SubmitAttachments
+	m.submitStreamAttachments = options.SubmitStreamAttachments
 	m.slash = options.Slash
 	m.permissionAnswer = options.PermissionAnswer
 	m.questionAnswer = options.QuestionAnswer
@@ -707,6 +747,9 @@ func (m model) View() string {
 	if len(m.queuedPrompts) > 0 {
 		composer += "\n" + renderQueuedPrompts(m.queuedPrompts)
 	}
+	if len(m.attachments) > 0 {
+		composer += "\n" + renderPendingAttachments(m.attachments)
+	}
 	statusText := appendStatusMode(statusBarText(m.visibleStatus(), m.width), m.modeLabel, m.width)
 	status := statusStyle().Width(max(40, m.width)).Render(statusText)
 	return strings.Join([]string{title, body, composer, status}, "\n")
@@ -740,6 +783,9 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 	}
+	if m.handleAttachmentInput(value) {
+		return m, nil
+	}
 	if strings.HasPrefix(value, "/") && m.slash != nil {
 		ctx, cancel := context.WithCancel(m.ctx)
 		m.turnCancel = cancel
@@ -755,8 +801,9 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 		m.viewport.GotoBottom()
 		return m, runSlashCommand(ctx, m.slash, value)
 	}
-	if m.submit == nil && m.submitStream == nil {
-		m.result = Result{Submitted: true, Prompt: value}
+	attachments := append([]string(nil), m.attachments...)
+	if m.submit == nil && m.submitStream == nil && m.submitAttachments == nil && m.submitStreamAttachments == nil {
+		m.result = Result{Submitted: true, Prompt: value, Attachments: attachments}
 		return m, tea.Quit
 	}
 	m.appendHistory(value)
@@ -766,15 +813,24 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 	m.matches = nil
 	m.selected = 0
 	m.historyPos = -1
+	m.attachments = nil
 	m.busy = true
 	m.status = "running"
-	m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: value})
+	m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: renderSubmittedInput(value, attachments)})
 	m.refreshViewport()
 	m.viewport.GotoBottom()
+	if m.submitStreamAttachments != nil {
+		messages := make(chan tea.Msg, 32)
+		m.turnMessages = messages
+		return m, runStreamSubmitAttachmentsCommand(ctx, m.submitStreamAttachments, value, attachments, messages)
+	}
 	if m.submitStream != nil {
 		messages := make(chan tea.Msg, 32)
 		m.turnMessages = messages
 		return m, runStreamSubmitCommand(ctx, m.submitStream, value, messages)
+	}
+	if m.submitAttachments != nil {
+		return m, runSubmitAttachmentsCommand(ctx, m.submitAttachments, value, attachments)
 	}
 	return m, runSubmitCommand(ctx, m.submit, value)
 }
@@ -782,6 +838,13 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 func (m *model) queueCurrentInput() {
 	value := strings.TrimSpace(m.textarea.Value())
 	if value == "" || m.awaitingPermission || m.awaitingQuestion {
+		return
+	}
+	if len(m.attachments) > 0 {
+		m.status = "attachments pending"
+		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Send or clear pending attachments before queueing another prompt."})
+		m.refreshViewport()
+		m.viewport.GotoBottom()
 		return
 	}
 	m.queuedPrompts = append(m.queuedPrompts, value)
@@ -825,6 +888,109 @@ func (m *model) editQueuedPrompts() {
 	m.viewport.GotoBottom()
 }
 
+func (m *model) handleAttachmentInput(value string) bool {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return false
+	}
+	command := strings.ToLower(fields[0])
+	switch command {
+	case "/attach", "/attachments":
+	default:
+		return false
+	}
+	if m.busy || m.backgrounding || m.awaitingPermission || m.awaitingQuestion {
+		m.status = "attachments unavailable"
+		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Finish the current turn before changing pending attachments."})
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		return true
+	}
+	m.appendHistory(value)
+	m.textarea.SetValue("")
+	m.matches = nil
+	m.selected = 0
+	m.historyPos = -1
+	if len(fields) == 1 || strings.EqualFold(fields[1], "list") {
+		m.status = "attachments"
+		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: renderAttachmentSummary(m.attachments)})
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		return true
+	}
+	switch strings.ToLower(fields[1]) {
+	case "clear":
+		count := len(m.attachments)
+		m.attachments = nil
+		m.status = "attachments cleared"
+		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Cleared %d pending %s.", count, plural("attachment", count))})
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		return true
+	case "remove", "rm", "delete":
+		if len(fields) < 3 {
+			m.status = "attachment error"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: "usage: /attach remove INDEX"})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return true
+		}
+		if !m.removeAttachment(fields[2]) {
+			m.status = "attachment error"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: "attachment index is out of range"})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return true
+		}
+		m.status = "attachment removed"
+		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: renderAttachmentSummary(m.attachments)})
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		return true
+	}
+	added := 0
+	for _, field := range fields[1:] {
+		if strings.HasPrefix(field, "--") {
+			m.status = "attachment error"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: fmt.Sprintf("unknown /attach option %q", field)})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return true
+		}
+		if addUniqueAttachment(&m.attachments, field) {
+			added++
+		}
+	}
+	m.status = fmt.Sprintf("%d attached", len(m.attachments))
+	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Added %d %s for the next prompt.\n%s", added, plural("attachment", added), renderAttachmentSummary(m.attachments))})
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+	return true
+}
+
+func (m *model) removeAttachment(indexText string) bool {
+	var index int
+	if _, err := fmt.Sscanf(strings.TrimSpace(indexText), "%d", &index); err != nil || index < 1 || index > len(m.attachments) {
+		return false
+	}
+	m.attachments = append(append([]string(nil), m.attachments[:index-1]...), m.attachments[index:]...)
+	return true
+}
+
+func addUniqueAttachment(attachments *[]string, path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	for _, existing := range *attachments {
+		if existing == path {
+			return false
+		}
+	}
+	*attachments = append(*attachments, path)
+	return true
+}
+
 func runSubmitCommand(ctx context.Context, submit SubmitFunc, prompt string) tea.Cmd {
 	return func() tea.Msg {
 		output, err := submit(ctx, prompt)
@@ -832,9 +998,35 @@ func runSubmitCommand(ctx context.Context, submit SubmitFunc, prompt string) tea
 	}
 }
 
+func runSubmitAttachmentsCommand(ctx context.Context, submit SubmitWithAttachmentsFunc, prompt string, attachments []string) tea.Cmd {
+	return func() tea.Msg {
+		output, err := submit(ctx, prompt, append([]string(nil), attachments...))
+		return turnDoneMsg{Role: "assistant", Output: output, Err: err, Interrupted: errors.Is(err, context.Canceled)}
+	}
+}
+
 func runStreamSubmitCommand(ctx context.Context, submit StreamSubmitFunc, prompt string, messages chan tea.Msg) tea.Cmd {
 	go func() {
 		output, err := submit(ctx, prompt, func(entry Entry) {
+			if strings.TrimSpace(entry.Role) == "" {
+				entry.Role = "assistant"
+			}
+			if entry.Text == "" {
+				return
+			}
+			select {
+			case messages <- turnStreamMsg{Role: entry.Role, Delta: entry.Text}:
+			case <-ctx.Done():
+			}
+		})
+		messages <- turnDoneMsg{Role: "assistant", Output: output, Err: err, Interrupted: errors.Is(err, context.Canceled)}
+	}()
+	return waitTurnMessage(messages)
+}
+
+func runStreamSubmitAttachmentsCommand(ctx context.Context, submit StreamSubmitWithAttachmentsFunc, prompt string, attachments []string, messages chan tea.Msg) tea.Cmd {
+	go func() {
+		output, err := submit(ctx, prompt, append([]string(nil), attachments...), func(entry Entry) {
 			if strings.TrimSpace(entry.Role) == "" {
 				entry.Role = "assistant"
 			}
@@ -1176,6 +1368,45 @@ func renderQueuedPrompts(queued []string) string {
 	return strings.Join(lines, "\n")
 }
 
+func renderPendingAttachments(attachments []string) string {
+	if len(attachments) == 0 {
+		return ""
+	}
+	lines := []string{completionTitleStyle().Render(fmt.Sprintf(" attachments: %d ", len(attachments)))}
+	start := 0
+	if len(attachments) > 4 {
+		start = len(attachments) - 4
+		lines = append(lines, completionStyle().Render(fmt.Sprintf("  ... %d earlier", start)))
+	}
+	for index := start; index < len(attachments); index++ {
+		lines = append(lines, completionStyle().Render(fmt.Sprintf("  %d. %s", index+1, truncateForComposer(attachments[index], 100))))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderAttachmentSummary(attachments []string) string {
+	if len(attachments) == 0 {
+		return "No pending attachments."
+	}
+	lines := []string{fmt.Sprintf("Pending attachments: %d", len(attachments))}
+	for index, attachment := range attachments {
+		lines = append(lines, fmt.Sprintf("  %d. %s", index+1, attachment))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderSubmittedInput(prompt string, attachments []string) string {
+	prompt = strings.TrimSpace(prompt)
+	if len(attachments) == 0 {
+		return prompt
+	}
+	lines := []string{prompt, "", "Attachments:"}
+	for _, attachment := range attachments {
+		lines = append(lines, "- "+attachment)
+	}
+	return strings.Join(lines, "\n")
+}
+
 func statusBarText(status string, width int) string {
 	status = strings.TrimSpace(status)
 	if status == "" {
@@ -1467,9 +1698,15 @@ func (m model) visibleStatus() string {
 		status = m.mode()
 	}
 	if len(m.queuedPrompts) == 0 {
-		return status
+		if len(m.attachments) == 0 {
+			return status
+		}
+		return fmt.Sprintf("%s · %d attached", status, len(m.attachments))
 	}
-	return fmt.Sprintf("%s · %d queued", status, len(m.queuedPrompts))
+	if len(m.attachments) == 0 {
+		return fmt.Sprintf("%s · %d queued", status, len(m.queuedPrompts))
+	}
+	return fmt.Sprintf("%s · %d queued · %d attached", status, len(m.queuedPrompts), len(m.attachments))
 }
 
 func isLocalHelpInput(value string) bool {
@@ -1553,7 +1790,7 @@ func helpPanel(candidates []string, width int) string {
 		"",
 		"Common commands",
 		"  /status   inspect workspace and runtime",
-		"  /context  inspect prompt context",
+		"  /context  inspect prompt context; /attach stages files",
 		"  /diff     view git changes",
 		"  /review   review current diff",
 		"  /exit     quit",

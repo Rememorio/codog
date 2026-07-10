@@ -770,6 +770,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, "interactive-ui", tuiPrompt.Category)
 	require.Equal(t, "tui prompt completion harness ok", tuiPrompt.FinalMessage)
 	require.Contains(t, tuiPrompt.Output, `"queued_preview":true`)
+	require.Contains(t, tuiPrompt.Output, `"attachment_preview":true`)
 	require.Contains(t, tuiPrompt.Output, `"submitted":true`)
 	interactiveUI := findCategory(t, report, "interactive-ui")
 	require.True(t, interactiveUI.OK)

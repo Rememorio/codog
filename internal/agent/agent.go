@@ -39074,7 +39074,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 	permissionAnswers := make(chan string, 1)
 	questionAnswers := make(chan string, 1)
 	modeState := newTUIModeState(a.Config)
-	submit := func(ctx context.Context, prompt string, emit func(tui.Entry)) (string, error) {
+	submit := func(ctx context.Context, prompt string, attachments []string, emit func(tui.Entry)) (string, error) {
 		var out bytes.Buffer
 		streamOut := tuiStreamWriter{buffer: &out, emit: emit}
 		toolCalls := []runloop.ToolCall{}
@@ -39091,7 +39091,8 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 			_ = a.refreshBuiltinToolScope()
 		}()
 		err := a.runSessionTurnWithOptions(ctx, "tui", sess, prompt, "idle", turnOptions{
-			Out: &streamOut,
+			Out:         &streamOut,
+			Attachments: attachments,
 			ConfigurePrompter: func(prompter *tools.Prompter) {
 				prompter.In = &lineAnswerReader{answers: permissionAnswers, done: ctx.Done()}
 				prompter.Err = io.Discard
@@ -39140,12 +39141,12 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		return strings.TrimSpace(out.String()), handled, nil
 	}
 	loopErr := tui.Shell(ctx, tui.ShellOptions{
-		Candidates:   a.slashCompletionCandidates(sess.ID),
-		Prefill:      overrides.Prefill,
-		History:      history,
-		Entries:      entries,
-		SubmitStream: submit,
-		Slash:        slashHandler,
+		Candidates:              a.slashCompletionCandidates(sess.ID),
+		Prefill:                 overrides.Prefill,
+		History:                 history,
+		Entries:                 entries,
+		SubmitStreamAttachments: submit,
+		Slash:                   slashHandler,
 		ExternalEditor: func(ctx context.Context, value string) (string, error) {
 			return a.editTUIComposer(ctx, value)
 		},
