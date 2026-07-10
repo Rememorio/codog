@@ -685,6 +685,61 @@ expect eof
 	require.Contains(t, joinedRequests, `\"answer\": \"beta\"`)
 }
 
+func TestRealBinaryTUICyclesModeBeforeTurnWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	server := httptest.NewServer(mockanthropic.Server{
+		Turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-write",
+				Name:  "write_file",
+				Input: json.RawMessage(`{"path":"mode-cycle.txt","content":"mode cycle ok\n"}`),
+			}}},
+			{Text: "mode cycle final ok"},
+		},
+	}.Handler())
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, `
+set timeout 10
+spawn -noecho $env(CODOG_TEST_BIN) --permission-mode read-only --model claude-sonnet-4-5 tui
+expect {
+  "Codog TUI" {}
+  timeout { exit 1 }
+}
+send "\033\[Z"
+expect {
+  "default" {}
+  timeout { exit 1 }
+}
+send "\033\[Z"
+expect {
+  "accept edits" {}
+  timeout { exit 1 }
+}
+send "mode cycle smoke\r"
+expect {
+  "mode cycle final ok" {}
+  timeout { exit 1 }
+}
+send "\003"
+expect {
+  eof {}
+  timeout { exit 1 }
+}
+`)
+
+	require.Contains(t, output, "accept edits")
+	require.Contains(t, output, "mode cycle final ok")
+	created, err := os.ReadFile(filepath.Join(workspace, "mode-cycle.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "mode cycle ok\n", string(created))
+}
+
 func TestRealBinaryPromptResumeSendsPriorSessionHistory(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()

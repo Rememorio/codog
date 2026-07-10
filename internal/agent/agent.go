@@ -39046,11 +39046,13 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 	history := a.tuiPromptHistory(sess.ID)
 	permissionAnswers := make(chan string, 1)
 	questionAnswers := make(chan string, 1)
+	modeState := newTUIModeState(a.Config)
 	submit := func(ctx context.Context, prompt string, emit func(tui.Entry)) (string, error) {
 		var out bytes.Buffer
 		streamOut := tuiStreamWriter{buffer: &out, emit: emit}
 		toolCalls := []runloop.ToolCall{}
 		liveToolEvents := false
+		modeState.Apply(&a.Config)
 		a.Tools.Register(tools.AskUserQuestionTool{
 			In: &lineAnswerReader{answers: questionAnswers, done: ctx.Done()},
 			Out: tuiQuestionWriter{emit: func(entry tui.Entry) {
@@ -39117,6 +39119,10 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		Entries:      entries,
 		SubmitStream: submit,
 		Slash:        slashHandler,
+		ModeLabel:    modeState.Label(),
+		CycleMode: func() string {
+			return modeState.Cycle()
+		},
 		PermissionAnswer: func(answer string) {
 			select {
 			case permissionAnswers <- answer + "\n":
@@ -39131,6 +39137,66 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		},
 	})
 	return a.finishREPL(ctx, sess, loopErr)
+}
+
+type tuiModeOption struct {
+	Label          string
+	PermissionMode string
+	PlanMode       bool
+}
+
+type tuiModeState struct {
+	options []tuiModeOption
+	index   int
+}
+
+func newTUIModeState(cfg config.Config) *tuiModeState {
+	options := []tuiModeOption{
+		{Label: "read-only", PermissionMode: "read-only"},
+		{Label: "default", PermissionMode: "prompt"},
+		{Label: "accept edits", PermissionMode: "workspace-write"},
+		{Label: "plan", PermissionMode: "read-only", PlanMode: true},
+	}
+	state := &tuiModeState{options: options, index: 1}
+	mode := strings.TrimSpace(cfg.PermissionMode)
+	switch mode {
+	case "allow":
+		state.options = append(state.options, tuiModeOption{Label: "bypass permissions", PermissionMode: "allow"})
+	case "danger-full-access":
+		state.options = append(state.options, tuiModeOption{Label: "danger full access", PermissionMode: "danger-full-access"})
+	}
+	for index, option := range state.options {
+		if option.PermissionMode == mode && option.PlanMode == cfg.PlanMode {
+			state.index = index
+			return state
+		}
+	}
+	return state
+}
+
+func (s *tuiModeState) Label() string {
+	if s == nil || len(s.options) == 0 {
+		return ""
+	}
+	option := s.options[s.index]
+	return option.Label
+}
+
+func (s *tuiModeState) Cycle() string {
+	if s == nil || len(s.options) == 0 {
+		return ""
+	}
+	s.index = (s.index + 1) % len(s.options)
+	return s.Label()
+}
+
+func (s *tuiModeState) Apply(cfg *config.Config) {
+	if s == nil || cfg == nil || len(s.options) == 0 {
+		return
+	}
+	option := s.options[s.index]
+	cfg.PermissionMode = option.PermissionMode
+	cfg.PlanMode = option.PlanMode
 }
 
 type lineAnswerReader struct {

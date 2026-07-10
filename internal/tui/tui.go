@@ -47,6 +47,8 @@ type ShellOptions struct {
 	Slash            SlashFunc
 	PermissionAnswer func(string)
 	QuestionAnswer   func(string)
+	ModeLabel        string
+	CycleMode        func() string
 }
 
 // Preview captures a deterministic TUI model state for tests and parity
@@ -80,6 +82,8 @@ type model struct {
 	slash              SlashFunc
 	permissionAnswer   func(string)
 	questionAnswer     func(string)
+	modeLabel          string
+	cycleMode          func() string
 	history            []string
 	historyPos         int
 	draft              string
@@ -173,6 +177,8 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.slash = options.Slash
 	m.permissionAnswer = options.PermissionAnswer
 	m.questionAnswer = options.QuestionAnswer
+	m.modeLabel = strings.TrimSpace(options.ModeLabel)
+	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
@@ -334,6 +340,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m = m.completeSlashCommand()
 			return m, nil
+		case "shift+tab":
+			if m.busy || m.cycleMode == nil {
+				return m, nil
+			}
+			if label := strings.TrimSpace(m.cycleMode()); label != "" {
+				m.modeLabel = label
+				m.status = m.mode()
+				m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Mode: " + label})
+				m.refreshViewport()
+				m.viewport.GotoBottom()
+			}
+			return m, nil
 		case "ctrl+r":
 			if len(m.history) > 0 {
 				m.openHistorySearch()
@@ -416,7 +434,8 @@ func (m model) View() string {
 	if m.searchOpen {
 		composer += "\n" + renderHistorySearch(m.searchHits, m.searchPos, m.textarea.Value())
 	}
-	status := statusStyle().Width(max(40, m.width)).Render(statusBarText(m.status, m.width))
+	statusText := appendStatusMode(statusBarText(m.status, m.width), m.modeLabel, m.width)
+	status := statusStyle().Width(max(40, m.width)).Render(statusText)
 	return strings.Join([]string{title, body, composer, status}, "\n")
 }
 
@@ -761,6 +780,23 @@ func statusBarText(status string, width int) string {
 	default:
 		return fmt.Sprintf("%s · Enter send · Alt+Enter newline · Tab complete · Ctrl-R history · ? help · Esc quit", status)
 	}
+}
+
+func appendStatusMode(status string, mode string, width int) string {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		return status
+	}
+	suffix := " · " + mode + " · Shift+Tab mode"
+	if width > 0 && len([]rune(status+suffix)) > width {
+		suffix = " · " + mode
+	}
+	out := status + suffix
+	if width <= 0 || len([]rune(out)) <= width {
+		return out
+	}
+	runes := []rune(out)
+	return string(runes[:width])
 }
 
 func isBusyStatus(status string) bool {

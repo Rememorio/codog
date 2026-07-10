@@ -113,6 +113,21 @@ func TestStatusBarShowsCancelHintWhileRunning(t *testing.T) {
 	require.LessOrEqual(t, len([]rune(text)), 80)
 }
 
+func TestShiftTabCyclesTUILocalMode(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.modeLabel = "default"
+	m.cycleMode = func() string { return "accept edits" }
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = updated.(model)
+
+	require.Equal(t, "accept edits", m.modeLabel)
+	require.Equal(t, "system", m.transcript[len(m.transcript)-1].Role)
+	require.Equal(t, "Mode: accept edits", m.transcript[len(m.transcript)-1].Text)
+	require.Contains(t, m.View(), "accept edits")
+}
+
 func TestPreviewWithCandidatesCompletesAndSubmits(t *testing.T) {
 	preview := PreviewWithCandidates("/mo", []string{"/model claude-test"}, 100, 24, true, true)
 

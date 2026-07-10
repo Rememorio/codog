@@ -213,6 +213,39 @@ func TestLineAnswerReaderReturnsEOFWhenCanceled(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 }
 
+func TestTUIModeStateCyclesPermissionModes(t *testing.T) {
+	state := newTUIModeState(config.Config{PermissionMode: "read-only"})
+	require.Equal(t, "read-only", state.Label())
+	var cfg config.Config
+	state.Apply(&cfg)
+	require.Equal(t, "read-only", cfg.PermissionMode)
+	require.False(t, cfg.PlanMode)
+
+	require.Equal(t, "default", state.Cycle())
+	state.Apply(&cfg)
+	require.Equal(t, "prompt", cfg.PermissionMode)
+	require.False(t, cfg.PlanMode)
+
+	require.Equal(t, "accept edits", state.Cycle())
+	state.Apply(&cfg)
+	require.Equal(t, "workspace-write", cfg.PermissionMode)
+	require.False(t, cfg.PlanMode)
+
+	require.Equal(t, "plan", state.Cycle())
+	state.Apply(&cfg)
+	require.Equal(t, "read-only", cfg.PermissionMode)
+	require.True(t, cfg.PlanMode)
+}
+
+func TestTUIModeStatePreservesBypassPermissionMode(t *testing.T) {
+	state := newTUIModeState(config.Config{PermissionMode: "allow"})
+	require.Equal(t, "bypass permissions", state.Label())
+	var cfg config.Config
+	state.Apply(&cfg)
+	require.Equal(t, "allow", cfg.PermissionMode)
+	require.False(t, cfg.PlanMode)
+}
+
 func TestEnterpriseAuditListsEvents(t *testing.T) {
 	configHome := t.TempDir()
 	require.NoError(t, audit.NewStore(configHome).Append(audit.Event{
