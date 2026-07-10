@@ -20698,6 +20698,13 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"binding_action": "clear screen"`)
 	out.Reset()
 
+	require.NoError(t, app.Keybindings([]string{"resolve", "tui", "Ctrl-B", "--json"}))
+	require.Contains(t, out.String(), `"action": "resolve"`)
+	require.Contains(t, out.String(), `"normalized_key": "ctrl+b"`)
+	require.Contains(t, out.String(), `"found": true`)
+	require.Contains(t, out.String(), `"binding_action": "run composer prompt in background"`)
+	out.Reset()
+
 	require.NoError(t, app.Keybindings([]string{"init", "--json"}))
 	require.Contains(t, out.String(), `"status": "created"`)
 	require.Contains(t, out.String(), `"created": true`)
@@ -20708,17 +20715,19 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), `"ctrl+g": "edit composer in $EDITOR"`)
 	require.Contains(t, string(data), `"ctrl+l": "clear screen"`)
 	require.Contains(t, string(data), `"ctrl+d": "exit when composer is empty"`)
+	require.Contains(t, string(data), `"ctrl+b": "run composer prompt in background"`)
 	out.Reset()
 
 	require.NoError(t, app.Keybindings([]string{"validate", "--json"}))
 	require.Contains(t, out.String(), `"action": "validate"`)
 	require.Contains(t, out.String(), `"valid": true`)
 	require.Contains(t, out.String(), `"context_count": 4`)
-	require.Contains(t, out.String(), `"binding_count": 27`)
+	require.Contains(t, out.String(), `"binding_count": 28`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+r"`)
 	require.Contains(t, out.String(), `"normalized_key": "shift+enter"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+g"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+l"`)
+	require.Contains(t, out.String(), `"normalized_key": "ctrl+b"`)
 	out.Reset()
 
 	require.NoError(t, os.WriteFile(keybindingsPath, []byte("custom\n"), 0o644))
@@ -20769,12 +20778,47 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "REPL vim")
 	require.Contains(t, out.String(), "Config exists    true")
 	require.Contains(t, out.String(), "User valid       true")
-	require.Contains(t, out.String(), "User bindings    27")
+	require.Contains(t, out.String(), "User bindings    28")
 	require.Contains(t, out.String(), "Shift-Enter")
 	require.Contains(t, out.String(), "Ctrl-G")
 	require.Contains(t, out.String(), "Ctrl-L")
 	require.Contains(t, out.String(), "Ctrl-D")
+	require.Contains(t, out.String(), "Ctrl-B")
 	require.Empty(t, errOut.String())
+}
+
+func TestDetachedPromptCommandCarriesConfigHome(t *testing.T) {
+	command := buildDetachedPromptCommand("/tmp/codog home", "/bin/codog", "review Bob's diff")
+
+	require.Contains(t, command, "CODOG_CONFIG_HOME='/tmp/codog home'")
+	require.Contains(t, command, "'/bin/codog' prompt")
+	require.Contains(t, command, "'review Bob'\"'\"'s diff'")
+}
+
+func TestTUIBackgroundPromptCreatesTask(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	app := &App{
+		Config:     config.Config{ConfigHome: configHome},
+		Workspace:  workspace,
+		Executable: "/bin/echo",
+		Out:        io.Discard,
+		Err:        io.Discard,
+	}
+
+	message, err := app.startTUIBackgroundPrompt(context.Background(), "session-tui", "review this diff")
+	require.NoError(t, err)
+	require.Contains(t, message, "Background task")
+
+	tasks, err := background.NewStore(configHome).List()
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.Equal(t, "prompt", tasks[0].Kind)
+	require.Equal(t, "session-tui", tasks[0].SessionID)
+	require.Equal(t, "review this diff", tasks[0].Prompt)
+	require.Equal(t, "TUI background prompt", tasks[0].Description)
+	require.Contains(t, tasks[0].Command, "CODOG_CONFIG_HOME=")
+	require.Contains(t, tasks[0].Command, "'/bin/echo' prompt 'review this diff'")
 }
 
 func TestTUIComposerExternalEditorUsesEditorEnv(t *testing.T) {

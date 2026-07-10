@@ -40,6 +40,10 @@ type SlashFunc func(context.Context, string) (output string, handled bool, err e
 // returns the replacement composer text.
 type ExternalEditorFunc func(context.Context, string) (string, error)
 
+// BackgroundFunc starts the current composer prompt in a detached background
+// task and returns a user-facing status line.
+type BackgroundFunc func(context.Context, string) (string, error)
+
 // ShellOptions configures the full-screen TUI shell.
 type ShellOptions struct {
 	Candidates       []string
@@ -52,6 +56,7 @@ type ShellOptions struct {
 	PermissionAnswer func(string)
 	QuestionAnswer   func(string)
 	ExternalEditor   ExternalEditorFunc
+	Background       BackgroundFunc
 	ModeLabel        string
 	CycleMode        func() string
 }
@@ -88,6 +93,7 @@ type model struct {
 	permissionAnswer   func(string)
 	questionAnswer     func(string)
 	externalEditor     ExternalEditorFunc
+	background         BackgroundFunc
 	modeLabel          string
 	cycleMode          func() string
 	history            []string
@@ -186,6 +192,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.permissionAnswer = options.PermissionAnswer
 	m.questionAnswer = options.QuestionAnswer
 	m.externalEditor = options.ExternalEditor
+	m.background = options.Background
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
@@ -282,6 +289,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "editor updated"
 		m.refreshSlashMenu()
 		return m, nil
+	case backgroundDoneMsg:
+		m.busy = false
+		if msg.Err != nil {
+			m.status = "background error"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return m, nil
+		}
+		m.textarea.SetValue("")
+		m.matches = nil
+		m.selected = 0
+		m.historyPos = -1
+		m.status = "backgrounded"
+		if strings.TrimSpace(msg.Output) == "" {
+			msg.Output = "Background task started."
+		}
+		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: msg.Output})
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		return m, nil
 	case turnStreamMsg:
 		m.appendStreamDelta(msg.Role, msg.Delta)
 		if strings.EqualFold(msg.Role, "permission") {
@@ -344,6 +372,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.clearScreen()
 			return m, nil
+		case "ctrl+b":
+			if m.busy || m.background == nil || m.searchOpen {
+				return m, nil
+			}
+			value := strings.TrimSpace(m.textarea.Value())
+			if value == "" {
+				return m, nil
+			}
+			m.appendHistory(value)
+			m.matches = nil
+			m.selected = 0
+			m.historyPos = -1
+			m.busy = true
+			m.status = "backgrounding"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: value})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return m, runBackgroundCommand(m.ctx, m.background, value)
 		case "shift+enter", "alt+enter", "ctrl+j":
 			m.textarea.InsertString("\n")
 			return m, nil
@@ -710,10 +756,22 @@ type externalEditorDoneMsg struct {
 	Err  error
 }
 
+type backgroundDoneMsg struct {
+	Output string
+	Err    error
+}
+
 func runExternalEditorCommand(ctx context.Context, editor ExternalEditorFunc, value string) tea.Cmd {
 	return func() tea.Msg {
 		text, err := editor(ctx, value)
 		return externalEditorDoneMsg{Text: text, Err: err}
+	}
+}
+
+func runBackgroundCommand(ctx context.Context, background BackgroundFunc, prompt string) tea.Cmd {
+	return func() tea.Msg {
+		output, err := background(ctx, prompt)
+		return backgroundDoneMsg{Output: output, Err: err}
 	}
 }
 
@@ -1016,7 +1074,7 @@ func appendStatusMode(status string, mode string, width int) string {
 
 func isBusyStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "running", "running slash", "interrupting":
+	case "running", "running slash", "interrupting", "backgrounding":
 		return true
 	default:
 		return false
@@ -1343,6 +1401,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Up/Down     recall prompt history when composer is empty",
 		"  Ctrl+J      insert newline",
 		"  PgUp/PgDn   scroll transcript",
+		"  Ctrl+B      run composer prompt in background",
 		"  ?           toggle this help panel",
 		"  Esc         cancel a running turn, close help, or quit",
 	}

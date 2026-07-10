@@ -6452,6 +6452,15 @@ func buildCronPromptCommand(exe string, prompt string) string {
 	return strings.Join([]string{shellQuote(exe), "prompt", shellQuote(prompt)}, " ")
 }
 
+func buildDetachedPromptCommand(configHome string, exe string, prompt string) string {
+	parts := []string{}
+	if strings.TrimSpace(configHome) != "" {
+		parts = append(parts, "CODOG_CONFIG_HOME="+shellQuote(configHome))
+	}
+	parts = append(parts, shellQuote(exe), "prompt", shellQuote(prompt))
+	return strings.Join(parts, " ")
+}
+
 type teamRequest struct {
 	Action    string
 	Format    string
@@ -20806,6 +20815,7 @@ func defaultKeybindingsTemplate() []byte {
 					"ctrl+u":      "delete before cursor",
 					"ctrl+k":      "delete after cursor",
 					"ctrl+d":      "exit when composer is empty",
+					"ctrl+b":      "run composer prompt in background",
 					"tab":         "complete slash command",
 					"esc":         "quit",
 					"ctrl+c":      "quit",
@@ -20877,6 +20887,7 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Ctrl-U", Action: "delete before cursor"},
 					{Key: "Ctrl-K", Action: "delete after cursor"},
 					{Key: "Ctrl-D", Action: "exit when composer is empty"},
+					{Key: "Ctrl-B", Action: "run composer prompt in background"},
 					{Key: "Tab", Action: "complete slash command"},
 					{Key: "Esc", Action: "quit"},
 					{Key: "Ctrl-C", Action: "quit"},
@@ -39134,6 +39145,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		ExternalEditor: func(ctx context.Context, value string) (string, error) {
 			return a.editTUIComposer(ctx, value)
 		},
+		Background: func(ctx context.Context, prompt string) (string, error) {
+			return a.startTUIBackgroundPrompt(ctx, sess.ID, prompt)
+		},
 		ModeLabel: modeState.Label(),
 		CycleMode: func() string {
 			return modeState.Cycle()
@@ -39152,6 +39166,33 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		},
 	})
 	return a.finishREPL(ctx, sess, loopErr)
+}
+
+func (a *App) startTUIBackgroundPrompt(ctx context.Context, sessionID string, prompt string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return "", errors.New("background prompt is empty")
+	}
+	executable, err := a.executablePath()
+	if err != nil {
+		return "", err
+	}
+	command := buildDetachedPromptCommand(a.Config.ConfigHome, executable, prompt)
+	task, err := background.NewStore(a.Config.ConfigHome).RunWithOptions(command, a.Workspace, background.RunOptions{
+		Kind:        "prompt",
+		SessionID:   sessionID,
+		Prompt:      prompt,
+		Description: "TUI background prompt",
+	})
+	if err != nil {
+		return "", err
+	}
+	a.runTaskCreatedHook(context.Background(), task)
+	a.runNotificationHook(context.Background(), "background_task_started", "Background prompt started", fmt.Sprintf("Background task %s started from TUI", task.ID))
+	return fmt.Sprintf("Background task %s started. Use /background logs %s to inspect output.", task.ID, task.ID), nil
 }
 
 func (a *App) editTUIComposer(ctx context.Context, value string) (string, error) {

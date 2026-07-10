@@ -598,10 +598,11 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, privacyKeybindings.Output, `"created":true`)
 	require.Contains(t, privacyKeybindings.Output, `"valid":true`)
 	require.Contains(t, privacyKeybindings.Output, `"contexts":4`)
-	require.Contains(t, privacyKeybindings.Output, `"bindings":27`)
+	require.Contains(t, privacyKeybindings.Output, `"bindings":28`)
 	require.Contains(t, privacyKeybindings.Output, `"shift_enter":true`)
 	require.Contains(t, privacyKeybindings.Output, `"external_editor":true`)
 	require.Contains(t, privacyKeybindings.Output, `"terminal_keys":true`)
+	require.Contains(t, privacyKeybindings.Output, `"background_key":true`)
 	require.Contains(t, privacyKeybindings.Output, `"resolved":true`)
 	require.Contains(t, privacyKeybindings.Output, `"source":"user"`)
 

@@ -729,6 +729,51 @@ func TestCtrlUAndCtrlKEditComposer(t *testing.T) {
 	require.Empty(t, next.textarea.Value())
 }
 
+func TestCtrlBStartsBackgroundPrompt(t *testing.T) {
+	ta := newPromptTextarea("review this diff")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.background = func(_ context.Context, prompt string) (string, error) {
+		require.Equal(t, "review this diff", prompt)
+		return "Background task started: task-1", nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	next := updated.(model)
+	require.True(t, next.busy)
+	require.Equal(t, "backgrounding", next.status)
+	require.NotNil(t, cmd)
+	require.Equal(t, "review this diff", next.textarea.Value())
+	require.Contains(t, next.history, "review this diff")
+
+	updated, _ = next.Update(cmd())
+	next = updated.(model)
+	require.False(t, next.busy)
+	require.Empty(t, next.textarea.Value())
+	require.Equal(t, "backgrounded", next.status)
+	require.Equal(t, "system", next.transcript[len(next.transcript)-1].Role)
+	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "task-1")
+}
+
+func TestCtrlBBackgroundErrorKeepsComposer(t *testing.T) {
+	ta := newPromptTextarea("review this diff")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.background = func(context.Context, string) (string, error) {
+		return "", errors.New("background failed")
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	next := updated.(model)
+	require.NotNil(t, cmd)
+
+	updated, _ = next.Update(cmd())
+	next = updated.(model)
+	require.False(t, next.busy)
+	require.Equal(t, "review this diff", next.textarea.Value())
+	require.Equal(t, "background error", next.status)
+	require.Equal(t, "error", next.transcript[len(next.transcript)-1].Role)
+	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "background failed")
+}
+
 func TestPastedMultilineInputDoesNotSubmitUntilEnter(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, nil)
