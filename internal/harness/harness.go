@@ -3583,6 +3583,9 @@ func privacyKeybindingsScenario() scenario {
 			if !strings.Contains(string(keybindingsData), `"context": "tui-modal"`) || !strings.Contains(string(keybindingsData), `"j"`) || !strings.Contains(string(keybindingsData), `"shift+down"`) || !strings.Contains(string(keybindingsData), `"ctrl+down"`) {
 				return localScenarioResult{}, fmt.Errorf("keybindings template missing modal navigation entries: %s", string(keybindingsData))
 			}
+			if !strings.Contains(string(keybindingsData), `"context": "tui-attachments"`) || !strings.Contains(string(keybindingsData), `"right"`) || !strings.Contains(string(keybindingsData), `"backspace"`) || !strings.Contains(string(keybindingsData), `"delete"`) {
+				return localScenarioResult{}, fmt.Errorf("keybindings template missing attachment navigation entries: %s", string(keybindingsData))
+			}
 
 			editorLog := filepath.Join(workspace, "keybindings-editor.log")
 			editorScript := filepath.Join(workspace, "keybindings-editor.sh")
@@ -3620,7 +3623,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 5 || validateReport.BindingCount != 71 {
+			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 6 || validateReport.BindingCount != 77 {
 				return localScenarioResult{}, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
 			}
 
@@ -3686,6 +3689,7 @@ func privacyKeybindingsScenario() scenario {
 					"global_search_key":     strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) && strings.Contains(string(keybindingsData), `"ctrl+f"`),
 					"mode_cycle_keys":       strings.Contains(string(keybindingsData), `"alt+m"`) && strings.Contains(string(keybindingsData), `"meta+m"`),
 					"modal_navigation_keys": strings.Contains(string(keybindingsData), `"context": "tui-modal"`) && strings.Contains(string(keybindingsData), `"j"`) && strings.Contains(string(keybindingsData), `"k"`) && strings.Contains(string(keybindingsData), `"shift+down"`),
+					"attachment_nav_keys":   strings.Contains(string(keybindingsData), `"context": "tui-attachments"`) && strings.Contains(string(keybindingsData), `"right"`) && strings.Contains(string(keybindingsData), `"backspace"`) && strings.Contains(string(keybindingsData), `"delete"`),
 					"runtime_control_keys":  strings.Contains(string(keybindingsData), `"alt+p"`) && strings.Contains(string(keybindingsData), `"alt+o"`) && strings.Contains(string(keybindingsData), `"alt+t"`),
 					"message_actions_key":   strings.Contains(string(keybindingsData), `"shift+up"`),
 					"transcript_key":        strings.Contains(string(keybindingsData), `"ctrl+o"`),
@@ -5440,6 +5444,10 @@ func tuiPromptCompletionScenario() scenario {
 			if len(attachmentRemoval.Attachments) != 1 || attachmentRemoval.Attachments[0] != "notes.txt" || !strings.Contains(attachmentRemoval.View, "attachment removed") {
 				return localScenarioResult{}, fmt.Errorf("expected attachment removal preview, got attachments=%#v view=%s", attachmentRemoval.Attachments, attachmentRemoval.View)
 			}
+			attachmentNavigation := tui.PreviewWithAttachmentNavigation("describe", []string{"notes.txt", "pixel.png", "report.pdf"}, []string{"right", "delete"}, 96, 24)
+			if !attachmentNavigation.AttachmentsOpen || len(attachmentNavigation.Attachments) != 2 || attachmentNavigation.Attachments[1] != "report.pdf" || !strings.Contains(attachmentNavigation.View, "attachments 2/2") {
+				return localScenarioResult{}, fmt.Errorf("expected attachment navigation preview, got attachments=%#v view=%s", attachmentNavigation.Attachments, attachmentNavigation.View)
+			}
 			paste := tui.PreviewWithPaste("prefix ", "clipboard text", 96, 24)
 			if paste.Value != "prefix clipboard text" || !strings.Contains(paste.View, "pasted 1 line") {
 				return localScenarioResult{}, fmt.Errorf("expected paste preview, got value=%q view=%s", paste.Value, paste.View)
@@ -5573,6 +5581,7 @@ func tuiPromptCompletionScenario() scenario {
 				"todos_preview":                todosPreview.TodosOpen && strings.Contains(todosPreview.View, "write focused parity test"),
 				"undo_preview":                 undoPreview.Value == "" && strings.Contains(undoPreview.View, "undo"),
 				"attachment_preview":           strings.Contains(attachments.View, "attachments: 2"),
+				"attachment_navigation":        attachmentNavigation.AttachmentsOpen && len(attachmentNavigation.Attachments) == 2,
 				"paste_preview":                strings.Contains(paste.View, "pasted 1 line"),
 				"paste_image_preview":          strings.Contains(pasteImage.View, "clipboard image attached"),
 				"file_ref_completion":          strings.Contains(fileRef.Value, "@internal/tui/tui.go"),

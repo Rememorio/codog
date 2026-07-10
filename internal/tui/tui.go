@@ -136,21 +136,22 @@ type ShellOptions struct {
 // Preview captures a deterministic TUI model state for tests and parity
 // harnesses without taking over the terminal.
 type Preview struct {
-	View         string
-	Value        string
-	Matches      []string
-	Submitted    bool
-	Prompt       string
-	Attachments  []string
-	Mode         string
-	HelpOpen     bool
-	HasStash     bool
-	Transcript   bool
-	QuickOpen    bool
-	GlobalSearch bool
-	TodosOpen    bool
-	ModelPicker  bool
-	MessageMenu  bool
+	View            string
+	Value           string
+	Matches         []string
+	Submitted       bool
+	Prompt          string
+	Attachments     []string
+	Mode            string
+	HelpOpen        bool
+	HasStash        bool
+	Transcript      bool
+	QuickOpen       bool
+	GlobalSearch    bool
+	TodosOpen       bool
+	ModelPicker     bool
+	MessageMenu     bool
+	AttachmentsOpen bool
 }
 
 type composerStash struct {
@@ -238,6 +239,8 @@ type model struct {
 	messageActionSelected     int
 	queuedPrompts             []string
 	attachments               []string
+	attachmentsOpen           bool
+	attachmentSelected        int
 	stashedPrompt             *composerStash
 	searchOpen                bool
 	searchHits                []string
@@ -549,6 +552,66 @@ func PreviewWithAttachmentRemoval(input string, attachments []string, width int,
 		QuickOpen:    m.quickOpen,
 		GlobalSearch: m.globalSearch,
 		TodosOpen:    m.todosOpen,
+	}
+}
+
+// PreviewWithAttachmentNavigation renders the TUI attachment selector after
+// opening it and applying the provided navigation keys.
+func PreviewWithAttachmentNavigation(input string, attachments []string, keys []string, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	m.attachments = append([]string(nil), attachments...)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	m.textarea.SetValue("/attachments")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	for _, key := range keys {
+		updated, _ = m.Update(attachmentPreviewKey(key))
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:            m.View(),
+		Value:           m.textarea.Value(),
+		Matches:         append([]string(nil), m.matches...),
+		Attachments:     append([]string(nil), m.attachments...),
+		Mode:            m.mode(),
+		HelpOpen:        m.helpOpen,
+		HasStash:        m.stashedPrompt != nil,
+		Transcript:      m.transcriptMode,
+		QuickOpen:       m.quickOpen,
+		GlobalSearch:    m.globalSearch,
+		TodosOpen:       m.todosOpen,
+		ModelPicker:     m.modelPicker,
+		MessageMenu:     m.messageActions,
+		AttachmentsOpen: m.attachmentsOpen,
+	}
+}
+
+func attachmentPreviewKey(key string) tea.KeyMsg {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "left":
+		return tea.KeyMsg{Type: tea.KeyLeft}
+	case "right":
+		return tea.KeyMsg{Type: tea.KeyRight}
+	case "backspace":
+		return tea.KeyMsg{Type: tea.KeyBackspace}
+	case "delete":
+		return tea.KeyMsg{Type: tea.KeyDelete}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "esc", "escape":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	default:
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	}
 }
 
@@ -1251,6 +1314,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Paste {
 			return m.handlePastedInput(msg)
 		}
+		if m.attachmentsOpen {
+			switch msg.String() {
+			case "ctrl+c", "esc", "down":
+				m.closeAttachmentsPanel()
+				return m, nil
+			case "right":
+				m.moveAttachmentSelection(1)
+				return m, nil
+			case "left":
+				m.moveAttachmentSelection(-1)
+				return m, nil
+			case "backspace", "delete":
+				m.removeSelectedAttachment()
+				return m, nil
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "shift+up", "alt+m", "meta+m", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
+				return m, nil
+			}
+			return m, nil
+		}
 		if m.modelPicker {
 			switch msg.String() {
 			case "ctrl+c", "esc", "alt+p", "meta+p":
@@ -1886,7 +1968,9 @@ func (m model) View() string {
 	if len(m.queuedPrompts) > 0 {
 		composer += "\n" + renderQueuedPrompts(m.queuedPrompts)
 	}
-	if len(m.attachments) > 0 {
+	if m.attachmentsOpen {
+		composer += "\n" + renderAttachmentPanel(m.attachments, m.attachmentSelected, m.width)
+	} else if len(m.attachments) > 0 {
 		composer += "\n" + renderPendingAttachments(m.attachments)
 	}
 	if m.stashedPrompt != nil {
@@ -1974,6 +2058,7 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 	m.selected = 0
 	m.historyPos = -1
 	m.attachments = nil
+	m.closeAttachmentsPanel()
 	m.busy = true
 	m.status = "running"
 	m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: renderSubmittedInput(value, attachments)})
@@ -2066,6 +2151,7 @@ func (m *model) togglePromptStash() {
 		m.textarea.SetValue(m.stashedPrompt.Text)
 		m.textarea.CursorEnd()
 		m.attachments = append([]string(nil), m.stashedPrompt.Attachments...)
+		m.normalizeAttachmentSelection()
 		m.stashedPrompt = nil
 		m.matches = nil
 		m.selected = 0
@@ -2080,6 +2166,7 @@ func (m *model) togglePromptStash() {
 	}
 	m.textarea.SetValue("")
 	m.attachments = nil
+	m.closeAttachmentsPanel()
 	m.matches = nil
 	m.selected = 0
 	m.historyPos = -1
@@ -2125,8 +2212,14 @@ func (m *model) handleAttachmentInput(value string) bool {
 	m.selected = 0
 	m.historyPos = -1
 	if len(fields) == 1 || strings.EqualFold(fields[1], "list") {
-		m.status = "attachments"
-		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: renderAttachmentSummary(m.attachments)})
+		if len(m.attachments) > 0 {
+			m.openAttachmentsPanel()
+			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: renderAttachmentSummary(m.attachments)})
+		} else {
+			m.closeAttachmentsPanel()
+			m.status = "attachments"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: renderAttachmentSummary(m.attachments)})
+		}
 		m.refreshViewport()
 		m.viewport.GotoBottom()
 		return true
@@ -2135,6 +2228,7 @@ func (m *model) handleAttachmentInput(value string) bool {
 	case "clear":
 		count := len(m.attachments)
 		m.attachments = nil
+		m.closeAttachmentsPanel()
 		m.status = "attachments cleared"
 		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Cleared %d pending %s.", count, plural("attachment", count))})
 		m.refreshViewport()
@@ -2155,6 +2249,7 @@ func (m *model) handleAttachmentInput(value string) bool {
 			m.viewport.GotoBottom()
 			return true
 		}
+		m.normalizeAttachmentSelection()
 		m.status = "attachment removed"
 		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: renderAttachmentSummary(m.attachments)})
 		m.refreshViewport()
@@ -2175,6 +2270,7 @@ func (m *model) handleAttachmentInput(value string) bool {
 		}
 	}
 	m.status = fmt.Sprintf("%d attached", len(m.attachments))
+	m.normalizeAttachmentSelection()
 	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Added %d %s for the next prompt.\n%s", added, plural("attachment", added), renderAttachmentSummary(m.attachments))})
 	m.refreshViewport()
 	m.viewport.GotoBottom()
@@ -2192,6 +2288,7 @@ func (m *model) removeAttachment(indexText string) bool {
 		return false
 	}
 	m.attachments = append(append([]string(nil), m.attachments[:index-1]...), m.attachments[index:]...)
+	m.normalizeAttachmentSelection()
 	return true
 }
 
@@ -2202,6 +2299,67 @@ func (m *model) removeLastAttachment() {
 	}
 	removed := m.attachments[len(m.attachments)-1]
 	m.attachments = append([]string(nil), m.attachments[:len(m.attachments)-1]...)
+	m.normalizeAttachmentSelection()
+	m.status = "attachment removed"
+	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Removed attachment: %s\n%s", removed, renderAttachmentSummary(m.attachments))})
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+}
+
+func (m *model) openAttachmentsPanel() {
+	if len(m.attachments) == 0 {
+		m.closeAttachmentsPanel()
+		m.status = "no attachments"
+		return
+	}
+	if m.helpOpen {
+		m.helpOpen = false
+		m.refreshViewport()
+	}
+	m.matches = nil
+	m.selected = 0
+	m.searchOpen = false
+	m.attachmentsOpen = true
+	m.normalizeAttachmentSelection()
+	m.status = "attachments"
+}
+
+func (m *model) closeAttachmentsPanel() {
+	m.attachmentsOpen = false
+	m.attachmentSelected = 0
+	if !m.busy && !m.backgrounding {
+		m.status = m.mode()
+	}
+}
+
+func (m *model) normalizeAttachmentSelection() {
+	if len(m.attachments) == 0 {
+		m.attachmentsOpen = false
+		m.attachmentSelected = 0
+		return
+	}
+	m.attachmentSelected = clampIndex(m.attachmentSelected, len(m.attachments))
+}
+
+func (m *model) moveAttachmentSelection(delta int) {
+	if len(m.attachments) == 0 {
+		m.closeAttachmentsPanel()
+		return
+	}
+	m.attachmentSelected = (m.attachmentSelected + delta + len(m.attachments)) % len(m.attachments)
+	m.status = "attachments"
+}
+
+func (m *model) removeSelectedAttachment() {
+	if len(m.attachments) == 0 {
+		m.closeAttachmentsPanel()
+		m.status = "no attachments"
+		return
+	}
+	m.normalizeAttachmentSelection()
+	removed := m.attachments[m.attachmentSelected]
+	m.attachments = append(append([]string(nil), m.attachments[:m.attachmentSelected]...), m.attachments[m.attachmentSelected+1:]...)
+	m.normalizeAttachmentSelection()
 	m.status = "attachment removed"
 	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Removed attachment: %s\n%s", removed, renderAttachmentSummary(m.attachments))})
 	m.refreshViewport()
@@ -2566,7 +2724,7 @@ func (m model) completeSlashCommand() model {
 
 func (m *model) refreshCompletionMenu() {
 	value := strings.Trim(m.textarea.Value(), "\r\n\t")
-	if value == "" || m.busy || m.searchOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.messageActions {
+	if value == "" || m.busy || m.searchOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.messageActions || m.attachmentsOpen {
 		m.matches = nil
 		m.selected = 0
 		return
@@ -3743,6 +3901,29 @@ func renderPendingAttachments(attachments []string) string {
 	return strings.Join(lines, "\n")
 }
 
+func renderAttachmentPanel(attachments []string, selected int, width int) string {
+	if len(attachments) == 0 {
+		return ""
+	}
+	selected = clampIndex(selected, len(attachments))
+	limit := 100
+	if width > 0 {
+		limit = max(40, width-8)
+	}
+	lines := []string{completionTitleStyle().Render(fmt.Sprintf(" attachments %d/%d ", selected+1, len(attachments)))}
+	for index, attachment := range attachments {
+		prefix := "  "
+		style := completionStyle()
+		if index == selected {
+			prefix = "> "
+			style = selectedCompletionStyle()
+		}
+		lines = append(lines, style.Render(fmt.Sprintf("%s%d. %s", prefix, index+1, truncateForComposer(attachment, limit))))
+	}
+	lines = append(lines, completionStyle().Render("  Left/Right select · Backspace/Delete remove · Down/Esc close"))
+	return strings.Join(lines, "\n")
+}
+
 func renderStashNotice(stash *composerStash) string {
 	if stash == nil {
 		return ""
@@ -4368,6 +4549,9 @@ func (m model) mode() string {
 	}
 	if m.messageActions {
 		return "message actions"
+	}
+	if m.attachmentsOpen {
+		return "attachments"
 	}
 	if len(m.matches) > 0 {
 		return fmt.Sprintf("%d completions", len(m.matches))

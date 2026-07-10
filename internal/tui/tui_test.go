@@ -1989,13 +1989,70 @@ func TestAttachmentCommandsListRemoveAndClear(t *testing.T) {
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	require.Equal(t, "attachments", m.status)
+	require.True(t, m.attachmentsOpen)
 	require.Contains(t, m.transcript[len(m.transcript)-1].Text, "Pending attachments: 1")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.False(t, m.attachmentsOpen)
 
 	m.textarea.SetValue("/attach clear")
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	require.Empty(t, m.attachments)
 	require.Equal(t, "attachments cleared", m.status)
+}
+
+func TestAttachmentSelectorNavigatesRemovesAndCloses(t *testing.T) {
+	ta := newPromptTextarea("/attachments")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.attachments = []string{"one.txt", "two.txt", "three.txt"}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	require.True(t, m.attachmentsOpen)
+	require.Equal(t, 0, m.attachmentSelected)
+	require.Contains(t, m.View(), "attachments 1/3")
+	require.Contains(t, m.View(), "> 1. one.txt")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(model)
+	require.Equal(t, 1, m.attachmentSelected)
+	require.Contains(t, m.View(), "attachments 2/3")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updated.(model)
+	require.True(t, m.attachmentsOpen)
+	require.Equal(t, []string{"one.txt", "three.txt"}, m.attachments)
+	require.Equal(t, 1, m.attachmentSelected)
+	require.Equal(t, "attachment removed", m.status)
+	require.Contains(t, m.transcript[len(m.transcript)-1].Text, "Removed attachment: two.txt")
+	require.Contains(t, m.View(), "attachments 2/2")
+	require.Contains(t, m.View(), "> 2. three.txt")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(model)
+	require.Equal(t, 0, m.attachmentSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	require.False(t, m.attachmentsOpen)
+	require.Contains(t, m.View(), "attachments: 2")
+}
+
+func TestPreviewWithAttachmentNavigation(t *testing.T) {
+	preview := PreviewWithAttachmentNavigation("describe", []string{"one.txt", "two.txt", "three.txt"}, []string{"right", "delete"}, 96, 24)
+
+	require.True(t, preview.AttachmentsOpen)
+	require.Equal(t, []string{"one.txt", "three.txt"}, preview.Attachments)
+	require.Contains(t, preview.View, "attachments 2/2")
+	require.Contains(t, preview.View, "three.txt")
+
+	closed := PreviewWithAttachmentNavigation("describe", []string{"one.txt"}, []string{"esc"}, 96, 24)
+	require.False(t, closed.AttachmentsOpen)
+	require.Equal(t, []string{"one.txt"}, closed.Attachments)
+	require.Contains(t, closed.View, "attachments: 1")
 }
 
 func TestCtrlXBackspaceRemovesLastAttachment(t *testing.T) {

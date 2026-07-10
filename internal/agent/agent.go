@@ -20960,6 +20960,17 @@ func defaultKeybindingsTemplate() []byte {
 				},
 			},
 			{
+				Context: "tui-attachments",
+				Bindings: map[string]string{
+					"right":     "select next attachment",
+					"left":      "select previous attachment",
+					"backspace": "remove selected attachment",
+					"delete":    "remove selected attachment",
+					"down":      "close attachment selector",
+					"esc":       "close attachment selector",
+				},
+			},
+			{
 				Context: "slash",
 				Bindings: map[string]string{
 					"/help":                 "show command help",
@@ -21065,6 +21076,14 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "End / Ctrl-Down / Meta-Down / Alt-Down / Shift-J", Action: "jump selection to bottom"},
 					{Key: "Left / Right", Action: "move message action target"},
 					{Key: "Shift-Up / Shift-Down", Action: "move between user messages in message actions"},
+				},
+			},
+			{
+				Name: "TUI attachments",
+				Entries: []keybindingEntry{
+					{Key: "Right / Left", Action: "select next or previous pending attachment"},
+					{Key: "Backspace / Delete", Action: "remove selected pending attachment"},
+					{Key: "Down / Esc", Action: "close attachment selector"},
 				},
 			},
 			{
