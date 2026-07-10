@@ -334,6 +334,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, tea.Quit
+		case "ctrl+d":
+			if !m.busy && !m.searchOpen && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
+				return m, tea.Quit
+			}
+		case "ctrl+l":
+			if m.busy {
+				return m, nil
+			}
+			m.clearScreen()
+			return m, nil
 		case "shift+enter", "alt+enter", "ctrl+j":
 			m.textarea.InsertString("\n")
 			return m, nil
@@ -751,6 +761,19 @@ func (m *model) answerQuestion() {
 	m.viewport.GotoBottom()
 }
 
+func (m *model) clearScreen() {
+	m.helpOpen = false
+	m.matches = nil
+	m.selected = 0
+	m.searchOpen = false
+	m.searchHits = nil
+	m.searchPos = 0
+	m.transcript = []transcriptEntry{{Role: "system", Text: "Screen cleared."}}
+	m.status = "cleared"
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+}
+
 func isPermissionRequestDelta(delta string) bool {
 	normalized := strings.ToLower(delta)
 	return strings.Contains(normalized, " requires ")
@@ -968,9 +991,9 @@ func statusBarText(status string, width int) string {
 	case width > 0 && width < 70:
 		return fmt.Sprintf("%s · Enter · Tab · Ctrl-R · Esc", status)
 	case width > 0 && width < 90:
-		return fmt.Sprintf("%s · Enter send · Shift+Enter newline · Tab · Ctrl-R · Esc", status)
+		return fmt.Sprintf("%s · Enter send · Shift+Enter newline · Tab · Ctrl-R · Ctrl-D · Esc", status)
 	default:
-		return fmt.Sprintf("%s · Enter send · Shift+Enter or \\+Enter newline · Tab complete · Ctrl-R history · ? help · Esc quit", status)
+		return fmt.Sprintf("%s · Enter send · Shift+Enter or \\+Enter newline · Tab complete · Ctrl-R history · Ctrl-L clear · Ctrl-D exit", status)
 	}
 }
 
@@ -1310,6 +1333,10 @@ func helpPanel(candidates []string, width int) string {
 		"  Alt+Enter   insert newline fallback",
 		"  \\+Enter     replace trailing backslash with newline",
 		"  Ctrl+G      edit composer in $EDITOR",
+		"  Ctrl+L      clear screen",
+		"  Ctrl+U      delete before cursor",
+		"  Ctrl+K      delete after cursor",
+		"  Ctrl+D      exit when composer is empty",
 		"  Ctrl+R      search prompt history",
 		"  Tab         complete slash command",
 		"  Up/Down     choose a shown completion",

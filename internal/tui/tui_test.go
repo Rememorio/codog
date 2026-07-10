@@ -143,8 +143,8 @@ func TestStatusBarUsesCompactHintsAtTerminalWidth(t *testing.T) {
 	require.Contains(t, text, "Enter send")
 	require.Contains(t, text, "Shift+Enter newline")
 	require.Contains(t, text, "Tab")
-	require.Contains(t, text, "Esc")
 	require.Contains(t, text, "Ctrl-R")
+	require.Contains(t, text, "Ctrl-D")
 	require.NotContains(t, text, "Tab complete")
 	require.NotContains(t, text, "Alt+Enter")
 	require.LessOrEqual(t, len([]rune(text)), 80)
@@ -666,6 +666,67 @@ func TestExternalEditorShortcutRendersErrors(t *testing.T) {
 	require.Equal(t, "editor error", next.status)
 	require.Equal(t, "error", next.transcript[len(next.transcript)-1].Role)
 	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "editor failed")
+}
+
+func TestCtrlDExitsWhenComposerIsEmpty(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	next := updated.(model)
+
+	require.NotNil(t, cmd)
+	_, ok := cmd().(tea.QuitMsg)
+	require.True(t, ok)
+	require.False(t, next.result.Submitted)
+}
+
+func TestCtrlDDeletesForwardWhenComposerHasText(t *testing.T) {
+	ta := newPromptTextarea("abc")
+	ta.CursorStart()
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	next := updated.(model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, "bc", next.textarea.Value())
+}
+
+func TestCtrlLClearsVisibleTranscript(t *testing.T) {
+	ta := newPromptTextarea("draft")
+	m := newModel(context.Background(), ta, nil, []transcriptEntry{
+		{Role: "user", Text: "old prompt"},
+		{Role: "assistant", Text: "old answer"},
+	})
+	m.matches = []string{"/model"}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	next := updated.(model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, "draft", next.textarea.Value())
+	require.Empty(t, next.matches)
+	require.Equal(t, "cleared", next.status)
+	require.Equal(t, []transcriptEntry{{Role: "system", Text: "Screen cleared."}}, next.transcript)
+	require.Contains(t, next.View(), "Screen cleared.")
+	require.NotContains(t, next.View(), "old answer")
+}
+
+func TestCtrlUAndCtrlKEditComposer(t *testing.T) {
+	ta := newPromptTextarea("first second")
+	ta.CursorEnd()
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	next := updated.(model)
+	require.Empty(t, next.textarea.Value())
+
+	next.textarea.SetValue("first second")
+	next.textarea.CursorStart()
+	updated, _ = next.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	next = updated.(model)
+	require.Empty(t, next.textarea.Value())
 }
 
 func TestPastedMultilineInputDoesNotSubmitUntilEnter(t *testing.T) {
