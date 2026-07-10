@@ -3581,6 +3581,34 @@ func privacyKeybindingsScenario() scenario {
 				return localScenarioResult{}, fmt.Errorf("keybindings template missing expected entries: %s", string(keybindingsData))
 			}
 
+			editorLog := filepath.Join(workspace, "keybindings-editor.log")
+			editorScript := filepath.Join(workspace, "keybindings-editor.sh")
+			if err := os.WriteFile(editorScript, []byte("#!/bin/sh\nprintf '%s\\n' \"$2\" > \"$1\"\n"), 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.Remove(pathReport.Path); err != nil {
+				return localScenarioResult{}, err
+			}
+			openOut, err := runHarnessCodogWithEnv(ctx, workspace, []string{"VISUAL=" + editorScript + " " + editorLog}, "--config", configPath, "--output-format", "json", "keybindings", "open")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			openReport, err := decodeKeybindingsFileHarnessReport(openOut)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			openedPath, err := os.ReadFile(editorLog)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if openReport.Action != "open" || openReport.Status != "created_opened" || !openReport.Created || !openReport.Opened || string(openedPath) != pathReport.Path+"\n" {
+				return localScenarioResult{}, fmt.Errorf("unexpected keybindings open report: %#v opened=%q", openReport, string(openedPath))
+			}
+			keybindingsData, err = os.ReadFile(pathReport.Path)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+
 			validateOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings", "validate")
 			if err != nil {
 				return localScenarioResult{}, err
@@ -3635,6 +3663,7 @@ func privacyKeybindingsScenario() scenario {
 					"initial_exists":        initialKeybindings.KeybindingsExists,
 					"path":                  strings.HasSuffix(pathReport.Path, "keybindings.json"),
 					"created":               initReport.Created,
+					"opened":                openReport.Opened,
 					"valid":                 validateReport.Valid,
 					"contexts":              validateReport.ContextCount,
 					"bindings":              validateReport.BindingCount,
@@ -3672,7 +3701,7 @@ func privacyKeybindingsScenario() scenario {
 			return localScenarioResult{
 				Output:       string(data),
 				FinalMessage: "privacy keybindings harness ok",
-				RequestCount: 11,
+				RequestCount: 12,
 				MessageCount: 1,
 			}, nil
 		},
@@ -3716,6 +3745,7 @@ type keybindingsFileHarnessReport struct {
 	Path    string `json:"path"`
 	Created bool   `json:"created"`
 	Exists  bool   `json:"exists"`
+	Opened  bool   `json:"opened,omitempty"`
 }
 
 type keybindingsValidationHarnessReport struct {

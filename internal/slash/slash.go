@@ -215,7 +215,7 @@ func Specs() []Spec {
 		{Name: "/privacy-settings", Usage: "/privacy-settings [show|set KEY on|off|clear KEY]", Description: "Show or change local privacy preferences."},
 		{Name: "/profile", Usage: "/profile [list|show|set|clear]", Description: "Show or switch the active OAuth provider profile."},
 		{Name: "/telemetry", Usage: "/telemetry [on|off|status]", Description: "Show or change local telemetry preference."},
-		{Name: "/keybindings", Usage: "/keybindings [show|path|init|validate|resolve]", Description: "Show, validate, resolve, or create keybinding config."},
+		{Name: "/keybindings", Usage: "/keybindings [show|path|init|open|edit|validate|resolve]", Description: "Show, open, validate, resolve, or create keybinding config."},
 		{Name: "/notifications", Usage: "/notifications [on|off|status]", Description: "Show or configure notification hooks."},
 		{Name: "/skill", Usage: "/skill [list|sources|status|enable|disable|show|invoke|add|install|uninstall]", Description: "Alias for /skills."},
 		{Name: "/skills", Usage: "/skills [list|sources|status|enable|disable|show|invoke|add|install|uninstall]", Description: "List, audit sources, enable, disable, install, remove, or render Markdown skills."},

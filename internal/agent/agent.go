@@ -20249,12 +20249,15 @@ type keybindingReport struct {
 }
 
 type keybindingsFileReport struct {
-	Kind    string `json:"kind"`
-	Action  string `json:"action"`
-	Status  string `json:"status"`
-	Path    string `json:"path"`
-	Created bool   `json:"created"`
-	Exists  bool   `json:"exists"`
+	Kind        string `json:"kind"`
+	Action      string `json:"action"`
+	Status      string `json:"status"`
+	Path        string `json:"path"`
+	Created     bool   `json:"created"`
+	Exists      bool   `json:"exists"`
+	Opened      bool   `json:"opened,omitempty"`
+	Editor      string `json:"editor,omitempty"`
+	EditorError string `json:"editor_error,omitempty"`
 }
 
 type keybindingValidationReport struct {
@@ -20331,6 +20334,18 @@ func (a *App) Keybindings(args []string) error {
 		}
 		renderKeybindingsFileReport(a.Out, report)
 		return nil
+	case "open":
+		report, err := a.openKeybindings()
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderKeybindingsFileReport(a.Out, report)
+		return nil
 	case "validate":
 		report := a.validateKeybindings(req.Path)
 		if req.Format == "json" {
@@ -20360,7 +20375,7 @@ func (a *App) Keybindings(args []string) error {
 	}
 }
 
-const keybindingsUsage = "codog keybindings [show|path|init|validate|resolve CONTEXT KEY] [--path PATH] [--force] [--output-format text|json]"
+const keybindingsUsage = "codog keybindings [show|path|init|open|edit|validate|resolve CONTEXT KEY] [--path PATH] [--force] [--output-format text|json]"
 
 func parseKeybindingsArgs(args []string) (keybindingsRequest, error) {
 	req := keybindingsRequest{Action: "show", Format: "text"}
@@ -20402,6 +20417,8 @@ func parseKeybindingsArgs(args []string) (keybindingsRequest, error) {
 				req.Action = "path"
 			case "init", "create", "template":
 				req.Action = "init"
+			case "open", "edit":
+				req.Action = "open"
 			case "validate", "check":
 				req.Action = "validate"
 			case "resolve", "match":
@@ -20427,12 +20444,53 @@ func parseKeybindingsArgs(args []string) (keybindingsRequest, error) {
 		}
 		req.Context = req.Args[0]
 		req.Key = strings.Join(req.Args[1:], " ")
-	case "show", "path", "init", "validate":
+	case "show", "path", "init", "open", "validate":
 		if len(req.Args) != 0 {
 			return req, unexpectedExtraArgsError{Command: "keybindings " + req.Action, Args: req.Args, Usage: keybindingsUsage}
 		}
 	}
 	return req, nil
+}
+
+func (a *App) openKeybindings() (keybindingsFileReport, error) {
+	report, err := a.initKeybindings(false)
+	if err != nil {
+		return report, err
+	}
+	report.Action = "open"
+	editor := strings.TrimSpace(os.Getenv("VISUAL"))
+	if editor == "" {
+		editor = strings.TrimSpace(os.Getenv("EDITOR"))
+	}
+	report.Editor = editor
+	if editor == "" {
+		report.Status = "open_failed"
+		report.EditorError = "no editor configured; set VISUAL or EDITOR"
+		return report, nil
+	}
+	fields := strings.Fields(editor)
+	if len(fields) == 0 {
+		report.Status = "open_failed"
+		report.EditorError = "no editor configured; set VISUAL or EDITOR"
+		return report, nil
+	}
+	cmd := exec.Command(fields[0], append(fields[1:], report.Path)...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		report.Status = "open_failed"
+		report.EditorError = err.Error()
+		return report, nil
+	}
+	report.Opened = true
+	if report.Created {
+		report.Status = "created_opened"
+	} else {
+		report.Status = "opened"
+	}
+	report.Exists = true
+	return report, nil
 }
 
 func (a *App) initKeybindings(force bool) (keybindingsFileReport, error) {
@@ -21013,6 +21071,17 @@ func renderKeybindingsFileReport(out io.Writer, report keybindingsFileReport) {
 	switch report.Status {
 	case "created":
 		fmt.Fprintf(out, "Created keybindings template: %s\n", report.Path)
+	case "created_opened":
+		fmt.Fprintf(out, "Created keybindings template and opened in editor: %s\n", report.Path)
+	case "opened":
+		fmt.Fprintf(out, "Opened keybindings in editor: %s\n", report.Path)
+	case "open_failed":
+		prefix := "Keybindings file is ready"
+		if report.Created {
+			prefix = "Created keybindings template"
+		}
+		fmt.Fprintf(out, "%s: %s\n", prefix, report.Path)
+		fmt.Fprintf(out, "Could not open editor: %s\n", report.EditorError)
 	case "written":
 		fmt.Fprintf(out, "Wrote keybindings template: %s\n", report.Path)
 	default:
@@ -64205,10 +64274,10 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"keybindings",
 			"keybindings",
-			"codog keybindings [show|path|init|validate|resolve CONTEXT KEY] [--force] [--path PATH] [--output-format text|json]",
-			"Keybindings\n\nUsage:\n  codog keybindings [show|path|init|validate|resolve CONTEXT KEY] [--force] [--path PATH] [--output-format text|json]\n\nShows default shortcuts, creates or validates a keybindings config file, and resolves an effective action for a context/key pair after applying user overrides.\n",
+			"codog keybindings [show|path|init|open|edit|validate|resolve CONTEXT KEY] [--force] [--path PATH] [--output-format text|json]",
+			"Keybindings\n\nUsage:\n  codog keybindings [show|path|init|open|edit|validate|resolve CONTEXT KEY] [--force] [--path PATH] [--output-format text|json]\n\nShows default shortcuts, creates or opens a keybindings config file, validates it, and resolves an effective action for a context/key pair after applying user overrides.\n",
 			[]string{"editor_mode", "keybindings_path", "sections", "normalized_key", "binding_action"},
-			[]string{"ok", "missing", "invalid", "created", "written"},
+			[]string{"ok", "missing", "invalid", "created", "written", "opened", "created_opened", "open_failed"},
 			true,
 		), true
 	case "voice", "listen":
@@ -64471,7 +64540,7 @@ Usage:
   %s [flags] chrome [status|on|off|toggle|clear|install|permissions|reconnect] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] telemetry [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] keybindings [show|path|init|validate|resolve CONTEXT KEY] [--force] [--path PATH] [--json|--output-format text|json]
+  %s [flags] keybindings [show|path|init|open|edit|validate|resolve CONTEXT KEY] [--force] [--path PATH] [--json|--output-format text|json]
   %s [flags] notifications [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] cache [--session ID|--resume ID|latest] [--json|--output-format text|json]
