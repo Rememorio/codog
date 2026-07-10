@@ -301,7 +301,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, tea.Quit
-		case "alt+enter", "ctrl+j":
+		case "shift+enter", "alt+enter", "ctrl+j":
 			m.textarea.InsertString("\n")
 			return m, nil
 		case "ctrl+s":
@@ -804,9 +804,9 @@ func statusBarText(status string, width int) string {
 	case width > 0 && width < 70:
 		return fmt.Sprintf("%s · Enter · Tab · Ctrl-R · Esc", status)
 	case width > 0 && width < 90:
-		return fmt.Sprintf("%s · Enter send · Alt+Enter newline · Tab · Ctrl-R · Esc", status)
+		return fmt.Sprintf("%s · Enter send · Shift+Enter newline · Tab · Ctrl-R · Esc", status)
 	default:
-		return fmt.Sprintf("%s · Enter send · Alt+Enter newline · Tab complete · Ctrl-R history · ? help · Esc quit", status)
+		return fmt.Sprintf("%s · Enter send · Shift+Enter newline · Tab complete · Ctrl-R history · ? help · Esc quit", status)
 	}
 }
 
@@ -1142,7 +1142,8 @@ func helpPanel(candidates []string, width int) string {
 		"",
 		"Keys",
 		"  Enter       submit composer",
-		"  Alt+Enter   insert newline",
+		"  Shift+Enter insert newline",
+		"  Alt+Enter   insert newline fallback",
 		"  Ctrl+R      search prompt history",
 		"  Tab         complete slash command",
 		"  Up/Down     choose a shown completion",

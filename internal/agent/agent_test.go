@@ -20677,20 +20677,29 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"binding_action": "reverse search prompt history"`)
 	out.Reset()
 
+	require.NoError(t, app.Keybindings([]string{"resolve", "tui", "Shift-Enter", "--json"}))
+	require.Contains(t, out.String(), `"action": "resolve"`)
+	require.Contains(t, out.String(), `"normalized_key": "shift+enter"`)
+	require.Contains(t, out.String(), `"found": true`)
+	require.Contains(t, out.String(), `"binding_action": "insert newline"`)
+	out.Reset()
+
 	require.NoError(t, app.Keybindings([]string{"init", "--json"}))
 	require.Contains(t, out.String(), `"status": "created"`)
 	require.Contains(t, out.String(), `"created": true`)
 	data, err := os.ReadFile(keybindingsPath)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"context": "repl"`)
+	require.Contains(t, string(data), `"shift+enter": "insert newline"`)
 	out.Reset()
 
 	require.NoError(t, app.Keybindings([]string{"validate", "--json"}))
 	require.Contains(t, out.String(), `"action": "validate"`)
 	require.Contains(t, out.String(), `"valid": true`)
 	require.Contains(t, out.String(), `"context_count": 4`)
-	require.Contains(t, out.String(), `"binding_count": 21`)
+	require.Contains(t, out.String(), `"binding_count": 22`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+r"`)
+	require.Contains(t, out.String(), `"normalized_key": "shift+enter"`)
 	out.Reset()
 
 	require.NoError(t, os.WriteFile(keybindingsPath, []byte("custom\n"), 0o644))
@@ -20741,7 +20750,8 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "REPL vim")
 	require.Contains(t, out.String(), "Config exists    true")
 	require.Contains(t, out.String(), "User valid       true")
-	require.Contains(t, out.String(), "User bindings    21")
+	require.Contains(t, out.String(), "User bindings    22")
+	require.Contains(t, out.String(), "Shift-Enter")
 	require.Empty(t, errOut.String())
 }
 

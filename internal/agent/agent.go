@@ -20797,12 +20797,13 @@ func defaultKeybindingsTemplate() []byte {
 			{
 				Context: "tui",
 				Bindings: map[string]string{
-					"enter":     "submit prompt",
-					"alt+enter": "insert newline",
-					"ctrl+j":    "insert newline",
-					"tab":       "complete slash command",
-					"esc":       "quit",
-					"ctrl+c":    "quit",
+					"enter":       "submit prompt",
+					"shift+enter": "insert newline",
+					"alt+enter":   "insert newline fallback",
+					"ctrl+j":      "insert newline",
+					"tab":         "complete slash command",
+					"esc":         "quit",
+					"ctrl+c":      "quit",
 				},
 			},
 			{
@@ -20863,7 +20864,8 @@ func (a *App) keybindingReport() keybindingReport {
 				Name: "TUI",
 				Entries: []keybindingEntry{
 					{Key: "Enter", Action: "submit prompt"},
-					{Key: "Alt-Enter", Action: "insert newline"},
+					{Key: "Shift-Enter", Action: "insert newline"},
+					{Key: "Alt-Enter", Action: "insert newline fallback"},
 					{Key: "Ctrl-J", Action: "insert newline"},
 					{Key: "Tab", Action: "complete slash command"},
 					{Key: "Esc", Action: "quit"},

@@ -97,10 +97,12 @@ func TestStatusBarUsesCompactHintsAtTerminalWidth(t *testing.T) {
 	text := statusBarText("5 completions", 80)
 
 	require.Contains(t, text, "Enter send")
+	require.Contains(t, text, "Shift+Enter newline")
 	require.Contains(t, text, "Tab")
 	require.Contains(t, text, "Esc")
 	require.Contains(t, text, "Ctrl-R")
 	require.NotContains(t, text, "Tab complete")
+	require.NotContains(t, text, "Alt+Enter")
 	require.LessOrEqual(t, len([]rune(text)), 80)
 }
 
@@ -524,15 +526,21 @@ func TestPreviewQuestionMarkOpensHelpWhenComposerEmpty(t *testing.T) {
 	require.True(t, next.helpOpen)
 	require.Contains(t, next.View(), "Keys")
 	require.Contains(t, next.View(), "/status")
-	require.Contains(t, next.View(), "Ctrl+R")
+	require.Contains(t, next.View(), "Shift+Enter")
+	require.Contains(t, next.View(), "Alt+Enter")
 }
 
-func TestEnterSubmitsAndCtrlJInsertsNewline(t *testing.T) {
+func TestEnterSubmitsAndNewlineShortcutsInsertNewline(t *testing.T) {
 	ta := newPromptTextarea("first")
 	m := newModel(context.Background(), ta, nil, nil)
 
 	updated, _ := m.Update(teaKey("ctrl+j"))
 	next := updated.(model)
+	require.Equal(t, "first\n", next.textarea.Value())
+
+	next.textarea.SetValue("first")
+	updated, _ = next.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	next = updated.(model)
 	require.Equal(t, "first\n", next.textarea.Value())
 
 	updated, _ = next.Update(teaKey("enter"))
