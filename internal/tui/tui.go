@@ -1264,7 +1264,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter", "tab":
 				return m.acceptModelPicker()
-			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "alt+o", "meta+o", "alt+t", "meta+t":
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "alt+m", "meta+m", "alt+o", "meta+o", "alt+t", "meta+t":
 				return m, nil
 			}
 			return m, nil
@@ -1291,7 +1291,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "c":
 				m.messageActionSelected = 1
 				return m.applyMessageAction()
-			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "alt+m", "meta+m", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
 				return m, nil
 			}
 			return m, nil
@@ -1313,7 +1313,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "shift+tab":
 				m.closeGlobalSearch(true, false)
 				return m, nil
-			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "shift+up", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "shift+up", "alt+m", "meta+m", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -1340,7 +1340,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "shift+tab":
 				m.closeQuickOpen(true, false)
 				return m, nil
-			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "shift+up", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "shift+up", "alt+m", "meta+m", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -1611,7 +1611,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pushComposerUndo()
 			m = m.completeSlashCommand()
 			return m, nil
-		case "shift+tab":
+		case "shift+tab", "alt+m", "meta+m":
 			if m.busy || m.cycleMode == nil {
 				return m, nil
 			}
@@ -4417,6 +4417,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+Shift+F search workspace",
 		"  Ctrl+F      search workspace fallback",
 		"  Alt+P       open model picker",
+		"  Alt/Meta+M  cycle permission mode fallback",
 		"  Alt+O       toggle fast mode",
 		"  Alt+T       cycle thinking effort",
 		"  Shift+Up    open message actions",

@@ -330,6 +330,22 @@ func TestShiftTabCyclesTUILocalMode(t *testing.T) {
 	require.Contains(t, m.View(), "accept edits")
 }
 
+func TestAltMCyclesTUILocalModeFallback(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.modeLabel = "default"
+	m.cycleMode = func() string { return "plan" }
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}, Alt: true})
+	m = updated.(model)
+
+	require.Equal(t, "plan", m.modeLabel)
+	require.Empty(t, m.textarea.Value())
+	require.Equal(t, "system", m.transcript[len(m.transcript)-1].Role)
+	require.Equal(t, "Mode: plan", m.transcript[len(m.transcript)-1].Text)
+	require.Contains(t, helpPanel(nil, 100), "Alt/Meta+M")
+}
+
 func TestCtrlOTogglesExpandedTranscript(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, []transcriptEntry{
