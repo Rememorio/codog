@@ -336,6 +336,42 @@ func TestStatusBarShowsCancelHintWhileRunning(t *testing.T) {
 	require.LessOrEqual(t, len([]rune(text)), 80)
 }
 
+func TestPromptFooterShowsContextualIdleHints(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.modeLabel = "accept edits"
+	m.attachments = []string{"notes.txt"}
+	m.modelOptions = []string{"glm52"}
+	m.stashedPrompt = &composerStash{Text: "draft"}
+
+	footer := m.promptFooterText(240)
+
+	require.Contains(t, footer, "Enter send")
+	require.Contains(t, footer, "? for shortcuts")
+	require.Contains(t, footer, "/ commands")
+	require.Contains(t, footer, "@ files")
+	require.Contains(t, footer, "Ctrl+T tasks")
+	require.Contains(t, footer, "Ctrl+S restore stash")
+	require.Contains(t, footer, "1 attached")
+	require.Contains(t, footer, "accept edits")
+}
+
+func TestPromptFooterShowsRunningQueueHints(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.busy = true
+	m.status = "running"
+	m.queuedPrompts = []string{"next"}
+
+	footer := m.promptFooterText(90)
+
+	require.Contains(t, footer, "Esc/Ctrl-C cancel current turn")
+	require.Contains(t, footer, "Esc interrupt")
+	require.Contains(t, footer, "1 queued")
+	require.Contains(t, footer, "Up edit queue")
+	require.NotContains(t, footer, "Enter send")
+}
+
 func TestShiftTabCyclesTUILocalMode(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, nil)

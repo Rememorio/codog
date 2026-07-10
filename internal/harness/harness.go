@@ -5415,6 +5415,9 @@ func tuiPromptCompletionScenario() scenario {
 			if len(automatic.Matches) != 3 || !strings.Contains(automatic.View, "suggestions") {
 				return localScenarioResult{}, fmt.Errorf("expected automatic TUI slash menu, got %#v", automatic.Matches)
 			}
+			if !strings.Contains(automatic.View, "? for shortcuts") || !strings.Contains(automatic.View, "Ctrl+T tasks") {
+				return localScenarioResult{}, fmt.Errorf("expected TUI footer hints, got %s", automatic.View)
+			}
 			commandArgs := tui.PreviewWithCandidates("/model ", []string{"/model claude-test"}, 96, 24, false, false)
 			if !strings.Contains(commandArgs.CommandHint, "arguments: [name]") || !strings.Contains(commandArgs.View, "command args") {
 				return localScenarioResult{}, fmt.Errorf("expected slash command argument hint, got hint=%q view=%s", commandArgs.CommandHint, commandArgs.View)
@@ -5453,7 +5456,7 @@ func tuiPromptCompletionScenario() scenario {
 				return localScenarioResult{}, fmt.Errorf("expected undo preview, got %#v", undoPreview)
 			}
 			attachments := tui.PreviewWithAttachments("describe", []string{"notes.txt", "pixel.png"}, 96, 24)
-			if !strings.Contains(attachments.View, "attachments: 2") || !strings.Contains(attachments.View, "2 attached") || len(attachments.Attachments) != 2 {
+			if !strings.Contains(attachments.View, "attachments: 2") || !strings.Contains(attachments.View, "notes.txt") || len(attachments.Attachments) != 2 {
 				return localScenarioResult{}, fmt.Errorf("expected attachment preview, got %s", attachments.View)
 			}
 			attachmentRemoval := tui.PreviewWithAttachmentRemoval("describe", []string{"notes.txt", "pixel.png"}, 96, 24)
@@ -5611,6 +5614,7 @@ func tuiPromptCompletionScenario() scenario {
 				"kind":                         "tui_prompt_completion",
 				"matches":                      multiple.Matches,
 				"automatic":                    automatic.Matches,
+				"footer_hints":                 strings.Contains(automatic.View, "? for shortcuts") && strings.Contains(automatic.View, "Ctrl+T tasks"),
 				"command_args":                 strings.Contains(commandArgs.CommandHint, "arguments: [name]"),
 				"mid_input_command":            midInputCommand.InlineHint == "/status",
 				"mid_input_command_completion": midInputCompleted.Value == "please /status ",

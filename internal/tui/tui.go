@@ -2094,7 +2094,7 @@ func (m model) View() string {
 	if m.stashedPrompt != nil {
 		composer += "\n" + renderStashNotice(m.stashedPrompt)
 	}
-	statusText := appendStatusMode(statusBarText(m.visibleStatus(), m.width), m.modeLabel, m.width)
+	statusText := m.promptFooterText(m.width)
 	status := statusStyle().Width(max(40, m.width)).Render(statusText)
 	return strings.Join([]string{title, body, composer, status}, "\n")
 }
@@ -4506,6 +4506,209 @@ func statusBarText(status string, width int) string {
 	default:
 		return fmt.Sprintf("%s · Enter send · Shift+Enter or \\+Enter newline · Tab complete · Ctrl-R history · Ctrl+Shift+P files · Ctrl+Shift+F search · Ctrl+T tasks · Ctrl-O transcript · Ctrl-L clear · Ctrl-D exit", status)
 	}
+}
+
+func (m model) promptFooterText(width int) string {
+	baseStatus := strings.TrimSpace(m.status)
+	if baseStatus == "" {
+		baseStatus = m.mode()
+	}
+	status := statusBarText(baseStatus, width)
+	if m.transcriptMode && !strings.EqualFold(baseStatus, "transcript") {
+		status = appendStatusMode(status, "transcript", width)
+	}
+	status = appendStatusMode(status, m.modeLabel, width)
+	hints := m.promptFooterHints(width)
+	if len(hints) == 0 {
+		return status
+	}
+	limit := width
+	if limit <= 0 {
+		limit = 120
+	}
+	byline := truncateFooterLine(strings.Join(hints, " · "), limit)
+	if strings.TrimSpace(byline) == "" {
+		return status
+	}
+	return status + "\n" + byline
+}
+
+func (m model) promptFooterHints(width int) []string {
+	status := strings.ToLower(strings.TrimSpace(m.status))
+	hints := []string{}
+	add := func(hint string) {
+		hint = strings.TrimSpace(hint)
+		if hint == "" {
+			return
+		}
+		for _, existing := range hints {
+			if strings.EqualFold(existing, hint) {
+				return
+			}
+		}
+		hints = append(hints, hint)
+	}
+	if m.awaitingPermission {
+		add("y approve")
+		add("n deny")
+		add("a always")
+		return trimFooterHints(hints, width)
+	}
+	if m.awaitingQuestion {
+		add("Enter reply")
+		add("Esc interrupt")
+		return trimFooterHints(hints, width)
+	}
+	if m.busy {
+		add("Esc interrupt")
+		if len(m.queuedPrompts) > 0 {
+			add(fmt.Sprintf("%d queued", len(m.queuedPrompts)))
+			add("Up edit queue")
+		} else {
+			add("type next prompt to queue")
+		}
+		if m.background != nil {
+			add("Ctrl+B background")
+		}
+		return trimFooterHints(hints, width)
+	}
+	if m.backgrounding {
+		add("background starting")
+		if m.stopBackground != nil {
+			add("Ctrl+X Ctrl+K stop")
+		}
+		return trimFooterHints(hints, width)
+	}
+	if m.helpOpen {
+		add("Esc close help")
+		add("/ for commands")
+		add("@ for files")
+		return trimFooterHints(hints, width)
+	}
+	if m.searchOpen {
+		add("Enter restore")
+		add("Esc close")
+		return trimFooterHints(hints, width)
+	}
+	if m.quickOpen {
+		add("Enter insert @file")
+		add("Shift+Tab path only")
+		add("Esc close")
+		return trimFooterHints(hints, width)
+	}
+	if m.globalSearch {
+		add("Enter insert @line")
+		add("Shift+Tab path:line")
+		add("Esc close")
+		return trimFooterHints(hints, width)
+	}
+	if m.todosOpen {
+		add("Ctrl+T close tasks")
+		add("/todos manage")
+		if m.taskBoard != nil {
+			add("Ctrl+Shift+T background tasks")
+		}
+		return trimFooterHints(hints, width)
+	}
+	if m.modelPicker {
+		add("Enter select model")
+		add("Esc close")
+		return trimFooterHints(hints, width)
+	}
+	if m.messageActions {
+		add("Enter apply")
+		add("Left/Right target")
+		add("Esc close")
+		return trimFooterHints(hints, width)
+	}
+	if m.attachmentsOpen {
+		add("Left/Right select")
+		add("Backspace remove")
+		add("Esc close")
+		return trimFooterHints(hints, width)
+	}
+	if m.diffDialog {
+		add("Enter details")
+		add("Left/Right sources")
+		add("Esc close")
+		return trimFooterHints(hints, width)
+	}
+	if status == "ctrl+x" {
+		add("Ctrl+E editor")
+		add("Ctrl+C compact")
+		add("Ctrl+U undo")
+		add("Esc cancel")
+		return trimFooterHints(hints, width)
+	}
+	add("? for shortcuts")
+	add("/ commands")
+	add("@ files")
+	if len(m.attachments) > 0 {
+		add(fmt.Sprintf("%d attached", len(m.attachments)))
+	}
+	if len(m.queuedPrompts) > 0 {
+		add(fmt.Sprintf("%d queued", len(m.queuedPrompts)))
+	}
+	add("Ctrl+R history")
+	add("Ctrl+T tasks")
+	if m.transcriptMode {
+		add("Ctrl+O compact transcript")
+	} else {
+		add("Ctrl+O transcript")
+	}
+	if strings.TrimSpace(m.modeLabel) != "" {
+		add("mode: " + m.modeLabel)
+	}
+	if m.cycleMode != nil || strings.TrimSpace(m.modeLabel) != "" {
+		add("Shift+Tab mode")
+	}
+	if m.stashedPrompt != nil {
+		add("Ctrl+S restore stash")
+	} else {
+		add("Ctrl+S stash")
+	}
+	if len(m.modelOptions) > 0 {
+		add("Alt+P model")
+	}
+	if m.background != nil {
+		add("Ctrl+B background")
+	}
+	return trimFooterHints(hints, width)
+}
+
+func trimFooterHints(hints []string, width int) []string {
+	if width <= 0 || len(hints) <= 2 {
+		return hints
+	}
+	limit := 8
+	switch {
+	case width < 70:
+		limit = 3
+	case width < 95:
+		limit = 4
+	case width < 120:
+		limit = 5
+	case width >= 150:
+		limit = 10
+	}
+	if len(hints) > limit {
+		return hints[:limit]
+	}
+	return hints
+}
+
+func truncateFooterLine(line string, width int) string {
+	if width <= 0 {
+		return line
+	}
+	runes := []rune(line)
+	if len(runes) <= width {
+		return line
+	}
+	if width <= 3 {
+		return string(runes[:width])
+	}
+	return string(runes[:width-3]) + "..."
 }
 
 func appendStatusMode(status string, mode string, width int) string {
