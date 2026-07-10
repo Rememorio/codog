@@ -19521,6 +19521,28 @@ func TestUndoCommandAndSlashRestoreFile(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestUndoTUIChangeRestoresLastFileChange(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "notes.txt")
+	require.NoError(t, os.WriteFile(path, []byte("old\n"), 0o644))
+	_, err := undo.Push(workspace, "edit_file", path, true, []byte("old\n"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, []byte("new\n"), 0o644))
+
+	app := &App{Workspace: workspace}
+	result, err := app.undoTUIChange(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "Undo", result.Title)
+	require.Equal(t, "restored", result.Status)
+	require.Contains(t, result.Lines, "Tool: edit_file")
+	require.Contains(t, result.Lines, "Path: notes.txt")
+	require.Contains(t, result.Lines, "Restored: true")
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "old\n", string(data))
+}
+
 func TestUndoErrorsHonorGlobalJSONFormat(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(configHome, "config.json")

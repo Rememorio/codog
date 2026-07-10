@@ -120,6 +120,7 @@ type ShellOptions struct {
 	ToggleThinking            RuntimeControlFunc
 	StopBackground            RuntimeControlFunc
 	CompactSession            RuntimeControlFunc
+	UndoLast                  RuntimeControlFunc
 	RestoreConversation       ConversationRestoreFunc
 	ForkConversation          ConversationForkFunc
 	SummarizeConversation     ConversationSummarizeFunc
@@ -220,6 +221,7 @@ type model struct {
 	toggleThinking            RuntimeControlFunc
 	stopBackground            RuntimeControlFunc
 	compactSession            RuntimeControlFunc
+	undoLast                  RuntimeControlFunc
 	restoreConversation       ConversationRestoreFunc
 	forkConversation          ConversationForkFunc
 	summarizeConversation     ConversationSummarizeFunc
@@ -699,6 +701,12 @@ func PreviewWithModelPicker(input string, models []string, current string, width
 // PreviewWithRuntimeToggle renders a deterministic TUI state after invoking a
 // runtime control shortcut such as Alt-O or Alt-T.
 func PreviewWithRuntimeToggle(input string, key string, result RuntimeControlResult, width int, height int) Preview {
+	return PreviewWithRuntimeControl(input, key, result, width, height)
+}
+
+// PreviewWithRuntimeControl renders a deterministic TUI state after invoking a
+// runtime control shortcut.
+func PreviewWithRuntimeControl(input string, key string, result RuntimeControlResult, width int, height int) Preview {
 	ta := newPromptTextarea(input)
 	m := newModel(context.Background(), ta, nil, nil)
 	control := func(context.Context) (RuntimeControlResult, error) {
@@ -709,6 +717,8 @@ func PreviewWithRuntimeToggle(input string, key string, result RuntimeControlRes
 		m.toggleFast = control
 	case "alt+t", "meta+t":
 		m.toggleThinking = control
+	case "ctrl+x ctrl+u":
+		m.undoLast = control
 	}
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -716,7 +726,13 @@ func PreviewWithRuntimeToggle(input string, key string, result RuntimeControlRes
 			m = next
 		}
 	}
-	updated, cmd := m.Update(altRuneKey(key))
+	updated, cmd := m.Update(runtimeControlPreviewKey(key, false))
+	if strings.EqualFold(strings.TrimSpace(key), "ctrl+x ctrl+u") {
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+		updated, cmd = m.Update(runtimeControlPreviewKey(key, true))
+	}
 	if next, ok := updated.(model); ok {
 		m = next
 	}
@@ -739,6 +755,17 @@ func PreviewWithRuntimeToggle(input string, key string, result RuntimeControlRes
 		TodosOpen:   m.todosOpen,
 		ModelPicker: m.modelPicker,
 	}
+}
+
+func runtimeControlPreviewKey(key string, chordSecond bool) tea.KeyMsg {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if key == "ctrl+x ctrl+u" {
+		if chordSecond {
+			return tea.KeyMsg{Type: tea.KeyCtrlU}
+		}
+		return tea.KeyMsg{Type: tea.KeyCtrlX}
+	}
+	return altRuneKey(key)
 }
 
 // PreviewWithMessageActions renders a deterministic TUI state after opening
@@ -923,6 +950,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.toggleThinking = options.ToggleThinking
 	m.stopBackground = options.StopBackground
 	m.compactSession = options.CompactSession
+	m.undoLast = options.UndoLast
 	m.restoreConversation = options.RestoreConversation
 	m.forkConversation = options.ForkConversation
 	m.summarizeConversation = options.SummarizeConversation
@@ -1261,6 +1289,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.status = "compacting"
 				return m, runRuntimeControlCommand(m.ctx, m.compactSession)
+			case "ctrl+u":
+				if m.undoLast == nil {
+					m.status = "no undo"
+					return m, nil
+				}
+				m.status = "undoing"
+				return m, runRuntimeControlCommand(m.ctx, m.undoLast)
 			case "esc":
 				m.status = m.mode()
 				return m, nil
@@ -4238,6 +4273,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+X Ctrl+E edit composer in $EDITOR",
 		"  Ctrl+X Ctrl+K stop background tasks",
 		"  Ctrl+X Ctrl+C compact session",
+		"  Ctrl+X Ctrl+U undo last file change",
 		"  Ctrl+_      undo composer edit",
 		"  Ctrl+Shift+- undo composer edit",
 		"  Ctrl+V      paste clipboard text or image",

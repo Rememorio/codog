@@ -5452,6 +5452,14 @@ func tuiPromptCompletionScenario() scenario {
 			if !strings.Contains(thinkingToggle.View, "Thinking") || !strings.Contains(thinkingToggle.View, "Reasoning: medium") {
 				return localScenarioResult{}, fmt.Errorf("expected thinking toggle preview, got view=%s", thinkingToggle.View)
 			}
+			undoControl := tui.PreviewWithRuntimeControl("", "ctrl+x ctrl+u", tui.RuntimeControlResult{
+				Title:  "Undo",
+				Status: "restored",
+				Lines:  []string{"Path: notes.txt", "Restored: true"},
+			}, 96, 24)
+			if !strings.Contains(undoControl.View, "Undo") || !strings.Contains(undoControl.View, "Path: notes.txt") {
+				return localScenarioResult{}, fmt.Errorf("expected undo control preview, got view=%s", undoControl.View)
+			}
 			messageActions := tui.PreviewWithMessageActions([]tui.Entry{{Role: "assistant", Text: "Use message actions"}}, 96, 24, -1)
 			if !messageActions.MessageMenu || !strings.Contains(messageActions.View, "message actions") || !strings.Contains(messageActions.View, "copy to composer") {
 				return localScenarioResult{}, fmt.Errorf("expected message actions preview, got view=%s", messageActions.View)

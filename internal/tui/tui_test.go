@@ -674,6 +674,15 @@ func TestRuntimeToggleShortcutsAppendStatus(t *testing.T) {
 
 	require.Contains(t, thinking.View, "Thinking")
 	require.Contains(t, thinking.View, "Reasoning: medium")
+
+	undo := PreviewWithRuntimeControl("", "ctrl+x ctrl+u", RuntimeControlResult{
+		Title:  "Undo",
+		Status: "restored",
+		Lines:  []string{"Path: notes.txt", "Restored: true"},
+	}, 96, 24)
+
+	require.Contains(t, undo.View, "Undo")
+	require.Contains(t, undo.View, "Path: notes.txt")
 }
 
 func TestPreviewWithModelPicker(t *testing.T) {
@@ -1000,6 +1009,34 @@ func TestCtrlXCtrlCCompactsSession(t *testing.T) {
 	require.Equal(t, "compacted 3", m.status)
 	require.Contains(t, m.View(), "Session Compacted")
 	require.Contains(t, m.View(), "Removed: 3")
+}
+
+func TestCtrlXCtrlUUndoesLastChange(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	called := false
+	m.undoLast = func(context.Context) (RuntimeControlResult, error) {
+		called = true
+		return RuntimeControlResult{Title: "Undo", Status: "restored", Lines: []string{"Path: notes.txt", "Restored: true"}}, nil
+	}
+
+	updated, cmd := m.Update(teaKey("ctrl+x"))
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.True(t, m.ctrlXChord)
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "undoing", m.status)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.True(t, called)
+	require.False(t, m.ctrlXChord)
+	require.Equal(t, "restored", m.status)
+	require.Contains(t, m.View(), "Undo")
+	require.Contains(t, m.View(), "Path: notes.txt")
 }
 
 func TestPreviewTogglesHelpPanel(t *testing.T) {

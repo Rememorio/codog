@@ -39235,6 +39235,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		CompactSession: func(ctx context.Context) (tui.RuntimeControlResult, error) {
 			return a.compactTUISession(ctx, sess)
 		},
+		UndoLast: func(ctx context.Context) (tui.RuntimeControlResult, error) {
+			return a.undoTUIChange(ctx)
+		},
 		RestoreConversation: func(ctx context.Context, keepMessages int) (tui.RuntimeControlResult, error) {
 			return a.restoreTUIConversation(ctx, sess, keepMessages)
 		},
@@ -39444,6 +39447,38 @@ func (a *App) compactTUISession(ctx context.Context, sess *session.Session) (tui
 	}
 	return tui.RuntimeControlResult{
 		Title:  "Session Compacted",
+		Status: status,
+		Lines:  lines,
+	}, nil
+}
+
+func (a *App) undoTUIChange(ctx context.Context) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	report, err := undo.RestoreLast(a.Workspace)
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	lines := []string{
+		"Tool: " + emptyAsNone(report.Tool),
+		"Path: " + report.Path,
+	}
+	if report.Restored {
+		lines = append(lines, "Restored: true", fmt.Sprintf("Bytes: %d", report.Bytes))
+	}
+	if report.Removed {
+		lines = append(lines, "Removed: true")
+	}
+	lines = append(lines, fmt.Sprintf("Remaining: %d", report.Remaining))
+	status := "undo"
+	if report.Restored {
+		status = "restored"
+	} else if report.Removed {
+		status = "removed"
+	}
+	return tui.RuntimeControlResult{
+		Title:  "Undo",
 		Status: status,
 		Lines:  lines,
 	}, nil
