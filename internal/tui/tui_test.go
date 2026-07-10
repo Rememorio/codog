@@ -732,6 +732,39 @@ func TestMessageActionsCopyQuoteAndStash(t *testing.T) {
 	require.Equal(t, "message stashed", m.status)
 }
 
+func TestMessageActionsNavigateTargetMessages(t *testing.T) {
+	entries := []transcriptEntry{
+		{Role: "user", Text: "first prompt"},
+		{Role: "assistant", Text: "first answer"},
+		{Role: "user", Text: "second prompt"},
+		{Role: "assistant", Text: "second answer"},
+	}
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, entries)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	m = updated.(model)
+
+	require.True(t, m.messageActions)
+	require.Contains(t, m.View(), "message actions 4/4")
+	require.Contains(t, m.View(), "assistant: second answer")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(model)
+
+	require.Contains(t, m.View(), "message actions 2/4")
+	require.Contains(t, m.View(), "assistant: first answer")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	require.False(t, m.messageActions)
+	require.Equal(t, "first answer", m.textarea.Value())
+	require.Equal(t, "message copied", m.status)
+}
+
 func TestMessageActionsRestoreBeforeTurn(t *testing.T) {
 	entries := []transcriptEntry{
 		{Role: "system", Text: "ready"},
@@ -907,6 +940,10 @@ func TestPreviewWithMessageActions(t *testing.T) {
 	summarizedUpTo := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 6)
 	require.False(t, summarizedUpTo.MessageMenu)
 	require.Contains(t, summarizedUpTo.View, "Earlier Conversation Summarized")
+
+	targeted := PreviewWithMessageActionTarget([]Entry{{Role: "assistant", Text: "first"}, {Role: "assistant", Text: "second"}}, 96, 24, 0, -1)
+	require.False(t, targeted.MessageMenu)
+	require.Equal(t, "first", targeted.Value)
 }
 
 func TestCtrlXCtrlKStopsBackgroundTasks(t *testing.T) {

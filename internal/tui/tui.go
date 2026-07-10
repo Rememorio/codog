@@ -744,6 +744,16 @@ func PreviewWithRuntimeToggle(input string, key string, result RuntimeControlRes
 // PreviewWithMessageActions renders a deterministic TUI state after opening
 // the transcript message action menu.
 func PreviewWithMessageActions(entries []Entry, width int, height int, action int) Preview {
+	return previewWithMessageActions(entries, width, height, action, 0)
+}
+
+// PreviewWithMessageActionTarget renders message actions after moving the
+// selected target message by targetDelta steps.
+func PreviewWithMessageActionTarget(entries []Entry, width int, height int, action int, targetDelta int) Preview {
+	return previewWithMessageActions(entries, width, height, action, targetDelta)
+}
+
+func previewWithMessageActions(entries []Entry, width int, height int, action int, targetDelta int) Preview {
 	ta := newPromptTextarea("")
 	modelEntries := make([]transcriptEntry, 0, len(entries))
 	for _, entry := range entries {
@@ -787,6 +797,18 @@ func PreviewWithMessageActions(entries []Entry, width int, height int, action in
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
 	if next, ok := updated.(model); ok {
 		m = next
+	}
+	key := tea.KeyRight
+	steps := targetDelta
+	if steps < 0 {
+		key = tea.KeyLeft
+		steps = -steps
+	}
+	for index := 0; index < steps; index++ {
+		updated, _ = m.Update(tea.KeyMsg{Type: key})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
 	}
 	for index := 0; index < action; index++ {
 		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -1152,6 +1174,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "down", "ctrl+n":
 				m.moveMessageAction(1)
+				return m, nil
+			case "left":
+				m.moveMessageActionTarget(-1)
+				return m, nil
+			case "right":
+				m.moveMessageActionTarget(1)
 				return m, nil
 			case "enter", "tab":
 				return m.applyMessageAction()
@@ -1690,7 +1718,8 @@ func (m model) View() string {
 		composer += "\n" + renderModelPicker(m.modelOptions, m.currentModel, m.modelPickerSelected, m.width)
 	}
 	if m.messageActions {
-		composer += "\n" + renderMessageActions(m.messageActionEntry(), m.messageActionSelected, m.width)
+		targetPos, targetCount := m.messageActionTargetPosition()
+		composer += "\n" + renderMessageActions(m.messageActionEntry(), m.messageActionSelected, m.width, targetPos, targetCount)
 	}
 	if len(m.queuedPrompts) > 0 {
 		composer += "\n" + renderQueuedPrompts(m.queuedPrompts)
@@ -2837,6 +2866,24 @@ func (m *model) moveMessageAction(delta int) {
 	m.status = "message actions"
 }
 
+func (m *model) moveMessageActionTarget(delta int) {
+	targets := m.messageActionTargets()
+	if len(targets) == 0 {
+		m.status = "no messages"
+		return
+	}
+	position := 0
+	for index, target := range targets {
+		if target == m.messageActionTarget {
+			position = index
+			break
+		}
+	}
+	next := (position + delta + len(targets)) % len(targets)
+	m.messageActionTarget = targets[next]
+	m.status = "message actions"
+}
+
 func (m model) applyMessageAction() (tea.Model, tea.Cmd) {
 	entry := m.messageActionEntry()
 	text := strings.TrimSpace(entry.Text)
@@ -2968,6 +3015,29 @@ func (m model) messageActionEntry() transcriptEntry {
 	return transcriptEntry{}
 }
 
+func (m model) messageActionTargetPosition() (int, int) {
+	targets := m.messageActionTargets()
+	for index, target := range targets {
+		if target == m.messageActionTarget {
+			return index + 1, len(targets)
+		}
+	}
+	if len(targets) == 0 {
+		return 0, 0
+	}
+	return 1, len(targets)
+}
+
+func (m model) messageActionTargets() []int {
+	targets := []int{}
+	for index, entry := range m.transcript {
+		if strings.TrimSpace(entry.Text) != "" {
+			targets = append(targets, index)
+		}
+	}
+	return targets
+}
+
 func (m model) restoreMessageKeepCount() int {
 	if m.messageActionTarget < 0 || m.messageActionTarget >= len(m.transcript) {
 		return -1
@@ -3002,7 +3072,7 @@ func quoteMessageText(text string) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderMessageActions(entry transcriptEntry, selected int, width int) string {
+func renderMessageActions(entry transcriptEntry, selected int, width int, targetPos int, targetCount int) string {
 	limit := 120
 	if width > 0 {
 		limit = max(40, width-8)
@@ -3011,7 +3081,11 @@ func renderMessageActions(entry transcriptEntry, selected int, width int) string
 	if role == "" {
 		role = "message"
 	}
-	lines := []string{completionTitleStyle().Render(" message actions ")}
+	title := " message actions "
+	if targetCount > 1 && targetPos > 0 {
+		title = fmt.Sprintf(" message actions %d/%d ", targetPos, targetCount)
+	}
+	lines := []string{completionTitleStyle().Render(title)}
 	summary := strings.Join(strings.Fields(entry.Text), " ")
 	if summary == "" {
 		summary = "(empty message)"
@@ -3029,7 +3103,11 @@ func renderMessageActions(entry transcriptEntry, selected int, width int) string
 		}
 		lines = append(lines, style.Render(prefix+action))
 	}
-	lines = append(lines, completionStyle().Render("  Enter apply · Up/Down choose · Esc cancel"))
+	hint := "  Enter apply · Up/Down choose · Esc cancel"
+	if targetCount > 1 {
+		hint = "  Enter apply · Up/Down choose · Left/Right message · Esc cancel"
+	}
+	lines = append(lines, completionStyle().Render(hint))
 	return strings.Join(lines, "\n")
 }
 

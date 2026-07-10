@@ -5460,6 +5460,10 @@ func tuiPromptCompletionScenario() scenario {
 			if messageCopy.MessageMenu || messageCopy.Value != "copy me" {
 				return localScenarioResult{}, fmt.Errorf("expected message copied into composer, got value=%q view=%s", messageCopy.Value, messageCopy.View)
 			}
+			messageTargetCopy := tui.PreviewWithMessageActionTarget([]tui.Entry{{Role: "assistant", Text: "first target"}, {Role: "assistant", Text: "second target"}}, 96, 24, 0, -1)
+			if messageTargetCopy.MessageMenu || messageTargetCopy.Value != "first target" {
+				return localScenarioResult{}, fmt.Errorf("expected selected earlier message copied, got value=%q view=%s", messageTargetCopy.Value, messageTargetCopy.View)
+			}
 			messageRestore := tui.PreviewWithMessageActions([]tui.Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 3)
 			if messageRestore.MessageMenu || !strings.Contains(messageRestore.View, "Conversation Restored") {
 				return localScenarioResult{}, fmt.Errorf("expected message restore preview, got view=%s", messageRestore.View)
@@ -5510,6 +5514,7 @@ func tuiPromptCompletionScenario() scenario {
 				"runtime_thinking":             strings.Contains(thinkingToggle.View, "Reasoning: medium"),
 				"message_actions":              messageActions.MessageMenu,
 				"message_action_copy":          messageCopy.Value == "copy me",
+				"message_action_target":        messageTargetCopy.Value == "first target",
 				"message_action_restore":       strings.Contains(messageRestore.View, "Conversation Restored"),
 				"message_action_fork":          strings.Contains(messageFork.View, "Conversation Forked"),
 				"message_action_summary":       strings.Contains(messageSummarize.View, "Conversation Summarized"),
