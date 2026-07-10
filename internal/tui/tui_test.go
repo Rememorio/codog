@@ -549,6 +549,55 @@ func TestEnterSubmitsAndNewlineShortcutsInsertNewline(t *testing.T) {
 	require.Equal(t, "first", next.result.Prompt)
 }
 
+func TestPastedMultilineInputDoesNotSubmitUntilEnter(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("first\nsecond"), Paste: true})
+	next := updated.(model)
+
+	require.Nil(t, cmd)
+	require.False(t, next.result.Submitted)
+	require.Equal(t, "first\nsecond", next.textarea.Value())
+	require.Equal(t, "pasted 2 lines", next.status)
+
+	updated, _ = next.Update(teaKey("enter"))
+	next = updated.(model)
+	require.True(t, next.result.Submitted)
+	require.Equal(t, "first\nsecond", next.result.Prompt)
+}
+
+func TestPastedShortcutTextDoesNotTriggerTUIActions(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, []string{"/status"}, nil)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?"), Paste: true})
+	next := updated.(model)
+
+	require.False(t, next.helpOpen)
+	require.Equal(t, "?", next.textarea.Value())
+	require.Equal(t, "pasted 1 line", next.status)
+}
+
+func TestPastedPermissionAnswerDoesNotApprove(t *testing.T) {
+	ta := newPromptTextarea("")
+	answers := []string{}
+	m := newModel(context.Background(), ta, nil, nil)
+	m.permissionAnswer = func(answer string) {
+		answers = append(answers, answer)
+	}
+	m.awaitingPermission = true
+	m.status = "permission"
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y"), Paste: true})
+	next := updated.(model)
+
+	require.True(t, next.awaitingPermission)
+	require.Empty(t, answers)
+	require.Equal(t, "y", next.textarea.Value())
+	require.Equal(t, "permission", next.status)
+}
+
 func TestLongErrorTranscriptWrapsInViewport(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, nil)

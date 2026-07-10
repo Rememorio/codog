@@ -284,6 +284,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.layout(msg.Width, msg.Height)
 	case tea.KeyMsg:
+		if msg.Paste {
+			return m.handlePastedInput(msg)
+		}
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			if m.busy {
@@ -427,6 +430,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.mode()
 	}
 	return m, tea.Batch(cmd, viewportCmd)
+}
+
+func (m model) handlePastedInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	text := string(msg.Runes)
+	if text == "" {
+		return m, nil
+	}
+	if m.helpOpen {
+		m.helpOpen = false
+	}
+	m.textarea.InsertString(text)
+	m.matches = nil
+	m.selected = 0
+	m.historyPos = -1
+	if m.searchOpen {
+		m.updateHistorySearch()
+		return m, nil
+	}
+	if m.awaitingPermission {
+		m.status = "permission"
+	} else if m.awaitingQuestion {
+		m.status = "question"
+	} else if m.busy {
+		m.status = "running"
+	} else {
+		lines := pastedLineCount(text)
+		m.status = fmt.Sprintf("pasted %d %s", lines, plural("line", lines))
+	}
+	return m, nil
+}
+
+func pastedLineCount(text string) int {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	if text == "" {
+		return 0
+	}
+	return strings.Count(text, "\n") + 1
+}
+
+func plural(word string, count int) string {
+	if count == 1 {
+		return word
+	}
+	return word + "s"
 }
 
 func (m model) View() string {
