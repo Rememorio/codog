@@ -86,6 +86,98 @@ func TestClientStreamsAnthropicMessageID(t *testing.T) {
 	require.Equal(t, "hello", msg.Blocks[0].Text)
 }
 
+func TestClientStreamsAnthropicThinkingBlocks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/messages", r.URL.Path)
+		w.Header().Set("content-type", "text/event-stream")
+		writeAnthropicSSE(t, w,
+			map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_thinking"}},
+			map[string]any{
+				"type":  "content_block_start",
+				"index": 0,
+				"content_block": map[string]any{
+					"type": "thinking",
+				},
+			},
+			map[string]any{
+				"type":  "content_block_delta",
+				"index": 0,
+				"delta": map[string]any{
+					"type":     "thinking_delta",
+					"thinking": "first ",
+				},
+			},
+			map[string]any{
+				"type":  "content_block_delta",
+				"index": 0,
+				"delta": map[string]any{
+					"type":     "thinking_delta",
+					"thinking": "second",
+				},
+			},
+			map[string]any{
+				"type":  "content_block_delta",
+				"index": 0,
+				"delta": map[string]any{
+					"type":      "signature_delta",
+					"signature": "sig-1",
+				},
+			},
+			map[string]any{"type": "content_block_stop", "index": 0},
+			map[string]any{
+				"type":  "content_block_start",
+				"index": 1,
+				"content_block": map[string]any{
+					"type": "redacted_thinking",
+					"data": "opaque",
+				},
+			},
+			map[string]any{"type": "content_block_stop", "index": 1},
+			map[string]any{
+				"type":  "content_block_start",
+				"index": 2,
+				"content_block": map[string]any{
+					"type": "text",
+					"text": "",
+				},
+			},
+			map[string]any{
+				"type":  "content_block_delta",
+				"index": 2,
+				"delta": map[string]any{
+					"type": "text_delta",
+					"text": "visible",
+				},
+			},
+			map[string]any{"type": "content_block_stop", "index": 2},
+			map[string]any{"type": "message_stop"},
+		)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test", "")
+	var streamed strings.Builder
+	msg, err := client.Stream(context.Background(), Request{
+		Model:     "mock",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, func(delta string) {
+		streamed.WriteString(delta)
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "visible", streamed.String())
+	require.Equal(t, "msg_thinking", msg.ID)
+	require.Len(t, msg.Blocks, 3)
+	require.Equal(t, "thinking", msg.Blocks[0].Type)
+	require.Equal(t, "first second", msg.Blocks[0].Thinking)
+	require.Equal(t, "sig-1", msg.Blocks[0].Signature)
+	require.Equal(t, "redacted_thinking", msg.Blocks[1].Type)
+	require.Equal(t, "opaque", msg.Blocks[1].Data)
+	require.Equal(t, "text", msg.Blocks[2].Type)
+	require.Equal(t, "visible", msg.Blocks[2].Text)
+}
+
 func TestClientStreamsAnthropicAliasAsResolvedModel(t *testing.T) {
 	var requestBody map[string]any
 	server := httptest.NewServer(mockanthropic.Server{
@@ -130,6 +222,7 @@ func TestClientFiltersThinkingBlocksForAnthropicRequests(t *testing.T) {
 			Role: "assistant",
 			Content: []ContentBlock{
 				{Type: "thinking", Thinking: "hidden reasoning"},
+				{Type: "redacted_thinking", Data: "opaque reasoning"},
 				{Type: "text", Text: "visible answer"},
 			},
 		}},

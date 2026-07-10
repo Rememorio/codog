@@ -30,6 +30,7 @@ type ContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
 	Thinking  string          `json:"thinking,omitempty"`
+	Data      string          `json:"data,omitempty"`
 	Source    *ContentSource  `json:"source,omitempty"`
 	Title     string          `json:"title,omitempty"`
 	Signature string          `json:"signature,omitempty"`

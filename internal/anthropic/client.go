@@ -697,7 +697,7 @@ func messagesWithoutThinkingBlocks(messages []Message) []Message {
 	for _, msg := range messages {
 		next := Message{Role: msg.Role}
 		for _, block := range msg.Content {
-			if block.Type == "thinking" {
+			if block.Type == "thinking" || block.Type == "redacted_thinking" {
 				continue
 			}
 			next.Content = append(next.Content, block)
@@ -991,15 +991,21 @@ type streamEnvelope struct {
 		ID string `json:"id"`
 	} `json:"message"`
 	ContentBlock struct {
-		Type  string          `json:"type"`
-		Text  string          `json:"text"`
-		ID    string          `json:"id"`
-		Name  string          `json:"name"`
-		Input json.RawMessage `json:"input"`
+		Type      string          `json:"type"`
+		Text      string          `json:"text"`
+		Thinking  string          `json:"thinking"`
+		Data      string          `json:"data"`
+		Signature string          `json:"signature"`
+		ID        string          `json:"id"`
+		Name      string          `json:"name"`
+		Input     json.RawMessage `json:"input"`
 	} `json:"content_block"`
 	Delta struct {
 		Type        string `json:"type"`
 		Text        string `json:"text"`
+		Thinking    string `json:"thinking"`
+		Data        string `json:"data"`
+		Signature   string `json:"signature"`
 		PartialJSON string `json:"partial_json"`
 	} `json:"delta"`
 	Usage Usage `json:"usage"`
@@ -1231,6 +1237,14 @@ func consumeEvent(lines []string, builders map[int]*blockBuilder, usage *Usage, 
 		switch event.ContentBlock.Type {
 		case "text":
 			builder.block = ContentBlock{Type: "text", Text: event.ContentBlock.Text}
+		case "thinking":
+			builder.block = ContentBlock{
+				Type:      "thinking",
+				Thinking:  event.ContentBlock.Thinking,
+				Signature: event.ContentBlock.Signature,
+			}
+		case "redacted_thinking":
+			builder.block = ContentBlock{Type: "redacted_thinking", Data: event.ContentBlock.Data}
 		case "tool_use":
 			builder.block = ContentBlock{
 				Type:  "tool_use",
@@ -1256,6 +1270,12 @@ func consumeEvent(lines []string, builders map[int]*blockBuilder, usage *Usage, 
 			if onText != nil {
 				onText(event.Delta.Text)
 			}
+		case "thinking_delta":
+			builder.block.Thinking += event.Delta.Thinking
+		case "signature_delta":
+			builder.block.Signature += event.Delta.Signature
+		case "redacted_thinking_delta":
+			builder.block.Data += event.Delta.Data
 		case "input_json_delta":
 			builder.inputJSON.WriteString(event.Delta.PartialJSON)
 		}
