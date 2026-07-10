@@ -38,18 +38,38 @@ func TestBuildReportsReadyWhenProductionSurfacesConfigured(t *testing.T) {
 	require.True(t, report.ManagedPolicyFilePresent)
 	require.True(t, report.ReleaseSigningSupported)
 	require.Empty(t, report.MissingProductionSurfaces)
+	require.Empty(t, report.ExcludedProductionSurfaces)
 }
 
-func TestBuildReportsDegradedWhenProductionSurfacesAreMissing(t *testing.T) {
+func TestBuildReportsDegradedOnlyForLocalProductionSurfaces(t *testing.T) {
 	sandboxStatus := sandbox.Status{Available: false}
 
 	report := Build(Options{SandboxStatus: &sandboxStatus})
 
 	require.Equal(t, "degraded", report.Status)
 	require.Contains(t, report.MissingProductionSurfaces, "sandbox_available")
-	require.Contains(t, report.MissingProductionSurfaces, "updater_manifest")
-	require.Contains(t, report.MissingProductionSurfaces, "managed_policy")
-	require.Contains(t, report.MissingProductionSurfaces, "managed_policy_public_key")
+	require.NotContains(t, report.MissingProductionSurfaces, "updater_manifest")
+	require.NotContains(t, report.MissingProductionSurfaces, "managed_policy")
+	require.NotContains(t, report.MissingProductionSurfaces, "managed_policy_public_key")
 	require.NotContains(t, report.MissingProductionSurfaces, "updater_rollback")
 	require.NotContains(t, report.MissingProductionSurfaces, "release_signing")
+	require.Contains(t, report.ExcludedProductionSurfaces, "updater_manifest")
+	require.Contains(t, report.ExcludedProductionSurfaces, "managed_policy")
+	require.Contains(t, report.ExcludedProductionSurfaces, "managed_policy_public_key")
+}
+
+func TestBuildReportsReadyWhenOnlyOfficialProductionSurfacesAreMissing(t *testing.T) {
+	sandboxStatus := sandbox.Status{
+		Available:  true,
+		Default:    "sandbox-exec",
+		Strategies: []string{"sandbox-exec"},
+	}
+
+	report := Build(Options{SandboxStatus: &sandboxStatus})
+
+	require.Equal(t, "ready", report.Status)
+	require.Empty(t, report.MissingProductionSurfaces)
+	require.Contains(t, report.ExcludedProductionSurfaces, "updater_manifest")
+	require.Contains(t, report.ExcludedProductionSurfaces, "managed_policy")
+	require.Contains(t, report.ExcludedProductionSurfaces, "managed_policy_public_key")
 }

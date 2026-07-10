@@ -38,14 +38,32 @@ func TestBuildReportsReadyWhenBridgeAuthAndRemoteSessionConfigured(t *testing.T)
 	require.Empty(t, report.RemoteProxyMissing)
 }
 
-func TestBuildReportsDegradedWhenAuthIsMissing(t *testing.T) {
+func TestBuildReportsReadyWhenOnlyOfficialAuthIsMissing(t *testing.T) {
 	report := Build(Options{RemoteEnv: map[string]string{}})
 
-	require.Equal(t, "degraded", report.Status)
+	require.Equal(t, "ready", report.Status)
 	require.False(t, report.RemoteAuthConfigured)
 	require.False(t, report.EditorAuthConfigured)
 	require.Empty(t, report.MissingBridgeMethods)
 	require.Empty(t, report.MissingControlRoutes)
+	require.Empty(t, report.RemoteProxyMissing)
+	require.Contains(t, report.ExcludedExternalSurfaces, "official_remote_auth")
+	require.Contains(t, report.ExcludedExternalSurfaces, "official_ide_bridge_auth")
+	require.Contains(t, report.ExcludedExternalSurfaces, "ccr_hosted_remote_proxy")
+}
+
+func TestBuildReportsDegradedWhenEnabledRemoteSessionIsIncomplete(t *testing.T) {
+	report := Build(Options{
+		RemoteEnabled: true,
+		RemoteEnv: map[string]string{
+			"CLAUDE_CODE_REMOTE":         "1",
+			"CCR_UPSTREAM_PROXY_ENABLED": "1",
+		},
+	})
+
+	require.Equal(t, "degraded", report.Status)
+	require.False(t, report.RemoteSessionConfigured)
+	require.NotEmpty(t, report.RemoteProxyMissing)
 }
 
 func TestRequiredListsAreStableCopies(t *testing.T) {

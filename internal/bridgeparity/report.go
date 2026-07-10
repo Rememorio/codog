@@ -93,6 +93,7 @@ type Report struct {
 	RemoteSessionConfigured   bool     `json:"remote_session_configured"`
 	RemoteProxyReady          bool     `json:"remote_proxy_ready"`
 	RemoteProxyMissing        []string `json:"remote_proxy_missing,omitempty"`
+	ExcludedExternalSurfaces  []string `json:"excluded_external_surfaces,omitempty"`
 }
 
 // Build returns a bridge readiness report without starting any listeners or
@@ -118,15 +119,17 @@ func Build(options Options) Report {
 		EditorAuthConfigured:      strings.TrimSpace(options.EditorBridgeToken) != "",
 		RemoteSessionConfigured:   strings.TrimSpace(runtimeReport.Remote.SessionID) != "",
 		RemoteProxyReady:          runtimeReport.UpstreamProxy.Ready,
-		RemoteProxyMissing:        runtimeReport.UpstreamProxy.Missing,
+		RemoteProxyMissing:        remoteProxyMissing(runtimeReport),
+		ExcludedExternalSurfaces:  excludedExternalSurfaces(options, runtimeReport),
 	}
 	if len(report.MissingBridgeMethods) > 0 ||
-		len(report.MissingControlRoutes) > 0 ||
-		!report.RemoteAuthConfigured ||
-		!report.EditorAuthConfigured {
+		len(report.MissingControlRoutes) > 0 {
 		report.Status = "degraded"
 	}
 	if report.RemoteEnabled && !report.RemoteSessionConfigured {
+		report.Status = "degraded"
+	}
+	if report.RemoteEnabled && !report.RemoteProxyReady && runtimeReport.UpstreamProxy.Enabled {
 		report.Status = "degraded"
 	}
 	return report
@@ -166,4 +169,26 @@ func missing(required []string, available []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func remoteProxyMissing(runtimeReport remote.RuntimeReport) []string {
+	if runtimeReport.Remote.Enabled || runtimeReport.UpstreamProxy.Enabled {
+		return runtimeReport.UpstreamProxy.Missing
+	}
+	return nil
+}
+
+func excludedExternalSurfaces(options Options, runtimeReport remote.RuntimeReport) []string {
+	var excluded []string
+	if strings.TrimSpace(options.RemoteAuthToken) == "" {
+		excluded = append(excluded, "official_remote_auth")
+	}
+	if strings.TrimSpace(options.EditorBridgeToken) == "" {
+		excluded = append(excluded, "official_ide_bridge_auth")
+	}
+	if !runtimeReport.Remote.Enabled && !runtimeReport.UpstreamProxy.Enabled {
+		excluded = append(excluded, "ccr_hosted_remote_proxy")
+	}
+	sort.Strings(excluded)
+	return excluded
 }

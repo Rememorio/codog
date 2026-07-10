@@ -21,22 +21,23 @@ type Options struct {
 // Report is the JSON-safe delivery hardening summary exposed by capabilities
 // and release checks.
 type Report struct {
-	Status                    string   `json:"status"`
-	Platform                  string   `json:"platform"`
-	SandboxConfigured         bool     `json:"sandbox_configured"`
-	SandboxEnabled            bool     `json:"sandbox_enabled"`
-	SandboxAvailable          bool     `json:"sandbox_available"`
-	SandboxDefault            string   `json:"sandbox_default,omitempty"`
-	SandboxStrategies         []string `json:"sandbox_strategies,omitempty"`
-	UpdaterManifestConfigured bool     `json:"updater_manifest_configured"`
-	UpdaterManifestURL        string   `json:"updater_manifest_url,omitempty"`
-	UpdaterRollbackSupported  bool     `json:"updater_rollback_supported"`
-	ManagedPolicyConfigured   bool     `json:"managed_policy_configured"`
-	ManagedPolicyPublicKey    bool     `json:"managed_policy_public_key"`
-	ManagedPolicyFilePresent  bool     `json:"managed_policy_file_present"`
-	ReleaseSigningSupported   bool     `json:"release_signing_supported"`
-	RequiredSurfaceCount      int      `json:"required_surface_count"`
-	MissingProductionSurfaces []string `json:"missing_production_surfaces,omitempty"`
+	Status                     string   `json:"status"`
+	Platform                   string   `json:"platform"`
+	SandboxConfigured          bool     `json:"sandbox_configured"`
+	SandboxEnabled             bool     `json:"sandbox_enabled"`
+	SandboxAvailable           bool     `json:"sandbox_available"`
+	SandboxDefault             string   `json:"sandbox_default,omitempty"`
+	SandboxStrategies          []string `json:"sandbox_strategies,omitempty"`
+	UpdaterManifestConfigured  bool     `json:"updater_manifest_configured"`
+	UpdaterManifestURL         string   `json:"updater_manifest_url,omitempty"`
+	UpdaterRollbackSupported   bool     `json:"updater_rollback_supported"`
+	ManagedPolicyConfigured    bool     `json:"managed_policy_configured"`
+	ManagedPolicyPublicKey     bool     `json:"managed_policy_public_key"`
+	ManagedPolicyFilePresent   bool     `json:"managed_policy_file_present"`
+	ReleaseSigningSupported    bool     `json:"release_signing_supported"`
+	RequiredSurfaceCount       int      `json:"required_surface_count"`
+	MissingProductionSurfaces  []string `json:"missing_production_surfaces,omitempty"`
+	ExcludedProductionSurfaces []string `json:"excluded_production_surfaces,omitempty"`
 }
 
 // Build evaluates whether release hardening has the core surfaces required for
@@ -68,6 +69,7 @@ func Build(options Options) Report {
 		report.ManagedPolicyFilePresent = fileExists(options.EnterprisePolicyPath)
 	}
 	report.MissingProductionSurfaces = report.missingSurfaces()
+	report.ExcludedProductionSurfaces = report.excludedSurfaces()
 	if len(report.MissingProductionSurfaces) > 0 {
 		report.Status = "degraded"
 	}
@@ -90,22 +92,27 @@ func (r Report) missingSurfaces() []string {
 	if !r.SandboxAvailable {
 		missing = append(missing, "sandbox_available")
 	}
-	if !r.UpdaterManifestConfigured {
-		missing = append(missing, "updater_manifest")
-	}
 	if !r.UpdaterRollbackSupported {
 		missing = append(missing, "updater_rollback")
-	}
-	if !r.ManagedPolicyConfigured || !r.ManagedPolicyFilePresent {
-		missing = append(missing, "managed_policy")
-	}
-	if !r.ManagedPolicyPublicKey {
-		missing = append(missing, "managed_policy_public_key")
 	}
 	if !r.ReleaseSigningSupported {
 		missing = append(missing, "release_signing")
 	}
 	return missing
+}
+
+func (r Report) excludedSurfaces() []string {
+	var excluded []string
+	if !r.UpdaterManifestConfigured {
+		excluded = append(excluded, "updater_manifest")
+	}
+	if !r.ManagedPolicyConfigured || !r.ManagedPolicyFilePresent {
+		excluded = append(excluded, "managed_policy")
+	}
+	if !r.ManagedPolicyPublicKey {
+		excluded = append(excluded, "managed_policy_public_key")
+	}
+	return excluded
 }
 
 func fileExists(path string) bool {
