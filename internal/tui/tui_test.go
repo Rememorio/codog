@@ -528,6 +528,7 @@ func TestPreviewQuestionMarkOpensHelpWhenComposerEmpty(t *testing.T) {
 	require.Contains(t, next.View(), "/status")
 	require.Contains(t, next.View(), "Shift+Enter")
 	require.Contains(t, next.View(), "Alt+Enter")
+	require.Contains(t, helpPanel([]string{"/status"}, 100), "\\+Enter")
 }
 
 func TestEnterSubmitsAndNewlineShortcutsInsertNewline(t *testing.T) {
@@ -547,6 +548,42 @@ func TestEnterSubmitsAndNewlineShortcutsInsertNewline(t *testing.T) {
 	next = updated.(model)
 	require.True(t, next.result.Submitted)
 	require.Equal(t, "first", next.result.Prompt)
+}
+
+func TestBackslashEnterInsertsNewlineInsteadOfSubmitting(t *testing.T) {
+	ta := newPromptTextarea("first\\")
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, cmd := m.Update(teaKey("enter"))
+	next := updated.(model)
+
+	require.Nil(t, cmd)
+	require.False(t, next.result.Submitted)
+	require.Equal(t, "first\n", next.textarea.Value())
+	require.Equal(t, "newline", next.status)
+
+	next.textarea.InsertString("second")
+	updated, _ = next.Update(teaKey("enter"))
+	next = updated.(model)
+	require.True(t, next.result.Submitted)
+	require.Equal(t, "first\nsecond", next.result.Prompt)
+}
+
+func TestBackslashEnterHandlesWhitespaceAndEscapedBackslash(t *testing.T) {
+	ta := newPromptTextarea("first\\  ")
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, _ := m.Update(teaKey("enter"))
+	next := updated.(model)
+	require.Equal(t, "first\n  ", next.textarea.Value())
+	require.False(t, next.result.Submitted)
+
+	ta = newPromptTextarea("literal\\\\")
+	m = newModel(context.Background(), ta, nil, nil)
+	updated, _ = m.Update(teaKey("enter"))
+	next = updated.(model)
+	require.True(t, next.result.Submitted)
+	require.Equal(t, "literal\\\\", next.result.Prompt)
 }
 
 func TestPastedMultilineInputDoesNotSubmitUntilEnter(t *testing.T) {

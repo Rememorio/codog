@@ -393,6 +393,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.closeHistorySearch(true)
 				return m, nil
 			}
+			if m.convertTrailingBackslashToNewline() {
+				return m, nil
+			}
 			if len(m.matches) > 0 {
 				m = m.acceptSelectedCompletion()
 				return m, nil
@@ -459,6 +462,30 @@ func (m model) handlePastedInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("pasted %d %s", lines, plural("line", lines))
 	}
 	return m, nil
+}
+
+func (m *model) convertTrailingBackslashToNewline() bool {
+	value := m.textarea.Value()
+	trimmed := strings.TrimRight(value, " \t")
+	if !endsWithOddBackslashes(trimmed) {
+		return false
+	}
+	suffix := value[len(trimmed):]
+	m.textarea.SetValue(trimmed[:len(trimmed)-1] + "\n" + suffix)
+	m.textarea.CursorEnd()
+	m.matches = nil
+	m.selected = 0
+	m.historyPos = -1
+	m.status = "newline"
+	return true
+}
+
+func endsWithOddBackslashes(value string) bool {
+	count := 0
+	for i := len(value) - 1; i >= 0 && value[i] == '\\'; i-- {
+		count++
+	}
+	return count%2 == 1
 }
 
 func pastedLineCount(text string) int {
@@ -854,7 +881,7 @@ func statusBarText(status string, width int) string {
 	case width > 0 && width < 90:
 		return fmt.Sprintf("%s · Enter send · Shift+Enter newline · Tab · Ctrl-R · Esc", status)
 	default:
-		return fmt.Sprintf("%s · Enter send · Shift+Enter newline · Tab complete · Ctrl-R history · ? help · Esc quit", status)
+		return fmt.Sprintf("%s · Enter send · Shift+Enter or \\+Enter newline · Tab complete · Ctrl-R history · ? help · Esc quit", status)
 	}
 }
 
@@ -1192,6 +1219,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Enter       submit composer",
 		"  Shift+Enter insert newline",
 		"  Alt+Enter   insert newline fallback",
+		"  \\+Enter     replace trailing backslash with newline",
 		"  Ctrl+R      search prompt history",
 		"  Tab         complete slash command",
 		"  Up/Down     choose a shown completion",
