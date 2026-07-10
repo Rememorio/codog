@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/Rememorio/codog/internal/slash"
@@ -222,6 +223,7 @@ type model struct {
 	runtimeBadges             []string
 	vimEnabled                bool
 	vimNormal                 bool
+	vimOperator               string
 	cycleMode                 func() string
 	history                   []string
 	historyPos                int
@@ -2605,22 +2607,29 @@ func (m model) handleVimNormalKey(msg tea.KeyMsg) (model, bool, tea.Cmd) {
 		return m, false, nil
 	}
 	key := msg.String()
+	if m.vimOperator != "" {
+		return m.handleVimOperatorKey(key)
+	}
 	switch key {
 	case "i":
+		m.vimOperator = ""
 		m.vimNormal = false
 		m.status = "vim insert"
 		return m, true, nil
 	case "a":
+		m.vimOperator = ""
 		m.textarea, _ = m.textarea.Update(tea.KeyMsg{Type: tea.KeyRight})
 		m.vimNormal = false
 		m.status = "vim insert"
 		return m, true, nil
 	case "I":
+		m.vimOperator = ""
 		m.textarea.CursorStart()
 		m.vimNormal = false
 		m.status = "vim insert"
 		return m, true, nil
 	case "A":
+		m.vimOperator = ""
 		m.textarea.CursorEnd()
 		m.vimNormal = false
 		m.status = "vim insert"
@@ -2631,6 +2640,14 @@ func (m model) handleVimNormalKey(msg tea.KeyMsg) (model, bool, tea.Cmd) {
 		return m, true, nil
 	case "l":
 		m.textarea, _ = m.textarea.Update(tea.KeyMsg{Type: tea.KeyRight})
+		m.status = "vim normal"
+		return m, true, nil
+	case "w":
+		m.moveVimWordForward()
+		m.status = "vim normal"
+		return m, true, nil
+	case "b":
+		m.moveVimWordBackward()
 		m.status = "vim normal"
 		return m, true, nil
 	case "0":
@@ -2649,9 +2666,136 @@ func (m model) handleVimNormalKey(msg tea.KeyMsg) (model, bool, tea.Cmd) {
 		m.refreshCompletionMenu()
 		m.status = "vim normal"
 		return m, true, nil
+	case "D":
+		m.deleteVimToLineEnd()
+		m.status = "vim normal"
+		return m, true, nil
+	case "C":
+		m.deleteVimToLineEnd()
+		m.vimNormal = false
+		m.status = "vim insert"
+		return m, true, nil
+	case "d", "c":
+		m.vimOperator = key
+		m.status = "vim " + key
+		return m, true, nil
+	case "u":
+		m.undoComposer()
+		m.vimNormal = true
+		m.status = "vim normal"
+		return m, true, nil
 	default:
 		return m, false, nil
 	}
+}
+
+func (m model) handleVimOperatorKey(key string) (model, bool, tea.Cmd) {
+	operator := m.vimOperator
+	m.vimOperator = ""
+	switch {
+	case operator == "d" && key == "d":
+		m.clearVimComposer(false)
+		return m, true, nil
+	case operator == "c" && key == "c":
+		m.clearVimComposer(true)
+		return m, true, nil
+	case operator == "d" && key == "$":
+		m.deleteVimToLineEnd()
+		m.status = "vim normal"
+		return m, true, nil
+	case operator == "c" && key == "$":
+		m.deleteVimToLineEnd()
+		m.vimNormal = false
+		m.status = "vim insert"
+		return m, true, nil
+	default:
+		m.status = "vim normal"
+		return m, true, nil
+	}
+}
+
+func (m *model) moveVimWordForward() {
+	value := m.textarea.Value()
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return
+	}
+	col := clampIndex(m.vimCursorColumn(), len(runes)+1)
+	if col >= len(runes) {
+		m.textarea.CursorEnd()
+		return
+	}
+	for col < len(runes) && !isVimWordRune(runes[col]) {
+		col++
+	}
+	for col < len(runes) && isVimWordRune(runes[col]) {
+		col++
+	}
+	for col < len(runes) && !isVimWordRune(runes[col]) {
+		col++
+	}
+	m.textarea.SetCursor(min(col, len(runes)))
+}
+
+func (m *model) moveVimWordBackward() {
+	value := m.textarea.Value()
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return
+	}
+	col := clampIndex(m.vimCursorColumn(), len(runes)+1)
+	if col <= 0 {
+		m.textarea.CursorStart()
+		return
+	}
+	col--
+	for col > 0 && !isVimWordRune(runes[col]) {
+		col--
+	}
+	for col > 0 && isVimWordRune(runes[col-1]) {
+		col--
+	}
+	m.textarea.SetCursor(col)
+}
+
+func (m *model) deleteVimToLineEnd() {
+	value := m.textarea.Value()
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return
+	}
+	col := clampIndex(m.vimCursorColumn(), len(runes)+1)
+	m.pushComposerUndoValue(value)
+	m.textarea.SetValue(string(runes[:min(col, len(runes))]))
+	m.textarea.SetCursor(min(col, len([]rune(m.textarea.Value()))))
+	m.matches = nil
+	m.selected = 0
+	m.refreshCompletionMenu()
+}
+
+func (m *model) clearVimComposer(insert bool) {
+	m.pushComposerUndo()
+	m.textarea.SetValue("")
+	m.matches = nil
+	m.selected = 0
+	m.commandArgumentHint = ""
+	m.inlineGhostText = ""
+	m.historyPos = -1
+	m.vimNormal = !insert
+	if insert {
+		m.status = "vim insert"
+	} else {
+		m.status = "vim normal"
+	}
+}
+
+func (m model) vimCursorColumn() int {
+	info := m.textarea.LineInfo()
+	return info.StartColumn + info.ColumnOffset
+}
+
+func isVimWordRune(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 func (m model) openExternalEditor() (tea.Model, tea.Cmd) {
@@ -5212,8 +5356,9 @@ func (m model) promptFooterHints(width int) []string {
 	if m.vimEnabled && m.vimNormal {
 		add("vim NORMAL")
 		add("i/a insert")
-		add("h/l move")
-		add("x delete")
+		add("h/l/w/b move")
+		add("x/D/dd delete")
+		add("C/cc change")
 		add("Enter send")
 		return trimFooterHints(hints, width)
 	}

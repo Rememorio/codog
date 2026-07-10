@@ -5587,6 +5587,14 @@ func tuiPromptCompletionScenario() scenario {
 			if vimEdited.Value != "bc!" || !strings.Contains(vimEdited.View, "vim: insert") {
 				return localScenarioResult{}, fmt.Errorf("expected vim edit preview, got %#v", vimEdited)
 			}
+			vimWordEdited := tui.PreviewWithVimMode("one two three", []string{"esc", "0", "w", "x", "A", "!"}, 96, 24)
+			if vimWordEdited.Value != "one wo three!" {
+				return localScenarioResult{}, fmt.Errorf("expected vim word edit preview, got %#v", vimWordEdited)
+			}
+			vimOperatorEdited := tui.PreviewWithVimMode("abc", []string{"esc", "c", "c", "n"}, 96, 24)
+			if vimOperatorEdited.Value != "n" {
+				return localScenarioResult{}, fmt.Errorf("expected vim operator edit preview, got %#v", vimOperatorEdited)
+			}
 			undoControl := tui.PreviewWithRuntimeControl("", "ctrl+x ctrl+u", tui.RuntimeControlResult{
 				Title:  "Undo",
 				Status: "restored",
@@ -5691,6 +5699,8 @@ func tuiPromptCompletionScenario() scenario {
 				"runtime_thinking_badge":       strings.Contains(thinkingToggle.View, "thinking: medium"),
 				"vim_normal_mode":              vimNormal.Mode == "vim normal",
 				"vim_normal_edit":              vimEdited.Value == "bc!",
+				"vim_word_edit":                vimWordEdited.Value == "one wo three!",
+				"vim_operator_edit":            vimOperatorEdited.Value == "n",
 				"message_actions":              messageActions.MessageMenu,
 				"message_action_copy":          messageCopy.Value == "copy me",
 				"message_action_target":        messageTargetCopy.Value == "first target",

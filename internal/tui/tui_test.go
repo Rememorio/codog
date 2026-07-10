@@ -528,6 +528,24 @@ func TestVimModeNormalEditingAndInsertReturn(t *testing.T) {
 	require.Contains(t, preview.View, "vim: insert")
 }
 
+func TestVimModeWordMoveAndDeleteToEnd(t *testing.T) {
+	word := PreviewWithVimMode("one two three", []string{"esc", "0", "w", "x", "A", "!"}, 96, 24)
+	require.Equal(t, "one wo three!", word.Value)
+
+	deleted := PreviewWithVimMode("prefix suffix", []string{"esc", "0", "w", "D", "A", "!"}, 96, 24)
+	require.Equal(t, "prefix !", deleted.Value)
+}
+
+func TestVimModeOperatorsClearComposer(t *testing.T) {
+	deleted := PreviewWithVimMode("abc", []string{"esc", "d", "d"}, 96, 24)
+	require.Equal(t, "", deleted.Value)
+	require.Equal(t, "vim normal", deleted.Mode)
+
+	changed := PreviewWithVimMode("abc", []string{"esc", "c", "c", "n"}, 96, 24)
+	require.Equal(t, "n", changed.Value)
+	require.Equal(t, "compose", changed.Mode)
+}
+
 func TestPromptFooterShowsRunningQueueHints(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, nil)
