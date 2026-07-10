@@ -104,7 +104,7 @@ func Specs() []Spec {
 		{Name: "/self-test", Usage: "/self-test [run|check|manifest]", Description: "Run Codog's local deterministic self-test harness."},
 		{Name: "/reset-limits", Usage: "/reset-limits [--target user|project|local]", Description: "Reset local provider retry and backoff overrides."},
 		{Name: "/reset", Usage: "/reset [section|all --confirm]", Description: "Reset configuration sections to defaults."},
-		{Name: "/plan", Usage: "/plan [TEXT|show|exit|clear]", Description: "Enter or inspect read-only planning mode."},
+		{Name: "/plan", Usage: "/plan [TEXT|show|open|edit|exit|clear]", Description: "Enter, inspect, or edit read-only planning mode."},
 		{Name: "/ultraplan", Usage: "/ultraplan [TEXT]", Description: "Alias for local plan mode."},
 		{Name: "/exit-plan", Usage: "/exit-plan", Description: "Leave read-only planning mode."},
 		{Name: "/exit_plan_mode", Usage: "/exit_plan_mode", Description: "Alias for /exit-plan."},

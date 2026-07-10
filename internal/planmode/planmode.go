@@ -24,11 +24,14 @@ type State struct {
 
 // Report describes a plan-mode operation and the resulting workspace state.
 type Report struct {
-	Kind   string `json:"kind"`
-	Action string `json:"action"`
-	Status string `json:"status"`
-	Path   string `json:"path"`
-	State  State  `json:"state"`
+	Kind        string `json:"kind"`
+	Action      string `json:"action"`
+	Status      string `json:"status"`
+	Path        string `json:"path"`
+	State       State  `json:"state"`
+	Opened      bool   `json:"opened,omitempty"`
+	Editor      string `json:"editor,omitempty"`
+	EditorError string `json:"editor_error,omitempty"`
 }
 
 // Path returns the workspace-local plan-mode state file.
@@ -144,6 +147,12 @@ func RenderText(w io.Writer, report Report) {
 	fmt.Fprintln(w, "Plan")
 	fmt.Fprintf(w, "  Status           %s\n", report.Status)
 	fmt.Fprintf(w, "  Path             %s\n", report.Path)
+	if report.Opened {
+		fmt.Fprintln(w, "  Opened           true")
+	}
+	if report.EditorError != "" {
+		fmt.Fprintf(w, "  Editor error     %s\n", report.EditorError)
+	}
 	if report.State.UpdatedAt != "" {
 		fmt.Fprintf(w, "  Updated          %s\n", report.State.UpdatedAt)
 	}

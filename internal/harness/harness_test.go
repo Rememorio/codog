@@ -345,6 +345,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, []string{"enter_plan_mode", "todo_write", "todo_read", "exit_plan_mode"}, planTodo.ToolUses)
 	require.Contains(t, planTodo.Output, `"action": "enter"`)
 	require.Contains(t, planTodo.Output, `"status": "active"`)
+	require.Contains(t, planTodo.Output, `"action": "open"`)
+	require.Contains(t, planTodo.Output, `"opened": true`)
 	require.Contains(t, planTodo.Output, `"content": "write focused parity test"`)
 	require.Contains(t, planTodo.Output, `"action": "exit"`)
 	require.Contains(t, planTodo.Output, `"status": "inactive"`)

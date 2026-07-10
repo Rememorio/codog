@@ -20458,27 +20458,9 @@ func (a *App) openKeybindings() (keybindingsFileReport, error) {
 		return report, err
 	}
 	report.Action = "open"
-	editor := strings.TrimSpace(os.Getenv("VISUAL"))
-	if editor == "" {
-		editor = strings.TrimSpace(os.Getenv("EDITOR"))
-	}
+	editor, err := openPathInEditor(report.Path)
 	report.Editor = editor
-	if editor == "" {
-		report.Status = "open_failed"
-		report.EditorError = "no editor configured; set VISUAL or EDITOR"
-		return report, nil
-	}
-	fields := strings.Fields(editor)
-	if len(fields) == 0 {
-		report.Status = "open_failed"
-		report.EditorError = "no editor configured; set VISUAL or EDITOR"
-		return report, nil
-	}
-	cmd := exec.Command(fields[0], append(fields[1:], report.Path)...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err != nil {
 		report.Status = "open_failed"
 		report.EditorError = err.Error()
 		return report, nil
@@ -20491,6 +20473,28 @@ func (a *App) openKeybindings() (keybindingsFileReport, error) {
 	}
 	report.Exists = true
 	return report, nil
+}
+
+func openPathInEditor(path string) (string, error) {
+	editor := strings.TrimSpace(os.Getenv("VISUAL"))
+	if editor == "" {
+		editor = strings.TrimSpace(os.Getenv("EDITOR"))
+	}
+	if editor == "" {
+		return "", errors.New("no editor configured; set VISUAL or EDITOR")
+	}
+	fields := strings.Fields(editor)
+	if len(fields) == 0 {
+		return "", errors.New("no editor configured; set VISUAL or EDITOR")
+	}
+	cmd := exec.Command(fields[0], append(fields[1:], path)...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return editor, err
+	}
+	return editor, nil
 }
 
 func (a *App) initKeybindings(force bool) (keybindingsFileReport, error) {
@@ -29481,6 +29485,8 @@ func (a *App) Plan(args []string) error {
 		report, err = planmode.Exit(a.Workspace)
 	case "clear":
 		report, err = planmode.Clear(a.Workspace)
+	case "open":
+		report, err = a.openPlan()
 	default:
 		return fmt.Errorf("unknown plan action %q", req.Action)
 	}
@@ -29494,6 +29500,34 @@ func (a *App) Plan(args []string) error {
 	}
 	planmode.RenderText(a.Out, report)
 	return nil
+}
+
+func (a *App) openPlan() (planmode.Report, error) {
+	state, err := planmode.Load(a.Workspace)
+	if err != nil {
+		return planmode.Report{}, err
+	}
+	report := planmode.Report{
+		Kind:   "plan",
+		Action: "open",
+		Status: "missing",
+		Path:   planmode.Path(a.Workspace),
+		State:  state,
+	}
+	if strings.TrimSpace(state.Plan) == "" {
+		report.EditorError = "no plan written yet"
+		return report, nil
+	}
+	editor, err := openPathInEditor(report.Path)
+	report.Editor = editor
+	if err != nil {
+		report.Status = "open_failed"
+		report.EditorError = err.Error()
+		return report, nil
+	}
+	report.Status = "opened"
+	report.Opened = true
+	return report, nil
 }
 
 type historyRequest struct {
@@ -35279,7 +35313,7 @@ func stripJSONOnlyOutputFormat(command string, args []string) ([]string, string,
 }
 
 func parsePlanArgs(args []string) (planRequest, error) {
-	const usage = "codog plan [show|enter|set TEXT|exit|clear] [--json|--output-format text|json]"
+	const usage = "codog plan [show|enter|set TEXT|exit|clear|open|edit] [--json|--output-format text|json]"
 	req := planRequest{Action: "show", Format: "text"}
 	textParts := []string{}
 	actionSet := false
@@ -35298,7 +35332,7 @@ func parsePlanArgs(args []string) (planRequest, error) {
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case strings.HasPrefix(arg, "-"):
 			return req, unknownOptionError{Command: "plan", Option: arg, Usage: usage}
-		case !actionSet && isPlanAction(arg):
+		case !actionSet && len(textParts) == 0 && isPlanAction(arg):
 			req.Action = normalizePlanAction(arg)
 			actionSet = true
 		default:
@@ -35322,7 +35356,7 @@ func parsePlanArgs(args []string) (planRequest, error) {
 
 func isPlanAction(value string) bool {
 	switch normalizePlanAction(value) {
-	case "show", "enter", "set", "exit", "clear":
+	case "show", "enter", "set", "exit", "clear", "open":
 		return true
 	default:
 		return false
@@ -35341,6 +35375,8 @@ func normalizePlanAction(value string) string {
 		return "exit"
 	case "clear", "reset", "delete":
 		return "clear"
+	case "open", "edit":
+		return "open"
 	default:
 		return value
 	}
@@ -64563,7 +64599,7 @@ Usage:
   %s [flags] ant-trace [--no-request] [--message TEXT] [--timeout-ms N] [--write|--output PATH] [--json|--output-format text|json]
   %s [flags] mock-limits [serve|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--json|--output-format text|json]
   %s [flags] mock-parity [run|check|manifest] [--report PATH] [--json|--output-format text|json]
-  %s [flags] plan|ultraplan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]
+  %s [flags] plan|ultraplan [show|enter|set|open|edit|exit|clear] [TEXT] [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
   %s [flags] branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--json|--output-format text|json]

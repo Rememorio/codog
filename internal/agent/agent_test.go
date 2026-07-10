@@ -17240,11 +17240,38 @@ func TestPlanCommandAndSlashEnforceReadOnlyPlanningMode(t *testing.T) {
 	require.Contains(t, app.systemPrompt(), "inspect then edit")
 	out.Reset()
 
+	editorLog := filepath.Join(workspace, "plan-editor.log")
+	editorScript := filepath.Join(workspace, "plan-editor.sh")
+	require.NoError(t, os.WriteFile(editorScript, []byte("#!/bin/sh\nprintf '%s\\n' \"$2\" > \"$1\"\n"), 0o755))
+	t.Setenv("VISUAL", editorScript+" "+editorLog)
+
+	require.NoError(t, app.Plan([]string{"open", "--json"}))
+	require.Contains(t, out.String(), `"action": "open"`)
+	require.Contains(t, out.String(), `"status": "opened"`)
+	require.Contains(t, out.String(), `"opened": true`)
+	openedPath, err := os.ReadFile(editorLog)
+	require.NoError(t, err)
+	require.Equal(t, planmode.Path(workspace)+"\n", string(openedPath))
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/plan edit", sess))
+	require.Contains(t, out.String(), "Opened           true")
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/exit-plan", sess))
 	require.Contains(t, out.String(), "Status           inactive")
 	require.Empty(t, errOut.String())
 	require.Equal(t, "workspace-write", app.effectiveConfig().PermissionMode)
 	require.NotContains(t, app.systemPrompt(), "<codog_plan_mode")
+	out.Reset()
+
+	require.NoError(t, app.Plan([]string{"clear"}))
+	out.Reset()
+
+	require.NoError(t, app.Plan([]string{"open", "--json"}))
+	require.Contains(t, out.String(), `"action": "open"`)
+	require.Contains(t, out.String(), `"status": "missing"`)
+	require.Contains(t, out.String(), `"editor_error": "no plan written yet"`)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/ultraplan inspect the release", sess))

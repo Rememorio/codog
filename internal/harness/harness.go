@@ -8036,6 +8036,42 @@ func planTodoScenario() scenario {
 				}
 			}
 
+			editorLog := filepath.Join(workspace, "plan-editor.log")
+			editorScript := filepath.Join(workspace, "plan-editor.sh")
+			if err := os.WriteFile(editorScript, []byte("#!/bin/sh\nprintf '%s\\n' \"$2\" > \"$1\"\n"), 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			openOut, err := runHarnessCodogWithEnv(ctx, workspace, []string{"VISUAL=" + editorScript + " " + editorLog}, "plan", "open", "--output-format", "json")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var opened struct {
+				Action string `json:"action"`
+				Status string `json:"status"`
+				Opened bool   `json:"opened"`
+			}
+			if err := json.Unmarshal([]byte(openOut), &opened); err != nil {
+				return localScenarioResult{}, fmt.Errorf("plan open output was not json: %w: %s", err, openOut)
+			}
+			if opened.Action != "open" || opened.Status != "opened" || !opened.Opened {
+				return localScenarioResult{}, fmt.Errorf("unexpected plan open output: %s", openOut)
+			}
+			openedPath, err := os.ReadFile(editorLog)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			actualPlanPath, err := filepath.EvalSymlinks(strings.TrimSpace(string(openedPath)))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			expectedPlanPath, err := filepath.EvalSymlinks(filepath.Join(workspace, ".codog", "plan.json"))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if actualPlanPath != expectedPlanPath {
+				return localScenarioResult{}, fmt.Errorf("plan editor opened unexpected path: %s", string(openedPath))
+			}
+
 			writeOut, err := tools.TodoWriteTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{
 				"todos": [
 					{
@@ -8097,11 +8133,11 @@ func planTodoScenario() scenario {
 			}
 
 			return localScenarioResult{
-				Output:       strings.Join([]string{enterOut, writeOut, readOut, exitOut}, "\n"),
+				Output:       strings.Join([]string{enterOut, openOut, writeOut, readOut, exitOut}, "\n"),
 				FinalMessage: "plan todo harness ok",
 				ToolCalls:    4,
 				ToolUses:     []string{"enter_plan_mode", "todo_write", "todo_read", "exit_plan_mode"},
-				RequestCount: 4,
+				RequestCount: 5,
 			}, nil
 		},
 	}
