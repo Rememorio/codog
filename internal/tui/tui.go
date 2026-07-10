@@ -135,6 +135,7 @@ type ShellOptions struct {
 	RuntimeBadges             []string
 	VimMode                   bool
 	Keybindings               map[string][]string
+	ContextKeybindings        map[string]map[string][]string
 	CycleMode                 func() string
 }
 
@@ -226,6 +227,7 @@ type model struct {
 	vimNormal                 bool
 	vimOperator               string
 	keybindings               map[string]map[string]bool
+	contextKeybindings        map[string]map[string]map[string]bool
 	cycleMode                 func() string
 	history                   []string
 	historyPos                int
@@ -1154,34 +1156,217 @@ func PreviewWithKeybindings(input string, bindings map[string][]string, files []
 	}
 }
 
+// PreviewWithContextKeybindings renders a deterministic modal state after
+// applying custom keybindings for TUI sub-contexts such as tui-modal,
+// tui-attachments, and tui-diff.
+func PreviewWithContextKeybindings(target string, bindings map[string]map[string][]string, keys []string, width int, height int) Preview {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, []transcriptEntry{
+		{Role: "user", Text: "first prompt"},
+		{Role: "assistant", Text: "first answer"},
+		{Role: "user", Text: "second prompt"},
+		{Role: "assistant", Text: "second answer"},
+	})
+	m.contextKeybindings = normalizeTUIContextKeybindings(bindings)
+	m.modelOptions = []string{"alpha", "beta", "gamma"}
+	m.currentModel = "alpha"
+	m.selectModel = func(_ context.Context, model string) (RuntimeControlResult, error) {
+		return RuntimeControlResult{Title: "Model", Status: "model selected", Lines: []string{"Model: " + model}}, nil
+	}
+	m.attachments = []string{"one.txt", "two.txt", "three.txt"}
+	m.diffSources = normalizeDiffSources([]DiffSource{
+		{
+			Name:     "Uncommitted changes",
+			Subtitle: "git diff HEAD",
+			Files: []DiffFile{
+				{Path: "main.go", Status: "modified", Summary: "+2 -1", Diff: "@@ main.go\n-old\n+new"},
+				{Path: "main_test.go", Status: "added", Summary: "+8", Diff: "+func TestMain() {}"},
+			},
+		},
+		{
+			Name:     "Turn 2",
+			Subtitle: "tests",
+			Files: []DiffFile{
+				{Path: "agent.go", Status: "modified", Summary: "+4", Diff: "+updated"},
+			},
+		},
+	})
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	switch normalizeTUIContextTarget(target) {
+	case "model-picker":
+		m.openModelPicker()
+	case "message-actions":
+		m.openMessageActions()
+	case "attachments":
+		m.openAttachmentsPanel()
+	case "diff":
+		m.openDiffDialog(m.diffSources)
+	case "quick-open":
+		m.fileCandidates = []string{"internal/tui/tui.go", "internal/agent/agent.go"}
+		m.openQuickOpen()
+	case "global-search":
+		m.fileCandidates = []string{"main.go"}
+		m.openGlobalSearch()
+		m.globalSearchDraft = "main"
+		m.updateGlobalSearch()
+	default:
+		m.openModelPicker()
+	}
+	for _, key := range keys {
+		updated, cmd := m.Update(previewKey(key))
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+		if cmd != nil {
+			updated, _ = m.Update(cmd())
+			if next, ok := updated.(model); ok {
+				m = next
+			}
+		}
+	}
+	return Preview{
+		View:            m.View(),
+		Value:           m.textarea.Value(),
+		Matches:         append([]string(nil), m.matches...),
+		Attachments:     append([]string(nil), m.attachments...),
+		Mode:            m.mode(),
+		HelpOpen:        m.helpOpen,
+		HasStash:        m.stashedPrompt != nil,
+		Transcript:      m.transcriptMode,
+		QuickOpen:       m.quickOpen,
+		GlobalSearch:    m.globalSearch,
+		TodosOpen:       m.todosOpen,
+		ModelPicker:     m.modelPicker,
+		MessageMenu:     m.messageActions,
+		AttachmentsOpen: m.attachmentsOpen,
+		DiffDialog:      m.diffDialog,
+	}
+}
+
+func normalizeTUIContextTarget(target string) string {
+	target = strings.ToLower(strings.TrimSpace(target))
+	target = strings.ReplaceAll(target, "_", "-")
+	return strings.Join(strings.Fields(target), "-")
+}
+
 func vimPreviewKey(key string) tea.KeyMsg {
 	return previewKey(key)
 }
 
 func previewKey(key string) tea.KeyMsg {
-	switch strings.ToLower(strings.TrimSpace(key)) {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	switch normalized {
 	case "esc", "escape":
 		return tea.KeyMsg{Type: tea.KeyEsc}
 	case "enter":
 		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyMsg{Type: tea.KeyShiftTab}
 	case "left":
 		return tea.KeyMsg{Type: tea.KeyLeft}
 	case "right":
 		return tea.KeyMsg{Type: tea.KeyRight}
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "home":
+		return tea.KeyMsg{Type: tea.KeyHome}
+	case "end":
+		return tea.KeyMsg{Type: tea.KeyEnd}
+	case "backspace":
+		return tea.KeyMsg{Type: tea.KeyBackspace}
 	case "delete":
 		return tea.KeyMsg{Type: tea.KeyDelete}
-	case "ctrl+e":
-		return tea.KeyMsg{Type: tea.KeyCtrlE}
-	case "ctrl+y":
-		return tea.KeyMsg{Type: tea.KeyCtrlY}
-	case "alt+q", "meta+q":
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}, Alt: true}
+	case "shift+up":
+		return tea.KeyMsg{Type: tea.KeyShiftUp}
+	case "shift+down":
+		return tea.KeyMsg{Type: tea.KeyShiftDown}
 	default:
+		if key, ok := previewControlKey(normalized); ok {
+			return key
+		}
+		if strings.HasPrefix(normalized, "alt+") || strings.HasPrefix(normalized, "meta+") {
+			token := strings.TrimPrefix(strings.TrimPrefix(normalized, "alt+"), "meta+")
+			runes := []rune(token)
+			if len(runes) > 0 {
+				return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{runes[0]}, Alt: true}
+			}
+		}
 		runes := []rune(key)
 		if len(runes) == 0 {
 			return tea.KeyMsg{}
 		}
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{runes[0]}}
+	}
+}
+
+func previewControlKey(key string) (tea.KeyMsg, bool) {
+	if !strings.HasPrefix(key, "ctrl+") {
+		return tea.KeyMsg{}, false
+	}
+	switch strings.TrimPrefix(key, "ctrl+") {
+	case "a":
+		return tea.KeyMsg{Type: tea.KeyCtrlA}, true
+	case "b":
+		return tea.KeyMsg{Type: tea.KeyCtrlB}, true
+	case "c":
+		return tea.KeyMsg{Type: tea.KeyCtrlC}, true
+	case "d":
+		return tea.KeyMsg{Type: tea.KeyCtrlD}, true
+	case "e":
+		return tea.KeyMsg{Type: tea.KeyCtrlE}, true
+	case "f":
+		return tea.KeyMsg{Type: tea.KeyCtrlF}, true
+	case "g":
+		return tea.KeyMsg{Type: tea.KeyCtrlG}, true
+	case "h":
+		return tea.KeyMsg{Type: tea.KeyCtrlH}, true
+	case "i":
+		return tea.KeyMsg{Type: tea.KeyCtrlI}, true
+	case "j":
+		return tea.KeyMsg{Type: tea.KeyCtrlJ}, true
+	case "k":
+		return tea.KeyMsg{Type: tea.KeyCtrlK}, true
+	case "l":
+		return tea.KeyMsg{Type: tea.KeyCtrlL}, true
+	case "m":
+		return tea.KeyMsg{Type: tea.KeyCtrlM}, true
+	case "n":
+		return tea.KeyMsg{Type: tea.KeyCtrlN}, true
+	case "o":
+		return tea.KeyMsg{Type: tea.KeyCtrlO}, true
+	case "p":
+		return tea.KeyMsg{Type: tea.KeyCtrlP}, true
+	case "q":
+		return tea.KeyMsg{Type: tea.KeyCtrlQ}, true
+	case "r":
+		return tea.KeyMsg{Type: tea.KeyCtrlR}, true
+	case "s":
+		return tea.KeyMsg{Type: tea.KeyCtrlS}, true
+	case "t":
+		return tea.KeyMsg{Type: tea.KeyCtrlT}, true
+	case "u":
+		return tea.KeyMsg{Type: tea.KeyCtrlU}, true
+	case "v":
+		return tea.KeyMsg{Type: tea.KeyCtrlV}, true
+	case "w":
+		return tea.KeyMsg{Type: tea.KeyCtrlW}, true
+	case "x":
+		return tea.KeyMsg{Type: tea.KeyCtrlX}, true
+	case "y":
+		return tea.KeyMsg{Type: tea.KeyCtrlY}, true
+	case "z":
+		return tea.KeyMsg{Type: tea.KeyCtrlZ}, true
+	default:
+		return tea.KeyMsg{}, false
 	}
 }
 
@@ -1419,6 +1604,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.vimEnabled = options.VimMode
 	m.vimNormal = false
 	m.keybindings = normalizeTUIKeybindings(options.Keybindings)
+	m.contextKeybindings = normalizeTUIContextKeybindings(options.ContextKeybindings)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
@@ -1638,6 +1824,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handlePastedInput(msg)
 		}
 		if m.diffDialog {
+			if next, handled, cmd := m.handleBoundDiffAction(msg); handled {
+				return next, cmd
+			}
 			switch msg.String() {
 			case "ctrl+c", "esc":
 				m.closeDiffDialog()
@@ -1663,6 +1852,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.attachmentsOpen {
+			if next, handled, cmd := m.handleBoundAttachmentAction(msg); handled {
+				return next, cmd
+			}
 			switch msg.String() {
 			case "ctrl+c", "esc", "down":
 				m.closeAttachmentsPanel()
@@ -1682,6 +1874,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.modelPicker {
+			if next, handled, cmd := m.handleBoundModelPickerAction(msg); handled {
+				return next, cmd
+			}
 			switch msg.String() {
 			case "ctrl+c", "esc", "alt+p", "meta+p":
 				m.closeModelPicker()
@@ -1706,6 +1901,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.messageActions {
+			if next, handled, cmd := m.handleBoundMessageActionMenuAction(msg); handled {
+				return next, cmd
+			}
 			switch msg.String() {
 			case "ctrl+c", "esc":
 				m.closeMessageActions()
@@ -1745,6 +1943,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.globalSearch {
+			if next, handled, cmd := m.handleBoundGlobalSearchAction(msg); handled {
+				return next, cmd
+			}
 			switch msg.String() {
 			case "ctrl+c", "esc":
 				m.closeGlobalSearch(false, false)
@@ -1778,6 +1979,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmd, viewportCmd)
 		}
 		if m.quickOpen {
+			if next, handled, cmd := m.handleBoundQuickOpenAction(msg); handled {
+				return next, cmd
+			}
 			switch msg.String() {
 			case "ctrl+c", "esc":
 				m.closeQuickOpen(false, false)
@@ -2889,8 +3093,158 @@ func (m model) handleBoundTUIAction(msg tea.KeyMsg) (model, bool, tea.Cmd) {
 	}
 }
 
+func (m model) handleBoundModelPickerAction(msg tea.KeyMsg) (model, bool, tea.Cmd) {
+	key := normalizeTUIKey(msg.String())
+	switch {
+	case m.isBoundTUIContextAction("tui-modal", "move modal selection down", key):
+		m.moveModelPicker(1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "move modal selection up", key):
+		m.moveModelPicker(-1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "jump modal selection to top", key):
+		m.setModelPickerIndex(0)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "jump modal selection to bottom", key):
+		m.setModelPickerIndex(len(m.modelOptions) - 1)
+		return m, true, nil
+	default:
+		return m, false, nil
+	}
+}
+
+func (m model) handleBoundMessageActionMenuAction(msg tea.KeyMsg) (model, bool, tea.Cmd) {
+	key := normalizeTUIKey(msg.String())
+	switch {
+	case m.isBoundTUIContextAction("tui-modal", "move modal selection down", key):
+		m.moveMessageAction(1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "move modal selection up", key):
+		m.moveMessageAction(-1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "jump modal selection to top", key):
+		m.setMessageActionIndex(0)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "jump modal selection to bottom", key):
+		m.setMessageActionIndex(len(messageActionLabels) - 1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "move message target backward", key):
+		m.moveMessageActionTarget(-1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "move message target forward", key):
+		m.moveMessageActionTarget(1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "move to previous user message", key):
+		m.moveMessageActionUserTarget(-1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "move to next user message", key):
+		m.moveMessageActionUserTarget(1)
+		return m, true, nil
+	default:
+		return m, false, nil
+	}
+}
+
+func (m model) handleBoundGlobalSearchAction(msg tea.KeyMsg) (model, bool, tea.Cmd) {
+	key := normalizeTUIKey(msg.String())
+	switch {
+	case m.isBoundTUIContextAction("tui-modal", "move modal selection down", key):
+		m.moveGlobalSearch(1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "move modal selection up", key):
+		m.moveGlobalSearch(-1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "jump modal selection to top", key):
+		m.setGlobalSearchIndex(0)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "jump modal selection to bottom", key):
+		m.setGlobalSearchIndex(len(m.globalSearchMatches) - 1)
+		return m, true, nil
+	default:
+		return m, false, nil
+	}
+}
+
+func (m model) handleBoundQuickOpenAction(msg tea.KeyMsg) (model, bool, tea.Cmd) {
+	key := normalizeTUIKey(msg.String())
+	switch {
+	case m.isBoundTUIContextAction("tui-modal", "move modal selection down", key):
+		m.moveQuickOpen(1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "move modal selection up", key):
+		m.moveQuickOpen(-1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "jump modal selection to top", key):
+		m.setQuickOpenIndex(0)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-modal", "jump modal selection to bottom", key):
+		m.setQuickOpenIndex(len(m.quickOpenMatches) - 1)
+		return m, true, nil
+	default:
+		return m, false, nil
+	}
+}
+
+func (m model) handleBoundAttachmentAction(msg tea.KeyMsg) (model, bool, tea.Cmd) {
+	key := normalizeTUIKey(msg.String())
+	switch {
+	case m.isBoundTUIContextAction("tui-attachments", "select next attachment", key):
+		m.moveAttachmentSelection(1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-attachments", "select previous attachment", key):
+		m.moveAttachmentSelection(-1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-attachments", "remove selected attachment", key):
+		m.removeSelectedAttachment()
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-attachments", "close attachment selector", key):
+		m.closeAttachmentsPanel()
+		return m, true, nil
+	default:
+		return m, false, nil
+	}
+}
+
+func (m model) handleBoundDiffAction(msg tea.KeyMsg) (model, bool, tea.Cmd) {
+	key := normalizeTUIKey(msg.String())
+	switch {
+	case m.isBoundTUIContextAction("tui-diff", "close diff dialog", key):
+		m.closeDiffDialog()
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-diff", "previous diff source or back from detail", key):
+		m.previousDiffSourceOrBack()
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-diff", "next diff source", key):
+		m.nextDiffSource()
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-diff", "select previous changed file", key):
+		m.moveDiffFile(-1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-diff", "select next changed file", key):
+		m.moveDiffFile(1)
+		return m, true, nil
+	case m.isBoundTUIContextAction("tui-diff", "view selected file diff", key):
+		m.openDiffDetail()
+		return m, true, nil
+	default:
+		return m, false, nil
+	}
+}
+
 func (m model) isBoundTUIAction(action string, key string) bool {
 	keys := m.keybindings[normalizeTUIAction(action)]
+	return keys != nil && keys[key]
+}
+
+func (m model) isBoundTUIContextAction(contextName string, action string, key string) bool {
+	if key == "" || len(m.contextKeybindings) == 0 {
+		return false
+	}
+	actions := m.contextKeybindings[normalizeTUIContext(contextName)]
+	if len(actions) == 0 {
+		return false
+	}
+	keys := actions[normalizeTUIAction(action)]
 	return keys != nil && keys[key]
 }
 
@@ -3022,6 +3376,28 @@ func normalizeTUIKeybindings(bindings map[string][]string) map[string]map[string
 		}
 	}
 	return out
+}
+
+func normalizeTUIContextKeybindings(contexts map[string]map[string][]string) map[string]map[string]map[string]bool {
+	out := map[string]map[string]map[string]bool{}
+	for contextName, bindings := range contexts {
+		normalizedContext := normalizeTUIContext(contextName)
+		if normalizedContext == "" {
+			continue
+		}
+		normalizedBindings := normalizeTUIKeybindings(bindings)
+		if len(normalizedBindings) == 0 {
+			continue
+		}
+		out[normalizedContext] = normalizedBindings
+	}
+	return out
+}
+
+func normalizeTUIContext(contextName string) string {
+	contextName = strings.ToLower(strings.TrimSpace(contextName))
+	contextName = strings.ReplaceAll(contextName, "_", "-")
+	return strings.Join(strings.Fields(contextName), "-")
 }
 
 func normalizeTUIAction(action string) string {

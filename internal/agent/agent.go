@@ -39457,10 +39457,11 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		CopyMessage: func(ctx context.Context, text string) (tui.RuntimeControlResult, error) {
 			return a.copyTUIMessage(ctx, text)
 		},
-		ModeLabel:     modeState.Label(),
-		RuntimeBadges: a.tuiRuntimeBadges(),
-		VimMode:       a.readlineVimMode(),
-		Keybindings:   a.tuiKeybindings(),
+		ModeLabel:          modeState.Label(),
+		RuntimeBadges:      a.tuiRuntimeBadges(),
+		VimMode:            a.readlineVimMode(),
+		Keybindings:        a.tuiKeybindings(),
+		ContextKeybindings: a.tuiContextKeybindings(),
 		CycleMode: func() string {
 			return modeState.Cycle()
 		},
@@ -39596,6 +39597,29 @@ func (a *App) tuiKeybindings() map[string][]string {
 			continue
 		}
 		out[action] = append(out[action], key)
+	}
+	return out
+}
+
+func (a *App) tuiContextKeybindings() map[string]map[string][]string {
+	bindings, validationErrors := a.effectiveKeybindings("")
+	if len(validationErrors) != 0 {
+		return nil
+	}
+	out := map[string]map[string][]string{}
+	for _, binding := range bindings {
+		if binding.Disabled || binding.Source != "user" || !strings.HasPrefix(binding.Context, "tui-") {
+			continue
+		}
+		action := strings.TrimSpace(binding.Entry.Action)
+		key := strings.TrimSpace(binding.Entry.NormalizedKey)
+		if action == "" || key == "" {
+			continue
+		}
+		if out[binding.Context] == nil {
+			out[binding.Context] = map[string][]string{}
+		}
+		out[binding.Context][action] = append(out[binding.Context][action], key)
 	}
 	return out
 }

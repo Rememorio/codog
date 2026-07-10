@@ -1158,6 +1158,52 @@ func TestCustomTUIKeybindingsOpenQuickSearchAndStash(t *testing.T) {
 	require.Equal(t, "prompt stashed", m.status)
 }
 
+func TestCustomTUIContextKeybindingsDriveModalNavigation(t *testing.T) {
+	preview := PreviewWithContextKeybindings("model-picker", map[string]map[string][]string{
+		"tui-modal": {
+			"move modal selection down":      {"alt+j"},
+			"jump modal selection to bottom": {"alt+e"},
+		},
+	}, []string{"alt+j", "alt+e", "enter"}, 96, 24)
+
+	require.False(t, preview.ModelPicker)
+	require.Contains(t, preview.View, "Model: gamma")
+
+	target := PreviewWithContextKeybindings("message-actions", map[string]map[string][]string{
+		"tui-modal": {
+			"move message target backward":  {"alt+h"},
+			"move to previous user message": {"alt+u"},
+		},
+	}, []string{"alt+h", "alt+u", "enter"}, 96, 24)
+
+	require.False(t, target.MessageMenu)
+	require.Equal(t, "first prompt", target.Value)
+}
+
+func TestCustomTUIContextKeybindingsDriveAttachmentsAndDiff(t *testing.T) {
+	attachments := PreviewWithContextKeybindings("attachments", map[string]map[string][]string{
+		"tui-attachments": {
+			"select next attachment":     {"alt+j"},
+			"remove selected attachment": {"alt+x"},
+		},
+	}, []string{"alt+j", "alt+x"}, 96, 24)
+
+	require.True(t, attachments.AttachmentsOpen)
+	require.Equal(t, []string{"one.txt", "three.txt"}, attachments.Attachments)
+	require.Contains(t, attachments.View, "three.txt")
+
+	diff := PreviewWithContextKeybindings("diff", map[string]map[string][]string{
+		"tui-diff": {
+			"select next changed file": {"alt+j"},
+			"view selected file diff":  {"alt+o"},
+		},
+	}, []string{"alt+j", "alt+o"}, 96, 24)
+
+	require.True(t, diff.DiffDialog)
+	require.Equal(t, "diff detail", diff.Mode)
+	require.Contains(t, diff.View, "ADDED main_test.go")
+}
+
 func TestPreviewWithModelPicker(t *testing.T) {
 	preview := PreviewWithModelPicker("inspect", []string{"sonnet", "opus"}, "sonnet", 96, 24, false)
 

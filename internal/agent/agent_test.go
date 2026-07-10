@@ -21108,6 +21108,24 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
         "ctrl+e": "edit composer in $EDITOR",
         "alt+q": "quick open files"
       }
+    },
+    {
+      "context": "tui-modal",
+      "bindings": {
+        "alt+j": "move modal selection down"
+      }
+    },
+    {
+      "context": "tui-attachments",
+      "bindings": {
+        "alt+x": "remove selected attachment"
+      }
+    },
+    {
+      "context": "tui-diff",
+      "bindings": {
+        "alt+o": "view selected file diff"
+      }
     }
   ]
 }
@@ -21118,6 +21136,9 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	out.Reset()
 	require.Equal(t, []string{"alt+q"}, app.tuiKeybindings()["quick open files"])
 	require.Equal(t, []string{"ctrl+e"}, app.tuiKeybindings()["edit composer in $EDITOR"])
+	require.Equal(t, []string{"alt+j"}, app.tuiContextKeybindings()["tui-modal"]["move modal selection down"])
+	require.Equal(t, []string{"alt+x"}, app.tuiContextKeybindings()["tui-attachments"]["remove selected attachment"])
+	require.Equal(t, []string{"alt+o"}, app.tuiContextKeybindings()["tui-diff"]["view selected file diff"])
 
 	require.NoError(t, os.WriteFile(keybindingsPath, []byte("custom\n"), 0o644))
 	require.Error(t, app.Keybindings([]string{"validate", "--json"}))
