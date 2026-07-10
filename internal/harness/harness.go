@@ -5373,6 +5373,10 @@ func tuiPromptCompletionScenario() scenario {
 			if len(pasteImage.Attachments) != 1 || !strings.Contains(pasteImage.View, "clipboard image attached") {
 				return localScenarioResult{}, fmt.Errorf("expected paste image preview, got attachments=%#v view=%s", pasteImage.Attachments, pasteImage.View)
 			}
+			fileRef := tui.PreviewWithFileCandidates("review @internal/t", []string{"internal/tui/tui.go", "internal/agent/agent.go"}, 96, 24, true)
+			if fileRef.Value != "review @internal/tui/tui.go " {
+				return localScenarioResult{}, fmt.Errorf("expected file reference completion, got value=%q view=%s", fileRef.Value, fileRef.View)
+			}
 
 			submitted := tui.PreviewWithCandidates("/mo", []string{"/model claude-test"}, 96, 24, true, true)
 			if !submitted.Submitted {
@@ -5393,6 +5397,7 @@ func tuiPromptCompletionScenario() scenario {
 				"attachment_preview":  strings.Contains(attachments.View, "attachments: 2"),
 				"paste_preview":       strings.Contains(paste.View, "pasted 1 line"),
 				"paste_image_preview": strings.Contains(pasteImage.View, "clipboard image attached"),
+				"file_ref_completion": strings.Contains(fileRef.Value, "@internal/tui/tui.go"),
 				"attachments":         attachments.Attachments,
 				"submitted":           submitted.Submitted,
 				"submitted_prompt":    submitted.Prompt,

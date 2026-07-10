@@ -774,6 +774,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, tuiPrompt.Output, `"attachment_preview":true`)
 	require.Contains(t, tuiPrompt.Output, `"paste_preview":true`)
 	require.Contains(t, tuiPrompt.Output, `"paste_image_preview":true`)
+	require.Contains(t, tuiPrompt.Output, `"file_ref_completion":true`)
 	require.Contains(t, tuiPrompt.Output, `"submitted":true`)
 	interactiveUI := findCategory(t, report, "interactive-ui")
 	require.True(t, interactiveUI.OK)

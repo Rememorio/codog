@@ -39073,6 +39073,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		entries = append(entries, tui.Entry{Role: "system", Text: banner})
 	}
 	history := a.tuiPromptHistory(sess.ID)
+	fileCandidates := a.tuiFileReferenceCandidates()
 	permissionAnswers := make(chan string, 1)
 	questionAnswers := make(chan string, 1)
 	modeState := newTUIModeState(a.Config)
@@ -39144,6 +39145,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 	}
 	loopErr := tui.Shell(ctx, tui.ShellOptions{
 		Candidates:              a.slashCompletionCandidates(sess.ID),
+		FileCandidates:          fileCandidates,
 		Prefill:                 overrides.Prefill,
 		History:                 history,
 		Entries:                 entries,
@@ -39237,6 +39239,25 @@ func (a *App) readTUIClipboard(ctx context.Context) (tui.PasteContent, error) {
 		return tui.PasteContent{}, err
 	}
 	return tui.PasteContent{Text: string(data)}, nil
+}
+
+func (a *App) tuiFileReferenceCandidates() []string {
+	report, err := fileinventory.Build(a.Workspace, fileinventory.Options{
+		Limit:            1500,
+		RespectGitignore: a.Config.EffectiveRespectGitignore(),
+	})
+	if err != nil {
+		return nil
+	}
+	candidates := make([]string, 0, len(report.Files))
+	for _, file := range report.Files {
+		path := strings.TrimSpace(file.Path)
+		if path == "" {
+			continue
+		}
+		candidates = append(candidates, filepath.ToSlash(path))
+	}
+	return candidates
 }
 
 func (a *App) storeTUIClipboardImage(image clipboardImage) (string, error) {

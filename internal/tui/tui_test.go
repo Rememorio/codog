@@ -256,7 +256,7 @@ func TestSlashMenuOpensAndFiltersWhileTyping(t *testing.T) {
 func TestSlashMenuEscapeClosesSuggestionsBeforeQuitting(t *testing.T) {
 	ta := newPromptTextarea("/m")
 	m := newModel(context.Background(), ta, []string{"/memory list", "/model claude-test"}, nil)
-	m.refreshSlashMenu()
+	m.refreshCompletionMenu()
 	require.NotEmpty(t, m.matches)
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -271,7 +271,7 @@ func TestSlashMenuEscapeClosesSuggestionsBeforeQuitting(t *testing.T) {
 func TestSlashMenuDoesNotInterceptExactLocalHelp(t *testing.T) {
 	ta := newPromptTextarea("/help")
 	m := newModel(context.Background(), ta, []string{"/help"}, nil)
-	m.refreshSlashMenu()
+	m.refreshCompletionMenu()
 	require.Empty(t, m.matches)
 
 	updated, _ := m.Update(teaKey("enter"))
@@ -347,6 +347,30 @@ func TestPreviewWithCandidatesRendersMultipleMatches(t *testing.T) {
 	require.Contains(t, preview.View, "suggestions")
 	require.ElementsMatch(t, []string{"/model claude-test", "/memory list"}, preview.Matches)
 	require.False(t, preview.Submitted)
+}
+
+func TestFileReferenceCompletionFiltersAndCompletesAtMention(t *testing.T) {
+	preview := PreviewWithFileCandidates("review @internal/t", []string{
+		"internal/tui/tui.go",
+		"internal/agent/agent.go",
+		"README.md",
+	}, 96, 24, false)
+
+	require.Equal(t, []string{"@internal/tui/tui.go"}, preview.Matches)
+	require.Contains(t, preview.View, "@internal/tui/tui.go")
+	require.Contains(t, preview.View, "file reference")
+
+	completed := PreviewWithFileCandidates("review @internal/t", []string{
+		"internal/tui/tui.go",
+		"internal/agent/agent.go",
+	}, 96, 24, true)
+	require.Equal(t, "review @internal/tui/tui.go ", completed.Value)
+}
+
+func TestFileReferenceCompletionIgnoresEmailLikeAtSigns(t *testing.T) {
+	preview := PreviewWithFileCandidates("mail dev@example", []string{"example.go"}, 96, 24, false)
+
+	require.Empty(t, preview.Matches)
 }
 
 func TestPreviewTogglesHelpPanel(t *testing.T) {

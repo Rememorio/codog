@@ -18178,6 +18178,26 @@ func TestFilesCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestTUIFileReferenceCandidatesRespectGitignore(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "pkg"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("docs\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "main.go"), []byte("package main\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".gitignore"), []byte("ignored.go\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "ignored.go"), []byte("package ignored\n"), 0o644))
+	app := &App{Workspace: workspace}
+
+	candidates := app.tuiFileReferenceCandidates()
+	require.Contains(t, candidates, "README.md")
+	require.Contains(t, candidates, "pkg/main.go")
+	require.NotContains(t, candidates, "ignored.go")
+
+	respectGitignore := false
+	app.Config.RespectGitignore = &respectGitignore
+	candidates = app.tuiFileReferenceCandidates()
+	require.Contains(t, candidates, "ignored.go")
+}
+
 func TestScopeCommandAppliesAndRestoresSaferWorkspace(t *testing.T) {
 	workspace := t.TempDir()
 	resolvedWorkspace, err := filepath.EvalSymlinks(workspace)

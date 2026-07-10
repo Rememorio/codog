@@ -70,6 +70,7 @@ type TaskBoardFunc func(context.Context) (string, error)
 // ShellOptions configures the full-screen TUI shell.
 type ShellOptions struct {
 	Candidates              []string
+	FileCandidates          []string
 	Prefill                 string
 	History                 []string
 	Entries                 []Entry
@@ -111,6 +112,7 @@ type model struct {
 	matches                 []string
 	selected                int
 	candidates              []string
+	fileCandidates          []string
 	helpOpen                bool
 	busy                    bool
 	status                  string
@@ -176,7 +178,7 @@ func PromptWithCandidatesPrefill(candidates []string, prefill string) (Result, e
 func PreviewWithCandidates(input string, candidates []string, width int, height int, complete bool, submit bool) Preview {
 	ta := newPromptTextarea(input)
 	m := newModel(context.Background(), ta, candidates, nil)
-	m.refreshSlashMenu()
+	m.refreshCompletionMenu()
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 		if next, ok := updated.(model); ok {
@@ -206,6 +208,32 @@ func PreviewWithCandidates(input string, candidates []string, width int, height 
 		Submitted:   m.result.Submitted,
 		Prompt:      m.result.Prompt,
 		Attachments: append([]string(nil), m.result.Attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+	}
+}
+
+// PreviewWithFileCandidates renders a deterministic TUI state with @file
+// reference suggestions.
+func PreviewWithFileCandidates(input string, files []string, width int, height int, complete bool) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = append([]string(nil), files...)
+	m.refreshCompletionMenu()
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	if complete {
+		m = m.completeSlashCommand()
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Attachments: append([]string(nil), m.attachments...),
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
 	}
@@ -318,6 +346,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 		entries = append(entries, transcriptEntry{Role: entry.Role, Text: entry.Text})
 	}
 	m := newModel(ctx, ta, options.Candidates, entries)
+	m.fileCandidates = append([]string(nil), options.FileCandidates...)
 	m.submit = options.Submit
 	m.submitStream = options.SubmitStream
 	m.submitAttachments = options.SubmitAttachments
@@ -426,7 +455,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selected = 0
 		m.historyPos = -1
 		m.status = "editor updated"
-		m.refreshSlashMenu()
+		m.refreshCompletionMenu()
 		return m, nil
 	case pasteDoneMsg:
 		if msg.Err != nil {
@@ -738,7 +767,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateHistorySearch()
 		return m, tea.Batch(cmd, viewportCmd)
 	}
-	m.refreshSlashMenu()
+	m.refreshCompletionMenu()
 	if isLocalHelpInput(m.textarea.Value()) {
 		m.status = "help ready"
 	} else if m.awaitingQuestion {
@@ -780,7 +809,7 @@ func (m model) insertPastedText(text string) (tea.Model, tea.Cmd) {
 		m.updateHistorySearch()
 		return m, nil
 	}
-	m.refreshSlashMenu()
+	m.refreshCompletionMenu()
 	if m.awaitingPermission {
 		m.status = "permission"
 	} else if m.awaitingQuestion {
@@ -1378,13 +1407,13 @@ func (m *model) finishStreamingOutput(role string, output string) {
 
 func (m model) completeSlashCommand() model {
 	value := strings.Trim(m.textarea.Value(), "\r\n\t")
-	candidates := slash.FilterCandidates(value, m.completionCandidates())
+	candidates := m.filteredCompletionCandidates(value)
 	switch len(candidates) {
 	case 0:
 		m.matches = nil
 		m.selected = 0
 	case 1:
-		m.textarea.SetValue(completeValue(candidates[0]))
+		m.textarea.SetValue(m.completeValue(value, candidates[0]))
 		m.matches = nil
 		m.selected = 0
 	default:
@@ -1399,14 +1428,14 @@ func (m model) completeSlashCommand() model {
 	return m
 }
 
-func (m *model) refreshSlashMenu() {
+func (m *model) refreshCompletionMenu() {
 	value := strings.Trim(m.textarea.Value(), "\r\n\t")
-	if value == "" || !strings.HasPrefix(value, "/") || m.busy || m.searchOpen {
+	if value == "" || m.busy || m.searchOpen {
 		m.matches = nil
 		m.selected = 0
 		return
 	}
-	candidates := slash.FilterCandidates(value, m.completionCandidates())
+	candidates := m.filteredCompletionCandidates(value)
 	candidates = automaticCompletionCandidates(value, candidates)
 	if len(candidates) > 8 {
 		candidates = candidates[:8]
@@ -1419,6 +1448,16 @@ func (m *model) refreshSlashMenu() {
 	if m.selected < 0 || m.selected >= len(m.matches) {
 		m.selected = 0
 	}
+}
+
+func (m model) filteredCompletionCandidates(value string) []string {
+	if strings.HasPrefix(value, "/") {
+		return slash.FilterCandidates(value, m.completionCandidates())
+	}
+	if prefix, ok := activeFileReferencePrefix(value); ok {
+		return filterFileReferenceCandidates(prefix, m.fileCandidates)
+	}
+	return nil
 }
 
 func automaticCompletionCandidates(value string, candidates []string) []string {
@@ -1443,10 +1482,17 @@ func (m model) acceptSelectedCompletion() model {
 	if m.selected < 0 || m.selected >= len(m.matches) {
 		m.selected = 0
 	}
-	m.textarea.SetValue(completeValue(m.matches[m.selected]))
+	m.textarea.SetValue(m.completeValue(m.textarea.Value(), m.matches[m.selected]))
 	m.matches = nil
 	m.selected = 0
 	return m
+}
+
+func (m model) completeValue(value string, candidate string) string {
+	if strings.HasPrefix(candidate, "@") {
+		return completeFileReferenceValue(value, candidate)
+	}
+	return completeValue(candidate)
 }
 
 func completeValue(candidate string) string {
@@ -1454,6 +1500,62 @@ func completeValue(candidate string) string {
 		return candidate
 	}
 	return candidate + " "
+}
+
+func activeFileReferencePrefix(value string) (string, bool) {
+	index := strings.LastIndex(value, "@")
+	if index < 0 {
+		return "", false
+	}
+	if index > 0 {
+		previous := value[index-1]
+		if previous != ' ' && previous != '\t' && previous != '\n' && previous != '(' && previous != '[' && previous != '{' {
+			return "", false
+		}
+	}
+	token := value[index:]
+	if token == "" || strings.ContainsAny(token, " \t\r\n\"'") {
+		return "", false
+	}
+	return token, true
+}
+
+func filterFileReferenceCandidates(prefix string, files []string) []string {
+	query := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(prefix), "@"))
+	out := []string{}
+	seen := map[string]bool{}
+	for _, file := range files {
+		file = strings.TrimSpace(filepathToSlash(file))
+		if file == "" {
+			continue
+		}
+		lower := strings.ToLower(file)
+		if query != "" && !strings.HasPrefix(lower, query) && !strings.Contains(lower, "/"+query) {
+			continue
+		}
+		candidate := "@" + file
+		if seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		out = append(out, candidate)
+		if len(out) >= 8 {
+			break
+		}
+	}
+	return out
+}
+
+func completeFileReferenceValue(value string, candidate string) string {
+	index := strings.LastIndex(value, "@")
+	if index < 0 {
+		return completeValue(candidate)
+	}
+	return value[:index] + completeValue(candidate)
+}
+
+func filepathToSlash(path string) string {
+	return strings.ReplaceAll(path, "\\", "/")
 }
 
 func renderCompletions(matches []string, selected int) string {
@@ -1483,6 +1585,9 @@ func completionDisplayLine(candidate string) string {
 	}
 	spec, ok := slash.DescribeCandidate(candidate)
 	if !ok || strings.TrimSpace(spec.Description) == "" {
+		if strings.HasPrefix(candidate, "@") {
+			return truncateForComposer(candidate+"  -  file reference", 120)
+		}
 		return candidate
 	}
 	return truncateForComposer(candidate+"  -  "+spec.Description, 120)
@@ -1947,7 +2052,7 @@ func helpPanel(candidates []string, width int) string {
 	}
 	sections := []string{
 		panelTitleStyle().Render(" help "),
-		"Type a prompt and press Enter to submit. Slash commands run locally inside the session.",
+		"Type a prompt, @path file reference, or slash command. Enter submits.",
 		"",
 		"Common commands",
 		"  /status   inspect workspace and runtime",
@@ -1968,7 +2073,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+K      delete after cursor",
 		"  Ctrl+D      exit when composer is empty",
 		"  Ctrl+R      search prompt history",
-		"  Tab         complete slash command",
+		"  Tab         complete slash command or @file reference",
 		"  Up/Down     choose a shown completion",
 		"  Up          edit queued prompts while a turn is running",
 		"  Up/Down     recall prompt history when composer is empty",
