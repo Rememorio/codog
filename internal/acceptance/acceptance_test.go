@@ -74,7 +74,7 @@ set timeout 20
 spawn -noecho $env(CODOG_TEST_BIN) --model glm52 tui
 expect "Codog TUI"
 send "/help\r"
-expect "Common commands"
+expect "Common workflows"
 send "\033"
 expect "ready"
 send "/status\r"
@@ -83,7 +83,7 @@ send "/exit\r"
 expect eof
 `)
 
-	require.Contains(t, output, "Common commands")
+	require.Contains(t, output, "Common workflows")
 	require.Contains(t, output, "Tools")
 }
 

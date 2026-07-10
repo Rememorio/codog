@@ -80,6 +80,39 @@ func TestCompletionSelectionUsesArrowKeysAndEnter(t *testing.T) {
 	require.Equal(t, 0, m.selected)
 }
 
+func TestEnterSubmitsExactSlashCommandBeforeLongerCompletion(t *testing.T) {
+	ta := newPromptTextarea("/status")
+	m := newModel(context.Background(), ta, []string{"/status", "/statusline --json"}, nil)
+	m.slash = func(_ context.Context, line string) (string, bool, error) {
+		require.Equal(t, "/status", line)
+		return "Tools ok", true, nil
+	}
+	m.refreshCompletionMenu()
+	require.Contains(t, m.matches, "/statusline --json")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "running slash", m.status)
+	require.Equal(t, "", m.textarea.Value())
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.Contains(t, m.View(), "Tools ok")
+}
+
+func TestEnterSubmitsLocalExitBeforeLongerCompletion(t *testing.T) {
+	ta := newPromptTextarea("/exit")
+	m := newModel(context.Background(), ta, []string{"/exit-plan"}, nil)
+	m.refreshCompletionMenu()
+	require.Contains(t, m.matches, "/exit-plan")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Empty(t, m.matches)
+}
+
 func TestCompletionListRendersSelectedSuggestion(t *testing.T) {
 	view := renderCompletions([]string{"/model claude-test", "/memory list"}, 1)
 
@@ -1204,6 +1237,60 @@ func TestCustomTUIKeybindingsDeleteAroundCursor(t *testing.T) {
 	m = updated.(model)
 	require.Equal(t, "first", m.textarea.Value())
 	require.Equal(t, "deleted after cursor", m.status)
+}
+
+func TestTUILineStartAndEndActionsMoveComposerCursor(t *testing.T) {
+	ta := newPromptTextarea("middle")
+	ta.CursorEnd()
+	m := newModel(context.Background(), ta, nil, nil)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	m = updated.(model)
+	require.Equal(t, "line start", m.status)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(">")})
+	m = updated.(model)
+	require.Equal(t, ">middle", m.textarea.Value())
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	m = updated.(model)
+	require.Equal(t, "line start", m.status)
+
+	m.textarea.SetValue("middle")
+	m.textarea.CursorStart()
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = updated.(model)
+	require.Equal(t, "line end", m.status)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("!")})
+	m = updated.(model)
+	require.Equal(t, "middle!", m.textarea.Value())
+}
+
+func TestCustomTUIKeybindingsMoveComposerCursor(t *testing.T) {
+	ta := newPromptTextarea("middle")
+	ta.CursorEnd()
+	m := newModel(context.Background(), ta, nil, nil)
+	m.keybindings = normalizeTUIKeybindings(map[string][]string{
+		"move to line start": {"alt+h"},
+		"move to line end":   {"alt+l"},
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}, Alt: true})
+	m = updated.(model)
+	require.Equal(t, "line start", m.status)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(">")})
+	m = updated.(model)
+	require.Equal(t, ">middle", m.textarea.Value())
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}, Alt: true})
+	m = updated.(model)
+	require.Equal(t, "line end", m.status)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("!")})
+	m = updated.(model)
+	require.Equal(t, ">middle!", m.textarea.Value())
 }
 
 func TestCustomTUIKeybindingChordOpensEditor(t *testing.T) {

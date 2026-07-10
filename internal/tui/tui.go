@@ -2164,6 +2164,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.deleteComposerAfterCursor()
 			return m, nil
+		case "home", "ctrl+a":
+			if m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+				return m, nil
+			}
+			m.moveComposerLineStart()
+			return m, nil
+		case "end":
+			if m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+				return m, nil
+			}
+			m.moveComposerLineEnd()
+			return m, nil
 		case "ctrl+x":
 			if m.busy || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
 				return m, nil
@@ -2360,7 +2372,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.convertTrailingBackslashToNewline() {
 				return m, nil
 			}
-			if len(m.matches) > 0 {
+			if len(m.matches) > 0 && shouldAcceptCompletionOnEnter(m.textarea.Value()) {
 				m.pushComposerUndo()
 				m = m.acceptSelectedCompletion()
 				return m, nil
@@ -2616,6 +2628,8 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if isREPLExitInput(value) {
+		m.matches = nil
+		m.selected = 0
 		return m, tea.Quit
 	}
 	if isLocalHelpInput(value) {
@@ -3086,6 +3100,18 @@ func (m model) handleBoundTUIActionKey(key string) (model, bool, tea.Cmd) {
 			return m, true, nil
 		}
 		m.deleteComposerAfterCursor()
+		return m, true, nil
+	case m.isBoundTUIAction("move to line start", key):
+		if m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+			return m, true, nil
+		}
+		m.moveComposerLineStart()
+		return m, true, nil
+	case m.isBoundTUIAction("move to line end", key):
+		if m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+			return m, true, nil
+		}
+		m.moveComposerLineEnd()
 		return m, true, nil
 	case m.isBoundTUIAction("quick open files", key) || m.isBoundTUIAction("quick open fallback", key):
 		if m.busy || m.backgrounding || m.searchOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion || len(m.fileCandidates) == 0 {
@@ -4518,6 +4544,19 @@ func slashCommandArgumentHint(value string) string {
 	return "arguments: " + args + "  ·  " + spec.Description
 }
 
+func isExactSlashCommandInput(value string) bool {
+	fields := strings.Fields(strings.TrimSpace(value))
+	if len(fields) != 1 || !strings.HasPrefix(fields[0], "/") {
+		return false
+	}
+	_, ok := slash.Lookup(fields[0])
+	return ok
+}
+
+func shouldAcceptCompletionOnEnter(value string) bool {
+	return !isExactSlashCommandInput(value) && !isREPLExitInput(value) && !isLocalHelpInput(value)
+}
+
 func automaticCompletionCandidates(value string, candidates []string) []string {
 	if len(candidates) == 0 {
 		return nil
@@ -4803,6 +4842,16 @@ func (m *model) deleteComposerWithTextareaKey(key tea.KeyMsg, status string) {
 	m.historyPos = -1
 	m.status = status
 	m.refreshCompletionMenu()
+}
+
+func (m *model) moveComposerLineStart() {
+	m.textarea.CursorStart()
+	m.status = "line start"
+}
+
+func (m *model) moveComposerLineEnd() {
+	m.textarea.CursorEnd()
+	m.status = "line end"
 }
 
 func filepathToSlash(path string) string {
