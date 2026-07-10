@@ -96,35 +96,36 @@ type RuntimeControlResult struct {
 
 // ShellOptions configures the full-screen TUI shell.
 type ShellOptions struct {
-	Candidates              []string
-	FileCandidates          []string
-	Prefill                 string
-	History                 []string
-	Entries                 []Entry
-	Submit                  SubmitFunc
-	SubmitStream            StreamSubmitFunc
-	SubmitAttachments       SubmitWithAttachmentsFunc
-	SubmitStreamAttachments StreamSubmitWithAttachmentsFunc
-	Slash                   SlashFunc
-	PermissionAnswer        func(string)
-	QuestionAnswer          func(string)
-	ExternalEditor          ExternalEditorFunc
-	Paste                   PasteFunc
-	Background              BackgroundFunc
-	TaskBoard               TaskBoardFunc
-	Todos                   TodoListFunc
-	ModelOptions            []string
-	CurrentModel            string
-	SelectModel             ModelSelectFunc
-	ToggleFast              RuntimeControlFunc
-	ToggleThinking          RuntimeControlFunc
-	StopBackground          RuntimeControlFunc
-	CompactSession          RuntimeControlFunc
-	RestoreConversation     ConversationRestoreFunc
-	ForkConversation        ConversationForkFunc
-	SummarizeConversation   ConversationSummarizeFunc
-	ModeLabel               string
-	CycleMode               func() string
+	Candidates                []string
+	FileCandidates            []string
+	Prefill                   string
+	History                   []string
+	Entries                   []Entry
+	Submit                    SubmitFunc
+	SubmitStream              StreamSubmitFunc
+	SubmitAttachments         SubmitWithAttachmentsFunc
+	SubmitStreamAttachments   StreamSubmitWithAttachmentsFunc
+	Slash                     SlashFunc
+	PermissionAnswer          func(string)
+	QuestionAnswer            func(string)
+	ExternalEditor            ExternalEditorFunc
+	Paste                     PasteFunc
+	Background                BackgroundFunc
+	TaskBoard                 TaskBoardFunc
+	Todos                     TodoListFunc
+	ModelOptions              []string
+	CurrentModel              string
+	SelectModel               ModelSelectFunc
+	ToggleFast                RuntimeControlFunc
+	ToggleThinking            RuntimeControlFunc
+	StopBackground            RuntimeControlFunc
+	CompactSession            RuntimeControlFunc
+	RestoreConversation       ConversationRestoreFunc
+	ForkConversation          ConversationForkFunc
+	SummarizeConversation     ConversationSummarizeFunc
+	SummarizeUpToConversation ConversationSummarizeFunc
+	ModeLabel                 string
+	CycleMode                 func() string
 }
 
 // Preview captures a deterministic TUI model state for tests and parity
@@ -159,85 +160,86 @@ type globalSearchMatch struct {
 }
 
 type model struct {
-	ctx                      context.Context
-	textarea                 textarea.Model
-	viewport                 viewport.Model
-	result                   Result
-	width                    int
-	height                   int
-	matches                  []string
-	selected                 int
-	candidates               []string
-	fileCandidates           []string
-	helpOpen                 bool
-	transcriptMode           bool
-	quickOpen                bool
-	busy                     bool
-	status                   string
-	transcript               []transcriptEntry
-	submit                   SubmitFunc
-	submitStream             StreamSubmitFunc
-	submitAttachments        SubmitWithAttachmentsFunc
-	submitStreamAttachments  StreamSubmitWithAttachmentsFunc
-	slash                    SlashFunc
-	permissionAnswer         func(string)
-	questionAnswer           func(string)
-	externalEditor           ExternalEditorFunc
-	paste                    PasteFunc
-	background               BackgroundFunc
-	taskBoard                TaskBoardFunc
-	todos                    TodoListFunc
-	modeLabel                string
-	cycleMode                func() string
-	history                  []string
-	historyPos               int
-	draft                    string
-	undoStack                []string
-	ctrlXChord               bool
-	quickOpenDraft           string
-	quickOpenMatches         []string
-	quickOpenSelected        int
-	quickOpenPreviewPath     string
-	quickOpenPreviewLines    []string
-	globalSearch             bool
-	globalSearchDraft        string
-	globalSearchMatches      []globalSearchMatch
-	globalSearchSelected     int
-	globalSearchPreviewPath  string
-	globalSearchPreviewLine  int
-	globalSearchPreviewLines []string
-	todosOpen                bool
-	todosLoading             bool
-	todoItems                []TodoItem
-	todoErr                  string
-	modelPicker              bool
-	modelOptions             []string
-	currentModel             string
-	modelPickerSelected      int
-	selectModel              ModelSelectFunc
-	toggleFast               RuntimeControlFunc
-	toggleThinking           RuntimeControlFunc
-	stopBackground           RuntimeControlFunc
-	compactSession           RuntimeControlFunc
-	restoreConversation      ConversationRestoreFunc
-	forkConversation         ConversationForkFunc
-	summarizeConversation    ConversationSummarizeFunc
-	messageActions           bool
-	messageActionTarget      int
-	messageActionSelected    int
-	queuedPrompts            []string
-	attachments              []string
-	stashedPrompt            *composerStash
-	searchOpen               bool
-	searchHits               []string
-	searchPos                int
-	turnCancel               context.CancelFunc
-	backgrounding            bool
-	backgroundCancel         context.CancelFunc
-	turnMessages             <-chan tea.Msg
-	streamingIndex           int
-	awaitingPermission       bool
-	awaitingQuestion         bool
+	ctx                       context.Context
+	textarea                  textarea.Model
+	viewport                  viewport.Model
+	result                    Result
+	width                     int
+	height                    int
+	matches                   []string
+	selected                  int
+	candidates                []string
+	fileCandidates            []string
+	helpOpen                  bool
+	transcriptMode            bool
+	quickOpen                 bool
+	busy                      bool
+	status                    string
+	transcript                []transcriptEntry
+	submit                    SubmitFunc
+	submitStream              StreamSubmitFunc
+	submitAttachments         SubmitWithAttachmentsFunc
+	submitStreamAttachments   StreamSubmitWithAttachmentsFunc
+	slash                     SlashFunc
+	permissionAnswer          func(string)
+	questionAnswer            func(string)
+	externalEditor            ExternalEditorFunc
+	paste                     PasteFunc
+	background                BackgroundFunc
+	taskBoard                 TaskBoardFunc
+	todos                     TodoListFunc
+	modeLabel                 string
+	cycleMode                 func() string
+	history                   []string
+	historyPos                int
+	draft                     string
+	undoStack                 []string
+	ctrlXChord                bool
+	quickOpenDraft            string
+	quickOpenMatches          []string
+	quickOpenSelected         int
+	quickOpenPreviewPath      string
+	quickOpenPreviewLines     []string
+	globalSearch              bool
+	globalSearchDraft         string
+	globalSearchMatches       []globalSearchMatch
+	globalSearchSelected      int
+	globalSearchPreviewPath   string
+	globalSearchPreviewLine   int
+	globalSearchPreviewLines  []string
+	todosOpen                 bool
+	todosLoading              bool
+	todoItems                 []TodoItem
+	todoErr                   string
+	modelPicker               bool
+	modelOptions              []string
+	currentModel              string
+	modelPickerSelected       int
+	selectModel               ModelSelectFunc
+	toggleFast                RuntimeControlFunc
+	toggleThinking            RuntimeControlFunc
+	stopBackground            RuntimeControlFunc
+	compactSession            RuntimeControlFunc
+	restoreConversation       ConversationRestoreFunc
+	forkConversation          ConversationForkFunc
+	summarizeConversation     ConversationSummarizeFunc
+	summarizeUpToConversation ConversationSummarizeFunc
+	messageActions            bool
+	messageActionTarget       int
+	messageActionSelected     int
+	queuedPrompts             []string
+	attachments               []string
+	stashedPrompt             *composerStash
+	searchOpen                bool
+	searchHits                []string
+	searchPos                 int
+	turnCancel                context.CancelFunc
+	backgrounding             bool
+	backgroundCancel          context.CancelFunc
+	turnMessages              <-chan tea.Msg
+	streamingIndex            int
+	awaitingPermission        bool
+	awaitingQuestion          bool
 }
 
 type transcriptEntry struct {
@@ -769,6 +771,13 @@ func PreviewWithMessageActions(entries []Entry, width int, height int, action in
 			Lines:  []string{fmt.Sprintf("Before: %d", keepMessages)},
 		}, nil
 	}
+	m.summarizeUpToConversation = func(_ context.Context, keepMessages int) (RuntimeControlResult, error) {
+		return RuntimeControlResult{
+			Title:  "Earlier Conversation Summarized",
+			Status: "summarized earlier",
+			Lines:  []string{fmt.Sprintf("Summarized: %d", keepMessages)},
+		}, nil
+	}
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 		if next, ok := updated.(model); ok {
@@ -895,6 +904,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.restoreConversation = options.RestoreConversation
 	m.forkConversation = options.ForkConversation
 	m.summarizeConversation = options.SummarizeConversation
+	m.summarizeUpToConversation = options.SummarizeUpToConversation
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
@@ -2791,6 +2801,7 @@ var messageActionLabels = []string{
 	"restore before turn",
 	"fork before turn",
 	"summarize from turn",
+	"summarize up to turn",
 }
 
 func (m *model) openMessageActions() {
@@ -2905,6 +2916,27 @@ func (m model) applyMessageAction() (tea.Model, tea.Cmd) {
 		m.historyPos = -1
 		m.status = "summarizing"
 		return m, runConversationSummarizeCommand(m.ctx, m.summarizeConversation, keepMessages)
+	case 6:
+		if m.summarizeUpToConversation == nil {
+			m.status = "summarize unavailable"
+			m.messageActions = false
+			m.messageActionSelected = 0
+			return m, nil
+		}
+		keepMessages := m.restoreMessageKeepCount()
+		if keepMessages < 0 {
+			m.status = "summarize unavailable"
+			m.messageActions = false
+			m.messageActionSelected = 0
+			return m, nil
+		}
+		m.messageActions = false
+		m.messageActionSelected = 0
+		m.matches = nil
+		m.selected = 0
+		m.historyPos = -1
+		m.status = "summarizing"
+		return m, runConversationSummarizeCommand(m.ctx, m.summarizeUpToConversation, keepMessages)
 	default:
 		m.pushComposerUndo()
 		m.textarea.SetValue(text)

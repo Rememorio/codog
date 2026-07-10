@@ -843,6 +843,43 @@ func TestMessageActionsSummarizeFromTurn(t *testing.T) {
 	require.Contains(t, m.View(), "Summarized: 2")
 }
 
+func TestMessageActionsSummarizeUpToTurn(t *testing.T) {
+	entries := []transcriptEntry{
+		{Role: "system", Text: "ready"},
+		{Role: "user", Text: "first prompt"},
+		{Role: "assistant", Text: "first answer"},
+		{Role: "user", Text: "second prompt"},
+		{Role: "assistant", Text: "second answer"},
+	}
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, entries)
+	var keep int
+	m.summarizeUpToConversation = func(_ context.Context, keepMessages int) (RuntimeControlResult, error) {
+		keep = keepMessages
+		return RuntimeControlResult{Title: "Earlier Conversation Summarized", Status: "summarized earlier 2", Lines: []string{"Summarized: 2", "After: 2"}}, nil
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	m = updated.(model)
+	for range 6 {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(model)
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "summarizing", m.status)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.Equal(t, 2, keep)
+	require.False(t, m.messageActions)
+	require.Equal(t, "summarized earlier 2", m.status)
+	require.Contains(t, m.View(), "Earlier Conversation Summarized")
+	require.Contains(t, m.View(), "After: 2")
+}
+
 func TestPreviewWithMessageActions(t *testing.T) {
 	preview := PreviewWithMessageActions([]Entry{{Role: "assistant", Text: "copy me"}}, 96, 24, -1)
 
@@ -866,6 +903,10 @@ func TestPreviewWithMessageActions(t *testing.T) {
 	summarized := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 5)
 	require.False(t, summarized.MessageMenu)
 	require.Contains(t, summarized.View, "Conversation Summarized")
+
+	summarizedUpTo := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 6)
+	require.False(t, summarizedUpTo.MessageMenu)
+	require.Contains(t, summarizedUpTo.View, "Earlier Conversation Summarized")
 }
 
 func TestCtrlXCtrlKStopsBackgroundTasks(t *testing.T) {
