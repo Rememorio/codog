@@ -5579,6 +5579,14 @@ func tuiPromptCompletionScenario() scenario {
 			if !strings.Contains(thinkingToggle.View, "thinking: medium") {
 				return localScenarioResult{}, fmt.Errorf("expected thinking runtime badge, got view=%s", thinkingToggle.View)
 			}
+			vimNormal := tui.PreviewWithVimMode("abc", []string{"esc"}, 96, 24)
+			if vimNormal.Value != "abc" || vimNormal.Mode != "vim normal" || !strings.Contains(vimNormal.View, "vim: normal") {
+				return localScenarioResult{}, fmt.Errorf("expected vim normal preview, got %#v", vimNormal)
+			}
+			vimEdited := tui.PreviewWithVimMode("abc", []string{"esc", "0", "x", "A", "!"}, 96, 24)
+			if vimEdited.Value != "bc!" || !strings.Contains(vimEdited.View, "vim: insert") {
+				return localScenarioResult{}, fmt.Errorf("expected vim edit preview, got %#v", vimEdited)
+			}
 			undoControl := tui.PreviewWithRuntimeControl("", "ctrl+x ctrl+u", tui.RuntimeControlResult{
 				Title:  "Undo",
 				Status: "restored",
@@ -5681,6 +5689,8 @@ func tuiPromptCompletionScenario() scenario {
 				"runtime_fast_badge":           strings.Contains(fastToggle.View, "fast: on"),
 				"runtime_thinking":             strings.Contains(thinkingToggle.View, "Reasoning: medium"),
 				"runtime_thinking_badge":       strings.Contains(thinkingToggle.View, "thinking: medium"),
+				"vim_normal_mode":              vimNormal.Mode == "vim normal",
+				"vim_normal_edit":              vimEdited.Value == "bc!",
 				"message_actions":              messageActions.MessageMenu,
 				"message_action_copy":          messageCopy.Value == "copy me",
 				"message_action_target":        messageTargetCopy.Value == "first target",

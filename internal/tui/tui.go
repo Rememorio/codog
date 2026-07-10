@@ -132,6 +132,7 @@ type ShellOptions struct {
 	CopyMessage               MessageCopyFunc
 	ModeLabel                 string
 	RuntimeBadges             []string
+	VimMode                   bool
 	CycleMode                 func() string
 }
 
@@ -219,6 +220,8 @@ type model struct {
 	todos                     TodoListFunc
 	modeLabel                 string
 	runtimeBadges             []string
+	vimEnabled                bool
+	vimNormal                 bool
 	cycleMode                 func() string
 	history                   []string
 	historyPos                int
@@ -1074,6 +1077,59 @@ func PreviewWithRuntimeControl(input string, key string, result RuntimeControlRe
 	}
 }
 
+// PreviewWithVimMode renders a deterministic TUI state after applying vim
+// editor-mode keys.
+func PreviewWithVimMode(input string, keys []string, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	m.vimEnabled = true
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	for _, key := range keys {
+		updated, _ := m.Update(vimPreviewKey(key))
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
+		TodosOpen:   m.todosOpen,
+	}
+}
+
+func vimPreviewKey(key string) tea.KeyMsg {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "esc", "escape":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "left":
+		return tea.KeyMsg{Type: tea.KeyLeft}
+	case "right":
+		return tea.KeyMsg{Type: tea.KeyRight}
+	case "delete":
+		return tea.KeyMsg{Type: tea.KeyDelete}
+	default:
+		runes := []rune(key)
+		if len(runes) == 0 {
+			return tea.KeyMsg{}
+		}
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{runes[0]}}
+	}
+}
+
 func runtimeControlPreviewKey(key string, chordSecond bool) tea.KeyMsg {
 	key = strings.ToLower(strings.TrimSpace(key))
 	if key == "ctrl+x ctrl+u" {
@@ -1305,6 +1361,8 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.copyMessage = options.CopyMessage
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
 	m.runtimeBadges = normalizeRuntimeBadges(options.RuntimeBadges)
+	m.vimEnabled = options.VimMode
+	m.vimNormal = false
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
@@ -1762,6 +1820,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "esc":
+			if m.shouldEnterVimNormalMode() {
+				m.vimNormal = true
+				m.matches = nil
+				m.selected = 0
+				m.commandArgumentHint = ""
+				m.inlineGhostText = ""
+				m.exitPending = false
+				m.status = "vim normal"
+				return m, nil
+			}
+			if m.vimEnabled && m.vimNormal && m.vimKeybindingsAvailable() && strings.TrimSpace(m.textarea.Value()) != "" {
+				m.status = "vim normal"
+				return m, nil
+			}
 			if m.busy {
 				m.interruptTurn()
 				return m, nil
@@ -2053,6 +2125,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m.submitCurrentInput()
 		}
+		if next, handled, cmd := m.handleVimNormalKey(msg); handled {
+			return next, cmd
+		}
 	}
 	var cmd tea.Cmd
 	var viewportCmd tea.Cmd
@@ -2329,6 +2404,7 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 		ctx, cancel := context.WithCancel(m.ctx)
 		m.turnCancel = cancel
 		m.appendHistory(value)
+		m.vimNormal = false
 		m.textarea.SetValue("")
 		m.matches = nil
 		m.selected = 0
@@ -2342,12 +2418,14 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 	}
 	attachments := append([]string(nil), m.attachments...)
 	if m.submit == nil && m.submitStream == nil && m.submitAttachments == nil && m.submitStreamAttachments == nil {
+		m.vimNormal = false
 		m.result = Result{Submitted: true, Prompt: value, Attachments: attachments}
 		return m, tea.Quit
 	}
 	m.appendHistory(value)
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.turnCancel = cancel
+	m.vimNormal = false
 	m.textarea.SetValue("")
 	m.undoStack = nil
 	m.matches = nil
@@ -2383,12 +2461,14 @@ func (m model) startBashInput(value string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.slash == nil {
+		m.vimNormal = false
 		m.result = Result{Submitted: true, Prompt: value, Attachments: append([]string(nil), m.attachments...)}
 		return m, tea.Quit
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.turnCancel = cancel
 	m.appendHistory(value)
+	m.vimNormal = false
 	m.textarea.SetValue("")
 	m.undoStack = nil
 	m.matches = nil
@@ -2495,6 +2575,83 @@ func (m *model) togglePromptStash() {
 	m.selected = 0
 	m.historyPos = -1
 	m.status = "prompt stashed"
+}
+
+func (m model) shouldEnterVimNormalMode() bool {
+	if !m.vimEnabled || m.vimNormal {
+		return false
+	}
+	return m.vimKeybindingsAvailable() && strings.TrimSpace(m.textarea.Value()) != ""
+}
+
+func (m model) vimKeybindingsAvailable() bool {
+	return !m.busy &&
+		!m.backgrounding &&
+		!m.searchOpen &&
+		!m.quickOpen &&
+		!m.globalSearch &&
+		!m.todosOpen &&
+		!m.modelPicker &&
+		!m.messageActions &&
+		!m.attachmentsOpen &&
+		!m.diffDialog &&
+		!m.awaitingPermission &&
+		!m.awaitingQuestion &&
+		!m.helpOpen
+}
+
+func (m model) handleVimNormalKey(msg tea.KeyMsg) (model, bool, tea.Cmd) {
+	if !m.vimEnabled || !m.vimNormal || !m.vimKeybindingsAvailable() {
+		return m, false, nil
+	}
+	key := msg.String()
+	switch key {
+	case "i":
+		m.vimNormal = false
+		m.status = "vim insert"
+		return m, true, nil
+	case "a":
+		m.textarea, _ = m.textarea.Update(tea.KeyMsg{Type: tea.KeyRight})
+		m.vimNormal = false
+		m.status = "vim insert"
+		return m, true, nil
+	case "I":
+		m.textarea.CursorStart()
+		m.vimNormal = false
+		m.status = "vim insert"
+		return m, true, nil
+	case "A":
+		m.textarea.CursorEnd()
+		m.vimNormal = false
+		m.status = "vim insert"
+		return m, true, nil
+	case "h":
+		m.textarea, _ = m.textarea.Update(tea.KeyMsg{Type: tea.KeyLeft})
+		m.status = "vim normal"
+		return m, true, nil
+	case "l":
+		m.textarea, _ = m.textarea.Update(tea.KeyMsg{Type: tea.KeyRight})
+		m.status = "vim normal"
+		return m, true, nil
+	case "0":
+		m.textarea.CursorStart()
+		m.status = "vim normal"
+		return m, true, nil
+	case "$":
+		m.textarea.CursorEnd()
+		m.status = "vim normal"
+		return m, true, nil
+	case "x":
+		m.pushComposerUndo()
+		m.textarea, _ = m.textarea.Update(tea.KeyMsg{Type: tea.KeyDelete})
+		m.matches = nil
+		m.selected = 0
+		m.refreshCompletionMenu()
+		m.status = "vim normal"
+		return m, true, nil
+	default:
+		return m, false, nil
+	}
 }
 
 func (m model) openExternalEditor() (tea.Model, tea.Cmd) {
@@ -3855,6 +4012,13 @@ func (m model) runtimeStatusBadges() []string {
 		badges = append(badges, "model: "+current)
 	}
 	badges = append(badges, m.runtimeBadges...)
+	if m.vimEnabled {
+		mode := "insert"
+		if m.vimNormal {
+			mode = "normal"
+		}
+		badges = append(badges, "vim: "+mode)
+	}
 	return normalizeRuntimeBadges(badges)
 }
 
@@ -5045,6 +5209,14 @@ func (m model) promptFooterHints(width int) []string {
 		add("Esc clear")
 		return trimFooterHints(hints, width)
 	}
+	if m.vimEnabled && m.vimNormal {
+		add("vim NORMAL")
+		add("i/a insert")
+		add("h/l move")
+		add("x delete")
+		add("Enter send")
+		return trimFooterHints(hints, width)
+	}
 	if m.searchOpen {
 		add("Enter restore")
 		add("Esc close")
@@ -5121,6 +5293,13 @@ func (m model) promptFooterHints(width int) []string {
 	}
 	if strings.TrimSpace(m.modeLabel) != "" {
 		add("mode: " + m.modeLabel)
+	}
+	if m.vimEnabled {
+		if m.vimNormal {
+			add("vim: normal")
+		} else {
+			add("vim: insert")
+		}
 	}
 	if m.cycleMode != nil || strings.TrimSpace(m.modeLabel) != "" {
 		add("Shift+Tab mode")
@@ -5687,6 +5866,9 @@ func (m model) mode() string {
 	value := strings.TrimSpace(m.textarea.Value())
 	if isBashModeInput(value) {
 		return "bash"
+	}
+	if m.vimEnabled && m.vimNormal {
+		return "vim normal"
 	}
 	if len(m.matches) > 0 {
 		return fmt.Sprintf("%d completions", len(m.matches))

@@ -511,6 +511,23 @@ func TestHeaderShowsRuntimeBadges(t *testing.T) {
 	require.Contains(t, view, "thinking: medium")
 }
 
+func TestVimModeEscapeEntersNormalWithoutClearingInput(t *testing.T) {
+	preview := PreviewWithVimMode("abc", []string{"esc"}, 96, 24)
+
+	require.Equal(t, "abc", preview.Value)
+	require.Equal(t, "vim normal", preview.Mode)
+	require.Contains(t, preview.View, "vim: normal")
+	require.Contains(t, preview.View, "i/a insert")
+}
+
+func TestVimModeNormalEditingAndInsertReturn(t *testing.T) {
+	preview := PreviewWithVimMode("abc", []string{"esc", "0", "x", "A", "!"}, 96, 24)
+
+	require.Equal(t, "bc!", preview.Value)
+	require.Equal(t, "compose", preview.Mode)
+	require.Contains(t, preview.View, "vim: insert")
+}
+
 func TestPromptFooterShowsRunningQueueHints(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, nil)

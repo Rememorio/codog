@@ -822,6 +822,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, tuiPrompt.Output, `"runtime_fast_badge":true`)
 	require.Contains(t, tuiPrompt.Output, `"runtime_thinking":true`)
 	require.Contains(t, tuiPrompt.Output, `"runtime_thinking_badge":true`)
+	require.Contains(t, tuiPrompt.Output, `"vim_normal_mode":true`)
+	require.Contains(t, tuiPrompt.Output, `"vim_normal_edit":true`)
 	require.Contains(t, tuiPrompt.Output, `"message_actions":true`)
 	require.Contains(t, tuiPrompt.Output, `"message_action_copy":true`)
 	require.Contains(t, tuiPrompt.Output, `"message_action_target":true`)

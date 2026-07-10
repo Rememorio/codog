@@ -39459,6 +39459,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		},
 		ModeLabel:     modeState.Label(),
 		RuntimeBadges: a.tuiRuntimeBadges(),
+		VimMode:       a.readlineVimMode(),
 		CycleMode: func() string {
 			return modeState.Cycle()
 		},
