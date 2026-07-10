@@ -5426,6 +5426,14 @@ func tuiPromptCompletionScenario() scenario {
 			if bashPath.Value != "!cat internal/tui/tui.go " || strings.Contains(bashPath.Value, "@") {
 				return localScenarioResult{}, fmt.Errorf("expected bash path completion without @ prefix, got value=%q view=%s", bashPath.Value, bashPath.View)
 			}
+			bashHistory := tui.PreviewWithBashHistory("!go te", []string{"!go test ./internal/tui"}, nil, 96, 24, false)
+			if bashHistory.InlineHint != "!go test ./internal/tui" || !strings.Contains(bashHistory.View, "ghost: !go test ./internal/tui") {
+				return localScenarioResult{}, fmt.Errorf("expected bash history ghost completion, got %#v", bashHistory)
+			}
+			bashHistoryCompleted := tui.PreviewWithBashHistory("!go te", []string{"!go test ./internal/tui"}, nil, 96, 24, true)
+			if bashHistoryCompleted.Value != "!go test ./internal/tui " {
+				return localScenarioResult{}, fmt.Errorf("expected bash history completion with trailing space, got value=%q", bashHistoryCompleted.Value)
+			}
 			bashRun := tui.PreviewWithBashMode("!printf codog", 96, 24)
 			if bashRun.Prompt != "/run printf codog" || !strings.Contains(bashRun.View, "bash ok: /run printf codog") {
 				return localScenarioResult{}, fmt.Errorf("expected bash mode to route through /run, got %#v", bashRun)

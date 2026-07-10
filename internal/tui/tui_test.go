@@ -325,6 +325,49 @@ func TestBashModeRoutesThroughRunSlashCommand(t *testing.T) {
 	require.Contains(t, preview.View, "bash ok: /run printf codog")
 }
 
+func TestBashModeHistoryGhostCompletesWithTab(t *testing.T) {
+	preview := PreviewWithBashHistory("!go te", []string{"!go test ./internal/tui"}, nil, 96, 24, false)
+
+	require.Equal(t, "bash", preview.Mode)
+	require.Empty(t, preview.Matches)
+	require.Equal(t, "!go test ./internal/tui", preview.InlineHint)
+	require.Contains(t, preview.View, "ghost: !go test ./internal/tui")
+
+	completed := PreviewWithBashHistory("!go te", []string{"!go test ./internal/tui"}, nil, 96, 24, true)
+	require.Equal(t, "!go test ./internal/tui ", completed.Value)
+}
+
+func TestBashModePathCompletionBeatsHistoryGhost(t *testing.T) {
+	preview := PreviewWithBashHistory(
+		"!cat internal/t",
+		[]string{"!cat internal/tmp.txt"},
+		[]string{"internal/tui/tui.go", "internal/agent/agent.go"},
+		96,
+		24,
+		false,
+	)
+
+	require.Equal(t, []string{"internal/tui/tui.go"}, preview.Matches)
+	require.Empty(t, preview.InlineHint)
+
+	completed := PreviewWithBashHistory(
+		"!cat internal/t",
+		[]string{"!cat internal/tmp.txt"},
+		[]string{"internal/tui/tui.go", "internal/agent/agent.go"},
+		96,
+		24,
+		true,
+	)
+	require.Equal(t, "!cat internal/tui/tui.go ", completed.Value)
+}
+
+func TestBashModeHistoryGhostIgnoresNonBashAndExactMatches(t *testing.T) {
+	preview := PreviewWithBashHistory("!go te", []string{"go test ./...", "!go te"}, nil, 96, 24, false)
+
+	require.Empty(t, preview.InlineHint)
+	require.Empty(t, preview.Matches)
+}
+
 func TestBareBashModeStaysInComposer(t *testing.T) {
 	ta := newPromptTextarea("!")
 	m := newModel(context.Background(), ta, nil, nil)

@@ -501,6 +501,39 @@ func PreviewWithBashMode(input string, width int, height int) Preview {
 	}
 }
 
+// PreviewWithBashHistory renders bash history ghost completion for tests and
+// parity harnesses.
+func PreviewWithBashHistory(input string, history []string, files []string, width int, height int, complete bool) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	m.setHistory(history)
+	m.fileCandidates = append([]string(nil), files...)
+	m.refreshCompletionMenu()
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	if complete {
+		m = m.completeSlashCommand()
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
+		TodosOpen:   m.todosOpen,
+		CommandHint: m.commandArgumentHint,
+		InlineHint:  m.inlineGhostText,
+	}
+}
+
 // PreviewWithStash renders a deterministic TUI state after stashing the current
 // composer draft.
 func PreviewWithStash(input string, attachments []string, width int, height int) Preview {
@@ -3113,7 +3146,19 @@ func (m *model) finishStreamingOutput(role string, output string) {
 
 func (m model) completeSlashCommand() model {
 	value := strings.Trim(m.textarea.Value(), "\r\n\t")
-	if !strings.HasPrefix(value, "/") {
+	candidates := m.filteredCompletionCandidates(value)
+	if len(candidates) == 0 && isBashModeInput(value) {
+		if completion, ok := m.bashHistoryCompletion(value); ok {
+			m.textarea.SetValue(completeValue(completion))
+			m.textarea.CursorEnd()
+			m.matches = nil
+			m.selected = 0
+			m.commandArgumentHint = ""
+			m.inlineGhostText = ""
+			return m
+		}
+	}
+	if !strings.HasPrefix(value, "/") && !isBashModeInput(value) {
 		if completion, ok := m.midInputSlashCompletion(value); ok {
 			m.textarea.SetValue(value[:completion.start] + completeValue(completion.candidate))
 			m.textarea.CursorEnd()
@@ -3124,7 +3169,6 @@ func (m model) completeSlashCommand() model {
 			return m
 		}
 	}
-	candidates := m.filteredCompletionCandidates(value)
 	switch len(candidates) {
 	case 0:
 		m.matches = nil
@@ -3158,6 +3202,14 @@ func (m *model) refreshCompletionMenu() {
 	}
 	m.commandArgumentHint = slashCommandArgumentHint(value)
 	candidates := m.filteredCompletionCandidates(value)
+	if len(candidates) == 0 && isBashModeInput(value) {
+		if completion, ok := m.bashHistoryCompletion(value); ok {
+			m.inlineGhostText = completion
+		}
+		m.matches = nil
+		m.selected = 0
+		return
+	}
 	if len(candidates) == 0 && !strings.HasPrefix(value, "/") {
 		if completion, ok := m.midInputSlashCompletion(value); ok {
 			m.inlineGhostText = completion.display()
@@ -3194,6 +3246,28 @@ func (m model) filteredCompletionCandidates(value string) []string {
 		return filterFileReferenceCandidates(prefix, m.fileCandidates)
 	}
 	return nil
+}
+
+func (m model) bashHistoryCompletion(value string) (string, bool) {
+	value = strings.TrimRight(value, "\r\n\t")
+	if !isBashModeInput(value) {
+		return "", false
+	}
+	command := strings.TrimSpace(bashModeCommand(value))
+	if command == "" {
+		return "", false
+	}
+	normalized := strings.TrimSpace(value)
+	for index := len(m.history) - 1; index >= 0; index-- {
+		entry := strings.TrimSpace(m.history[index])
+		if entry == "" || entry == normalized || !isBashModeInput(entry) {
+			continue
+		}
+		if strings.HasPrefix(entry, normalized) {
+			return entry, true
+		}
+	}
+	return "", false
 }
 
 type midInputSlashCompletion struct {
