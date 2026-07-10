@@ -586,6 +586,44 @@ func TestBackslashEnterHandlesWhitespaceAndEscapedBackslash(t *testing.T) {
 	require.Equal(t, "literal\\\\", next.result.Prompt)
 }
 
+func TestExternalEditorShortcutUpdatesComposer(t *testing.T) {
+	ta := newPromptTextarea("draft")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.externalEditor = func(_ context.Context, value string) (string, error) {
+		require.Equal(t, "draft", value)
+		return "edited\nvalue", nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	next := updated.(model)
+	require.Equal(t, "editing", next.status)
+	require.NotNil(t, cmd)
+
+	updated, _ = next.Update(cmd())
+	next = updated.(model)
+	require.Equal(t, "edited\nvalue", next.textarea.Value())
+	require.Equal(t, "editor updated", next.status)
+}
+
+func TestExternalEditorShortcutRendersErrors(t *testing.T) {
+	ta := newPromptTextarea("draft")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.externalEditor = func(context.Context, string) (string, error) {
+		return "", errors.New("editor failed")
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	next := updated.(model)
+	require.NotNil(t, cmd)
+
+	updated, _ = next.Update(cmd())
+	next = updated.(model)
+	require.Equal(t, "draft", next.textarea.Value())
+	require.Equal(t, "editor error", next.status)
+	require.Equal(t, "error", next.transcript[len(next.transcript)-1].Role)
+	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "editor failed")
+}
+
 func TestPastedMultilineInputDoesNotSubmitUntilEnter(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, nil)

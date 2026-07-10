@@ -20801,6 +20801,7 @@ func defaultKeybindingsTemplate() []byte {
 					"shift+enter": "insert newline",
 					"alt+enter":   "insert newline fallback",
 					"ctrl+j":      "insert newline",
+					"ctrl+g":      "edit composer in $EDITOR",
 					"tab":         "complete slash command",
 					"esc":         "quit",
 					"ctrl+c":      "quit",
@@ -20867,6 +20868,7 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Shift-Enter", Action: "insert newline"},
 					{Key: "Alt-Enter", Action: "insert newline fallback"},
 					{Key: "Ctrl-J", Action: "insert newline"},
+					{Key: "Ctrl-G", Action: "edit composer in $EDITOR"},
 					{Key: "Tab", Action: "complete slash command"},
 					{Key: "Esc", Action: "quit"},
 					{Key: "Ctrl-C", Action: "quit"},
@@ -39121,7 +39123,10 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		Entries:      entries,
 		SubmitStream: submit,
 		Slash:        slashHandler,
-		ModeLabel:    modeState.Label(),
+		ExternalEditor: func(ctx context.Context, value string) (string, error) {
+			return a.editTUIComposer(ctx, value)
+		},
+		ModeLabel: modeState.Label(),
 		CycleMode: func() string {
 			return modeState.Cycle()
 		},
@@ -39139,6 +39144,45 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		},
 	})
 	return a.finishREPL(ctx, sess, loopErr)
+}
+
+func (a *App) editTUIComposer(ctx context.Context, value string) (string, error) {
+	editor := strings.TrimSpace(os.Getenv("VISUAL"))
+	if editor == "" {
+		editor = strings.TrimSpace(os.Getenv("EDITOR"))
+	}
+	if editor == "" {
+		return "", errors.New("no editor configured; set VISUAL or EDITOR")
+	}
+	fields := strings.Fields(editor)
+	if len(fields) == 0 {
+		return "", errors.New("no editor configured; set VISUAL or EDITOR")
+	}
+	file, err := os.CreateTemp("", "codog-tui-*.md")
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	defer os.Remove(path)
+	if _, err := file.WriteString(value); err != nil {
+		_ = file.Close()
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, fields[0], append(fields[1:], path)...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 type tuiModeOption struct {

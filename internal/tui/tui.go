@@ -36,6 +36,10 @@ type StreamSubmitFunc func(context.Context, string, func(Entry)) (string, error)
 // true when the command should not be sent to the model.
 type SlashFunc func(context.Context, string) (output string, handled bool, err error)
 
+// ExternalEditorFunc edits the current composer value outside the TUI and
+// returns the replacement composer text.
+type ExternalEditorFunc func(context.Context, string) (string, error)
+
 // ShellOptions configures the full-screen TUI shell.
 type ShellOptions struct {
 	Candidates       []string
@@ -47,6 +51,7 @@ type ShellOptions struct {
 	Slash            SlashFunc
 	PermissionAnswer func(string)
 	QuestionAnswer   func(string)
+	ExternalEditor   ExternalEditorFunc
 	ModeLabel        string
 	CycleMode        func() string
 }
@@ -82,6 +87,7 @@ type model struct {
 	slash              SlashFunc
 	permissionAnswer   func(string)
 	questionAnswer     func(string)
+	externalEditor     ExternalEditorFunc
 	modeLabel          string
 	cycleMode          func() string
 	history            []string
@@ -178,6 +184,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.slash = options.Slash
 	m.permissionAnswer = options.PermissionAnswer
 	m.questionAnswer = options.QuestionAnswer
+	m.externalEditor = options.ExternalEditor
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
@@ -258,6 +265,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.startInput(next)
 		}
 		return m, nil
+	case externalEditorDoneMsg:
+		if msg.Err != nil {
+			m.status = "editor error"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return m, nil
+		}
+		m.textarea.SetValue(msg.Text)
+		m.textarea.CursorEnd()
+		m.matches = nil
+		m.selected = 0
+		m.historyPos = -1
+		m.status = "editor updated"
+		return m, nil
 	case turnStreamMsg:
 		m.appendStreamDelta(msg.Role, msg.Delta)
 		if strings.EqualFold(msg.Role, "permission") {
@@ -309,6 +331,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+s":
 			return m.submitCurrentInput()
+		case "ctrl+g":
+			if m.busy || m.externalEditor == nil {
+				return m, nil
+			}
+			if m.helpOpen {
+				m.helpOpen = false
+				m.refreshViewport()
+			}
+			m.matches = nil
+			m.selected = 0
+			m.status = "editing"
+			return m, runExternalEditorCommand(m.ctx, m.externalEditor, m.textarea.Value())
 		case "pgup":
 			m.viewport.LineUp(max(1, m.viewport.Height/2))
 			return m, nil
@@ -653,6 +687,18 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 type turnStreamMsg struct {
 	Role  string
 	Delta string
+}
+
+type externalEditorDoneMsg struct {
+	Text string
+	Err  error
+}
+
+func runExternalEditorCommand(ctx context.Context, editor ExternalEditorFunc, value string) tea.Cmd {
+	return func() tea.Msg {
+		text, err := editor(ctx, value)
+		return externalEditorDoneMsg{Text: text, Err: err}
+	}
 }
 
 func (m *model) interruptTurn() {
@@ -1220,6 +1266,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Shift+Enter insert newline",
 		"  Alt+Enter   insert newline fallback",
 		"  \\+Enter     replace trailing backslash with newline",
+		"  Ctrl+G      edit composer in $EDITOR",
 		"  Ctrl+R      search prompt history",
 		"  Tab         complete slash command",
 		"  Up/Down     choose a shown completion",

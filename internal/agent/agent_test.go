@@ -20684,6 +20684,13 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"binding_action": "insert newline"`)
 	out.Reset()
 
+	require.NoError(t, app.Keybindings([]string{"resolve", "tui", "Ctrl-G", "--json"}))
+	require.Contains(t, out.String(), `"action": "resolve"`)
+	require.Contains(t, out.String(), `"normalized_key": "ctrl+g"`)
+	require.Contains(t, out.String(), `"found": true`)
+	require.Contains(t, out.String(), `"binding_action": "edit composer in $EDITOR"`)
+	out.Reset()
+
 	require.NoError(t, app.Keybindings([]string{"init", "--json"}))
 	require.Contains(t, out.String(), `"status": "created"`)
 	require.Contains(t, out.String(), `"created": true`)
@@ -20691,15 +20698,17 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"context": "repl"`)
 	require.Contains(t, string(data), `"shift+enter": "insert newline"`)
+	require.Contains(t, string(data), `"ctrl+g": "edit composer in $EDITOR"`)
 	out.Reset()
 
 	require.NoError(t, app.Keybindings([]string{"validate", "--json"}))
 	require.Contains(t, out.String(), `"action": "validate"`)
 	require.Contains(t, out.String(), `"valid": true`)
 	require.Contains(t, out.String(), `"context_count": 4`)
-	require.Contains(t, out.String(), `"binding_count": 22`)
+	require.Contains(t, out.String(), `"binding_count": 23`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+r"`)
 	require.Contains(t, out.String(), `"normalized_key": "shift+enter"`)
+	require.Contains(t, out.String(), `"normalized_key": "ctrl+g"`)
 	out.Reset()
 
 	require.NoError(t, os.WriteFile(keybindingsPath, []byte("custom\n"), 0o644))
@@ -20750,9 +20759,32 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "REPL vim")
 	require.Contains(t, out.String(), "Config exists    true")
 	require.Contains(t, out.String(), "User valid       true")
-	require.Contains(t, out.String(), "User bindings    22")
+	require.Contains(t, out.String(), "User bindings    23")
 	require.Contains(t, out.String(), "Shift-Enter")
+	require.Contains(t, out.String(), "Ctrl-G")
 	require.Empty(t, errOut.String())
+}
+
+func TestTUIComposerExternalEditorUsesEditorEnv(t *testing.T) {
+	dir := t.TempDir()
+	editor := filepath.Join(dir, "editor.sh")
+	require.NoError(t, os.WriteFile(editor, []byte("#!/bin/sh\nprintf 'edited composer\\nsecond line\\n' > \"$1\"\n"), 0o755))
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", editor)
+
+	app := &App{}
+	edited, err := app.editTUIComposer(context.Background(), "draft composer")
+	require.NoError(t, err)
+	require.Equal(t, "edited composer\nsecond line\n", edited)
+}
+
+func TestTUIComposerExternalEditorRequiresEditor(t *testing.T) {
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "")
+
+	app := &App{}
+	_, err := app.editTUIComposer(context.Background(), "draft")
+	require.ErrorContains(t, err, "set VISUAL or EDITOR")
 }
 
 func TestPreferenceCompatErrorsHonorGlobalJSONFormat(t *testing.T) {
