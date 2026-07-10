@@ -3577,7 +3577,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+x ctrl+e"`) || !strings.Contains(string(keybindingsData), `"ctrl+_"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+-"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+f"`) || !strings.Contains(string(keybindingsData), `"alt+p"`) || !strings.Contains(string(keybindingsData), `"alt+o"`) || !strings.Contains(string(keybindingsData), `"alt+t"`) || !strings.Contains(string(keybindingsData), `"ctrl+o"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
+			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+x ctrl+e"`) || !strings.Contains(string(keybindingsData), `"ctrl+x ctrl+k"`) || !strings.Contains(string(keybindingsData), `"ctrl+_"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+-"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+f"`) || !strings.Contains(string(keybindingsData), `"alt+p"`) || !strings.Contains(string(keybindingsData), `"alt+o"`) || !strings.Contains(string(keybindingsData), `"alt+t"`) || !strings.Contains(string(keybindingsData), `"shift+up"`) || !strings.Contains(string(keybindingsData), `"ctrl+o"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
 				return localScenarioResult{}, fmt.Errorf("keybindings template missing expected entries: %s", string(keybindingsData))
 			}
 
@@ -3589,7 +3589,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 44 {
+			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 46 {
 				return localScenarioResult{}, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
 			}
 
@@ -3642,11 +3642,13 @@ func privacyKeybindingsScenario() scenario {
 					"prompt_stash_key":      strings.Contains(string(keybindingsData), `"ctrl+s"`),
 					"external_editor":       strings.Contains(string(keybindingsData), `"ctrl+g"`),
 					"external_editor_chord": strings.Contains(string(keybindingsData), `"ctrl+x ctrl+e"`),
+					"kill_agents_chord":     strings.Contains(string(keybindingsData), `"ctrl+x ctrl+k"`),
 					"composer_undo_key":     strings.Contains(string(keybindingsData), `"ctrl+_"`) && strings.Contains(string(keybindingsData), `"ctrl+shift+-"`),
 					"clipboard_paste_key":   strings.Contains(string(keybindingsData), `"ctrl+v"`),
 					"quick_open_key":        strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) && strings.Contains(string(keybindingsData), `"ctrl+p"`),
 					"global_search_key":     strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) && strings.Contains(string(keybindingsData), `"ctrl+f"`),
 					"runtime_control_keys":  strings.Contains(string(keybindingsData), `"alt+p"`) && strings.Contains(string(keybindingsData), `"alt+o"`) && strings.Contains(string(keybindingsData), `"alt+t"`),
+					"message_actions_key":   strings.Contains(string(keybindingsData), `"shift+up"`),
 					"transcript_key":        strings.Contains(string(keybindingsData), `"ctrl+o"`),
 					"terminal_keys":         strings.Contains(string(keybindingsData), `"ctrl+l"`) && strings.Contains(string(keybindingsData), `"ctrl+d"`),
 					"background_key":        strings.Contains(string(keybindingsData), `"ctrl+b"`),
@@ -5449,6 +5451,14 @@ func tuiPromptCompletionScenario() scenario {
 			if !strings.Contains(thinkingToggle.View, "Thinking") || !strings.Contains(thinkingToggle.View, "Reasoning: medium") {
 				return localScenarioResult{}, fmt.Errorf("expected thinking toggle preview, got view=%s", thinkingToggle.View)
 			}
+			messageActions := tui.PreviewWithMessageActions([]tui.Entry{{Role: "assistant", Text: "Use message actions"}}, 96, 24, -1)
+			if !messageActions.MessageMenu || !strings.Contains(messageActions.View, "message actions") || !strings.Contains(messageActions.View, "copy to composer") {
+				return localScenarioResult{}, fmt.Errorf("expected message actions preview, got view=%s", messageActions.View)
+			}
+			messageCopy := tui.PreviewWithMessageActions([]tui.Entry{{Role: "assistant", Text: "copy me"}}, 96, 24, 0)
+			if messageCopy.MessageMenu || messageCopy.Value != "copy me" {
+				return localScenarioResult{}, fmt.Errorf("expected message copied into composer, got value=%q view=%s", messageCopy.Value, messageCopy.View)
+			}
 
 			submitted := tui.PreviewWithCandidates("/mo", []string{"/model claude-test"}, 96, 24, true, true)
 			if !submitted.Submitted {
@@ -5481,6 +5491,8 @@ func tuiPromptCompletionScenario() scenario {
 				"model_picker":          modelPicker.ModelPicker,
 				"runtime_fast_toggle":   strings.Contains(fastToggle.View, "Fast mode: on"),
 				"runtime_thinking":      strings.Contains(thinkingToggle.View, "Reasoning: medium"),
+				"message_actions":       messageActions.MessageMenu,
+				"message_action_copy":   messageCopy.Value == "copy me",
 				"attachments":           attachments.Attachments,
 				"submitted":             submitted.Submitted,
 				"submitted_prompt":      submitted.Prompt,

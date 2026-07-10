@@ -115,6 +115,7 @@ type ShellOptions struct {
 	SelectModel             ModelSelectFunc
 	ToggleFast              RuntimeControlFunc
 	ToggleThinking          RuntimeControlFunc
+	StopBackground          RuntimeControlFunc
 	ModeLabel               string
 	CycleMode               func() string
 }
@@ -136,6 +137,7 @@ type Preview struct {
 	GlobalSearch bool
 	TodosOpen    bool
 	ModelPicker  bool
+	MessageMenu  bool
 }
 
 type composerStash struct {
@@ -208,6 +210,10 @@ type model struct {
 	selectModel              ModelSelectFunc
 	toggleFast               RuntimeControlFunc
 	toggleThinking           RuntimeControlFunc
+	stopBackground           RuntimeControlFunc
+	messageActions           bool
+	messageActionTarget      int
+	messageActionSelected    int
 	queuedPrompts            []string
 	attachments              []string
 	stashedPrompt            *composerStash
@@ -722,6 +728,54 @@ func PreviewWithRuntimeToggle(input string, key string, result RuntimeControlRes
 	}
 }
 
+// PreviewWithMessageActions renders a deterministic TUI state after opening
+// the transcript message action menu.
+func PreviewWithMessageActions(entries []Entry, width int, height int, action int) Preview {
+	ta := newPromptTextarea("")
+	modelEntries := make([]transcriptEntry, 0, len(entries))
+	for _, entry := range entries {
+		modelEntries = append(modelEntries, transcriptEntry{Role: entry.Role, Text: entry.Text})
+	}
+	m := newModel(context.Background(), ta, nil, modelEntries)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	for index := 0; index < action; index++ {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	if action >= 0 {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:         m.View(),
+		Value:        m.textarea.Value(),
+		Matches:      append([]string(nil), messageActionLabels...),
+		Attachments:  append([]string(nil), m.attachments...),
+		Mode:         m.mode(),
+		HelpOpen:     m.helpOpen,
+		HasStash:     m.stashedPrompt != nil,
+		Transcript:   m.transcriptMode,
+		QuickOpen:    m.quickOpen,
+		GlobalSearch: m.globalSearch,
+		TodosOpen:    m.todosOpen,
+		ModelPicker:  m.modelPicker,
+		MessageMenu:  m.messageActions,
+	}
+}
+
 func altRuneKey(key string) tea.KeyMsg {
 	key = strings.ToLower(strings.TrimSpace(key))
 	r := 'o'
@@ -797,6 +851,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.selectModel = options.SelectModel
 	m.toggleFast = options.ToggleFast
 	m.toggleThinking = options.ToggleThinking
+	m.stopBackground = options.StopBackground
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
@@ -1034,6 +1089,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.messageActions {
+			switch msg.String() {
+			case "ctrl+c", "esc", "shift+up":
+				m.closeMessageActions()
+				return m, nil
+			case "up", "ctrl+p":
+				m.moveMessageAction(-1)
+				return m, nil
+			case "down", "ctrl+n":
+				m.moveMessageAction(1)
+				return m, nil
+			case "enter", "tab":
+				m.applyMessageAction()
+				return m, nil
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
+				return m, nil
+			}
+			return m, nil
+		}
 		if m.globalSearch {
 			switch msg.String() {
 			case "ctrl+c", "esc":
@@ -1051,7 +1125,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "shift+tab":
 				m.closeGlobalSearch(true, false)
 				return m, nil
-			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "shift+up", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -1078,7 +1152,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "shift+tab":
 				m.closeQuickOpen(true, false)
 				return m, nil
-			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "shift+up", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -1093,6 +1167,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "ctrl+e":
 				return m.openExternalEditor()
+			case "ctrl+k":
+				if m.stopBackground == nil {
+					m.status = "no background stop"
+					return m, nil
+				}
+				m.status = "stopping background"
+				return m, runRuntimeControlCommand(m.ctx, m.stopBackground)
 			case "ctrl+c", "esc":
 				m.status = m.mode()
 				return m, nil
@@ -1133,7 +1214,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "ctrl+d":
-			if !m.busy && !m.searchOpen && !m.quickOpen && !m.globalSearch && !m.todosOpen && !m.modelPicker && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
+			if !m.busy && !m.searchOpen && !m.quickOpen && !m.globalSearch && !m.todosOpen && !m.modelPicker && !m.messageActions && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
 				return m, tea.Quit
 			}
 		case "ctrl+l":
@@ -1166,6 +1247,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.ctrlXChord = true
 			m.status = "ctrl+x"
+			return m, nil
+		case "shift+up":
+			if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.awaitingPermission || m.awaitingQuestion {
+				return m, nil
+			}
+			m.openMessageActions()
 			return m, nil
 		case "ctrl+b":
 			if m.backgrounding || m.background == nil || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
@@ -1542,6 +1629,9 @@ func (m model) View() string {
 	}
 	if m.modelPicker {
 		composer += "\n" + renderModelPicker(m.modelOptions, m.currentModel, m.modelPickerSelected, m.width)
+	}
+	if m.messageActions {
+		composer += "\n" + renderMessageActions(m.messageActionEntry(), m.messageActionSelected, m.width)
 	}
 	if len(m.queuedPrompts) > 0 {
 		composer += "\n" + renderQueuedPrompts(m.queuedPrompts)
@@ -2106,6 +2196,9 @@ func (m *model) clearScreen() {
 	m.todoErr = ""
 	m.modelPicker = false
 	m.modelPickerSelected = 0
+	m.messageActions = false
+	m.messageActionTarget = 0
+	m.messageActionSelected = 0
 	m.transcript = []transcriptEntry{{Role: "system", Text: "Screen cleared."}}
 	m.status = "cleared"
 	m.refreshViewport()
@@ -2182,7 +2275,7 @@ func (m model) completeSlashCommand() model {
 
 func (m *model) refreshCompletionMenu() {
 	value := strings.Trim(m.textarea.Value(), "\r\n\t")
-	if value == "" || m.busy || m.searchOpen || m.globalSearch || m.todosOpen || m.modelPicker {
+	if value == "" || m.busy || m.searchOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.messageActions {
 		m.matches = nil
 		m.selected = 0
 		return
@@ -2618,6 +2711,130 @@ func renderModelPicker(options []string, current string, selected int, width int
 		lines = append(lines, style.Render(prefix+truncateForComposer(option+suffix, limit)))
 	}
 	lines = append(lines, completionStyle().Render("  Enter select · Up/Down move · Esc cancel"))
+	return strings.Join(lines, "\n")
+}
+
+var messageActionLabels = []string{
+	"copy to composer",
+	"quote in composer",
+	"stash message",
+}
+
+func (m *model) openMessageActions() {
+	target := m.lastTranscriptIndex()
+	if target < 0 {
+		m.status = "no messages"
+		return
+	}
+	if m.helpOpen {
+		m.helpOpen = false
+		m.refreshViewport()
+	}
+	m.matches = nil
+	m.selected = 0
+	m.messageActions = true
+	m.messageActionTarget = target
+	m.messageActionSelected = 0
+	m.status = "message actions"
+}
+
+func (m *model) closeMessageActions() {
+	m.messageActions = false
+	m.messageActionTarget = 0
+	m.messageActionSelected = 0
+	m.status = m.mode()
+}
+
+func (m *model) moveMessageAction(delta int) {
+	if len(messageActionLabels) == 0 {
+		return
+	}
+	m.messageActionSelected = (m.messageActionSelected + delta + len(messageActionLabels)) % len(messageActionLabels)
+	m.status = "message actions"
+}
+
+func (m *model) applyMessageAction() {
+	entry := m.messageActionEntry()
+	text := strings.TrimSpace(entry.Text)
+	if text == "" {
+		m.closeMessageActions()
+		return
+	}
+	switch m.messageActionSelected {
+	case 1:
+		m.pushComposerUndo()
+		m.textarea.SetValue(insertWithComposerSpacing(m.textarea.Value(), quoteMessageText(text)))
+		m.textarea.CursorEnd()
+		m.status = "message quoted"
+	case 2:
+		m.stashedPrompt = &composerStash{Text: text}
+		m.status = "message stashed"
+	default:
+		m.pushComposerUndo()
+		m.textarea.SetValue(text)
+		m.textarea.CursorEnd()
+		m.status = "message copied"
+	}
+	m.messageActions = false
+	m.messageActionSelected = 0
+	m.matches = nil
+	m.selected = 0
+	m.historyPos = -1
+	m.refreshCompletionMenu()
+}
+
+func (m model) lastTranscriptIndex() int {
+	for index := len(m.transcript) - 1; index >= 0; index-- {
+		if strings.TrimSpace(m.transcript[index].Text) != "" {
+			return index
+		}
+	}
+	return -1
+}
+
+func (m model) messageActionEntry() transcriptEntry {
+	if m.messageActionTarget >= 0 && m.messageActionTarget < len(m.transcript) {
+		return m.transcript[m.messageActionTarget]
+	}
+	return transcriptEntry{}
+}
+
+func quoteMessageText(text string) string {
+	lines := strings.Split(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"), "\n")
+	for index, line := range lines {
+		lines[index] = "> " + strings.TrimRight(line, " \t")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderMessageActions(entry transcriptEntry, selected int, width int) string {
+	limit := 120
+	if width > 0 {
+		limit = max(40, width-8)
+	}
+	role := strings.TrimSpace(entry.Role)
+	if role == "" {
+		role = "message"
+	}
+	lines := []string{completionTitleStyle().Render(" message actions ")}
+	summary := strings.Join(strings.Fields(entry.Text), " ")
+	if summary == "" {
+		summary = "(empty message)"
+	}
+	lines = append(lines, completionStyle().Render("  "+truncateForComposer(role+": "+summary, limit)))
+	if selected < 0 || selected >= len(messageActionLabels) {
+		selected = 0
+	}
+	for index, action := range messageActionLabels {
+		prefix := "  "
+		style := completionStyle()
+		if index == selected {
+			prefix = "> "
+			style = selectedCompletionStyle()
+		}
+		lines = append(lines, style.Render(prefix+action))
+	}
+	lines = append(lines, completionStyle().Render("  Enter apply · Up/Down choose · Esc cancel"))
 	return strings.Join(lines, "\n")
 }
 
@@ -3087,6 +3304,14 @@ func statusBarText(status string, width int) string {
 			return "model picker · Up/Down choose · Enter select · Esc cancel"
 		}
 	}
+	if strings.EqualFold(status, "message actions") {
+		switch {
+		case width > 0 && width < 80:
+			return "message actions · Enter apply · Esc"
+		default:
+			return "message actions · Up/Down choose · Enter apply · Esc cancel"
+		}
+	}
 	if strings.HasPrefix(strings.ToLower(status), "global search") {
 		switch {
 		case width > 0 && width < 80:
@@ -3104,7 +3329,7 @@ func statusBarText(status string, width int) string {
 		}
 	}
 	if strings.EqualFold(status, "ctrl+x") {
-		return "Ctrl+X · Ctrl+E edit in $EDITOR · Esc cancel"
+		return "Ctrl+X · Ctrl+E edit in $EDITOR · Ctrl+K stop background · Esc cancel"
 	}
 	switch {
 	case width > 0 && width < 70:
@@ -3591,6 +3816,9 @@ func (m model) mode() string {
 	if m.modelPicker {
 		return "model picker"
 	}
+	if m.messageActions {
+		return "message actions"
+	}
 	if len(m.matches) > 0 {
 		return fmt.Sprintf("%d completions", len(m.matches))
 	}
@@ -3735,6 +3963,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+S      stash or restore composer",
 		"  Ctrl+G      edit composer in $EDITOR",
 		"  Ctrl+X Ctrl+E edit composer in $EDITOR",
+		"  Ctrl+X Ctrl+K stop background tasks",
 		"  Ctrl+_      undo composer edit",
 		"  Ctrl+Shift+- undo composer edit",
 		"  Ctrl+V      paste clipboard text or image",
@@ -3745,6 +3974,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Alt+P       open model picker",
 		"  Alt+O       toggle fast mode",
 		"  Alt+T       cycle thinking effort",
+		"  Shift+Up    open message actions",
 		"  Ctrl+T      toggle tasks",
 		"  Ctrl+O      toggle expanded transcript",
 		"  Ctrl+L      clear screen",

@@ -690,6 +690,89 @@ func TestPreviewWithModelPicker(t *testing.T) {
 	require.Contains(t, selected.View, "Model: sonnet")
 }
 
+func TestMessageActionsCopyQuoteAndStash(t *testing.T) {
+	entries := []transcriptEntry{{Role: "assistant", Text: "first line\nsecond line"}}
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, entries)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	m = updated.(model)
+
+	require.True(t, m.messageActions)
+	require.Contains(t, m.View(), "message actions")
+	require.Contains(t, m.View(), "copy to composer")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.False(t, m.messageActions)
+	require.Equal(t, "first line\nsecond line", m.textarea.Value())
+	require.Equal(t, "message copied", m.status)
+
+	m.textarea.SetValue("")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Equal(t, "> first line\n> second line", m.textarea.Value())
+	require.Equal(t, "message quoted", m.status)
+
+	m.textarea.SetValue("")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, m.stashedPrompt)
+	require.Equal(t, "first line\nsecond line", m.stashedPrompt.Text)
+	require.Equal(t, "message stashed", m.status)
+}
+
+func TestPreviewWithMessageActions(t *testing.T) {
+	preview := PreviewWithMessageActions([]Entry{{Role: "assistant", Text: "copy me"}}, 96, 24, -1)
+
+	require.True(t, preview.MessageMenu)
+	require.Equal(t, messageActionLabels, preview.Matches)
+	require.Contains(t, preview.View, "message actions")
+
+	copied := PreviewWithMessageActions([]Entry{{Role: "assistant", Text: "copy me"}}, 96, 24, 0)
+
+	require.False(t, copied.MessageMenu)
+	require.Equal(t, "copy me", copied.Value)
+}
+
+func TestCtrlXCtrlKStopsBackgroundTasks(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	called := false
+	m.stopBackground = func(context.Context) (RuntimeControlResult, error) {
+		called = true
+		return RuntimeControlResult{Title: "Background Tasks", Status: "stopped 1", Lines: []string{"Stopped: 1", "agent: task-1"}}, nil
+	}
+
+	updated, cmd := m.Update(teaKey("ctrl+x"))
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.True(t, m.ctrlXChord)
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "stopping background", m.status)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.True(t, called)
+	require.False(t, m.ctrlXChord)
+	require.Equal(t, "stopped 1", m.status)
+	require.Contains(t, m.View(), "Background Tasks")
+	require.Contains(t, m.View(), "agent: task-1")
+}
+
 func TestPreviewTogglesHelpPanel(t *testing.T) {
 	preview := PreviewWithCandidates("/help", []string{"/status", "/context"}, 100, 24, false, false)
 	require.True(t, preview.HelpOpen)

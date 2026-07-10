@@ -20833,6 +20833,7 @@ func defaultKeybindingsTemplate() []byte {
 					"ctrl+s":        "stash or restore composer",
 					"ctrl+g":        "edit composer in $EDITOR",
 					"ctrl+x ctrl+e": "edit composer in $EDITOR",
+					"ctrl+x ctrl+k": "stop running background tasks and agents",
 					"ctrl+_":        "undo composer edit",
 					"ctrl+shift+-":  "undo composer edit",
 					"ctrl+v":        "paste clipboard text or image",
@@ -20843,6 +20844,7 @@ func defaultKeybindingsTemplate() []byte {
 					"alt+p":         "open model picker",
 					"alt+o":         "toggle fast mode",
 					"alt+t":         "cycle thinking effort",
+					"shift+up":      "open message actions",
 					"ctrl+o":        "toggle expanded transcript",
 					"ctrl+l":        "clear screen",
 					"ctrl+u":        "delete before cursor",
@@ -20921,6 +20923,7 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Ctrl-S", Action: "stash or restore composer"},
 					{Key: "Ctrl-G", Action: "edit composer in $EDITOR"},
 					{Key: "Ctrl-X Ctrl-E", Action: "edit composer in $EDITOR"},
+					{Key: "Ctrl-X Ctrl-K", Action: "stop running background tasks and agents"},
 					{Key: "Ctrl-_", Action: "undo composer edit"},
 					{Key: "Ctrl-Shift--", Action: "undo composer edit"},
 					{Key: "Ctrl-V", Action: "paste clipboard text or image"},
@@ -20931,6 +20934,7 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Alt-P", Action: "open model picker"},
 					{Key: "Alt-O", Action: "toggle fast mode"},
 					{Key: "Alt-T", Action: "cycle thinking effort"},
+					{Key: "Shift-Up", Action: "open message actions"},
 					{Key: "Ctrl-O", Action: "toggle expanded transcript"},
 					{Key: "Ctrl-L", Action: "clear screen"},
 					{Key: "Ctrl-U", Action: "delete before cursor"},
@@ -39223,6 +39227,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		ToggleThinking: func(ctx context.Context) (tui.RuntimeControlResult, error) {
 			return a.toggleTUIThinking(ctx)
 		},
+		StopBackground: func(ctx context.Context) (tui.RuntimeControlResult, error) {
+			return a.stopTUIBackground(ctx)
+		},
 		ModeLabel: modeState.Label(),
 		CycleMode: func() string {
 			return modeState.Cycle()
@@ -39329,6 +39336,60 @@ func (a *App) toggleTUIThinking(ctx context.Context) (tui.RuntimeControlResult, 
 		Title:  "Thinking",
 		Status: "thinking " + current,
 		Lines:  []string{"Reasoning: " + current, "Previous: " + previous},
+	}, nil
+}
+
+func (a *App) stopTUIBackground(ctx context.Context) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	store := background.NewStore(a.Config.ConfigHome)
+	tasks, err := store.List()
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	stopped := []background.Task{}
+	for _, task := range tasks {
+		if !strings.EqualFold(task.Status, "running") {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return tui.RuntimeControlResult{}, err
+		}
+		stoppedTask, err := store.Stop(task.ID)
+		if err != nil {
+			return tui.RuntimeControlResult{}, err
+		}
+		stopped = append(stopped, stoppedTask)
+		a.runTaskCompletedHook(context.Background(), stoppedTask, "manual")
+		a.runNotificationHook(context.Background(), "background_task_stopped", "Background task stopped", fmt.Sprintf("Background task %s stopped: %s", stoppedTask.ID, stoppedTask.Command))
+		if stoppedTask.Kind == "agent" {
+			a.runSubagentStopHook(context.Background(), stoppedTask.ID, subagentTypeForTask(stoppedTask), stoppedTask.LogPath, lastBackgroundLogLine(store, stoppedTask), false)
+		}
+	}
+	if len(stopped) == 0 {
+		return tui.RuntimeControlResult{
+			Title:  "Background Tasks",
+			Status: "no background tasks",
+			Lines:  []string{"No running background tasks or agents."},
+		}, nil
+	}
+	lines := []string{fmt.Sprintf("Stopped: %d", len(stopped))}
+	for index, task := range stopped {
+		if index >= 5 {
+			lines = append(lines, fmt.Sprintf("... %d more", len(stopped)-index))
+			break
+		}
+		label := strings.TrimSpace(task.Kind)
+		if label == "" {
+			label = "task"
+		}
+		lines = append(lines, fmt.Sprintf("%s: %s", label, task.ID))
+	}
+	return tui.RuntimeControlResult{
+		Title:  "Background Tasks",
+		Status: fmt.Sprintf("stopped %d", len(stopped)),
+		Lines:  lines,
 	}, nil
 }
 
