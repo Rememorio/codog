@@ -444,6 +444,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveHistorySearch(-1)
 				return m, nil
 			}
+			if m.canEditQueuedPrompt() {
+				m.editLatestQueuedPrompt()
+				return m, nil
+			}
 			if len(m.matches) > 0 {
 				m.selected = (m.selected - 1 + len(m.matches)) % len(m.matches)
 				return m, nil
@@ -642,7 +646,7 @@ func (m model) View() string {
 	if m.searchOpen {
 		composer += "\n" + renderHistorySearch(m.searchHits, m.searchPos, m.textarea.Value())
 	}
-	statusText := appendStatusMode(statusBarText(m.status, m.width), m.modeLabel, m.width)
+	statusText := appendStatusMode(statusBarText(m.visibleStatus(), m.width), m.modeLabel, m.width)
 	status := statusStyle().Width(max(40, m.width)).Render(statusText)
 	return strings.Join([]string{title, body, composer, status}, "\n")
 }
@@ -725,6 +729,34 @@ func (m *model) queueCurrentInput() {
 	m.selected = 0
 	m.status = "queued"
 	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Queued prompt %d: %s", len(m.queuedPrompts), truncateForComposer(value, 120))})
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+}
+
+func (m model) canEditQueuedPrompt() bool {
+	return m.busy &&
+		!m.awaitingPermission &&
+		!m.awaitingQuestion &&
+		!m.searchOpen &&
+		len(m.matches) == 0 &&
+		len(m.queuedPrompts) > 0 &&
+		strings.TrimSpace(m.textarea.Value()) == ""
+}
+
+func (m *model) editLatestQueuedPrompt() {
+	if len(m.queuedPrompts) == 0 {
+		return
+	}
+	index := len(m.queuedPrompts) - 1
+	value := m.queuedPrompts[index]
+	m.queuedPrompts = append([]string(nil), m.queuedPrompts[:index]...)
+	m.textarea.SetValue(value)
+	m.textarea.CursorEnd()
+	m.matches = nil
+	m.selected = 0
+	m.historyPos = -1
+	m.status = "editing queued prompt"
+	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Editing queued prompt %d: %s", index+1, truncateForComposer(value, 120))})
 	m.refreshViewport()
 	m.viewport.GotoBottom()
 }
@@ -1337,6 +1369,17 @@ func (m model) mode() string {
 	return "compose"
 }
 
+func (m model) visibleStatus() string {
+	status := strings.TrimSpace(m.status)
+	if status == "" {
+		status = m.mode()
+	}
+	if len(m.queuedPrompts) == 0 {
+		return status
+	}
+	return fmt.Sprintf("%s · %d queued", status, len(m.queuedPrompts))
+}
+
 func isLocalHelpInput(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "/help", "help", "?":
@@ -1436,6 +1479,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+R      search prompt history",
 		"  Tab         complete slash command",
 		"  Up/Down     choose a shown completion",
+		"  Up          edit latest queued prompt while a turn is running",
 		"  Up/Down     recall prompt history when composer is empty",
 		"  Ctrl+J      insert newline",
 		"  PgUp/PgDn   scroll transcript",

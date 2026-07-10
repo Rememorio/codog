@@ -339,6 +339,7 @@ func TestBusyEnterQueuesPromptsAndRunsAfterTurnDone(t *testing.T) {
 	require.Equal(t, "", m.textarea.Value())
 	require.Equal(t, "queued", m.status)
 	require.Contains(t, m.View(), "Queued prompt 1")
+	require.Contains(t, m.View(), "1 queued")
 
 	m.textarea.SetValue("third prompt")
 	updated, queueCmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -346,6 +347,7 @@ func TestBusyEnterQueuesPromptsAndRunsAfterTurnDone(t *testing.T) {
 	require.Nil(t, queueCmd)
 	require.Equal(t, []string{"second prompt", "third prompt"}, m.queuedPrompts)
 	require.Contains(t, m.View(), "Queued prompt 2")
+	require.Contains(t, m.View(), "2 queued")
 
 	firstDone := firstCmd().(turnDoneMsg)
 	updated, secondCmd := m.Update(firstDone)
@@ -373,6 +375,61 @@ func TestBusyEnterQueuesPromptsAndRunsAfterTurnDone(t *testing.T) {
 	require.False(t, m.busy)
 	require.Equal(t, []string{"first prompt", "second prompt", "third prompt"}, prompts)
 	require.Contains(t, m.View(), "done: third prompt")
+}
+
+func TestUpEditsLatestQueuedPromptWhileBusy(t *testing.T) {
+	ta := newPromptTextarea("first prompt")
+	m := newModel(context.Background(), ta, nil, nil)
+	prompts := []string{}
+	m.submit = func(_ context.Context, prompt string) (string, error) {
+		prompts = append(prompts, prompt)
+		return "done: " + prompt, nil
+	}
+
+	updated, firstCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.True(t, m.busy)
+	require.NotNil(t, firstCmd)
+
+	m.textarea.SetValue("second prompt")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	m.textarea.SetValue("third prompt")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Equal(t, []string{"second prompt", "third prompt"}, m.queuedPrompts)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.Equal(t, []string{"second prompt"}, m.queuedPrompts)
+	require.Equal(t, "third prompt", m.textarea.Value())
+	require.Equal(t, "editing queued prompt", m.status)
+	require.Contains(t, m.View(), "Editing queued prompt 2")
+	require.Contains(t, m.View(), "1 queued")
+
+	m.textarea.SetValue("third prompt edited")
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.Equal(t, []string{"second prompt", "third prompt edited"}, m.queuedPrompts)
+	require.Empty(t, m.textarea.Value())
+
+	firstDone := firstCmd().(turnDoneMsg)
+	updated, secondCmd := m.Update(firstDone)
+	m = updated.(model)
+	require.NotNil(t, secondCmd)
+	secondDone := secondCmd().(turnDoneMsg)
+	updated, thirdCmd := m.Update(secondDone)
+	m = updated.(model)
+	require.NotNil(t, thirdCmd)
+	thirdDone := thirdCmd().(turnDoneMsg)
+	updated, _ = m.Update(thirdDone)
+	m = updated.(model)
+
+	require.Equal(t, []string{"first prompt", "second prompt", "third prompt edited"}, prompts)
+	require.False(t, m.busy)
+	require.Empty(t, m.queuedPrompts)
 }
 
 func TestEscapeCancelsBusyTurnWithoutQuitting(t *testing.T) {
