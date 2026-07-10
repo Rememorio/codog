@@ -1365,6 +1365,7 @@ type FlagOverrides struct {
 	AppendPrompt                   string
 	AppendPromptFile               string
 	PermissionMode                 string
+	PlanModeRequired               bool
 	SkipPermissions                bool
 	AllowBroadCWD                  bool
 	AllowedTools                   []string
@@ -3414,6 +3415,13 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 		cfg.PermissionModeSource = "cli"
 		cfg.PermissionModeEnvVar = ""
 		cfg.PlanMode = false
+	}
+	if overrides.PlanModeRequired {
+		cfg.PermissionMode = "read-only"
+		cfg.PermissionModeRaw = "plan"
+		cfg.PermissionModeSource = "cli"
+		cfg.PermissionModeEnvVar = ""
+		cfg.PlanMode = true
 	}
 	if len(overrides.AllowedTools) > 0 {
 		cfg.PermissionRules.Allow = append(cfg.PermissionRules.Allow, overrides.AllowedTools...)

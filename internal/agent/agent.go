@@ -2306,6 +2306,7 @@ type sshRequest struct {
 	Prompt                     string
 	ExtraArgs                  []string
 	PermissionMode             string
+	PlanModeRequired           bool
 	DangerouslySkipPermissions bool
 	Local                      bool
 	Execute                    bool
@@ -2323,6 +2324,7 @@ type sshReport struct {
 	PromptConfigured           bool     `json:"prompt_configured,omitempty"`
 	ExtraArgs                  []string `json:"extra_args,omitempty"`
 	PermissionMode             string   `json:"permission_mode,omitempty"`
+	PlanModeRequired           bool     `json:"plan_mode_required,omitempty"`
 	DangerouslySkipPermissions bool     `json:"dangerously_skip_permissions,omitempty"`
 	Command                    []string `json:"command"`
 	RemoteShell                string   `json:"remote_shell,omitempty"`
@@ -2412,7 +2414,7 @@ func hasCommandBeforeDirectConnectURL(args []string, directURLIndex int) bool {
 }
 
 const openUsage = "codog open <cc-url|http-url> [-p|--print [PROMPT]] [--output-format text|json|stream-json]"
-const sshUsage = "codog ssh <host> [dir] [-p|--print [PROMPT]] [--continue|-c] [--resume ID|latest] [--model MODEL] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--execute] [--json|--output-format text|json]"
+const sshUsage = "codog ssh <host> [dir] [-p|--print [PROMPT]] [--continue|-c] [--resume ID|latest] [--model MODEL] [--permission-mode MODE] [--plan-mode-required] [--dangerously-skip-permissions] [--local] [--execute] [--json|--output-format text|json]"
 
 func (a *App) Open(ctx context.Context, args []string) error {
 	req, err := parseOpenArgs(args)
@@ -2497,6 +2499,8 @@ func parseSSHArgs(args []string) (sshRequest, error) {
 			req.PermissionMode = strings.TrimSpace(args[index])
 		case strings.HasPrefix(arg, "--permission-mode="):
 			req.PermissionMode = strings.TrimSpace(strings.TrimPrefix(arg, "--permission-mode="))
+		case arg == "--plan-mode-required":
+			req.PlanModeRequired = true
 		case arg == "-c" || arg == "--continue":
 			req.ExtraArgs = append(req.ExtraArgs, "--continue")
 		case arg == "--resume":
@@ -2592,6 +2596,7 @@ func (a *App) buildSSHReport(req sshRequest) sshReport {
 		PromptConfigured:           strings.TrimSpace(req.Prompt) != "",
 		ExtraArgs:                  append([]string(nil), req.ExtraArgs...),
 		PermissionMode:             req.PermissionMode,
+		PlanModeRequired:           req.PlanModeRequired,
 		DangerouslySkipPermissions: req.DangerouslySkipPermissions,
 		Command:                    command,
 		RemoteShell:                remoteShell,
@@ -2713,6 +2718,9 @@ func (a *App) sshRemoteCodogArgs(req sshRequest) []string {
 	out = append(out, req.ExtraArgs...)
 	if req.PermissionMode != "" {
 		out = append(out, "--permission-mode", req.PermissionMode)
+	}
+	if req.PlanModeRequired {
+		out = append(out, "--plan-mode-required")
 	}
 	if req.DangerouslySkipPermissions {
 		out = append(out, "--dangerously-skip-permissions")
@@ -62200,6 +62208,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&inputFormat, "input-format", inputFormat, "text or stream-json input for prompt mode")
 	flags.StringVar(&jsonSchema, "json-schema", jsonSchema, "JSON Schema for prompt structured output validation")
 	flags.StringVar(&base.PermissionMode, "permission-mode", base.PermissionMode, "read-only, workspace-write, danger-full-access, prompt, allow")
+	flags.BoolVar(&base.PlanModeRequired, "plan-mode-required", base.PlanModeRequired, "require read-only plan mode before implementation")
 	flags.BoolVar(&base.SkipPermissions, "dangerously-skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
 	flags.BoolVar(&base.SkipPermissions, "skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
 	flags.BoolVar(&base.AllowBroadCWD, "allow-broad-cwd", base.AllowBroadCWD, "allow model or agent commands from the home directory or filesystem root")

@@ -532,6 +532,25 @@ func TestLoadPermissionModeFlagClearsPlanMode(t *testing.T) {
 	require.False(t, cfg.PlanMode)
 }
 
+func TestLoadPlanModeRequiredFlagForcesPlanMode(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permissions":{"defaultMode":"bypassPermissions"}}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{
+		ConfigPath:       configPath,
+		PermissionMode:   "danger-full-access",
+		SkipPermissions:  true,
+		PlanModeRequired: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "read-only", cfg.PermissionMode)
+	require.Equal(t, "plan", cfg.PermissionModeRaw)
+	require.Equal(t, "cli", cfg.PermissionModeSource)
+	require.True(t, cfg.PlanMode)
+}
+
 func TestLoadAppliesRuntimeDiagnosticFlags(t *testing.T) {
 	debugFile := filepath.Join(t.TempDir(), "debug.log")
 	cfg, _, err := LoadForInspection(FlagOverrides{Debug: true, Verbose: true, DebugFile: debugFile})

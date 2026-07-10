@@ -577,6 +577,33 @@ func TestUsageOverviewDirectTokensDispatch(t *testing.T) {
 	require.Equal(t, 200000, report.ContextWindowTokens)
 }
 
+func TestRunCLIPlanModeRequiredForcesReadOnlyStatus(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := json.Marshal(map[string]string{
+		"config_home": configHome,
+		"model":       "claude-test",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--cwd", workspace,
+			"--dangerously-skip-permissions",
+			"--plan-mode-required",
+			"status",
+			"--json",
+		}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"permission_mode": "read-only"`)
+	require.Contains(t, out, `"permission_mode_raw": "plan"`)
+	require.Contains(t, out, `"permission_mode_source": "cli"`)
+}
+
 func requireResumeSafeHelpLine(t *testing.T, help string) string {
 	t.Helper()
 	for _, line := range strings.Split(help, "\n") {
@@ -22880,6 +22907,7 @@ func TestSSHCommandReportsPlan(t *testing.T) {
 		"--resume=remote-session",
 		"--model", "claude-opus",
 		"--permission-mode", "read-only",
+		"--plan-mode-required",
 		"--dangerously-skip-permissions",
 		"--json",
 	}))
@@ -22897,6 +22925,7 @@ func TestSSHCommandReportsPlan(t *testing.T) {
 	require.Contains(t, report.Message, "Pass --execute")
 	require.Equal(t, []string{"--continue", "--resume", "remote-session", "--model", "claude-opus"}, report.ExtraArgs)
 	require.Equal(t, "read-only", report.PermissionMode)
+	require.True(t, report.PlanModeRequired)
 	require.True(t, report.DangerouslySkipPermissions)
 	require.True(t, report.RemoteAuthForwarded)
 	require.Contains(t, report.RemoteEnvKeys, "ANTHROPIC_API_KEY")
@@ -22908,7 +22937,7 @@ func TestSSHCommandReportsPlan(t *testing.T) {
 	require.Contains(t, report.RemoteShell, "CODOG_BASE_URL='https://api.example.test'")
 	require.Equal(t, ".cache/codog/remote/devbox/codog", report.RemoteExecutable)
 	require.Equal(t, []string{"ssh", "devbox", "mkdir -p '.cache/codog/remote/devbox' && cat > '.cache/codog/remote/devbox/codog' && chmod 700 '.cache/codog/remote/devbox/codog'"}, report.DeployCommand)
-	require.Contains(t, report.RemoteShell, ".cache/codog/remote/devbox/codog --continue --resume remote-session --model claude-opus --permission-mode read-only --dangerously-skip-permissions repl")
+	require.Contains(t, report.RemoteShell, ".cache/codog/remote/devbox/codog --continue --resume remote-session --model claude-opus --permission-mode read-only --plan-mode-required --dangerously-skip-permissions repl")
 	require.NotContains(t, report.RemoteShell, "secret-api-key")
 	require.NotContains(t, report.RemoteShell, "secret-auth-token")
 	require.NotContains(t, out.String(), "secret-api-key")
