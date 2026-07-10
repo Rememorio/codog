@@ -278,7 +278,9 @@ spawn -noecho $env(CODOG_TEST_BIN) --permission-mode allow --model claude-sonnet
 expect "Codog TUI"
 send "exercise visible tui tools\r"
 expect "Tools"
+expect "write_file running"
 expect "write_file ok"
+expect "bash running"
 expect "bash ok"
 expect "tui-tool-visible"
 expect "tui tool final ok"
@@ -287,7 +289,9 @@ expect eof
 `)
 
 	require.Contains(t, output, "Tools")
+	require.Contains(t, output, "write_file running")
 	require.Contains(t, output, "write_file ok")
+	require.Contains(t, output, "bash running")
 	require.Contains(t, output, "bash ok")
 	require.Contains(t, output, "tui-tool-visible")
 	require.Contains(t, output, "tui tool final ok")

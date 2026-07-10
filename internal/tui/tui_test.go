@@ -336,16 +336,20 @@ func TestToolStreamEntryDoesNotMergeIntoAssistantText(t *testing.T) {
 	m = updated.(model)
 	updated, _ = m.Update(turnStreamMsg{Role: "tool", Delta: "Tools\n- bash ok"})
 	m = updated.(model)
+	updated, _ = m.Update(turnStreamMsg{Role: "tool", Delta: "Tools\n- grep ok"})
+	m = updated.(model)
 	updated, _ = m.Update(turnStreamMsg{Role: "assistant", Delta: "done"})
 	m = updated.(model)
 
-	require.Len(t, m.transcript, 4)
+	require.Len(t, m.transcript, 5)
 	require.Equal(t, "assistant", m.transcript[1].Role)
 	require.Equal(t, "thinking", m.transcript[1].Text)
 	require.Equal(t, "tool", m.transcript[2].Role)
 	require.Contains(t, m.transcript[2].Text, "bash ok")
-	require.Equal(t, "assistant", m.transcript[3].Role)
-	require.Equal(t, "done", m.transcript[3].Text)
+	require.Equal(t, "tool", m.transcript[3].Role)
+	require.Contains(t, m.transcript[3].Text, "grep ok")
+	require.Equal(t, "assistant", m.transcript[4].Role)
+	require.Equal(t, "done", m.transcript[4].Text)
 }
 
 func TestCanceledSlashCommandRendersInterrupted(t *testing.T) {

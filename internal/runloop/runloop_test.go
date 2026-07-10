@@ -92,6 +92,7 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 		},
 	}
 	var out strings.Builder
+	events := []string{}
 	temperature := 0.3
 	result, err := Runner{
 		Config: config.Config{
@@ -107,11 +108,18 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 		Tools:     tools.NewRegistry(workspace),
 		Workspace: workspace,
 		Out:       &out,
+		OnToolStart: func(call ToolCall) {
+			events = append(events, "start:"+call.Name)
+		},
+		OnToolUse: func(call ToolCall) {
+			events = append(events, "done:"+call.Name)
+		},
 	}.Run(context.Background(), nil, "list files")
 	require.NoError(t, err)
 	require.Equal(t, 2, result.Iterations)
 	require.Len(t, result.ToolCalls, 1)
 	require.Equal(t, "glob", result.ToolCalls[0].Name)
+	require.Equal(t, []string{"start:glob", "done:glob"}, events)
 	require.Contains(t, out.String(), "done")
 	require.Len(t, client.requests, 2)
 	require.Equal(t, []MessageUsage{

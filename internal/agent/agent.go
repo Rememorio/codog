@@ -38243,6 +38243,7 @@ type turnOptions struct {
 	MaxBudgetUSD           float64
 	PriorCostUSD           float64
 	Out                    io.Writer
+	OnToolStart            func(runloop.ToolCall)
 	OnToolUse              func(runloop.ToolCall)
 }
 
@@ -38865,6 +38866,7 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		SessionID:        sess.ID,
 		Out:              firstWriter(opts.Out, a.Out),
 		System:           a.systemPromptForInput(input),
+		OnToolStart:      opts.OnToolStart,
 		OnToolUse:        onToolUse,
 		MaxBudgetUSD:     opts.MaxBudgetUSD,
 		PriorCostUSD:     opts.PriorCostUSD,
@@ -39044,6 +39046,12 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		liveToolEvents := false
 		err := a.runSessionTurnWithOptions(ctx, "tui", sess, prompt, "idle", turnOptions{
 			Out: &streamOut,
+			OnToolStart: func(call runloop.ToolCall) {
+				if summary := renderTUIToolStart(call); summary != "" {
+					liveToolEvents = true
+					emit(tui.Entry{Role: "tool", Text: summary})
+				}
+			},
 			OnToolUse: func(call runloop.ToolCall) {
 				toolCalls = append(toolCalls, call)
 				if summary := renderTUIToolSummary([]runloop.ToolCall{call}); summary != "" {
@@ -39149,6 +39157,14 @@ func renderTUIToolSummary(calls []runloop.ToolCall) string {
 		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func renderTUIToolStart(call runloop.ToolCall) string {
+	name := strings.TrimSpace(call.Name)
+	if name == "" {
+		name = "tool"
+	}
+	return "Tools\n- " + name + " running"
 }
 
 func toolSummaryDetail(output string) string {

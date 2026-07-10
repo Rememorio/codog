@@ -73,6 +73,7 @@ type Runner struct {
 	SessionID        string
 	Out              io.Writer
 	System           string
+	OnToolStart      func(ToolCall)
 	OnToolUse        func(ToolCall)
 	MaxBudgetUSD     float64
 	PriorCostUSD     float64
@@ -291,6 +292,7 @@ func (r Runner) RunWithUserContent(ctx context.Context, previous []anthropic.Mes
 					oldCWD = cwd
 				}
 			}
+			r.emitToolStart(call)
 			output, err := r.Tools.Execute(toolCtx, block.Name, effectiveInput, execPrompter)
 			if err != nil {
 				call.Output = err.Error()
@@ -688,6 +690,12 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (r Runner) emitToolStart(call ToolCall) {
+	if r.OnToolStart != nil {
+		r.OnToolStart(call)
+	}
 }
 
 func (r Runner) emitToolUse(call ToolCall) {

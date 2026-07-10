@@ -519,6 +519,11 @@ func (m *model) appendStreamDelta(role string, delta string) {
 	if delta == "" {
 		return
 	}
+	if !strings.EqualFold(role, "assistant") {
+		m.transcript = append(m.transcript, transcriptEntry{Role: role, Text: delta})
+		m.streamingIndex = len(m.transcript) - 1
+		return
+	}
 	if m.streamingIndex < 0 || m.streamingIndex >= len(m.transcript) || !strings.EqualFold(m.transcript[m.streamingIndex].Role, role) {
 		m.transcript = append(m.transcript, transcriptEntry{Role: role, Text: delta})
 		m.streamingIndex = len(m.transcript) - 1
