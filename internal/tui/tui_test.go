@@ -93,6 +93,50 @@ func TestCompletionDisplayLineFallsBackForCustomCandidate(t *testing.T) {
 	require.Equal(t, "/custom thing", completionDisplayLine("/custom thing"))
 }
 
+func TestSlashMenuOpensAndFiltersWhileTyping(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, []string{"/memory list", "/model claude-test", "/status"}, nil)
+
+	updated, _ := m.Update(teaKey("/"))
+	m = updated.(model)
+	require.NotEmpty(t, m.matches)
+	require.Contains(t, m.View(), "suggestions")
+
+	updated, _ = m.Update(teaKey("m"))
+	m = updated.(model)
+	require.ElementsMatch(t, []string{"/memory list", "/model claude-test"}, m.matches)
+	require.Equal(t, "2 completions", m.status)
+}
+
+func TestSlashMenuEscapeClosesSuggestionsBeforeQuitting(t *testing.T) {
+	ta := newPromptTextarea("/m")
+	m := newModel(context.Background(), ta, []string{"/memory list", "/model claude-test"}, nil)
+	m.refreshSlashMenu()
+	require.NotEmpty(t, m.matches)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+
+	require.Nil(t, cmd)
+	require.Empty(t, m.matches)
+	require.Equal(t, "slash", m.status)
+	require.False(t, m.result.Submitted)
+}
+
+func TestSlashMenuDoesNotInterceptExactLocalHelp(t *testing.T) {
+	ta := newPromptTextarea("/help")
+	m := newModel(context.Background(), ta, []string{"/help"}, nil)
+	m.refreshSlashMenu()
+	require.Empty(t, m.matches)
+
+	updated, _ := m.Update(teaKey("enter"))
+	m = updated.(model)
+
+	require.True(t, m.helpOpen)
+	require.Empty(t, m.textarea.Value())
+	require.Contains(t, m.View(), "Common commands")
+}
+
 func TestStatusBarUsesCompactHintsAtTerminalWidth(t *testing.T) {
 	text := statusBarText("5 completions", 80)
 

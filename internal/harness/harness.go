@@ -5348,6 +5348,10 @@ func tuiPromptCompletionScenario() scenario {
 			if len(multiple.Matches) != 2 {
 				return localScenarioResult{}, fmt.Errorf("expected 2 TUI completion matches, got %d", len(multiple.Matches))
 			}
+			automatic := tui.PreviewWithCandidates("/", []string{"/memory list", "/model claude-test", "/status"}, 96, 24, false, false)
+			if len(automatic.Matches) != 3 || !strings.Contains(automatic.View, "suggestions") {
+				return localScenarioResult{}, fmt.Errorf("expected automatic TUI slash menu, got %#v", automatic.Matches)
+			}
 
 			submitted := tui.PreviewWithCandidates("/mo", []string{"/model claude-test"}, 96, 24, true, true)
 			if !submitted.Submitted {
@@ -5363,6 +5367,7 @@ func tuiPromptCompletionScenario() scenario {
 			report := map[string]any{
 				"kind":             "tui_prompt_completion",
 				"matches":          multiple.Matches,
+				"automatic":        automatic.Matches,
 				"submitted":        submitted.Submitted,
 				"submitted_prompt": submitted.Prompt,
 				"view_contains":    []string{"Codog TUI", "Enter send"},

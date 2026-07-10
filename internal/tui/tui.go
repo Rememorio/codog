@@ -135,6 +135,7 @@ func PromptWithCandidatesPrefill(candidates []string, prefill string) (Result, e
 func PreviewWithCandidates(input string, candidates []string, width int, height int, complete bool, submit bool) Preview {
 	ta := newPromptTextarea(input)
 	m := newModel(context.Background(), ta, candidates, nil)
+	m.refreshSlashMenu()
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 		if next, ok := updated.(model); ok {
@@ -279,6 +280,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selected = 0
 		m.historyPos = -1
 		m.status = "editor updated"
+		m.refreshSlashMenu()
 		return m, nil
 	case turnStreamMsg:
 		m.appendStreamDelta(msg.Role, msg.Delta)
@@ -313,6 +315,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc":
 			if m.busy {
 				m.interruptTurn()
+				return m, nil
+			}
+			if len(m.matches) > 0 {
+				m.matches = nil
+				m.selected = 0
+				m.status = m.mode()
 				return m, nil
 			}
 			if m.searchOpen {
@@ -453,10 +461,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateHistorySearch()
 		return m, tea.Batch(cmd, viewportCmd)
 	}
-	if strings.TrimSpace(m.textarea.Value()) == "" || !strings.HasPrefix(strings.TrimSpace(m.textarea.Value()), "/") {
-		m.matches = nil
-		m.selected = 0
-	}
+	m.refreshSlashMenu()
 	if isLocalHelpInput(m.textarea.Value()) {
 		m.status = "help ready"
 	} else if m.awaitingQuestion {
@@ -485,6 +490,7 @@ func (m model) handlePastedInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.updateHistorySearch()
 		return m, nil
 	}
+	m.refreshSlashMenu()
 	if m.awaitingPermission {
 		m.status = "permission"
 	} else if m.awaitingQuestion {
@@ -811,6 +817,43 @@ func (m model) completeSlashCommand() model {
 		}
 	}
 	return m
+}
+
+func (m *model) refreshSlashMenu() {
+	value := strings.Trim(m.textarea.Value(), "\r\n\t")
+	if value == "" || !strings.HasPrefix(value, "/") || m.busy || m.searchOpen {
+		m.matches = nil
+		m.selected = 0
+		return
+	}
+	candidates := slash.FilterCandidates(value, m.completionCandidates())
+	candidates = automaticCompletionCandidates(value, candidates)
+	if len(candidates) > 8 {
+		candidates = candidates[:8]
+	}
+	m.matches = candidates
+	if len(m.matches) == 0 {
+		m.selected = 0
+		return
+	}
+	if m.selected < 0 || m.selected >= len(m.matches) {
+		m.selected = 0
+	}
+}
+
+func automaticCompletionCandidates(value string, candidates []string) []string {
+	if len(candidates) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(candidates))
+	normalizedValue := strings.TrimSpace(value)
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate) == normalizedValue && !strings.HasSuffix(candidate, " ") {
+			continue
+		}
+		out = append(out, candidate)
+	}
+	return out
 }
 
 func (m model) acceptSelectedCompletion() model {
