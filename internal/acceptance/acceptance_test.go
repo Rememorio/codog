@@ -278,8 +278,6 @@ spawn -noecho $env(CODOG_TEST_BIN) --permission-mode allow --model claude-sonnet
 expect "Codog TUI"
 send "exercise visible tui tools\r"
 expect "Tools"
-expect "write_file running"
-expect "write_file ok"
 expect "bash running"
 expect "bash ok"
 expect "tui-tool-visible"
@@ -289,8 +287,6 @@ expect eof
 `)
 
 	require.Contains(t, output, "Tools")
-	require.Contains(t, output, "write_file running")
-	require.Contains(t, output, "write_file ok")
 	require.Contains(t, output, "bash running")
 	require.Contains(t, output, "bash ok")
 	require.Contains(t, output, "tui-tool-visible")
@@ -597,6 +593,48 @@ expect eof
 			}
 		})
 	}
+}
+
+func TestRealBinaryTUIPermissionEventsWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	server := httptest.NewServer(mockanthropic.Server{
+		Turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-bash",
+				Name:  "bash",
+				Input: json.RawMessage(`{"command":"printf permission-tui > permission.txt","timeout":1000}`),
+			}}},
+			{Text: "permission tui approved ok"},
+		},
+	}.Handler())
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, `
+set timeout 30
+spawn -noecho $env(CODOG_TEST_BIN) --permission-mode workspace-write --model claude-sonnet-4-5 tui
+expect "Codog TUI"
+send "permission tui smoke\r"
+expect "Permission"
+expect "bash requires"
+send "y"
+expect "bash approved"
+expect "permission tui approved ok"
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, output, "Permission")
+	require.Contains(t, output, "bash requires")
+	require.Contains(t, output, "bash approved")
+	require.Contains(t, output, "permission tui approved ok")
+	created, err := os.ReadFile(filepath.Join(workspace, "permission.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "permission-tui", string(created))
 }
 
 func TestRealBinaryPromptResumeSendsPriorSessionHistory(t *testing.T) {

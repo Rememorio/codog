@@ -38243,6 +38243,7 @@ type turnOptions struct {
 	MaxBudgetUSD           float64
 	PriorCostUSD           float64
 	Out                    io.Writer
+	ConfigurePrompter      func(*tools.Prompter)
 	OnToolStart            func(runloop.ToolCall)
 	OnToolUse              func(runloop.ToolCall)
 }
@@ -38856,11 +38857,15 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 			opts.OnToolUse(call)
 		}
 	}
+	prompter := a.prompterWithAllowedTools(sess.ID, allowedTools)
+	if opts.ConfigurePrompter != nil {
+		opts.ConfigurePrompter(prompter)
+	}
 	runner := runloop.Runner{
 		Config:           effectiveConfig,
 		Client:           a.Client,
 		Tools:            a.Tools,
-		Prompter:         a.prompterWithAllowedTools(sess.ID, allowedTools),
+		Prompter:         prompter,
 		HookPromptRunner: a.hookPromptRunner(effectiveConfig),
 		Workspace:        a.Workspace,
 		SessionID:        sess.ID,
@@ -39039,6 +39044,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		entries = append(entries, tui.Entry{Role: "system", Text: banner})
 	}
 	history := a.tuiPromptHistory(sess.ID)
+	permissionAnswers := make(chan string, 1)
 	submit := func(ctx context.Context, prompt string, emit func(tui.Entry)) (string, error) {
 		var out bytes.Buffer
 		streamOut := tuiStreamWriter{buffer: &out, emit: emit}
@@ -39046,6 +39052,14 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		liveToolEvents := false
 		err := a.runSessionTurnWithOptions(ctx, "tui", sess, prompt, "idle", turnOptions{
 			Out: &streamOut,
+			ConfigurePrompter: func(prompter *tools.Prompter) {
+				prompter.In = &permissionAnswerReader{answers: permissionAnswers}
+				prompter.Err = io.Discard
+				wrapTUIPermissionEvents(prompter, func(entry tui.Entry) {
+					liveToolEvents = true
+					emit(entry)
+				})
+			},
 			OnToolStart: func(call runloop.ToolCall) {
 				if summary := renderTUIToolStart(call); summary != "" {
 					liveToolEvents = true
@@ -39092,8 +39106,57 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		Entries:      entries,
 		SubmitStream: submit,
 		Slash:        slashHandler,
+		PermissionAnswer: func(answer string) {
+			select {
+			case permissionAnswers <- answer + "\n":
+			case <-ctx.Done():
+			}
+		},
 	})
 	return a.finishREPL(ctx, sess, loopErr)
+}
+
+type permissionAnswerReader struct {
+	answers <-chan string
+	buffer  string
+}
+
+func (r *permissionAnswerReader) Read(data []byte) (int, error) {
+	if len(data) == 0 {
+		return 0, nil
+	}
+	for r.buffer == "" {
+		answer, ok := <-r.answers
+		if !ok {
+			return 0, io.EOF
+		}
+		r.buffer = answer
+	}
+	n := copy(data, r.buffer)
+	r.buffer = r.buffer[n:]
+	return n, nil
+}
+
+func wrapTUIPermissionEvents(prompter *tools.Prompter, emit func(tui.Entry)) {
+	if prompter == nil || emit == nil {
+		return
+	}
+	baseRequest := prompter.OnRequest
+	baseDecision := prompter.OnDecision
+	prompter.OnRequest = func(decision tools.PermissionDecision) {
+		if baseRequest != nil {
+			baseRequest(decision)
+		}
+		emit(tui.Entry{Role: "permission", Text: renderTUIPermissionRequest(decision)})
+	}
+	prompter.OnDecision = func(decision tools.PermissionDecision) {
+		if baseDecision != nil {
+			baseDecision(decision)
+		}
+		if text := renderTUIPermissionDecision(decision); text != "" {
+			emit(tui.Entry{Role: "permission", Text: text})
+		}
+	}
 }
 
 type tuiStreamWriter struct {
@@ -39165,6 +39228,38 @@ func renderTUIToolStart(call runloop.ToolCall) string {
 		name = "tool"
 	}
 	return "Tools\n- " + name + " running"
+}
+
+func renderTUIPermissionRequest(decision tools.PermissionDecision) string {
+	name := strings.TrimSpace(decision.ToolName)
+	if name == "" {
+		name = "tool"
+	}
+	required := strings.TrimSpace(string(decision.Required))
+	if required == "" {
+		required = "permission"
+	}
+	line := fmt.Sprintf("Permission\n- %s requires %s", name, required)
+	if message := strings.TrimSpace(decision.Message); message != "" {
+		line += ": " + truncateForReport(message, 180)
+	}
+	return line
+}
+
+func renderTUIPermissionDecision(decision tools.PermissionDecision) string {
+	name := strings.TrimSpace(decision.ToolName)
+	if name == "" {
+		name = "tool"
+	}
+	status := "denied"
+	if decision.Allowed {
+		status = "approved"
+	}
+	reason := strings.TrimSpace(decision.Reason)
+	if reason == "" {
+		return fmt.Sprintf("Permission\n- %s %s", name, status)
+	}
+	return fmt.Sprintf("Permission\n- %s %s: %s", name, status, reason)
 }
 
 func toolSummaryDetail(output string) string {

@@ -38,13 +38,14 @@ type SlashFunc func(context.Context, string) (output string, handled bool, err e
 
 // ShellOptions configures the full-screen TUI shell.
 type ShellOptions struct {
-	Candidates   []string
-	Prefill      string
-	History      []string
-	Entries      []Entry
-	Submit       SubmitFunc
-	SubmitStream StreamSubmitFunc
-	Slash        SlashFunc
+	Candidates       []string
+	Prefill          string
+	History          []string
+	Entries          []Entry
+	Submit           SubmitFunc
+	SubmitStream     StreamSubmitFunc
+	Slash            SlashFunc
+	PermissionAnswer func(string)
 }
 
 // Preview captures a deterministic TUI model state for tests and parity
@@ -60,31 +61,33 @@ type Preview struct {
 }
 
 type model struct {
-	ctx            context.Context
-	textarea       textarea.Model
-	viewport       viewport.Model
-	result         Result
-	width          int
-	height         int
-	matches        []string
-	selected       int
-	candidates     []string
-	helpOpen       bool
-	busy           bool
-	status         string
-	transcript     []transcriptEntry
-	submit         SubmitFunc
-	submitStream   StreamSubmitFunc
-	slash          SlashFunc
-	history        []string
-	historyPos     int
-	draft          string
-	searchOpen     bool
-	searchHits     []string
-	searchPos      int
-	turnCancel     context.CancelFunc
-	turnMessages   <-chan tea.Msg
-	streamingIndex int
+	ctx                context.Context
+	textarea           textarea.Model
+	viewport           viewport.Model
+	result             Result
+	width              int
+	height             int
+	matches            []string
+	selected           int
+	candidates         []string
+	helpOpen           bool
+	busy               bool
+	status             string
+	transcript         []transcriptEntry
+	submit             SubmitFunc
+	submitStream       StreamSubmitFunc
+	slash              SlashFunc
+	permissionAnswer   func(string)
+	history            []string
+	historyPos         int
+	draft              string
+	searchOpen         bool
+	searchHits         []string
+	searchPos          int
+	turnCancel         context.CancelFunc
+	turnMessages       <-chan tea.Msg
+	streamingIndex     int
+	awaitingPermission bool
 }
 
 type transcriptEntry struct {
@@ -165,6 +168,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.submit = options.Submit
 	m.submitStream = options.SubmitStream
 	m.slash = options.Slash
+	m.permissionAnswer = options.PermissionAnswer
 	m.setHistory(options.History)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
@@ -238,7 +242,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case turnStreamMsg:
 		m.appendStreamDelta(msg.Role, msg.Delta)
-		m.status = "streaming"
+		if strings.EqualFold(msg.Role, "permission") {
+			m.awaitingPermission = isPermissionRequestDelta(msg.Delta)
+			if m.awaitingPermission {
+				m.status = "permission"
+			} else {
+				m.status = "permission answered"
+			}
+		} else {
+			m.status = "streaming"
+		}
 		m.refreshViewport()
 		m.viewport.GotoBottom()
 		if m.turnMessages != nil {
@@ -317,6 +330,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+r":
 			if len(m.history) > 0 {
 				m.openHistorySearch()
+				return m, nil
+			}
+		case "y", "Y", "a", "A", "n", "N":
+			if m.awaitingPermission {
+				m.answerPermission(msg.String())
 				return m, nil
 			}
 		case "?":
@@ -512,6 +530,26 @@ func (m *model) interruptTurn() {
 	m.status = "interrupting"
 }
 
+func (m *model) answerPermission(answer string) {
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	if answer == "" || m.permissionAnswer == nil {
+		return
+	}
+	switch answer {
+	case "y", "yes", "a", "always", "n", "no":
+	default:
+		return
+	}
+	m.permissionAnswer(answer)
+	m.awaitingPermission = false
+	m.status = "permission answered"
+}
+
+func isPermissionRequestDelta(delta string) bool {
+	normalized := strings.ToLower(delta)
+	return strings.Contains(normalized, " requires ")
+}
+
 func (m *model) appendStreamDelta(role string, delta string) {
 	if strings.TrimSpace(role) == "" {
 		role = "assistant"
@@ -656,6 +694,14 @@ func statusBarText(status string, width int) string {
 	status = strings.TrimSpace(status)
 	if status == "" {
 		status = "ready"
+	}
+	if strings.EqualFold(status, "permission") {
+		switch {
+		case width > 0 && width < 70:
+			return "permission · y yes · n no · a always"
+		default:
+			return "permission · y approve · n deny · a always for session"
+		}
 	}
 	if isBusyStatus(status) {
 		switch {
@@ -1050,6 +1096,8 @@ func roleStyle(role string) lipgloss.Style {
 		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
 	case "tool":
 		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
+	case "permission":
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
 	case "user":
 		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
 	default:

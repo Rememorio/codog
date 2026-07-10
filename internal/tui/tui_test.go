@@ -352,6 +352,33 @@ func TestToolStreamEntryDoesNotMergeIntoAssistantText(t *testing.T) {
 	require.Equal(t, "done", m.transcript[4].Text)
 }
 
+func TestPermissionStreamEntryAcceptsKeyboardAnswer(t *testing.T) {
+	ta := newPromptTextarea("")
+	answers := []string{}
+	m := newModel(context.Background(), ta, nil, nil)
+	m.permissionAnswer = func(answer string) {
+		answers = append(answers, answer)
+	}
+
+	updated, _ := m.Update(turnStreamMsg{Role: "permission", Delta: "Permission\n- bash requires danger-full-access"})
+	m = updated.(model)
+	require.True(t, m.awaitingPermission)
+	require.Equal(t, "permission", m.status)
+	require.Contains(t, statusBarText(m.status, 80), "y approve")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = updated.(model)
+
+	require.False(t, m.awaitingPermission)
+	require.Equal(t, []string{"y"}, answers)
+	require.Equal(t, "permission answered", m.status)
+
+	updated, _ = m.Update(turnStreamMsg{Role: "permission", Delta: "Permission\n- bash approved: user_approved"})
+	m = updated.(model)
+	require.False(t, m.awaitingPermission)
+	require.Equal(t, "permission answered", m.status)
+}
+
 func TestCanceledSlashCommandRendersInterrupted(t *testing.T) {
 	cmd := runSlashCommand(context.Background(), func(context.Context, string) (string, bool, error) {
 		return "", true, context.Canceled

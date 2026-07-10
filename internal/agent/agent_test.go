@@ -76,6 +76,7 @@ import (
 	"github.com/Rememorio/codog/internal/thinkback"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
+	"github.com/Rememorio/codog/internal/tui"
 	"github.com/Rememorio/codog/internal/undo"
 	"github.com/Rememorio/codog/internal/updater"
 	"github.com/Rememorio/codog/internal/usage"
@@ -110,6 +111,94 @@ func (b *notifyBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+func TestTUIPermissionEventsWrapOriginalCallbacks(t *testing.T) {
+	prompter := &tools.Prompter{}
+	original := []string{}
+	prompter.OnRequest = func(decision tools.PermissionDecision) {
+		original = append(original, "request:"+decision.ToolName)
+	}
+	prompter.OnDecision = func(decision tools.PermissionDecision) {
+		original = append(original, "decision:"+decision.ToolName)
+	}
+	entries := []string{}
+	wrapTUIPermissionEvents(prompter, func(entry tui.Entry) {
+		entries = append(entries, entry.Text)
+	})
+
+	request := tools.PermissionDecision{
+		ToolName:    "bash",
+		Required:    tools.PermissionDanger,
+		WouldPrompt: true,
+		Message:     "writes outside workspace",
+	}
+	approved := request
+	approved.Allowed = true
+	approved.Reason = "user_approved"
+
+	prompter.OnRequest(request)
+	prompter.OnDecision(approved)
+
+	require.Equal(t, []string{"request:bash", "decision:bash"}, original)
+	require.Len(t, entries, 2)
+	require.Contains(t, entries[0], "bash requires danger-full-access")
+	require.Contains(t, entries[0], "writes outside workspace")
+	require.Contains(t, entries[1], "bash approved")
+	require.Contains(t, entries[1], "user_approved")
+}
+
+func TestPromptEmitsMultipleToolEventsInOneTurn(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Turns: []mockanthropic.Turn{
+		{ToolUses: []mockanthropic.ToolUse{
+			{ID: "tool-write", Name: "write_file", Input: json.RawMessage(`{"path":"multi-tool.txt","content":"created by first tool\n"}`)},
+			{ID: "tool-bash", Name: "bash", Input: json.RawMessage(`{"command":"printf second-tool","timeout":1000}`)},
+		}},
+		{Text: "multi tool done"},
+	}}.Handler())
+	defer server.Close()
+
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            2,
+			AutoCompactMessages: 40,
+			PermissionMode:      "allow",
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	starts := []string{}
+	finishes := []string{}
+	err := app.promptWithOutputOptions(context.Background(), "run both tools", config.FlagOverrides{SessionID: "multi-tool-events"}, "text", false, turnOptions{
+		OnToolStart: func(call runloop.ToolCall) {
+			starts = append(starts, call.Name)
+		},
+		OnToolUse: func(call runloop.ToolCall) {
+			finishes = append(finishes, call.Name)
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"write_file", "bash"}, starts)
+	require.Equal(t, []string{"write_file", "bash"}, finishes)
+	require.Contains(t, out.String(), "multi tool done")
+	created, readErr := os.ReadFile(filepath.Join(workspace, "multi-tool.txt"))
+	require.NoError(t, readErr)
+	require.Equal(t, "created by first tool\n", string(created))
 }
 
 func TestEnterpriseAuditListsEvents(t *testing.T) {
