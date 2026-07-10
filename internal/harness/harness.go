@@ -3577,7 +3577,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
+			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+o"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
 				return localScenarioResult{}, fmt.Errorf("keybindings template missing expected entries: %s", string(keybindingsData))
 			}
 
@@ -3589,7 +3589,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 32 {
+			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 33 {
 				return localScenarioResult{}, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
 			}
 
@@ -3642,6 +3642,7 @@ func privacyKeybindingsScenario() scenario {
 					"prompt_stash_key":    strings.Contains(string(keybindingsData), `"ctrl+s"`),
 					"external_editor":     strings.Contains(string(keybindingsData), `"ctrl+g"`),
 					"clipboard_paste_key": strings.Contains(string(keybindingsData), `"ctrl+v"`),
+					"transcript_key":      strings.Contains(string(keybindingsData), `"ctrl+o"`),
 					"terminal_keys":       strings.Contains(string(keybindingsData), `"ctrl+l"`) && strings.Contains(string(keybindingsData), `"ctrl+d"`),
 					"background_key":      strings.Contains(string(keybindingsData), `"ctrl+b"`),
 					"task_board_key":      strings.Contains(string(keybindingsData), `"ctrl+t"`),
@@ -5366,6 +5367,12 @@ func tuiPromptCompletionScenario() scenario {
 			if !stash.HasStash || stash.Value != "" || !strings.Contains(stash.View, "stashed prompt") {
 				return localScenarioResult{}, fmt.Errorf("expected prompt stash preview, got %#v", stash)
 			}
+			transcript := tui.PreviewWithTranscript([]tui.Entry{
+				{Role: "tool", Text: "stdout\nstderr"},
+			}, 96, 24)
+			if !transcript.Transcript || !strings.Contains(transcript.View, "001/001 tool") || !strings.Contains(transcript.View, "2 lines") {
+				return localScenarioResult{}, fmt.Errorf("expected expanded transcript preview, got %#v", transcript)
+			}
 			attachments := tui.PreviewWithAttachments("describe", []string{"notes.txt", "pixel.png"}, 96, 24)
 			if !strings.Contains(attachments.View, "attachments: 2") || !strings.Contains(attachments.View, "2 attached") || len(attachments.Attachments) != 2 {
 				return localScenarioResult{}, fmt.Errorf("expected attachment preview, got %s", attachments.View)
@@ -5400,6 +5407,7 @@ func tuiPromptCompletionScenario() scenario {
 				"automatic":           automatic.Matches,
 				"queued_preview":      strings.Contains(queued.View, "queued prompts: 2"),
 				"stash_preview":       stash.HasStash,
+				"transcript_preview":  transcript.Transcript,
 				"attachment_preview":  strings.Contains(attachments.View, "attachments: 2"),
 				"paste_preview":       strings.Contains(paste.View, "pasted 1 line"),
 				"paste_image_preview": strings.Contains(pasteImage.View, "clipboard image attached"),

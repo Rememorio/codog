@@ -101,6 +101,7 @@ type Preview struct {
 	Mode        string
 	HelpOpen    bool
 	HasStash    bool
+	Transcript  bool
 }
 
 type composerStash struct {
@@ -120,6 +121,7 @@ type model struct {
 	candidates              []string
 	fileCandidates          []string
 	helpOpen                bool
+	transcriptMode          bool
 	busy                    bool
 	status                  string
 	transcript              []transcriptEntry
@@ -218,6 +220,7 @@ func PreviewWithCandidates(input string, candidates []string, width int, height 
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
 	}
 }
 
@@ -245,6 +248,7 @@ func PreviewWithFileCandidates(input string, files []string, width int, height i
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
 	}
 }
 
@@ -270,6 +274,7 @@ func PreviewWithQueued(input string, queued []string, width int, height int) Pre
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
 	}
 }
 
@@ -297,6 +302,38 @@ func PreviewWithStash(input string, attachments []string, width int, height int)
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
+	}
+}
+
+// PreviewWithTranscript renders a deterministic TUI state after switching the
+// viewport into expanded transcript mode.
+func PreviewWithTranscript(entries []Entry, width int, height int) Preview {
+	ta := newPromptTextarea("")
+	modelEntries := make([]transcriptEntry, 0, len(entries))
+	for _, entry := range entries {
+		modelEntries = append(modelEntries, transcriptEntry{Role: entry.Role, Text: entry.Text})
+	}
+	m := newModel(context.Background(), ta, nil, modelEntries)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
 	}
 }
 
@@ -320,6 +357,7 @@ func PreviewWithAttachments(input string, attachments []string, width int, heigh
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
 	}
 }
 
@@ -346,6 +384,7 @@ func PreviewWithPaste(input string, clipboardText string, width int, height int)
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
 	}
 }
 
@@ -372,6 +411,7 @@ func PreviewWithPasteAttachment(input string, attachmentPath string, width int, 
 		Mode:        m.mode(),
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
 	}
 }
 
@@ -681,6 +721,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+s":
 			m.togglePromptStash()
+			return m, nil
+		case "ctrl+o":
+			if m.helpOpen {
+				m.helpOpen = false
+			}
+			m.transcriptMode = !m.transcriptMode
+			if m.transcriptMode {
+				m.status = "transcript"
+			} else {
+				m.status = "ready"
+			}
+			m.refreshViewport()
+			m.viewport.GotoBottom()
 			return m, nil
 		case "ctrl+g":
 			if m.busy || m.externalEditor == nil {
@@ -1806,8 +1859,10 @@ func statusBarText(status string, width int) string {
 		return fmt.Sprintf("%s · Enter · Tab · Ctrl-R · Esc", status)
 	case width > 0 && width < 90:
 		return fmt.Sprintf("%s · Enter send · Shift+Enter newline · Tab · Ctrl-R · Ctrl-D · Esc", status)
+	case width > 0 && width < 110:
+		return fmt.Sprintf("%s · Enter send · Shift+Enter newline · Tab complete · Ctrl-R history · Ctrl-L clear · Ctrl-D exit", status)
 	default:
-		return fmt.Sprintf("%s · Enter send · Shift+Enter or \\+Enter newline · Tab complete · Ctrl-R history · Ctrl-L clear · Ctrl-D exit", status)
+		return fmt.Sprintf("%s · Enter send · Shift+Enter or \\+Enter newline · Tab complete · Ctrl-R history · Ctrl-O transcript · Ctrl-L clear · Ctrl-D exit", status)
 	}
 }
 
@@ -2032,8 +2087,8 @@ func (m *model) refreshViewport() {
 		return
 	}
 	lines := []string{}
-	for _, entry := range m.transcript {
-		lines = append(lines, renderTranscriptEntry(entry, max(40, m.viewport.Width-2)))
+	for index, entry := range m.transcript {
+		lines = append(lines, renderTranscriptEntry(entry, max(40, m.viewport.Width-2), index, len(m.transcript), m.transcriptMode))
 	}
 	m.viewport.SetContent(strings.Join(lines, "\n\n"))
 }
@@ -2060,6 +2115,9 @@ func (m model) visibleStatus() string {
 	if status == "" {
 		status = m.mode()
 	}
+	if m.transcriptMode && !strings.EqualFold(status, "transcript") {
+		status += " · transcript"
+	}
 	if len(m.queuedPrompts) == 0 {
 		if len(m.attachments) == 0 {
 			return status
@@ -2081,16 +2139,33 @@ func isLocalHelpInput(value string) bool {
 	}
 }
 
-func renderTranscriptEntry(entry transcriptEntry, width int) string {
+func renderTranscriptEntry(entry transcriptEntry, width int, index int, total int, transcriptMode bool) string {
 	role := strings.TrimSpace(entry.Role)
 	if role == "" {
 		role = "message"
 	}
-	text := strings.TrimSpace(entry.Text)
+	if !transcriptMode {
+		text := strings.TrimSpace(entry.Text)
+		if text == "" {
+			text = "(empty)"
+		}
+		return roleStyle(role).Render(role) + "\n" + wrapTranscriptText(text, width)
+	}
+	text := entry.Text
 	if text == "" {
 		text = "(empty)"
 	}
-	return roleStyle(role).Render(role) + "\n" + wrapTranscriptText(text, width)
+	header := fmt.Sprintf("%03d/%03d %s · %d %s · %d %s", index+1, max(1, total), role, transcriptLineCount(text), plural("line", transcriptLineCount(text)), len([]rune(text)), plural("char", len([]rune(text))))
+	return roleStyle(role).Render(header) + "\n" + wrapTranscriptText(text, width)
+}
+
+func transcriptLineCount(text string) int {
+	if text == "" {
+		return 0
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return strings.Count(text, "\n") + 1
 }
 
 func wrapTranscriptText(text string, width int) string {
@@ -2166,6 +2241,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+S      stash or restore composer",
 		"  Ctrl+G      edit composer in $EDITOR",
 		"  Ctrl+V      paste clipboard text or image",
+		"  Ctrl+O      toggle expanded transcript",
 		"  Ctrl+L      clear screen",
 		"  Ctrl+U      delete before cursor",
 		"  Ctrl+K      delete after cursor",

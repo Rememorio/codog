@@ -319,6 +319,47 @@ func TestShiftTabCyclesTUILocalMode(t *testing.T) {
 	require.Contains(t, m.View(), "accept edits")
 }
 
+func TestCtrlOTogglesExpandedTranscript(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, []transcriptEntry{
+		{Role: "user", Text: "first line\nsecond line"},
+		{Role: "assistant", Text: "result"},
+	})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 128, Height: 24})
+	m = updated.(model)
+
+	require.False(t, m.transcriptMode)
+	require.NotContains(t, m.View(), "001/002 user")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = updated.(model)
+
+	require.True(t, m.transcriptMode)
+	require.Equal(t, "transcript", m.status)
+	require.Contains(t, m.View(), "001/002 user")
+	require.Contains(t, m.View(), "2 lines")
+	require.Contains(t, m.View(), "Ctrl-O transcript")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = updated.(model)
+
+	require.False(t, m.transcriptMode)
+	require.Equal(t, "ready", m.status)
+	require.NotContains(t, m.View(), "001/002 user")
+}
+
+func TestPreviewWithTranscriptRendersExpandedEntries(t *testing.T) {
+	preview := PreviewWithTranscript([]Entry{
+		{Role: "tool", Text: "stdout\nstderr"},
+	}, 96, 24)
+
+	require.True(t, preview.Transcript)
+	require.Contains(t, preview.View, "001/001 tool")
+	require.Contains(t, preview.View, "2 lines")
+	require.Contains(t, preview.View, "stdout")
+	require.Contains(t, preview.View, "stderr")
+}
+
 func TestPreviewWithCandidatesCompletesAndSubmits(t *testing.T) {
 	preview := PreviewWithCandidates("/mo", []string{"/model claude-test"}, 100, 24, true, true)
 
