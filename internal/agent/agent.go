@@ -20840,6 +20840,9 @@ func defaultKeybindingsTemplate() []byte {
 					"ctrl+p":        "quick open fallback",
 					"ctrl+shift+f":  "search workspace",
 					"ctrl+f":        "search workspace fallback",
+					"alt+p":         "open model picker",
+					"alt+o":         "toggle fast mode",
+					"alt+t":         "cycle thinking effort",
 					"ctrl+o":        "toggle expanded transcript",
 					"ctrl+l":        "clear screen",
 					"ctrl+u":        "delete before cursor",
@@ -20925,6 +20928,9 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Ctrl-P", Action: "quick open fallback"},
 					{Key: "Ctrl-Shift-F", Action: "search workspace"},
 					{Key: "Ctrl-F", Action: "search workspace fallback"},
+					{Key: "Alt-P", Action: "open model picker"},
+					{Key: "Alt-O", Action: "toggle fast mode"},
+					{Key: "Alt-T", Action: "cycle thinking effort"},
 					{Key: "Ctrl-O", Action: "toggle expanded transcript"},
 					{Key: "Ctrl-L", Action: "clear screen"},
 					{Key: "Ctrl-U", Action: "delete before cursor"},
@@ -39206,6 +39212,17 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		Todos: func(ctx context.Context) ([]tui.TodoItem, error) {
 			return a.readTUITodos(ctx)
 		},
+		ModelOptions: a.tuiModelOptions(),
+		CurrentModel: strings.TrimSpace(a.Config.Model),
+		SelectModel: func(ctx context.Context, model string) (tui.RuntimeControlResult, error) {
+			return a.selectTUIModel(ctx, model)
+		},
+		ToggleFast: func(ctx context.Context) (tui.RuntimeControlResult, error) {
+			return a.toggleTUIFast(ctx)
+		},
+		ToggleThinking: func(ctx context.Context) (tui.RuntimeControlResult, error) {
+			return a.toggleTUIThinking(ctx)
+		},
 		ModeLabel: modeState.Label(),
 		CycleMode: func() string {
 			return modeState.Cycle()
@@ -39224,6 +39241,115 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		},
 	})
 	return a.finishREPL(ctx, sess, loopErr)
+}
+
+func (a *App) tuiModelOptions() []string {
+	out := []string{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range out {
+			if strings.EqualFold(existing, value) {
+				return
+			}
+		}
+		out = append(out, value)
+	}
+	add(a.Config.Model)
+	add(config.DefaultModel)
+	for _, alias := range modelAliases() {
+		add(alias.Name)
+	}
+	return out
+}
+
+func (a *App) selectTUIModel(ctx context.Context, selected string) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	selected = strings.TrimSpace(selected)
+	if selected == "" {
+		return tui.RuntimeControlResult{}, errors.New("model is required")
+	}
+	previous := strings.TrimSpace(a.Config.Model)
+	var out bytes.Buffer
+	oldOut, oldErr := a.Out, a.Err
+	a.Out, a.Err = &out, &out
+	err := a.Model([]string{selected})
+	a.Out, a.Err = oldOut, oldErr
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	lines := []string{"Model: " + strings.TrimSpace(a.Config.Model)}
+	if previous != "" && !strings.EqualFold(previous, a.Config.Model) {
+		lines = append(lines, "Previous: "+previous)
+	}
+	return tui.RuntimeControlResult{Title: "Model", Status: "model selected", Lines: lines}, nil
+}
+
+func (a *App) toggleTUIFast(ctx context.Context) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	previous := fastModeEnabled(a.Config.FastMode)
+	var out bytes.Buffer
+	oldOut, oldErr := a.Out, a.Err
+	a.Out, a.Err = &out, &out
+	err := a.Fast([]string{"toggle"})
+	a.Out, a.Err = oldOut, oldErr
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	enabled := fastModeEnabled(a.Config.FastMode)
+	lines := []string{fmt.Sprintf("Fast mode: %s", onOff(enabled))}
+	if previous != enabled {
+		lines = append(lines, fmt.Sprintf("Previous: %s", onOff(previous)))
+	}
+	return tui.RuntimeControlResult{Title: "Fast Mode", Status: "fast " + onOff(enabled), Lines: lines}, nil
+}
+
+func (a *App) toggleTUIThinking(ctx context.Context) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	previous := effectiveEffort(a.Config.ReasoningEffort)
+	next := nextTUIReasoningEffort(previous)
+	var out bytes.Buffer
+	oldOut, oldErr := a.Out, a.Err
+	a.Out, a.Err = &out, &out
+	err := a.Reasoning([]string{"set", next})
+	a.Out, a.Err = oldOut, oldErr
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	current := effectiveEffort(a.Config.ReasoningEffort)
+	return tui.RuntimeControlResult{
+		Title:  "Thinking",
+		Status: "thinking " + current,
+		Lines:  []string{"Reasoning: " + current, "Previous: " + previous},
+	}, nil
+}
+
+func nextTUIReasoningEffort(current string) string {
+	current = strings.ToLower(strings.TrimSpace(current))
+	if current == "" {
+		current = "auto"
+	}
+	for index, level := range availableEfforts {
+		if level == current {
+			return availableEfforts[(index+1)%len(availableEfforts)]
+		}
+	}
+	return "auto"
+}
+
+func onOff(value bool) string {
+	if value {
+		return "on"
+	}
+	return "off"
 }
 
 func (a *App) readTUITodos(ctx context.Context) ([]tui.TodoItem, error) {

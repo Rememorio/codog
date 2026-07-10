@@ -621,6 +621,75 @@ func TestPreviewWithGlobalSearch(t *testing.T) {
 	require.Equal(t, "inspect @main.go#L3 ", accepted.Value)
 }
 
+func TestModelPickerSelectsRuntimeModel(t *testing.T) {
+	ta := newPromptTextarea("keep draft")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.modelOptions = []string{"sonnet", "opus"}
+	m.currentModel = "sonnet"
+	m.selectModel = func(_ context.Context, model string) (RuntimeControlResult, error) {
+		return RuntimeControlResult{Title: "Model", Status: "model selected", Lines: []string{"Model: " + model}}, nil
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}, Alt: true})
+	m = updated.(model)
+
+	require.True(t, m.modelPicker)
+	require.Equal(t, 0, m.modelPickerSelected)
+	require.Contains(t, m.View(), "model picker")
+	require.Contains(t, m.View(), "sonnet  current")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.False(t, m.modelPicker)
+	require.Equal(t, "opus", m.currentModel)
+	require.Equal(t, "keep draft", m.textarea.Value())
+	require.Equal(t, "model selected", m.status)
+	require.Contains(t, m.View(), "Model")
+	require.Contains(t, m.View(), "Model: opus")
+}
+
+func TestRuntimeToggleShortcutsAppendStatus(t *testing.T) {
+	preview := PreviewWithRuntimeToggle("", "alt+o", RuntimeControlResult{
+		Title:  "Fast Mode",
+		Status: "fast on",
+		Lines:  []string{"Fast mode: on", "Previous: off"},
+	}, 96, 24)
+
+	require.Equal(t, "ready", preview.Mode)
+	require.Contains(t, preview.View, "Fast Mode")
+	require.Contains(t, preview.View, "Fast mode: on")
+
+	thinking := PreviewWithRuntimeToggle("", "alt+t", RuntimeControlResult{
+		Title:  "Thinking",
+		Status: "thinking medium",
+		Lines:  []string{"Reasoning: medium", "Previous: low"},
+	}, 96, 24)
+
+	require.Contains(t, thinking.View, "Thinking")
+	require.Contains(t, thinking.View, "Reasoning: medium")
+}
+
+func TestPreviewWithModelPicker(t *testing.T) {
+	preview := PreviewWithModelPicker("inspect", []string{"sonnet", "opus"}, "sonnet", 96, 24, false)
+
+	require.True(t, preview.ModelPicker)
+	require.Equal(t, []string{"sonnet", "opus"}, preview.Matches)
+	require.Equal(t, "inspect", preview.Value)
+	require.Contains(t, preview.View, "model picker")
+
+	selected := PreviewWithModelPicker("inspect", []string{"sonnet", "opus"}, "sonnet", 96, 24, true)
+
+	require.False(t, selected.ModelPicker)
+	require.Contains(t, selected.View, "Model: sonnet")
+}
+
 func TestPreviewTogglesHelpPanel(t *testing.T) {
 	preview := PreviewWithCandidates("/help", []string{"/status", "/context"}, 100, 24, false, false)
 	require.True(t, preview.HelpOpen)

@@ -3577,7 +3577,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+x ctrl+e"`) || !strings.Contains(string(keybindingsData), `"ctrl+_"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+-"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+o"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
+			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+x ctrl+e"`) || !strings.Contains(string(keybindingsData), `"ctrl+_"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+-"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+f"`) || !strings.Contains(string(keybindingsData), `"alt+p"`) || !strings.Contains(string(keybindingsData), `"alt+o"`) || !strings.Contains(string(keybindingsData), `"alt+t"`) || !strings.Contains(string(keybindingsData), `"ctrl+o"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
 				return localScenarioResult{}, fmt.Errorf("keybindings template missing expected entries: %s", string(keybindingsData))
 			}
 
@@ -3589,7 +3589,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 41 {
+			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 44 {
 				return localScenarioResult{}, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
 			}
 
@@ -3646,6 +3646,7 @@ func privacyKeybindingsScenario() scenario {
 					"clipboard_paste_key":   strings.Contains(string(keybindingsData), `"ctrl+v"`),
 					"quick_open_key":        strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) && strings.Contains(string(keybindingsData), `"ctrl+p"`),
 					"global_search_key":     strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) && strings.Contains(string(keybindingsData), `"ctrl+f"`),
+					"runtime_control_keys":  strings.Contains(string(keybindingsData), `"alt+p"`) && strings.Contains(string(keybindingsData), `"alt+o"`) && strings.Contains(string(keybindingsData), `"alt+t"`),
 					"transcript_key":        strings.Contains(string(keybindingsData), `"ctrl+o"`),
 					"terminal_keys":         strings.Contains(string(keybindingsData), `"ctrl+l"`) && strings.Contains(string(keybindingsData), `"ctrl+d"`),
 					"background_key":        strings.Contains(string(keybindingsData), `"ctrl+b"`),
@@ -5428,6 +5429,26 @@ func tuiPromptCompletionScenario() scenario {
 			if globalSearch.GlobalSearch || !strings.Contains(globalSearch.Value, "@"+previewFile+"#L4 ") {
 				return localScenarioResult{}, fmt.Errorf("expected global search line reference, got value=%q view=%s", globalSearch.Value, globalSearch.View)
 			}
+			modelPicker := tui.PreviewWithModelPicker("inspect", []string{"sonnet", "opus"}, "sonnet", 96, 24, false)
+			if !modelPicker.ModelPicker || !strings.Contains(modelPicker.View, "model picker") || !strings.Contains(modelPicker.View, "sonnet  current") {
+				return localScenarioResult{}, fmt.Errorf("expected model picker preview, got view=%s", modelPicker.View)
+			}
+			fastToggle := tui.PreviewWithRuntimeToggle("", "alt+o", tui.RuntimeControlResult{
+				Title:  "Fast Mode",
+				Status: "fast on",
+				Lines:  []string{"Fast mode: on", "Previous: off"},
+			}, 96, 24)
+			if !strings.Contains(fastToggle.View, "Fast Mode") || !strings.Contains(fastToggle.View, "Fast mode: on") {
+				return localScenarioResult{}, fmt.Errorf("expected fast toggle preview, got view=%s", fastToggle.View)
+			}
+			thinkingToggle := tui.PreviewWithRuntimeToggle("", "alt+t", tui.RuntimeControlResult{
+				Title:  "Thinking",
+				Status: "thinking medium",
+				Lines:  []string{"Reasoning: medium", "Previous: low"},
+			}, 96, 24)
+			if !strings.Contains(thinkingToggle.View, "Thinking") || !strings.Contains(thinkingToggle.View, "Reasoning: medium") {
+				return localScenarioResult{}, fmt.Errorf("expected thinking toggle preview, got view=%s", thinkingToggle.View)
+			}
 
 			submitted := tui.PreviewWithCandidates("/mo", []string{"/model claude-test"}, 96, 24, true, true)
 			if !submitted.Submitted {
@@ -5457,6 +5478,9 @@ func tuiPromptCompletionScenario() scenario {
 				"quick_open":            strings.Contains(quickOpen.Value, "@internal/tui/tui.go"),
 				"global_search_preview": strings.Contains(globalSearchPreview.View, "NeedleValue"),
 				"global_search":         strings.Contains(globalSearch.Value, "#L4"),
+				"model_picker":          modelPicker.ModelPicker,
+				"runtime_fast_toggle":   strings.Contains(fastToggle.View, "Fast mode: on"),
+				"runtime_thinking":      strings.Contains(thinkingToggle.View, "Reasoning: medium"),
 				"attachments":           attachments.Attachments,
 				"submitted":             submitted.Submitted,
 				"submitted_prompt":      submitted.Prompt,

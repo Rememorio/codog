@@ -72,6 +72,8 @@ type TaskBoardFunc func(context.Context) (string, error)
 
 // TodoListFunc returns the current workspace todo list for the TUI task panel.
 type TodoListFunc func(context.Context) ([]TodoItem, error)
+type RuntimeControlFunc func(context.Context) (RuntimeControlResult, error)
+type ModelSelectFunc func(context.Context, string) (RuntimeControlResult, error)
 
 // TodoItem is the small display model used by the TUI todo panel.
 type TodoItem struct {
@@ -80,6 +82,13 @@ type TodoItem struct {
 	ActiveForm string
 	Status     string
 	Priority   string
+}
+
+// RuntimeControlResult describes a runtime TUI setting change.
+type RuntimeControlResult struct {
+	Title  string
+	Status string
+	Lines  []string
 }
 
 // ShellOptions configures the full-screen TUI shell.
@@ -101,6 +110,11 @@ type ShellOptions struct {
 	Background              BackgroundFunc
 	TaskBoard               TaskBoardFunc
 	Todos                   TodoListFunc
+	ModelOptions            []string
+	CurrentModel            string
+	SelectModel             ModelSelectFunc
+	ToggleFast              RuntimeControlFunc
+	ToggleThinking          RuntimeControlFunc
 	ModeLabel               string
 	CycleMode               func() string
 }
@@ -121,6 +135,7 @@ type Preview struct {
 	QuickOpen    bool
 	GlobalSearch bool
 	TodosOpen    bool
+	ModelPicker  bool
 }
 
 type composerStash struct {
@@ -186,6 +201,13 @@ type model struct {
 	todosLoading             bool
 	todoItems                []TodoItem
 	todoErr                  string
+	modelPicker              bool
+	modelOptions             []string
+	currentModel             string
+	modelPickerSelected      int
+	selectModel              ModelSelectFunc
+	toggleFast               RuntimeControlFunc
+	toggleThinking           RuntimeControlFunc
 	queuedPrompts            []string
 	attachments              []string
 	stashedPrompt            *composerStash
@@ -606,6 +628,111 @@ func PreviewWithTodos(input string, items []TodoItem, width int, height int) Pre
 	}
 }
 
+// PreviewWithModelPicker renders a deterministic TUI state after opening the
+// runtime model picker.
+func PreviewWithModelPicker(input string, models []string, current string, width int, height int, accept bool) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	m.modelOptions = normalizeModelOptions(models)
+	m.currentModel = current
+	m.selectModel = func(_ context.Context, model string) (RuntimeControlResult, error) {
+		return RuntimeControlResult{Title: "Model", Status: "model selected", Lines: []string{"Model: " + model}}, nil
+	}
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}, Alt: true})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	if accept {
+		updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+		if cmd != nil {
+			updated, _ = m.Update(cmd())
+			if next, ok := updated.(model); ok {
+				m = next
+			}
+		}
+	} else if cmd != nil {
+		_ = cmd
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.modelOptions...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
+		TodosOpen:   m.todosOpen,
+		ModelPicker: m.modelPicker,
+	}
+}
+
+// PreviewWithRuntimeToggle renders a deterministic TUI state after invoking a
+// runtime control shortcut such as Alt-O or Alt-T.
+func PreviewWithRuntimeToggle(input string, key string, result RuntimeControlResult, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	control := func(context.Context) (RuntimeControlResult, error) {
+		return result, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "alt+o", "meta+o":
+		m.toggleFast = control
+	case "alt+t", "meta+t":
+		m.toggleThinking = control
+	}
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	updated, cmd := m.Update(altRuneKey(key))
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	if cmd != nil {
+		updated, _ = m.Update(cmd())
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
+		TodosOpen:   m.todosOpen,
+		ModelPicker: m.modelPicker,
+	}
+}
+
+func altRuneKey(key string) tea.KeyMsg {
+	key = strings.ToLower(strings.TrimSpace(key))
+	r := 'o'
+	if strings.HasSuffix(key, "+t") {
+		r = 't'
+	} else if strings.HasSuffix(key, "+p") {
+		r = 'p'
+	}
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: true}
+}
+
 // PreviewWithUndo renders a deterministic TUI state after editing the composer
 // and invoking the undo shortcut.
 func PreviewWithUndo(input string, inserted string, width int, height int) Preview {
@@ -665,6 +792,11 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.background = options.Background
 	m.taskBoard = options.TaskBoard
 	m.todos = options.Todos
+	m.modelOptions = normalizeModelOptions(options.ModelOptions)
+	m.currentModel = strings.TrimSpace(options.CurrentModel)
+	m.selectModel = options.SelectModel
+	m.toggleFast = options.ToggleFast
+	m.toggleThinking = options.ToggleThinking
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
@@ -845,6 +977,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.todoItems = normalizeTUITodoItems(msg.Items)
 		m.status = fmt.Sprintf("todos %d", len(m.todoItems))
 		return m, nil
+	case runtimeControlDoneMsg:
+		if msg.Err != nil {
+			m.status = "control error"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return m, nil
+		}
+		m.applyRuntimeControlResult(msg.Result)
+		return m, nil
 	case turnStreamMsg:
 		m.appendStreamDelta(msg.Role, msg.Delta)
 		if strings.EqualFold(msg.Role, "permission") {
@@ -874,6 +1016,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Paste {
 			return m.handlePastedInput(msg)
 		}
+		if m.modelPicker {
+			switch msg.String() {
+			case "ctrl+c", "esc", "alt+p", "meta+p":
+				m.closeModelPicker()
+				return m, nil
+			case "up", "ctrl+p":
+				m.moveModelPicker(-1)
+				return m, nil
+			case "down", "ctrl+n":
+				m.moveModelPicker(1)
+				return m, nil
+			case "enter", "tab":
+				return m.acceptModelPicker()
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "alt+o", "meta+o", "alt+t", "meta+t":
+				return m, nil
+			}
+			return m, nil
+		}
 		if m.globalSearch {
 			switch msg.String() {
 			case "ctrl+c", "esc":
@@ -891,7 +1051,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "shift+tab":
 				m.closeGlobalSearch(true, false)
 				return m, nil
-			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d":
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -918,7 +1078,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "shift+tab":
 				m.closeQuickOpen(true, false)
 				return m, nil
-			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d":
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -973,7 +1133,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "ctrl+d":
-			if !m.busy && !m.searchOpen && !m.quickOpen && !m.globalSearch && !m.todosOpen && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
+			if !m.busy && !m.searchOpen && !m.quickOpen && !m.globalSearch && !m.todosOpen && !m.modelPicker && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
 				return m, tea.Quit
 			}
 		case "ctrl+l":
@@ -1055,6 +1215,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.openGlobalSearch()
 			return m, nil
+		case "alt+p", "meta+p":
+			if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+				return m, nil
+			}
+			m.openModelPicker()
+			return m, nil
+		case "alt+o", "meta+o":
+			if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.awaitingPermission || m.awaitingQuestion || m.toggleFast == nil {
+				return m, nil
+			}
+			m.status = "fast mode"
+			return m, runRuntimeControlCommand(m.ctx, m.toggleFast)
+		case "alt+t", "meta+t":
+			if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.awaitingPermission || m.awaitingQuestion || m.toggleThinking == nil {
+				return m, nil
+			}
+			m.status = "thinking"
+			return m, runRuntimeControlCommand(m.ctx, m.toggleThinking)
 		case "shift+enter", "alt+enter", "ctrl+j":
 			m.pushComposerUndo()
 			m.textarea.InsertString("\n")
@@ -1361,6 +1539,9 @@ func (m model) View() string {
 	}
 	if m.todosOpen {
 		composer += "\n" + renderTodosPanel(m.todoItems, m.todosLoading, m.todoErr, m.width)
+	}
+	if m.modelPicker {
+		composer += "\n" + renderModelPicker(m.modelOptions, m.currentModel, m.modelPickerSelected, m.width)
 	}
 	if len(m.queuedPrompts) > 0 {
 		composer += "\n" + renderQueuedPrompts(m.queuedPrompts)
@@ -1789,6 +1970,11 @@ type todoListDoneMsg struct {
 	Err   error
 }
 
+type runtimeControlDoneMsg struct {
+	Result RuntimeControlResult
+	Err    error
+}
+
 func runExternalEditorCommand(ctx context.Context, editor ExternalEditorFunc, value string) tea.Cmd {
 	return func() tea.Msg {
 		text, err := editor(ctx, value)
@@ -1814,6 +2000,20 @@ func runTodoListCommand(ctx context.Context, todos TodoListFunc) tea.Cmd {
 	return func() tea.Msg {
 		items, err := todos(ctx)
 		return todoListDoneMsg{Items: items, Err: err}
+	}
+}
+
+func runRuntimeControlCommand(ctx context.Context, control RuntimeControlFunc) tea.Cmd {
+	return func() tea.Msg {
+		result, err := control(ctx)
+		return runtimeControlDoneMsg{Result: result, Err: err}
+	}
+}
+
+func runModelSelectCommand(ctx context.Context, selectModel ModelSelectFunc, model string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := selectModel(ctx, model)
+		return runtimeControlDoneMsg{Result: result, Err: err}
 	}
 }
 
@@ -1904,6 +2104,8 @@ func (m *model) clearScreen() {
 	m.todosLoading = false
 	m.todoItems = nil
 	m.todoErr = ""
+	m.modelPicker = false
+	m.modelPickerSelected = 0
 	m.transcript = []transcriptEntry{{Role: "system", Text: "Screen cleared."}}
 	m.status = "cleared"
 	m.refreshViewport()
@@ -1980,7 +2182,7 @@ func (m model) completeSlashCommand() model {
 
 func (m *model) refreshCompletionMenu() {
 	value := strings.Trim(m.textarea.Value(), "\r\n\t")
-	if value == "" || m.busy || m.searchOpen || m.globalSearch || m.todosOpen {
+	if value == "" || m.busy || m.searchOpen || m.globalSearch || m.todosOpen || m.modelPicker {
 		m.matches = nil
 		m.selected = 0
 		return
@@ -2279,6 +2481,143 @@ func renderQueuedPrompts(queued []string) string {
 	for index := start; index < len(queued); index++ {
 		lines = append(lines, completionStyle().Render(fmt.Sprintf("  %d. %s", index+1, truncateForComposer(queued[index], 100))))
 	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *model) openModelPicker() {
+	if len(m.modelOptions) == 0 || m.selectModel == nil {
+		m.status = "no model picker"
+		return
+	}
+	if m.helpOpen {
+		m.helpOpen = false
+		m.refreshViewport()
+	}
+	m.matches = nil
+	m.selected = 0
+	m.modelPicker = true
+	m.modelPickerSelected = indexOfModelOption(m.modelOptions, m.currentModel)
+	m.status = "model picker"
+}
+
+func (m *model) closeModelPicker() {
+	m.modelPicker = false
+	m.modelPickerSelected = 0
+	m.status = m.mode()
+}
+
+func (m *model) moveModelPicker(delta int) {
+	if len(m.modelOptions) == 0 {
+		return
+	}
+	m.modelPickerSelected = (m.modelPickerSelected + delta + len(m.modelOptions)) % len(m.modelOptions)
+	m.status = "model picker"
+}
+
+func (m model) acceptModelPicker() (tea.Model, tea.Cmd) {
+	if len(m.modelOptions) == 0 || m.selectModel == nil {
+		m.closeModelPicker()
+		return m, nil
+	}
+	if m.modelPickerSelected < 0 || m.modelPickerSelected >= len(m.modelOptions) {
+		m.modelPickerSelected = 0
+	}
+	selected := m.modelOptions[m.modelPickerSelected]
+	m.modelPicker = false
+	m.currentModel = selected
+	m.status = "selecting model"
+	return m, runModelSelectCommand(m.ctx, m.selectModel, selected)
+}
+
+func (m *model) applyRuntimeControlResult(result RuntimeControlResult) {
+	title := strings.TrimSpace(result.Title)
+	if title == "" {
+		title = "Runtime Control"
+	}
+	status := strings.TrimSpace(result.Status)
+	if status == "" {
+		status = strings.ToLower(title)
+	}
+	lines := []string{title}
+	for _, line := range result.Lines {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	if len(lines) == 1 {
+		lines = append(lines, status)
+	}
+	for _, line := range result.Lines {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) >= 2 && strings.EqualFold(strings.TrimRight(fields[0], ":"), "model") {
+			m.currentModel = fields[1]
+			break
+		}
+	}
+	m.status = status
+	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: strings.Join(lines, "\n")})
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+}
+
+func normalizeModelOptions(options []string) []string {
+	out := make([]string, 0, len(options))
+	seen := map[string]bool{}
+	for _, option := range options {
+		option = strings.TrimSpace(option)
+		if option == "" {
+			continue
+		}
+		key := strings.ToLower(option)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, option)
+	}
+	return out
+}
+
+func indexOfModelOption(options []string, current string) int {
+	current = strings.TrimSpace(current)
+	if current == "" {
+		return 0
+	}
+	lower := strings.ToLower(current)
+	for index, option := range options {
+		if strings.EqualFold(option, current) || strings.EqualFold(option, lower) {
+			return index
+		}
+	}
+	return 0
+}
+
+func renderModelPicker(options []string, current string, selected int, width int) string {
+	limit := 120
+	if width > 0 {
+		limit = max(40, width-8)
+	}
+	lines := []string{completionTitleStyle().Render(" model picker ")}
+	if len(options) == 0 {
+		return strings.Join(append(lines, completionStyle().Render("  no models configured")), "\n")
+	}
+	if selected < 0 || selected >= len(options) {
+		selected = 0
+	}
+	for index, option := range options {
+		prefix := "  "
+		style := completionStyle()
+		if index == selected {
+			prefix = "> "
+			style = selectedCompletionStyle()
+		}
+		suffix := ""
+		if strings.EqualFold(option, current) {
+			suffix = "  current"
+		}
+		lines = append(lines, style.Render(prefix+truncateForComposer(option+suffix, limit)))
+	}
+	lines = append(lines, completionStyle().Render("  Enter select · Up/Down move · Esc cancel"))
 	return strings.Join(lines, "\n")
 }
 
@@ -2738,6 +3077,14 @@ func statusBarText(status string, width int) string {
 			return "quick open · type · Enter · Esc"
 		default:
 			return "quick open · type to search · Enter/Tab insert @file · Shift+Tab path · Esc cancel"
+		}
+	}
+	if strings.EqualFold(status, "model picker") {
+		switch {
+		case width > 0 && width < 80:
+			return "model picker · Enter select · Esc"
+		default:
+			return "model picker · Up/Down choose · Enter select · Esc cancel"
 		}
 	}
 	if strings.HasPrefix(strings.ToLower(status), "global search") {
@@ -3241,6 +3588,9 @@ func (m model) mode() string {
 	if m.todosOpen {
 		return "todos"
 	}
+	if m.modelPicker {
+		return "model picker"
+	}
 	if len(m.matches) > 0 {
 		return fmt.Sprintf("%d completions", len(m.matches))
 	}
@@ -3392,6 +3742,9 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+P      quick open fallback",
 		"  Ctrl+Shift+F search workspace",
 		"  Ctrl+F      search workspace fallback",
+		"  Alt+P       open model picker",
+		"  Alt+O       toggle fast mode",
+		"  Alt+T       cycle thinking effort",
 		"  Ctrl+T      toggle tasks",
 		"  Ctrl+O      toggle expanded transcript",
 		"  Ctrl+L      clear screen",
