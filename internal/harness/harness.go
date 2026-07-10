@@ -3577,7 +3577,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+x ctrl+e"`) || !strings.Contains(string(keybindingsData), `"ctrl+x ctrl+k"`) || !strings.Contains(string(keybindingsData), `"ctrl+_"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+-"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+f"`) || !strings.Contains(string(keybindingsData), `"alt+p"`) || !strings.Contains(string(keybindingsData), `"alt+o"`) || !strings.Contains(string(keybindingsData), `"alt+t"`) || !strings.Contains(string(keybindingsData), `"shift+up"`) || !strings.Contains(string(keybindingsData), `"ctrl+o"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
+			if !strings.Contains(string(keybindingsData), `"context": "repl"`) || !strings.Contains(string(keybindingsData), `"ctrl+r"`) || !strings.Contains(string(keybindingsData), `"shift+enter"`) || !strings.Contains(string(keybindingsData), `"ctrl+s"`) || !strings.Contains(string(keybindingsData), `"ctrl+g"`) || !strings.Contains(string(keybindingsData), `"ctrl+x ctrl+e"`) || !strings.Contains(string(keybindingsData), `"ctrl+x ctrl+k"`) || !strings.Contains(string(keybindingsData), `"ctrl+x ctrl+c"`) || !strings.Contains(string(keybindingsData), `"ctrl+_"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+-"`) || !strings.Contains(string(keybindingsData), `"ctrl+v"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+p"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+f"`) || !strings.Contains(string(keybindingsData), `"ctrl+f"`) || !strings.Contains(string(keybindingsData), `"alt+p"`) || !strings.Contains(string(keybindingsData), `"alt+o"`) || !strings.Contains(string(keybindingsData), `"alt+t"`) || !strings.Contains(string(keybindingsData), `"shift+up"`) || !strings.Contains(string(keybindingsData), `"ctrl+o"`) || !strings.Contains(string(keybindingsData), `"ctrl+l"`) || !strings.Contains(string(keybindingsData), `"ctrl+d"`) || !strings.Contains(string(keybindingsData), `"ctrl+b"`) || !strings.Contains(string(keybindingsData), `"ctrl+t"`) || !strings.Contains(string(keybindingsData), `"ctrl+shift+t"`) || !strings.Contains(string(keybindingsData), `"up"`) {
 				return localScenarioResult{}, fmt.Errorf("keybindings template missing expected entries: %s", string(keybindingsData))
 			}
 
@@ -3589,7 +3589,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 46 {
+			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 4 || validateReport.BindingCount != 47 {
 				return localScenarioResult{}, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
 			}
 
@@ -3643,6 +3643,7 @@ func privacyKeybindingsScenario() scenario {
 					"external_editor":       strings.Contains(string(keybindingsData), `"ctrl+g"`),
 					"external_editor_chord": strings.Contains(string(keybindingsData), `"ctrl+x ctrl+e"`),
 					"kill_agents_chord":     strings.Contains(string(keybindingsData), `"ctrl+x ctrl+k"`),
+					"compact_chord":         strings.Contains(string(keybindingsData), `"ctrl+x ctrl+c"`),
 					"composer_undo_key":     strings.Contains(string(keybindingsData), `"ctrl+_"`) && strings.Contains(string(keybindingsData), `"ctrl+shift+-"`),
 					"clipboard_paste_key":   strings.Contains(string(keybindingsData), `"ctrl+v"`),
 					"quick_open_key":        strings.Contains(string(keybindingsData), `"ctrl+shift+p"`) && strings.Contains(string(keybindingsData), `"ctrl+p"`),

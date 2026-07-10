@@ -20834,6 +20834,7 @@ func defaultKeybindingsTemplate() []byte {
 					"ctrl+g":        "edit composer in $EDITOR",
 					"ctrl+x ctrl+e": "edit composer in $EDITOR",
 					"ctrl+x ctrl+k": "stop running background tasks and agents",
+					"ctrl+x ctrl+c": "compact current session",
 					"ctrl+_":        "undo composer edit",
 					"ctrl+shift+-":  "undo composer edit",
 					"ctrl+v":        "paste clipboard text or image",
@@ -20924,6 +20925,7 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Ctrl-G", Action: "edit composer in $EDITOR"},
 					{Key: "Ctrl-X Ctrl-E", Action: "edit composer in $EDITOR"},
 					{Key: "Ctrl-X Ctrl-K", Action: "stop running background tasks and agents"},
+					{Key: "Ctrl-X Ctrl-C", Action: "compact current session"},
 					{Key: "Ctrl-_", Action: "undo composer edit"},
 					{Key: "Ctrl-Shift--", Action: "undo composer edit"},
 					{Key: "Ctrl-V", Action: "paste clipboard text or image"},
@@ -39230,6 +39232,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		StopBackground: func(ctx context.Context) (tui.RuntimeControlResult, error) {
 			return a.stopTUIBackground(ctx)
 		},
+		CompactSession: func(ctx context.Context) (tui.RuntimeControlResult, error) {
+			return a.compactTUISession(ctx, sess)
+		},
 		ModeLabel: modeState.Label(),
 		CycleMode: func() string {
 			return modeState.Cycle()
@@ -39389,6 +39394,45 @@ func (a *App) stopTUIBackground(ctx context.Context) (tui.RuntimeControlResult, 
 	return tui.RuntimeControlResult{
 		Title:  "Background Tasks",
 		Status: fmt.Sprintf("stopped %d", len(stopped)),
+		Lines:  lines,
+	}, nil
+}
+
+func (a *App) compactTUISession(ctx context.Context, sess *session.Session) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if sess == nil || strings.TrimSpace(sess.ID) == "" {
+		return tui.RuntimeControlResult{}, errors.New("session is required")
+	}
+	var out bytes.Buffer
+	oldOut, oldErr := a.Out, a.Err
+	a.Out, a.Err = &out, &out
+	err := a.Compact([]string{"--json"}, config.FlagOverrides{SessionID: sess.ID})
+	a.Out, a.Err = oldOut, oldErr
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	var result session.ReplaceResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if current, err := a.Sessions.Open(sess.ID); err == nil {
+		*sess = *current
+	}
+	lines := []string{
+		"Session: " + result.SessionID,
+		fmt.Sprintf("Original: %d", result.OriginalMessages),
+		fmt.Sprintf("Remaining: %d", result.RemainingMessages),
+		fmt.Sprintf("Removed: %d", result.RemovedMessages),
+	}
+	status := "compacted"
+	if result.RemovedMessages > 0 {
+		status = fmt.Sprintf("compacted %d", result.RemovedMessages)
+	}
+	return tui.RuntimeControlResult{
+		Title:  "Session Compacted",
+		Status: status,
 		Lines:  lines,
 	}, nil
 }

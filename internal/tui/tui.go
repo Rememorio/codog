@@ -116,6 +116,7 @@ type ShellOptions struct {
 	ToggleFast              RuntimeControlFunc
 	ToggleThinking          RuntimeControlFunc
 	StopBackground          RuntimeControlFunc
+	CompactSession          RuntimeControlFunc
 	ModeLabel               string
 	CycleMode               func() string
 }
@@ -211,6 +212,7 @@ type model struct {
 	toggleFast               RuntimeControlFunc
 	toggleThinking           RuntimeControlFunc
 	stopBackground           RuntimeControlFunc
+	compactSession           RuntimeControlFunc
 	messageActions           bool
 	messageActionTarget      int
 	messageActionSelected    int
@@ -852,6 +854,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.toggleFast = options.ToggleFast
 	m.toggleThinking = options.ToggleThinking
 	m.stopBackground = options.StopBackground
+	m.compactSession = options.CompactSession
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
@@ -1174,7 +1177,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.status = "stopping background"
 				return m, runRuntimeControlCommand(m.ctx, m.stopBackground)
-			case "ctrl+c", "esc":
+			case "ctrl+c":
+				if m.compactSession == nil {
+					m.status = "no compact"
+					return m, nil
+				}
+				m.status = "compacting"
+				return m, runRuntimeControlCommand(m.ctx, m.compactSession)
+			case "esc":
 				m.status = m.mode()
 				return m, nil
 			default:
@@ -3329,7 +3339,7 @@ func statusBarText(status string, width int) string {
 		}
 	}
 	if strings.EqualFold(status, "ctrl+x") {
-		return "Ctrl+X · Ctrl+E edit in $EDITOR · Ctrl+K stop background · Esc cancel"
+		return "Ctrl+X · Ctrl+E edit in $EDITOR · Ctrl+K stop background · Ctrl+C compact · Esc cancel"
 	}
 	switch {
 	case width > 0 && width < 70:
@@ -3964,6 +3974,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+G      edit composer in $EDITOR",
 		"  Ctrl+X Ctrl+E edit composer in $EDITOR",
 		"  Ctrl+X Ctrl+K stop background tasks",
+		"  Ctrl+X Ctrl+C compact session",
 		"  Ctrl+_      undo composer edit",
 		"  Ctrl+Shift+- undo composer edit",
 		"  Ctrl+V      paste clipboard text or image",

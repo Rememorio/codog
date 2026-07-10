@@ -773,6 +773,34 @@ func TestCtrlXCtrlKStopsBackgroundTasks(t *testing.T) {
 	require.Contains(t, m.View(), "agent: task-1")
 }
 
+func TestCtrlXCtrlCCompactsSession(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	called := false
+	m.compactSession = func(context.Context) (RuntimeControlResult, error) {
+		called = true
+		return RuntimeControlResult{Title: "Session Compacted", Status: "compacted 3", Lines: []string{"Session: session-1", "Removed: 3"}}, nil
+	}
+
+	updated, cmd := m.Update(teaKey("ctrl+x"))
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.True(t, m.ctrlXChord)
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "compacting", m.status)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.True(t, called)
+	require.False(t, m.ctrlXChord)
+	require.Equal(t, "compacted 3", m.status)
+	require.Contains(t, m.View(), "Session Compacted")
+	require.Contains(t, m.View(), "Removed: 3")
+}
+
 func TestPreviewTogglesHelpPanel(t *testing.T) {
 	preview := PreviewWithCandidates("/help", []string{"/status", "/context"}, 100, 24, false, false)
 	require.True(t, preview.HelpOpen)

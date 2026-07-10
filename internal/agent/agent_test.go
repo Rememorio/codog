@@ -20809,6 +20809,13 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"binding_action": "stop running background tasks and agents"`)
 	out.Reset()
 
+	require.NoError(t, app.Keybindings([]string{"resolve", "tui", "Ctrl-X Ctrl-C", "--json"}))
+	require.Contains(t, out.String(), `"action": "resolve"`)
+	require.Contains(t, out.String(), `"normalized_key": "ctrl+x ctrl+c"`)
+	require.Contains(t, out.String(), `"found": true`)
+	require.Contains(t, out.String(), `"binding_action": "compact current session"`)
+	out.Reset()
+
 	require.NoError(t, app.Keybindings([]string{"resolve", "tui", "Ctrl-O", "--json"}))
 	require.Contains(t, out.String(), `"action": "resolve"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+o"`)
@@ -20855,6 +20862,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), `"ctrl+g": "edit composer in $EDITOR"`)
 	require.Contains(t, string(data), `"ctrl+x ctrl+e": "edit composer in $EDITOR"`)
 	require.Contains(t, string(data), `"ctrl+x ctrl+k": "stop running background tasks and agents"`)
+	require.Contains(t, string(data), `"ctrl+x ctrl+c": "compact current session"`)
 	require.Contains(t, string(data), `"ctrl+_": "undo composer edit"`)
 	require.Contains(t, string(data), `"ctrl+shift+-": "undo composer edit"`)
 	require.Contains(t, string(data), `"ctrl+v": "paste clipboard text or image"`)
@@ -20879,7 +20887,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"action": "validate"`)
 	require.Contains(t, out.String(), `"valid": true`)
 	require.Contains(t, out.String(), `"context_count": 4`)
-	require.Contains(t, out.String(), `"binding_count": 46`)
+	require.Contains(t, out.String(), `"binding_count": 47`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+r"`)
 	require.Contains(t, out.String(), `"normalized_key": "shift+enter"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+s"`)
@@ -20897,6 +20905,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"normalized_key": "alt+t"`)
 	require.Contains(t, out.String(), `"normalized_key": "shift+up"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+x ctrl+k"`)
+	require.Contains(t, out.String(), `"normalized_key": "ctrl+x ctrl+c"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+o"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+l"`)
 	require.Contains(t, out.String(), `"normalized_key": "ctrl+b"`)
@@ -20953,12 +20962,13 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "REPL vim")
 	require.Contains(t, out.String(), "Config exists    true")
 	require.Contains(t, out.String(), "User valid       true")
-	require.Contains(t, out.String(), "User bindings    46")
+	require.Contains(t, out.String(), "User bindings    47")
 	require.Contains(t, out.String(), "Shift-Enter")
 	require.Contains(t, out.String(), "Ctrl-S")
 	require.Contains(t, out.String(), "Ctrl-G")
 	require.Contains(t, out.String(), "Ctrl-X Ctrl-E")
 	require.Contains(t, out.String(), "Ctrl-X Ctrl-K")
+	require.Contains(t, out.String(), "Ctrl-X Ctrl-C")
 	require.Contains(t, out.String(), "Ctrl-_")
 	require.Contains(t, out.String(), "Ctrl-Shift--")
 	require.Contains(t, out.String(), "Ctrl-V")
@@ -20997,6 +21007,39 @@ func TestRenderTUITaskBoard(t *testing.T) {
 	require.Contains(t, out, task.ID)
 	require.Contains(t, out, "review background board")
 	require.Contains(t, out, "session=session-tui")
+}
+
+func TestCompactTUISessionRefreshesCurrentSession(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("tui-compact", anthropic.TextMessage("user", "one")))
+	require.NoError(t, store.Append("tui-compact", anthropic.TextMessage("assistant", "two")))
+	require.NoError(t, store.Append("tui-compact", anthropic.TextMessage("user", "three")))
+	sess, err := store.Open("tui-compact")
+	require.NoError(t, err)
+	require.Len(t, sess.Messages, 3)
+
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			AutoCompactMessages: 1,
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+
+	result, err := app.compactTUISession(context.Background(), sess)
+	require.NoError(t, err)
+
+	require.Equal(t, "Session Compacted", result.Title)
+	require.Equal(t, "compacted 1", result.Status)
+	require.Contains(t, result.Lines, "Session: tui-compact")
+	require.Contains(t, result.Lines, "Removed: 1")
+	require.Len(t, sess.Messages, 2)
 }
 
 func TestReadTUITodosUsesWorkspaceState(t *testing.T) {
