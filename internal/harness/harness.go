@@ -5464,6 +5464,10 @@ func tuiPromptCompletionScenario() scenario {
 			if messageRestore.MessageMenu || !strings.Contains(messageRestore.View, "Conversation Restored") {
 				return localScenarioResult{}, fmt.Errorf("expected message restore preview, got view=%s", messageRestore.View)
 			}
+			messageFork := tui.PreviewWithMessageActions([]tui.Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 4)
+			if messageFork.MessageMenu || !strings.Contains(messageFork.View, "Conversation Forked") {
+				return localScenarioResult{}, fmt.Errorf("expected message fork preview, got view=%s", messageFork.View)
+			}
 
 			submitted := tui.PreviewWithCandidates("/mo", []string{"/model claude-test"}, 96, 24, true, true)
 			if !submitted.Submitted {
@@ -5499,6 +5503,7 @@ func tuiPromptCompletionScenario() scenario {
 				"message_actions":        messageActions.MessageMenu,
 				"message_action_copy":    messageCopy.Value == "copy me",
 				"message_action_restore": strings.Contains(messageRestore.View, "Conversation Restored"),
+				"message_action_fork":    strings.Contains(messageFork.View, "Conversation Forked"),
 				"attachments":            attachments.Attachments,
 				"submitted":              submitted.Submitted,
 				"submitted_prompt":       submitted.Prompt,

@@ -75,6 +75,7 @@ type TodoListFunc func(context.Context) ([]TodoItem, error)
 type RuntimeControlFunc func(context.Context) (RuntimeControlResult, error)
 type ModelSelectFunc func(context.Context, string) (RuntimeControlResult, error)
 type ConversationRestoreFunc func(context.Context, int) (RuntimeControlResult, error)
+type ConversationForkFunc func(context.Context, int) (RuntimeControlResult, error)
 
 // TodoItem is the small display model used by the TUI todo panel.
 type TodoItem struct {
@@ -119,6 +120,7 @@ type ShellOptions struct {
 	StopBackground          RuntimeControlFunc
 	CompactSession          RuntimeControlFunc
 	RestoreConversation     ConversationRestoreFunc
+	ForkConversation        ConversationForkFunc
 	ModeLabel               string
 	CycleMode               func() string
 }
@@ -216,6 +218,7 @@ type model struct {
 	stopBackground           RuntimeControlFunc
 	compactSession           RuntimeControlFunc
 	restoreConversation      ConversationRestoreFunc
+	forkConversation         ConversationForkFunc
 	messageActions           bool
 	messageActionTarget      int
 	messageActionSelected    int
@@ -749,6 +752,13 @@ func PreviewWithMessageActions(entries []Entry, width int, height int, action in
 			Lines:  []string{fmt.Sprintf("Remaining: %d", keepMessages)},
 		}, nil
 	}
+	m.forkConversation = func(_ context.Context, keepMessages int) (RuntimeControlResult, error) {
+		return RuntimeControlResult{
+			Title:  "Conversation Forked",
+			Status: "forked",
+			Lines:  []string{fmt.Sprintf("Remaining: %d", keepMessages)},
+		}, nil
+	}
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 		if next, ok := updated.(model); ok {
@@ -873,6 +883,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.stopBackground = options.StopBackground
 	m.compactSession = options.CompactSession
 	m.restoreConversation = options.RestoreConversation
+	m.forkConversation = options.ForkConversation
 	m.modeLabel = strings.TrimSpace(options.ModeLabel)
 	m.cycleMode = options.CycleMode
 	m.setHistory(options.History)
@@ -2141,6 +2152,13 @@ func runConversationRestoreCommand(ctx context.Context, restore ConversationRest
 	}
 }
 
+func runConversationForkCommand(ctx context.Context, fork ConversationForkFunc, keepMessages int) tea.Cmd {
+	return func() tea.Msg {
+		result, err := fork(ctx, keepMessages)
+		return runtimeControlDoneMsg{Result: result, Err: err}
+	}
+}
+
 func runPasteCommand(ctx context.Context, paste PasteFunc) tea.Cmd {
 	return func() tea.Msg {
 		content, err := paste(ctx)
@@ -2753,6 +2771,7 @@ var messageActionLabels = []string{
 	"quote in composer",
 	"stash message",
 	"restore before turn",
+	"fork before turn",
 }
 
 func (m *model) openMessageActions() {
@@ -2825,6 +2844,27 @@ func (m model) applyMessageAction() (tea.Model, tea.Cmd) {
 		m.historyPos = -1
 		m.status = "restoring"
 		return m, runConversationRestoreCommand(m.ctx, m.restoreConversation, keepMessages)
+	case 4:
+		if m.forkConversation == nil {
+			m.status = "fork unavailable"
+			m.messageActions = false
+			m.messageActionSelected = 0
+			return m, nil
+		}
+		keepMessages := m.restoreMessageKeepCount()
+		if keepMessages < 0 {
+			m.status = "fork unavailable"
+			m.messageActions = false
+			m.messageActionSelected = 0
+			return m, nil
+		}
+		m.messageActions = false
+		m.messageActionSelected = 0
+		m.matches = nil
+		m.selected = 0
+		m.historyPos = -1
+		m.status = "forking"
+		return m, runConversationForkCommand(m.ctx, m.forkConversation, keepMessages)
 	default:
 		m.pushComposerUndo()
 		m.textarea.SetValue(text)

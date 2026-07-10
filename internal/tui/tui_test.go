@@ -769,6 +769,43 @@ func TestMessageActionsRestoreBeforeTurn(t *testing.T) {
 	require.Contains(t, m.View(), "Removed: 2")
 }
 
+func TestMessageActionsForkBeforeTurn(t *testing.T) {
+	entries := []transcriptEntry{
+		{Role: "system", Text: "ready"},
+		{Role: "user", Text: "first prompt"},
+		{Role: "assistant", Text: "first answer"},
+		{Role: "user", Text: "second prompt"},
+		{Role: "assistant", Text: "second answer"},
+	}
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, entries)
+	var keep int
+	m.forkConversation = func(_ context.Context, keepMessages int) (RuntimeControlResult, error) {
+		keep = keepMessages
+		return RuntimeControlResult{Title: "Conversation Forked", Status: "forked 2", Lines: []string{"Remaining: 2", "Removed: 2"}}, nil
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	m = updated.(model)
+	for range 4 {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(model)
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "forking", m.status)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.Equal(t, 2, keep)
+	require.False(t, m.messageActions)
+	require.Equal(t, "forked 2", m.status)
+	require.Contains(t, m.View(), "Conversation Forked")
+	require.Contains(t, m.View(), "Removed: 2")
+}
+
 func TestPreviewWithMessageActions(t *testing.T) {
 	preview := PreviewWithMessageActions([]Entry{{Role: "assistant", Text: "copy me"}}, 96, 24, -1)
 
@@ -784,6 +821,10 @@ func TestPreviewWithMessageActions(t *testing.T) {
 	restored := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 3)
 	require.False(t, restored.MessageMenu)
 	require.Contains(t, restored.View, "Conversation Restored")
+
+	forked := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 4)
+	require.False(t, forked.MessageMenu)
+	require.Contains(t, forked.View, "Conversation Forked")
 }
 
 func TestCtrlXCtrlKStopsBackgroundTasks(t *testing.T) {

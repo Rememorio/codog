@@ -21075,6 +21075,50 @@ func TestRestoreTUIConversationReplacesSessionMessages(t *testing.T) {
 	require.Equal(t, "two", sess.Messages[1].Content[0].Text)
 }
 
+func TestForkTUIConversationCreatesTruncatedChildSession(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("tui-fork", anthropic.TextMessage("user", "one")))
+	require.NoError(t, store.Append("tui-fork", anthropic.TextMessage("assistant", "two")))
+	require.NoError(t, store.Append("tui-fork", anthropic.TextMessage("user", "three")))
+	require.NoError(t, store.Append("tui-fork", anthropic.TextMessage("assistant", "four")))
+	sess, err := store.Open("tui-fork")
+	require.NoError(t, err)
+	require.Len(t, sess.Messages, 4)
+
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome, MCPServers: map[string]config.MCPServerConfig{}},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+
+	result, err := app.forkTUIConversation(context.Background(), sess, 2)
+	require.NoError(t, err)
+
+	require.Equal(t, "Conversation Forked", result.Title)
+	require.Equal(t, "forked 2", result.Status)
+	require.NotEqual(t, "tui-fork", sess.ID)
+	require.Contains(t, result.Lines, "Session: "+sess.ID)
+	require.Contains(t, result.Lines, "Parent: tui-fork")
+	require.Contains(t, result.Lines, "Remaining: 2")
+	require.Contains(t, result.Lines, "Removed: 2")
+	require.Len(t, sess.Messages, 2)
+	require.Equal(t, "one", sess.Messages[0].Content[0].Text)
+	require.Equal(t, "two", sess.Messages[1].Content[0].Text)
+	require.Equal(t, "tui-fork", sess.Metadata.ParentSessionID)
+	require.Equal(t, "rewind", sess.Metadata.BranchName)
+
+	original, err := store.Open("tui-fork")
+	require.NoError(t, err)
+	require.Len(t, original.Messages, 4)
+	forked, err := store.OpenExisting(sess.ID)
+	require.NoError(t, err)
+	require.Len(t, forked.Messages, 2)
+}
+
 func TestReadTUITodosUsesWorkspaceState(t *testing.T) {
 	workspace := t.TempDir()
 	app := &App{Workspace: workspace}

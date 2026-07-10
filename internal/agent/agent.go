@@ -39238,6 +39238,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		RestoreConversation: func(ctx context.Context, keepMessages int) (tui.RuntimeControlResult, error) {
 			return a.restoreTUIConversation(ctx, sess, keepMessages)
 		},
+		ForkConversation: func(ctx context.Context, keepMessages int) (tui.RuntimeControlResult, error) {
+			return a.forkTUIConversation(ctx, sess, keepMessages)
+		},
 		ModeLabel: modeState.Label(),
 		CycleMode: func() string {
 			return modeState.Cycle()
@@ -39478,6 +39481,54 @@ func (a *App) restoreTUIConversation(ctx context.Context, sess *session.Session,
 	}
 	return tui.RuntimeControlResult{
 		Title:  "Conversation Restored",
+		Status: status,
+		Lines:  lines,
+	}, nil
+}
+
+func (a *App) forkTUIConversation(ctx context.Context, sess *session.Session, keepMessages int) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if sess == nil || strings.TrimSpace(sess.ID) == "" {
+		return tui.RuntimeControlResult{}, errors.New("session is required")
+	}
+	if keepMessages < 0 {
+		return tui.RuntimeControlResult{}, errors.New("fork point is invalid")
+	}
+	current, err := a.Sessions.Open(sess.ID)
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if keepMessages > len(current.Messages) {
+		keepMessages = len(current.Messages)
+	}
+	retained := append([]anthropic.Message(nil), current.Messages[:keepMessages]...)
+	forked, err := a.Sessions.Fork(current.ID, "rewind")
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	result, err := a.Sessions.ReplaceMessages(forked, retained)
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	refreshed, err := a.Sessions.Open(forked.ID)
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	*sess = *refreshed
+	lines := []string{
+		"Session: " + result.SessionID,
+		"Parent: " + current.ID,
+		fmt.Sprintf("Remaining: %d", result.RemainingMessages),
+		fmt.Sprintf("Removed: %d", result.RemovedMessages),
+	}
+	status := "conversation forked"
+	if result.RemovedMessages > 0 {
+		status = fmt.Sprintf("forked %d", result.RemovedMessages)
+	}
+	return tui.RuntimeControlResult{
+		Title:  "Conversation Forked",
 		Status: status,
 		Lines:  lines,
 	}, nil
