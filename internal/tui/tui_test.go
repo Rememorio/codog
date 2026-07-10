@@ -1158,6 +1158,75 @@ func TestCustomTUIKeybindingsOpenQuickSearchAndStash(t *testing.T) {
 	require.Equal(t, "prompt stashed", m.status)
 }
 
+func TestCustomTUIKeybindingChordOpensEditor(t *testing.T) {
+	preview := PreviewWithKeybindings("draft", map[string][]string{
+		"edit composer in $EDITOR": {"ctrl+x ctrl+e"},
+	}, nil, "ctrl+x ctrl+e", 96, 24)
+
+	require.Equal(t, "edited: draft", preview.Value)
+	require.Contains(t, preview.View, "editor updated")
+}
+
+func TestCustomTUIKeybindingChordTriggersRuntimeAction(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.keybindings = normalizeTUIKeybindings(map[string][]string{
+		"copy current conversation": {"ctrl+x ctrl+y"},
+	})
+	called := false
+	m.copyConversation = func(context.Context) (RuntimeControlResult, error) {
+		called = true
+		return RuntimeControlResult{Title: "Conversation Copied", Status: "copied", Lines: []string{"Clipboard: test"}}, nil
+	}
+
+	updated, cmd := m.Update(previewKey("ctrl+x"))
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.Equal(t, "ctrl+x", m.keyChordPrefix)
+	require.False(t, m.ctrlXChord)
+
+	updated, cmd = m.Update(previewKey("ctrl+y"))
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Empty(t, m.keyChordPrefix)
+	require.Equal(t, "copying", m.status)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.True(t, called)
+	require.Equal(t, "copied", m.status)
+	require.Contains(t, m.View(), "Conversation Copied")
+}
+
+func TestCustomTUIKeybindingChordFallsBackToDefaultCtrlX(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.keybindings = normalizeTUIKeybindings(map[string][]string{
+		"edit composer in $EDITOR": {"ctrl+x ctrl+e"},
+	})
+	called := false
+	m.undoLast = func(context.Context) (RuntimeControlResult, error) {
+		called = true
+		return RuntimeControlResult{Title: "Undo", Status: "restored", Lines: []string{"Path: notes.txt"}}, nil
+	}
+
+	updated, cmd := m.Update(previewKey("ctrl+x"))
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.Equal(t, "ctrl+x", m.keyChordPrefix)
+
+	updated, cmd = m.Update(previewKey("ctrl+u"))
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Empty(t, m.keyChordPrefix)
+	require.Equal(t, "undoing", m.status)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.True(t, called)
+	require.Contains(t, m.View(), "Path: notes.txt")
+}
+
 func TestCustomTUIContextKeybindingsDriveModalNavigation(t *testing.T) {
 	preview := PreviewWithContextKeybindings("model-picker", map[string]map[string][]string{
 		"tui-modal": {

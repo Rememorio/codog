@@ -233,6 +233,7 @@ type model struct {
 	historyPos                int
 	draft                     string
 	undoStack                 []string
+	keyChordPrefix            string
 	ctrlXChord                bool
 	quickOpenDraft            string
 	quickOpenMatches          []string
@@ -1115,8 +1116,8 @@ func PreviewWithVimMode(input string, keys []string, width int, height int) Prev
 	}
 }
 
-// PreviewWithKeybindings renders a deterministic TUI state after applying one
-// custom TUI keybinding.
+// PreviewWithKeybindings renders a deterministic TUI state after applying a
+// custom TUI keybinding or keybinding chord.
 func PreviewWithKeybindings(input string, bindings map[string][]string, files []string, key string, width int, height int) Preview {
 	ta := newPromptTextarea(input)
 	m := newModel(context.Background(), ta, nil, nil)
@@ -1131,14 +1132,16 @@ func PreviewWithKeybindings(input string, bindings map[string][]string, files []
 			m = next
 		}
 	}
-	updated, cmd := m.Update(previewKey(key))
-	if next, ok := updated.(model); ok {
-		m = next
-	}
-	if cmd != nil {
-		updated, _ = m.Update(cmd())
+	for _, keyPart := range strings.Fields(key) {
+		updated, cmd := m.Update(previewKey(keyPart))
 		if next, ok := updated.(model); ok {
 			m = next
+		}
+		if cmd != nil {
+			updated, _ = m.Update(cmd())
+			if next, ok := updated.(model); ok {
+				m = next
+			}
 		}
 	}
 	return Preview{
@@ -2014,56 +2017,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateQuickOpen()
 			return m, tea.Batch(cmd, viewportCmd)
 		}
+		if m.keyChordPrefix != "" {
+			next, handled, cmd := m.handleBoundTUIChord(msg)
+			if handled {
+				return next, cmd
+			}
+		}
 		if m.ctrlXChord {
 			m.ctrlXChord = false
-			switch msg.String() {
-			case "ctrl+e":
-				return m.openExternalEditor()
-			case "ctrl+k":
-				if m.stopBackground == nil {
-					m.status = "no background stop"
-					return m, nil
-				}
-				m.status = "stopping background"
-				return m, runRuntimeControlCommand(m.ctx, m.stopBackground)
-			case "ctrl+c":
-				if m.compactSession == nil {
-					m.status = "no compact"
-					return m, nil
-				}
-				m.status = "compacting"
-				return m, runRuntimeControlCommand(m.ctx, m.compactSession)
-			case "ctrl+u":
-				if m.undoLast == nil {
-					m.status = "no undo"
-					return m, nil
-				}
-				m.status = "undoing"
-				return m, runRuntimeControlCommand(m.ctx, m.undoLast)
-			case "ctrl+s":
-				if m.exportConversation == nil {
-					m.status = "no export"
-					return m, nil
-				}
-				m.status = "exporting"
-				return m, runRuntimeControlCommand(m.ctx, m.exportConversation)
-			case "ctrl+y":
-				if m.copyConversation == nil {
-					m.status = "no copy"
-					return m, nil
-				}
-				m.status = "copying"
-				return m, runRuntimeControlCommand(m.ctx, m.copyConversation)
-			case "backspace", "delete":
-				m.removeLastAttachment()
-				return m, nil
-			case "esc":
-				m.status = m.mode()
-				return m, nil
-			default:
-				m.status = "compose"
-				return m, nil
-			}
+			return m.handleDefaultCtrlXChord(msg)
 		}
 		if msg.String() != "esc" {
 			m.exitPending = false
@@ -2955,6 +2917,44 @@ func (m model) handleBoundTUIAction(msg tea.KeyMsg) (model, bool, tea.Cmd) {
 	if key == "" || len(m.keybindings) == 0 {
 		return m, false, nil
 	}
+	if next, handled, cmd := m.handleBoundTUIActionKey(key); handled {
+		return next, true, cmd
+	}
+	if m.isBoundTUIChordPrefix(key) {
+		m.keyChordPrefix = key
+		m.status = key
+		return m, true, nil
+	}
+	return m, false, nil
+}
+
+func (m model) handleBoundTUIChord(msg tea.KeyMsg) (model, bool, tea.Cmd) {
+	prefix := m.keyChordPrefix
+	key := normalizeTUIKey(msg.String())
+	m.keyChordPrefix = ""
+	if prefix == "" {
+		return m, false, nil
+	}
+	if key == "esc" || key == "" {
+		m.status = m.mode()
+		return m, true, nil
+	}
+	sequence := strings.TrimSpace(prefix + " " + key)
+	if next, handled, cmd := m.handleBoundTUIActionKey(sequence); handled {
+		return next, true, cmd
+	}
+	if prefix == "ctrl+x" {
+		next, cmd := m.handleDefaultCtrlXChord(msg)
+		return next, true, cmd
+	}
+	m.status = "compose"
+	return m, true, nil
+}
+
+func (m model) handleBoundTUIActionKey(key string) (model, bool, tea.Cmd) {
+	if key == "" {
+		return m, false, nil
+	}
 	switch {
 	case m.isBoundTUIAction("submit prompt", key):
 		if m.busy && m.awaitingQuestion {
@@ -3006,6 +3006,44 @@ func (m model) handleBoundTUIAction(msg tea.KeyMsg) (model, bool, tea.Cmd) {
 			return modelNext, true, cmd
 		}
 		return m, true, cmd
+	case m.isBoundTUIAction("stop running background tasks and agents", key):
+		if m.stopBackground == nil {
+			m.status = "no background stop"
+			return m, true, nil
+		}
+		m.status = "stopping background"
+		return m, true, runRuntimeControlCommand(m.ctx, m.stopBackground)
+	case m.isBoundTUIAction("compact current session", key):
+		if m.compactSession == nil {
+			m.status = "no compact"
+			return m, true, nil
+		}
+		m.status = "compacting"
+		return m, true, runRuntimeControlCommand(m.ctx, m.compactSession)
+	case m.isBoundTUIAction("undo last file change", key):
+		if m.undoLast == nil {
+			m.status = "no undo"
+			return m, true, nil
+		}
+		m.status = "undoing"
+		return m, true, runRuntimeControlCommand(m.ctx, m.undoLast)
+	case m.isBoundTUIAction("export current conversation", key):
+		if m.exportConversation == nil {
+			m.status = "no export"
+			return m, true, nil
+		}
+		m.status = "exporting"
+		return m, true, runRuntimeControlCommand(m.ctx, m.exportConversation)
+	case m.isBoundTUIAction("copy current conversation", key):
+		if m.copyConversation == nil {
+			m.status = "no copy"
+			return m, true, nil
+		}
+		m.status = "copying"
+		return m, true, runRuntimeControlCommand(m.ctx, m.copyConversation)
+	case m.isBoundTUIAction("remove last attachment", key):
+		m.removeLastAttachment()
+		return m, true, nil
 	case m.isBoundTUIAction("undo composer edit", key):
 		if m.busy || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
 			return m, true, nil
@@ -3090,6 +3128,61 @@ func (m model) handleBoundTUIAction(msg tea.KeyMsg) (model, bool, tea.Cmd) {
 		return m, true, runPasteCommand(m.ctx, m.paste)
 	default:
 		return m, false, nil
+	}
+}
+
+func (m model) handleDefaultCtrlXChord(msg tea.KeyMsg) (model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+e":
+		next, cmd := m.openExternalEditor()
+		if modelNext, ok := next.(model); ok {
+			return modelNext, cmd
+		}
+		return m, cmd
+	case "ctrl+k":
+		if m.stopBackground == nil {
+			m.status = "no background stop"
+			return m, nil
+		}
+		m.status = "stopping background"
+		return m, runRuntimeControlCommand(m.ctx, m.stopBackground)
+	case "ctrl+c":
+		if m.compactSession == nil {
+			m.status = "no compact"
+			return m, nil
+		}
+		m.status = "compacting"
+		return m, runRuntimeControlCommand(m.ctx, m.compactSession)
+	case "ctrl+u":
+		if m.undoLast == nil {
+			m.status = "no undo"
+			return m, nil
+		}
+		m.status = "undoing"
+		return m, runRuntimeControlCommand(m.ctx, m.undoLast)
+	case "ctrl+s":
+		if m.exportConversation == nil {
+			m.status = "no export"
+			return m, nil
+		}
+		m.status = "exporting"
+		return m, runRuntimeControlCommand(m.ctx, m.exportConversation)
+	case "ctrl+y":
+		if m.copyConversation == nil {
+			m.status = "no copy"
+			return m, nil
+		}
+		m.status = "copying"
+		return m, runRuntimeControlCommand(m.ctx, m.copyConversation)
+	case "backspace", "delete":
+		m.removeLastAttachment()
+		return m, nil
+	case "esc":
+		m.status = m.mode()
+		return m, nil
+	default:
+		m.status = "compose"
+		return m, nil
 	}
 }
 
@@ -3234,6 +3327,21 @@ func (m model) handleBoundDiffAction(msg tea.KeyMsg) (model, bool, tea.Cmd) {
 func (m model) isBoundTUIAction(action string, key string) bool {
 	keys := m.keybindings[normalizeTUIAction(action)]
 	return keys != nil && keys[key]
+}
+
+func (m model) isBoundTUIChordPrefix(key string) bool {
+	if key == "" || len(m.keybindings) == 0 {
+		return false
+	}
+	prefix := key + " "
+	for _, keys := range m.keybindings {
+		for sequence := range keys {
+			if strings.HasPrefix(sequence, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (m model) isBoundTUIContextAction(contextName string, action string, key string) bool {
@@ -3492,6 +3600,7 @@ func (m model) openExternalEditor() (tea.Model, tea.Cmd) {
 	}
 	m.matches = nil
 	m.selected = 0
+	m.keyChordPrefix = ""
 	m.ctrlXChord = false
 	m.status = "editing"
 	return m, runExternalEditorCommand(m.ctx, m.externalEditor, m.textarea.Value())
@@ -4076,6 +4185,7 @@ func (m *model) clearScreen() {
 	m.searchHits = nil
 	m.searchPos = 0
 	m.undoStack = nil
+	m.keyChordPrefix = ""
 	m.ctrlXChord = false
 	m.quickOpen = false
 	m.quickOpenMatches = nil
@@ -4623,6 +4733,7 @@ func (m *model) undoComposer() {
 		m.matches = nil
 		m.selected = 0
 		m.historyPos = -1
+		m.keyChordPrefix = ""
 		m.ctrlXChord = false
 		m.status = "undo"
 		m.refreshCompletionMenu()
