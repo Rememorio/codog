@@ -338,7 +338,7 @@ func TestCtrlOTogglesExpandedTranscript(t *testing.T) {
 	require.Equal(t, "transcript", m.status)
 	require.Contains(t, m.View(), "001/002 user")
 	require.Contains(t, m.View(), "2 lines")
-	require.Contains(t, m.View(), "Ctrl-O transcript")
+	require.Contains(t, m.View(), "Ctrl-O")
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(model)
@@ -412,6 +412,94 @@ func TestFileReferenceCompletionIgnoresEmailLikeAtSigns(t *testing.T) {
 	preview := PreviewWithFileCandidates("mail dev@example", []string{"example.go"}, 96, 24, false)
 
 	require.Empty(t, preview.Matches)
+}
+
+func TestQuickOpenFiltersAndInsertsFileReference(t *testing.T) {
+	ta := newPromptTextarea("review")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = []string{"internal/agent/agent.go", "internal/tui/tui.go", "README.md"}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	m = updated.(model)
+
+	require.True(t, m.quickOpen)
+	require.Equal(t, "review", m.quickOpenDraft)
+	require.Contains(t, m.View(), "start typing to search files")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tui")})
+	m = updated.(model)
+
+	require.Equal(t, []string{"internal/tui/tui.go"}, m.quickOpenMatches)
+	require.Contains(t, m.View(), "quick open: tui")
+	require.Contains(t, m.View(), "Enter/Tab insert @file")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	require.False(t, m.quickOpen)
+	require.Equal(t, "review @internal/tui/tui.go ", m.textarea.Value())
+	require.Equal(t, "file referenced", m.status)
+}
+
+func TestQuickOpenShiftTabInsertsBarePath(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = []string{"internal/tui/tui.go"}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tui")})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = updated.(model)
+
+	require.False(t, m.quickOpen)
+	require.Equal(t, "internal/tui/tui.go ", m.textarea.Value())
+	require.Equal(t, "path inserted", m.status)
+}
+
+func TestQuickOpenEscapeRestoresDraft(t *testing.T) {
+	ta := newPromptTextarea("unfinished")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = []string{"internal/tui/tui.go"}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	m = updated.(model)
+	m.textarea.SetValue("tui")
+	m.updateQuickOpen()
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+
+	require.False(t, m.quickOpen)
+	require.Equal(t, "unfinished", m.textarea.Value())
+}
+
+func TestQuickOpenTreatsQuestionMarkAsQuery(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = []string{"docs/question.md"}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	m = updated.(model)
+
+	require.True(t, m.quickOpen)
+	require.False(t, m.helpOpen)
+	require.Equal(t, "?", m.textarea.Value())
+}
+
+func TestPreviewWithQuickOpen(t *testing.T) {
+	preview := PreviewWithQuickOpen("inspect", []string{"internal/tui/tui.go", "internal/agent/agent.go"}, "tui", 96, 24, false)
+
+	require.True(t, preview.QuickOpen)
+	require.Equal(t, []string{"internal/tui/tui.go"}, preview.Matches)
+	require.Contains(t, preview.View, "quick open: tui")
+
+	accepted := PreviewWithQuickOpen("inspect", []string{"internal/tui/tui.go"}, "tui", 96, 24, true)
+	require.False(t, accepted.QuickOpen)
+	require.Equal(t, "inspect @internal/tui/tui.go ", accepted.Value)
 }
 
 func TestPreviewTogglesHelpPanel(t *testing.T) {

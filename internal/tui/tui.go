@@ -102,6 +102,7 @@ type Preview struct {
 	HelpOpen    bool
 	HasStash    bool
 	Transcript  bool
+	QuickOpen   bool
 }
 
 type composerStash struct {
@@ -122,6 +123,7 @@ type model struct {
 	fileCandidates          []string
 	helpOpen                bool
 	transcriptMode          bool
+	quickOpen               bool
 	busy                    bool
 	status                  string
 	transcript              []transcriptEntry
@@ -141,6 +143,9 @@ type model struct {
 	history                 []string
 	historyPos              int
 	draft                   string
+	quickOpenDraft          string
+	quickOpenMatches        []string
+	quickOpenSelected       int
 	queuedPrompts           []string
 	attachments             []string
 	stashedPrompt           *composerStash
@@ -221,6 +226,7 @@ func PreviewWithCandidates(input string, candidates []string, width int, height 
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
 		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
 	}
 }
 
@@ -249,6 +255,7 @@ func PreviewWithFileCandidates(input string, files []string, width int, height i
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
 		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
 	}
 }
 
@@ -275,6 +282,7 @@ func PreviewWithQueued(input string, queued []string, width int, height int) Pre
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
 		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
 	}
 }
 
@@ -303,6 +311,7 @@ func PreviewWithStash(input string, attachments []string, width int, height int)
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
 		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
 	}
 }
 
@@ -334,6 +343,48 @@ func PreviewWithTranscript(entries []Entry, width int, height int) Preview {
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
 		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
+	}
+}
+
+// PreviewWithQuickOpen renders a deterministic TUI state after opening the file
+// picker, typing a query, and optionally accepting the selected file.
+func PreviewWithQuickOpen(input string, files []string, query string, width int, height int, accept bool) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = append([]string(nil), files...)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	if query != "" {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(query)})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	if accept {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.quickOpenMatches...),
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
 	}
 }
 
@@ -358,6 +409,7 @@ func PreviewWithAttachments(input string, attachments []string, width int, heigh
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
 		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
 	}
 }
 
@@ -385,6 +437,7 @@ func PreviewWithPaste(input string, clipboardText string, width int, height int)
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
 		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
 	}
 }
 
@@ -412,6 +465,7 @@ func PreviewWithPasteAttachment(input string, attachmentPath string, width int, 
 		HelpOpen:    m.helpOpen,
 		HasStash:    m.stashedPrompt != nil,
 		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
 	}
 }
 
@@ -635,6 +689,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Paste {
 			return m.handlePastedInput(msg)
 		}
+		if m.quickOpen {
+			switch msg.String() {
+			case "ctrl+c", "esc":
+				m.closeQuickOpen(false, false)
+				return m, nil
+			case "up", "ctrl+p":
+				m.moveQuickOpen(-1)
+				return m, nil
+			case "down", "ctrl+n":
+				m.moveQuickOpen(1)
+				return m, nil
+			case "enter", "tab":
+				m.closeQuickOpen(true, true)
+				return m, nil
+			case "shift+tab":
+				m.closeQuickOpen(true, false)
+				return m, nil
+			case "ctrl+r", "ctrl+s", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+v", "ctrl+l", "ctrl+d":
+				return m, nil
+			}
+			var cmd tea.Cmd
+			var viewportCmd tea.Cmd
+			m.viewport, viewportCmd = m.viewport.Update(msg)
+			m.textarea, cmd = m.textarea.Update(msg)
+			m.updateQuickOpen()
+			return m, tea.Batch(cmd, viewportCmd)
+		}
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			if m.busy {
@@ -663,7 +744,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "ctrl+d":
-			if !m.busy && !m.searchOpen && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
+			if !m.busy && !m.searchOpen && !m.quickOpen && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
 				return m, tea.Quit
 			}
 		case "ctrl+l":
@@ -685,7 +766,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "pasting"
 			return m, runPasteCommand(m.ctx, m.paste)
 		case "ctrl+b":
-			if m.backgrounding || m.background == nil || m.searchOpen || m.awaitingPermission || m.awaitingQuestion {
+			if m.backgrounding || m.background == nil || m.searchOpen || m.quickOpen || m.awaitingPermission || m.awaitingQuestion {
 				return m, nil
 			}
 			value := strings.TrimSpace(m.textarea.Value())
@@ -705,7 +786,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 			return m, runBackgroundCommand(ctx, m.background, value)
 		case "ctrl+t":
-			if m.taskBoard == nil || m.searchOpen || m.awaitingPermission || m.awaitingQuestion {
+			if m.taskBoard == nil || m.searchOpen || m.quickOpen || m.awaitingPermission || m.awaitingQuestion {
 				return m, nil
 			}
 			if m.helpOpen {
@@ -734,6 +815,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.refreshViewport()
 			m.viewport.GotoBottom()
+			return m, nil
+		case "ctrl+shift+p", "ctrl+p":
+			if m.busy || m.backgrounding || m.searchOpen || m.awaitingPermission || m.awaitingQuestion || len(m.fileCandidates) == 0 {
+				return m, nil
+			}
+			m.openQuickOpen()
 			return m, nil
 		case "ctrl+g":
 			if m.busy || m.externalEditor == nil {
@@ -861,6 +948,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateHistorySearch()
 		return m, tea.Batch(cmd, viewportCmd)
 	}
+	if m.quickOpen {
+		m.updateQuickOpen()
+		return m, tea.Batch(cmd, viewportCmd)
+	}
 	m.refreshCompletionMenu()
 	if isLocalHelpInput(m.textarea.Value()) {
 		m.status = "help ready"
@@ -901,6 +992,10 @@ func (m model) insertPastedText(text string) (tea.Model, tea.Cmd) {
 	m.historyPos = -1
 	if m.searchOpen {
 		m.updateHistorySearch()
+		return m, nil
+	}
+	if m.quickOpen {
+		m.updateQuickOpen()
 		return m, nil
 	}
 	m.refreshCompletionMenu()
@@ -994,6 +1089,9 @@ func (m model) View() string {
 	}
 	if m.searchOpen {
 		composer += "\n" + renderHistorySearch(m.searchHits, m.searchPos, m.textarea.Value())
+	}
+	if m.quickOpen {
+		composer += "\n" + renderQuickOpen(m.quickOpenMatches, m.quickOpenSelected, m.textarea.Value(), m.width)
 	}
 	if len(m.queuedPrompts) > 0 {
 		composer += "\n" + renderQueuedPrompts(m.queuedPrompts)
@@ -1159,7 +1257,7 @@ func (m *model) editQueuedPrompts() {
 }
 
 func (m *model) togglePromptStash() {
-	if m.searchOpen || m.awaitingPermission || m.awaitingQuestion {
+	if m.searchOpen || m.quickOpen || m.awaitingPermission || m.awaitingQuestion {
 		return
 	}
 	if m.helpOpen {
@@ -1488,6 +1586,10 @@ func (m *model) clearScreen() {
 	m.searchOpen = false
 	m.searchHits = nil
 	m.searchPos = 0
+	m.quickOpen = false
+	m.quickOpenMatches = nil
+	m.quickOpenSelected = 0
+	m.quickOpenDraft = ""
 	m.transcript = []transcriptEntry{{Role: "system", Text: "Screen cleared."}}
 	m.status = "cleared"
 	m.refreshViewport()
@@ -1680,12 +1782,74 @@ func filterFileReferenceCandidates(prefix string, files []string) []string {
 	return out
 }
 
+func filterQuickOpenFileCandidates(query string, files []string, limit int) []string {
+	if limit <= 0 {
+		limit = 8
+	}
+	tokens := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
+	if len(tokens) == 0 {
+		return nil
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, file := range files {
+		file = strings.TrimSpace(filepathToSlash(file))
+		if file == "" || seen[file] {
+			continue
+		}
+		lower := strings.ToLower(file)
+		matched := true
+		for _, token := range tokens {
+			if !strings.Contains(lower, token) && !fuzzySubsequence(token, lower) {
+				matched = false
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		seen[file] = true
+		out = append(out, file)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func fuzzySubsequence(query string, candidate string) bool {
+	if query == "" {
+		return true
+	}
+	queryRunes := []rune(query)
+	pos := 0
+	for _, r := range candidate {
+		if pos >= len(queryRunes) {
+			break
+		}
+		if r == queryRunes[pos] {
+			pos++
+		}
+	}
+	return pos == len(queryRunes)
+}
+
 func completeFileReferenceValue(value string, candidate string) string {
 	index := strings.LastIndex(value, "@")
 	if index < 0 {
 		return completeValue(candidate)
 	}
 	return value[:index] + completeValue(candidate)
+}
+
+func insertWithComposerSpacing(base string, insert string) string {
+	if strings.TrimSpace(base) == "" {
+		return insert
+	}
+	if strings.HasSuffix(base, " ") || strings.HasSuffix(base, "\t") || strings.HasSuffix(base, "\n") {
+		return base + insert
+	}
+	return base + " " + insert
 }
 
 func filepathToSlash(path string) string {
@@ -1765,6 +1929,39 @@ func renderQueuedPrompts(queued []string) string {
 	for index := start; index < len(queued); index++ {
 		lines = append(lines, completionStyle().Render(fmt.Sprintf("  %d. %s", index+1, truncateForComposer(queued[index], 100))))
 	}
+	return strings.Join(lines, "\n")
+}
+
+func renderQuickOpen(matches []string, selected int, query string, width int) string {
+	query = strings.TrimSpace(query)
+	title := " quick open "
+	if query != "" {
+		title = fmt.Sprintf(" quick open: %s ", query)
+	}
+	lines := []string{completionTitleStyle().Render(title)}
+	if query == "" {
+		return strings.Join(append(lines, completionStyle().Render("  start typing to search files")), "\n")
+	}
+	if len(matches) == 0 {
+		return strings.Join(append(lines, completionStyle().Render("  no matching files")), "\n")
+	}
+	if selected < 0 || selected >= len(matches) {
+		selected = 0
+	}
+	limit := 120
+	if width > 0 {
+		limit = max(40, width-8)
+	}
+	for index, match := range matches {
+		prefix := "  "
+		style := completionStyle()
+		if index == selected {
+			prefix = "> "
+			style = selectedCompletionStyle()
+		}
+		lines = append(lines, style.Render(prefix+truncateForComposer(match, limit)))
+	}
+	lines = append(lines, completionStyle().Render("  Enter/Tab insert @file · Shift+Tab insert path · Esc cancel"))
 	return strings.Join(lines, "\n")
 }
 
@@ -1854,6 +2051,14 @@ func statusBarText(status string, width int) string {
 			return fmt.Sprintf("%s · Esc/Ctrl-C cancel current turn · wait for tools to stop", status)
 		}
 	}
+	if strings.HasPrefix(strings.ToLower(status), "quick open") {
+		switch {
+		case width > 0 && width < 80:
+			return "quick open · type · Enter · Esc"
+		default:
+			return "quick open · type to search · Enter/Tab insert @file · Shift+Tab path · Esc cancel"
+		}
+	}
 	switch {
 	case width > 0 && width < 70:
 		return fmt.Sprintf("%s · Enter · Tab · Ctrl-R · Esc", status)
@@ -1862,7 +2067,7 @@ func statusBarText(status string, width int) string {
 	case width > 0 && width < 110:
 		return fmt.Sprintf("%s · Enter send · Shift+Enter newline · Tab complete · Ctrl-R history · Ctrl-L clear · Ctrl-D exit", status)
 	default:
-		return fmt.Sprintf("%s · Enter send · Shift+Enter or \\+Enter newline · Tab complete · Ctrl-R history · Ctrl-O transcript · Ctrl-L clear · Ctrl-D exit", status)
+		return fmt.Sprintf("%s · Enter send · Shift+Enter or \\+Enter newline · Tab complete · Ctrl-R history · Ctrl+Shift+P files · Ctrl-O transcript · Ctrl-L clear · Ctrl-D exit", status)
 	}
 }
 
@@ -1919,7 +2124,7 @@ func normalizeHistory(history []string) []string {
 }
 
 func (m model) canNavigateHistory() bool {
-	if len(m.history) == 0 || m.busy || m.helpOpen || m.searchOpen {
+	if len(m.history) == 0 || m.busy || m.helpOpen || m.searchOpen || m.quickOpen {
 		return false
 	}
 	if strings.Contains(m.textarea.Value(), "\n") {
@@ -2004,6 +2209,77 @@ func (m *model) closeHistorySearch(accept bool) {
 	m.searchOpen = false
 	m.searchHits = nil
 	m.searchPos = 0
+}
+
+func (m *model) openQuickOpen() {
+	if m.quickOpen {
+		return
+	}
+	m.quickOpen = true
+	m.quickOpenDraft = m.textarea.Value()
+	m.textarea.SetValue("")
+	m.matches = nil
+	m.selected = 0
+	m.historyPos = -1
+	m.searchOpen = false
+	m.searchHits = nil
+	m.searchPos = 0
+	if m.helpOpen {
+		m.helpOpen = false
+		m.refreshViewport()
+	}
+	m.updateQuickOpen()
+}
+
+func (m *model) updateQuickOpen() {
+	m.quickOpenMatches = filterQuickOpenFileCandidates(m.textarea.Value(), m.fileCandidates, 8)
+	if m.quickOpenSelected < 0 || m.quickOpenSelected >= len(m.quickOpenMatches) {
+		m.quickOpenSelected = 0
+	}
+	if len(m.quickOpenMatches) == 0 {
+		m.status = "quick open"
+		return
+	}
+	m.status = fmt.Sprintf("quick open %d/%d", m.quickOpenSelected+1, len(m.quickOpenMatches))
+}
+
+func (m *model) moveQuickOpen(delta int) {
+	if len(m.quickOpenMatches) == 0 {
+		return
+	}
+	m.quickOpenSelected = (m.quickOpenSelected + delta + len(m.quickOpenMatches)) % len(m.quickOpenMatches)
+	m.status = fmt.Sprintf("quick open %d/%d", m.quickOpenSelected+1, len(m.quickOpenMatches))
+}
+
+func (m *model) closeQuickOpen(accept bool, mention bool) {
+	if accept && len(m.quickOpenMatches) > 0 {
+		if m.quickOpenSelected < 0 || m.quickOpenSelected >= len(m.quickOpenMatches) {
+			m.quickOpenSelected = 0
+		}
+		selected := m.quickOpenMatches[m.quickOpenSelected]
+		insert := selected + " "
+		if mention {
+			insert = "@" + insert
+		}
+		m.textarea.SetValue(insertWithComposerSpacing(m.quickOpenDraft, insert))
+		m.textarea.CursorEnd()
+		if mention {
+			m.status = "file referenced"
+		} else {
+			m.status = "path inserted"
+		}
+	} else {
+		m.textarea.SetValue(m.quickOpenDraft)
+		m.textarea.CursorEnd()
+		m.status = m.mode()
+	}
+	m.quickOpen = false
+	m.quickOpenDraft = ""
+	m.quickOpenMatches = nil
+	m.quickOpenSelected = 0
+	m.matches = nil
+	m.selected = 0
+	m.refreshCompletionMenu()
 }
 
 func filterHistory(history []string, query string, limit int) []string {
@@ -2096,6 +2372,9 @@ func (m *model) refreshViewport() {
 func (m model) mode() string {
 	if m.helpOpen {
 		return "help"
+	}
+	if m.quickOpen {
+		return "quick open"
 	}
 	if len(m.matches) > 0 {
 		return fmt.Sprintf("%d completions", len(m.matches))
@@ -2241,6 +2520,8 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+S      stash or restore composer",
 		"  Ctrl+G      edit composer in $EDITOR",
 		"  Ctrl+V      paste clipboard text or image",
+		"  Ctrl+Shift+P quick open files",
+		"  Ctrl+P      quick open fallback",
 		"  Ctrl+O      toggle expanded transcript",
 		"  Ctrl+L      clear screen",
 		"  Ctrl+U      delete before cursor",
