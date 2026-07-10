@@ -300,6 +300,40 @@ func TestSlashMenuEscapeClosesSuggestionsBeforeQuitting(t *testing.T) {
 	require.False(t, m.result.Submitted)
 }
 
+func TestBashModeSuppressesPromptCompletions(t *testing.T) {
+	preview := PreviewWithCandidates("!echo @internal/tui", []string{"/status"}, 96, 24, false, false)
+
+	require.Equal(t, "bash", preview.Mode)
+	require.Empty(t, preview.Matches)
+	require.Contains(t, preview.View, "! for bash mode")
+	require.Contains(t, preview.View, "Enter run local command")
+}
+
+func TestBashModeRoutesThroughRunSlashCommand(t *testing.T) {
+	preview := PreviewWithBashMode("!printf codog", 96, 24)
+
+	require.Equal(t, "/run printf codog", preview.Prompt)
+	require.Empty(t, preview.Value)
+	require.Contains(t, preview.View, "bash ok: /run printf codog")
+}
+
+func TestBareBashModeStaysInComposer(t *testing.T) {
+	ta := newPromptTextarea("!")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.slash = func(context.Context, string) (string, bool, error) {
+		t.Fatal("bare bash mode should not run")
+		return "", false, nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, "!", m.textarea.Value())
+	require.Equal(t, "bash", m.status)
+	require.Contains(t, m.View(), "! for bash mode")
+}
+
 func TestEscapeClearsComposerBeforeExit(t *testing.T) {
 	ta := newPromptTextarea("draft prompt")
 	m := newModel(context.Background(), ta, nil, nil)

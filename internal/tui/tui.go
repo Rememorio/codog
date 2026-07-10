@@ -457,6 +457,50 @@ func PreviewWithEscape(input string, presses int, width int, height int) Preview
 	}
 }
 
+// PreviewWithBashMode renders the TUI after submitting a leading ! command.
+// The command is routed through the same slash dispatcher used by /run.
+func PreviewWithBashMode(input string, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	captured := ""
+	m.slash = func(_ context.Context, line string) (string, bool, error) {
+		captured = line
+		return "bash ok: " + line, true, nil
+	}
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	m.refreshCompletionMenu()
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	if cmd != nil {
+		updated, _ = m.Update(cmd())
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Matches:     append([]string(nil), m.matches...),
+		Prompt:      captured,
+		Attachments: append([]string(nil), m.attachments...),
+		Mode:        m.mode(),
+		HelpOpen:    m.helpOpen,
+		HasStash:    m.stashedPrompt != nil,
+		Transcript:  m.transcriptMode,
+		QuickOpen:   m.quickOpen,
+		TodosOpen:   m.todosOpen,
+		CommandHint: m.commandArgumentHint,
+		InlineHint:  m.inlineGhostText,
+	}
+}
+
 // PreviewWithStash renders a deterministic TUI state after stashing the current
 // composer draft.
 func PreviewWithStash(input string, attachments []string, width int, height int) Preview {
@@ -2207,6 +2251,9 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 	if m.handleAttachmentInput(value) {
 		return m, nil
 	}
+	if isBashModeInput(value) {
+		return m.startBashInput(value)
+	}
 	if isLocalPasteInput(value) && m.paste != nil {
 		if m.busy || m.backgrounding || m.awaitingPermission || m.awaitingQuestion {
 			m.status = "paste unavailable"
@@ -2273,6 +2320,34 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 		return m, runSubmitAttachmentsCommand(ctx, m.submitAttachments, value, attachments)
 	}
 	return m, runSubmitCommand(ctx, m.submit, value)
+}
+
+func (m model) startBashInput(value string) (tea.Model, tea.Cmd) {
+	command := bashModeCommand(value)
+	if command == "" {
+		m.status = "bash"
+		return m, nil
+	}
+	if m.slash == nil {
+		m.result = Result{Submitted: true, Prompt: value, Attachments: append([]string(nil), m.attachments...)}
+		return m, tea.Quit
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.turnCancel = cancel
+	m.appendHistory(value)
+	m.textarea.SetValue("")
+	m.undoStack = nil
+	m.matches = nil
+	m.selected = 0
+	m.commandArgumentHint = ""
+	m.inlineGhostText = ""
+	m.historyPos = -1
+	m.busy = true
+	m.status = "running bash"
+	m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: "!" + command})
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+	return m, runSlashCommand(ctx, m.slash, "/run "+command)
 }
 
 func (m *model) queueCurrentInput() {
@@ -2475,6 +2550,14 @@ func (m *model) handleAttachmentInput(value string) bool {
 func isLocalPasteInput(value string) bool {
 	fields := strings.Fields(value)
 	return len(fields) == 1 && strings.EqualFold(fields[0], "/paste")
+}
+
+func isBashModeInput(value string) bool {
+	return strings.HasPrefix(strings.TrimSpace(value), "!")
+}
+
+func bashModeCommand(value string) string {
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), "!"))
 }
 
 func (m *model) removeAttachment(indexText string) bool {
@@ -3071,6 +3154,12 @@ func (m *model) refreshCompletionMenu() {
 	if value == "" || m.busy || m.searchOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.messageActions || m.attachmentsOpen || m.diffDialog {
 		m.matches = nil
 		m.selected = 0
+		return
+	}
+	if isBashModeInput(value) {
+		m.matches = nil
+		m.selected = 0
+		m.status = "bash"
 		return
 	}
 	m.commandArgumentHint = slashCommandArgumentHint(value)
@@ -4675,6 +4764,12 @@ func (m model) promptFooterHints(width int) []string {
 		add("? for shortcuts")
 		return trimFooterHints(hints, width)
 	}
+	if status == "bash" || isBashModeInput(m.textarea.Value()) {
+		add("! for bash mode")
+		add("Enter run local command")
+		add("Esc clear")
+		return trimFooterHints(hints, width)
+	}
 	if m.searchOpen {
 		add("Enter restore")
 		add("Esc close")
@@ -5317,6 +5412,9 @@ func (m model) mode() string {
 	value := strings.TrimSpace(m.textarea.Value())
 	if strings.HasPrefix(value, "/") {
 		return "slash"
+	}
+	if isBashModeInput(value) {
+		return "bash"
 	}
 	if value == "" {
 		return "ready"
