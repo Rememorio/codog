@@ -177,6 +177,29 @@ func PreviewWithCandidates(input string, candidates []string, width int, height 
 	}
 }
 
+// PreviewWithQueued renders a deterministic busy TUI state with queued prompts
+// for tests and parity harnesses.
+func PreviewWithQueued(input string, queued []string, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	m.busy = true
+	m.status = "running"
+	m.queuedPrompts = append([]string(nil), queued...)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:     m.View(),
+		Value:    m.textarea.Value(),
+		Matches:  append([]string(nil), m.matches...),
+		Mode:     m.mode(),
+		HelpOpen: m.helpOpen,
+	}
+}
+
 // Shell starts the full-screen interactive TUI loop.
 func Shell(ctx context.Context, options ShellOptions) error {
 	if ctx == nil {
@@ -646,6 +669,9 @@ func (m model) View() string {
 	if m.searchOpen {
 		composer += "\n" + renderHistorySearch(m.searchHits, m.searchPos, m.textarea.Value())
 	}
+	if len(m.queuedPrompts) > 0 {
+		composer += "\n" + renderQueuedPrompts(m.queuedPrompts)
+	}
 	statusText := appendStatusMode(statusBarText(m.visibleStatus(), m.width), m.modeLabel, m.width)
 	status := statusStyle().Width(max(40, m.width)).Render(statusText)
 	return strings.Join([]string{title, body, composer, status}, "\n")
@@ -1080,6 +1106,22 @@ func renderHistorySearch(matches []string, selected int, query string) string {
 			style = selectedCompletionStyle()
 		}
 		lines = append(lines, style.Render(prefix+truncateForComposer(match, 100)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderQueuedPrompts(queued []string) string {
+	if len(queued) == 0 {
+		return ""
+	}
+	lines := []string{completionTitleStyle().Render(fmt.Sprintf(" queued prompts: %d ", len(queued)))}
+	start := 0
+	if len(queued) > 3 {
+		start = len(queued) - 3
+		lines = append(lines, completionStyle().Render(fmt.Sprintf("  ... %d earlier", start)))
+	}
+	for index := start; index < len(queued); index++ {
+		lines = append(lines, completionStyle().Render(fmt.Sprintf("  %d. %s", index+1, truncateForComposer(queued[index], 100))))
 	}
 	return strings.Join(lines, "\n")
 }

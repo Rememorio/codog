@@ -93,6 +93,33 @@ func TestCompletionDisplayLineFallsBackForCustomCandidate(t *testing.T) {
 	require.Equal(t, "/custom thing", completionDisplayLine("/custom thing"))
 }
 
+func TestQueuedPromptsRenderBelowComposer(t *testing.T) {
+	view := renderQueuedPrompts([]string{"first queued prompt", "second queued prompt"})
+
+	require.Contains(t, view, "queued prompts: 2")
+	require.Contains(t, view, "1. first queued prompt")
+	require.Contains(t, view, "2. second queued prompt")
+	require.Empty(t, renderQueuedPrompts(nil))
+}
+
+func TestQueuedPromptPreviewTruncatesOlderItems(t *testing.T) {
+	view := renderQueuedPrompts([]string{"one", "two", "three", "four"})
+
+	require.Contains(t, view, "... 1 earlier")
+	require.NotContains(t, view, "1. one")
+	require.Contains(t, view, "2. two")
+	require.Contains(t, view, "4. four")
+}
+
+func TestPreviewWithQueuedRendersQueuedPrompts(t *testing.T) {
+	preview := PreviewWithQueued("", []string{"review auth", "write tests"}, 96, 24)
+
+	require.Contains(t, preview.View, "queued prompts: 2")
+	require.Contains(t, preview.View, "review auth")
+	require.Contains(t, preview.View, "write tests")
+	require.Contains(t, preview.View, "2 queued")
+}
+
 func TestSlashMenuOpensAndFiltersWhileTyping(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, []string{"/memory list", "/model claude-test", "/status"}, nil)

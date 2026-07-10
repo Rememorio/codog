@@ -5355,6 +5355,10 @@ func tuiPromptCompletionScenario() scenario {
 			if len(automatic.Matches) != 3 || !strings.Contains(automatic.View, "suggestions") {
 				return localScenarioResult{}, fmt.Errorf("expected automatic TUI slash menu, got %#v", automatic.Matches)
 			}
+			queued := tui.PreviewWithQueued("", []string{"review auth flow", "write tests"}, 96, 24)
+			if !strings.Contains(queued.View, "queued prompts: 2") || !strings.Contains(queued.View, "2 queued") {
+				return localScenarioResult{}, fmt.Errorf("expected queued prompt preview, got %s", queued.View)
+			}
 
 			submitted := tui.PreviewWithCandidates("/mo", []string{"/model claude-test"}, 96, 24, true, true)
 			if !submitted.Submitted {
@@ -5371,6 +5375,7 @@ func tuiPromptCompletionScenario() scenario {
 				"kind":             "tui_prompt_completion",
 				"matches":          multiple.Matches,
 				"automatic":        automatic.Matches,
+				"queued_preview":   strings.Contains(queued.View, "queued prompts: 2"),
 				"submitted":        submitted.Submitted,
 				"submitted_prompt": submitted.Prompt,
 				"view_contains":    []string{"Codog TUI", "Enter send"},
