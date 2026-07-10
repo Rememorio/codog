@@ -5397,6 +5397,10 @@ func tuiPromptCompletionScenario() scenario {
 			if !strings.Contains(attachments.View, "attachments: 2") || !strings.Contains(attachments.View, "2 attached") || len(attachments.Attachments) != 2 {
 				return localScenarioResult{}, fmt.Errorf("expected attachment preview, got %s", attachments.View)
 			}
+			attachmentRemoval := tui.PreviewWithAttachmentRemoval("describe", []string{"notes.txt", "pixel.png"}, 96, 24)
+			if len(attachmentRemoval.Attachments) != 1 || attachmentRemoval.Attachments[0] != "notes.txt" || !strings.Contains(attachmentRemoval.View, "attachment removed") {
+				return localScenarioResult{}, fmt.Errorf("expected attachment removal preview, got attachments=%#v view=%s", attachmentRemoval.Attachments, attachmentRemoval.View)
+			}
 			paste := tui.PreviewWithPaste("prefix ", "clipboard text", 96, 24)
 			if paste.Value != "prefix clipboard text" || !strings.Contains(paste.View, "pasted 1 line") {
 				return localScenarioResult{}, fmt.Errorf("expected paste preview, got value=%q view=%s", paste.Value, paste.View)

@@ -510,6 +510,41 @@ func PreviewWithAttachments(input string, attachments []string, width int, heigh
 	}
 }
 
+// PreviewWithAttachmentRemoval renders the TUI after removing the most recent
+// pending attachment through the keyboard chord.
+func PreviewWithAttachmentRemoval(input string, attachments []string, width int, height int) Preview {
+	ta := newPromptTextarea(input)
+	m := newModel(context.Background(), ta, nil, nil)
+	m.attachments = append([]string(nil), attachments...)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	if next, ok := updated.(model); ok {
+		m = next
+	}
+	return Preview{
+		View:         m.View(),
+		Value:        m.textarea.Value(),
+		Matches:      append([]string(nil), m.matches...),
+		Attachments:  append([]string(nil), m.attachments...),
+		Mode:         m.mode(),
+		HelpOpen:     m.helpOpen,
+		HasStash:     m.stashedPrompt != nil,
+		Transcript:   m.transcriptMode,
+		QuickOpen:    m.quickOpen,
+		GlobalSearch: m.globalSearch,
+		TodosOpen:    m.todosOpen,
+	}
+}
+
 // PreviewWithGlobalSearch renders a deterministic TUI state after opening
 // workspace search, typing a query, and optionally accepting the selected match.
 func PreviewWithGlobalSearch(input string, files []string, query string, width int, height int, accept bool) Preview {
@@ -1296,6 +1331,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.status = "undoing"
 				return m, runRuntimeControlCommand(m.ctx, m.undoLast)
+			case "backspace", "delete":
+				m.removeLastAttachment()
+				return m, nil
 			case "esc":
 				m.status = m.mode()
 				return m, nil
@@ -2066,6 +2104,19 @@ func (m *model) removeAttachment(indexText string) bool {
 	}
 	m.attachments = append(append([]string(nil), m.attachments[:index-1]...), m.attachments[index:]...)
 	return true
+}
+
+func (m *model) removeLastAttachment() {
+	if len(m.attachments) == 0 {
+		m.status = "no attachments"
+		return
+	}
+	removed := m.attachments[len(m.attachments)-1]
+	m.attachments = append([]string(nil), m.attachments[:len(m.attachments)-1]...)
+	m.status = "attachment removed"
+	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Removed attachment: %s\n%s", removed, renderAttachmentSummary(m.attachments))})
+	m.refreshViewport()
+	m.viewport.GotoBottom()
 }
 
 func addUniqueAttachment(attachments *[]string, path string) bool {
@@ -4274,6 +4325,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+X Ctrl+K stop background tasks",
 		"  Ctrl+X Ctrl+C compact session",
 		"  Ctrl+X Ctrl+U undo last file change",
+		"  Ctrl+X Backspace remove last attachment",
 		"  Ctrl+_      undo composer edit",
 		"  Ctrl+Shift+- undo composer edit",
 		"  Ctrl+V      paste clipboard text or image",

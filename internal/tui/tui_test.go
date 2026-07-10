@@ -130,6 +130,16 @@ func TestPreviewWithAttachmentsRendersPendingAttachments(t *testing.T) {
 	require.Contains(t, preview.View, "2 attached")
 }
 
+func TestPreviewWithAttachmentRemovalDropsLastAttachment(t *testing.T) {
+	preview := PreviewWithAttachmentRemoval("describe", []string{"notes.txt", "pixel.png"}, 96, 24)
+
+	require.Equal(t, []string{"notes.txt"}, preview.Attachments)
+	require.Contains(t, preview.View, "attachment removed")
+	require.Contains(t, preview.View, "Removed attachment: pixel.png")
+	require.Contains(t, preview.View, "notes.txt")
+	require.NotContains(t, renderPendingAttachments(preview.Attachments), "pixel.png")
+}
+
 func TestPreviewWithPasteInsertsClipboardText(t *testing.T) {
 	preview := PreviewWithPaste("prefix ", "clipboard\ntext", 96, 24)
 
@@ -1714,6 +1724,26 @@ func TestAttachmentCommandsListRemoveAndClear(t *testing.T) {
 	m = updated.(model)
 	require.Empty(t, m.attachments)
 	require.Equal(t, "attachments cleared", m.status)
+}
+
+func TestCtrlXBackspaceRemovesLastAttachment(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.attachments = []string{"one.txt", "two.txt"}
+
+	updated, cmd := m.Update(teaKey("ctrl+x"))
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.True(t, m.ctrlXChord)
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.False(t, m.ctrlXChord)
+	require.Equal(t, []string{"one.txt"}, m.attachments)
+	require.Equal(t, "attachment removed", m.status)
+	require.Contains(t, m.transcript[len(m.transcript)-1].Text, "Removed attachment: two.txt")
+	require.Contains(t, m.View(), "attachments: 1")
 }
 
 func TestSubmittingWithAttachmentsPassesThemToSubmitter(t *testing.T) {
