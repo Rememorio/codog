@@ -5446,9 +5446,12 @@ func tuiPromptCompletionScenario() scenario {
 			if midInputCompleted.Value != "please /status " {
 				return localScenarioResult{}, fmt.Errorf("expected mid-input slash command completion, got value=%q", midInputCompleted.Value)
 			}
-			queued := tui.PreviewWithQueued("", []string{"review auth flow", "write tests"}, 96, 24)
+			queued := tui.PreviewWithQueued("", []string{"review auth flow", "!printf codog"}, 96, 24)
 			if !strings.Contains(queued.View, "queued prompts: 2") || !strings.Contains(queued.View, "2 queued") {
 				return localScenarioResult{}, fmt.Errorf("expected queued prompt preview, got %s", queued.View)
+			}
+			if !strings.Contains(queued.View, "bash: printf codog") {
+				return localScenarioResult{}, fmt.Errorf("expected queued bash preview, got %s", queued.View)
 			}
 			stash := tui.PreviewWithStash("draft prompt", []string{"notes.txt"}, 96, 24)
 			if !stash.HasStash || stash.Value != "" || !strings.Contains(stash.View, "stashed prompt") {
@@ -5639,6 +5642,7 @@ func tuiPromptCompletionScenario() scenario {
 				"mid_input_command":            midInputCommand.InlineHint == "/status",
 				"mid_input_command_completion": midInputCompleted.Value == "please /status ",
 				"queued_preview":               strings.Contains(queued.View, "queued prompts: 2"),
+				"queued_bash_preview":          strings.Contains(queued.View, "bash: printf codog"),
 				"stash_preview":                stash.HasStash,
 				"transcript_preview":           transcript.Transcript,
 				"todos_preview":                todosPreview.TodosOpen && strings.Contains(todosPreview.View, "write focused parity test"),

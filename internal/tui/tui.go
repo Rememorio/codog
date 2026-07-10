@@ -2368,7 +2368,7 @@ func (m *model) queueCurrentInput() {
 	m.matches = nil
 	m.selected = 0
 	m.status = "queued"
-	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Queued prompt %d: %s", len(m.queuedPrompts), truncateForComposer(value, 120))})
+	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Queued %s %d: %s", queuedPromptKind(value), len(m.queuedPrompts), truncateForComposer(queuedPromptDisplay(value), 120))})
 	m.refreshViewport()
 	m.viewport.GotoBottom()
 }
@@ -3576,9 +3576,28 @@ func renderQueuedPrompts(queued []string) string {
 		lines = append(lines, completionStyle().Render(fmt.Sprintf("  ... %d earlier", start)))
 	}
 	for index := start; index < len(queued); index++ {
-		lines = append(lines, completionStyle().Render(fmt.Sprintf("  %d. %s", index+1, truncateForComposer(queued[index], 100))))
+		lines = append(lines, completionStyle().Render(fmt.Sprintf("  %d. %s", index+1, truncateForComposer(queuedPromptDisplay(queued[index]), 100))))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func queuedPromptKind(prompt string) string {
+	if isBashModeInput(prompt) {
+		return "bash"
+	}
+	return "prompt"
+}
+
+func queuedPromptDisplay(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if isBashModeInput(prompt) {
+		command := bashModeCommand(prompt)
+		if command == "" {
+			return "bash:"
+		}
+		return "bash: " + command
+	}
+	return prompt
 }
 
 func (m *model) openModelPicker() {

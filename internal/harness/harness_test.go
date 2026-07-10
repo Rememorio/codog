@@ -801,6 +801,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, tuiPrompt.Output, `"mid_input_command":true`)
 	require.Contains(t, tuiPrompt.Output, `"mid_input_command_completion":true`)
 	require.Contains(t, tuiPrompt.Output, `"queued_preview":true`)
+	require.Contains(t, tuiPrompt.Output, `"queued_bash_preview":true`)
 	require.Contains(t, tuiPrompt.Output, `"stash_preview":true`)
 	require.Contains(t, tuiPrompt.Output, `"transcript_preview":true`)
 	require.Contains(t, tuiPrompt.Output, `"todos_preview":true`)

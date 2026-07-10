@@ -124,6 +124,14 @@ func TestQueuedPromptsRenderBelowComposer(t *testing.T) {
 	require.Empty(t, renderQueuedPrompts(nil))
 }
 
+func TestQueuedPromptsRenderBashMode(t *testing.T) {
+	view := renderQueuedPrompts([]string{"!printf codog", "regular prompt"})
+
+	require.Contains(t, view, "queued prompts: 2")
+	require.Contains(t, view, "1. bash: printf codog")
+	require.Contains(t, view, "2. regular prompt")
+}
+
 func TestQueuedPromptPreviewTruncatesOlderItems(t *testing.T) {
 	view := renderQueuedPrompts([]string{"one", "two", "three", "four"})
 
@@ -1672,6 +1680,49 @@ func TestBusyEnterQueuesPromptsAndRunsAfterTurnDone(t *testing.T) {
 	require.False(t, m.busy)
 	require.Equal(t, []string{"first prompt", "second prompt", "third prompt"}, prompts)
 	require.Contains(t, m.View(), "done: third prompt")
+}
+
+func TestBusyEnterQueuesBashPromptAndRunsThroughSlash(t *testing.T) {
+	ta := newPromptTextarea("first prompt")
+	m := newModel(context.Background(), ta, nil, nil)
+	prompts := []string{}
+	slashLines := []string{}
+	m.submit = func(_ context.Context, prompt string) (string, error) {
+		prompts = append(prompts, prompt)
+		return "done: " + prompt, nil
+	}
+	m.slash = func(_ context.Context, line string) (string, bool, error) {
+		slashLines = append(slashLines, line)
+		return "ran " + line, true, nil
+	}
+
+	updated, firstCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.True(t, m.busy)
+	require.NotNil(t, firstCmd)
+
+	m.textarea.SetValue("!printf codog")
+	updated, queueCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Nil(t, queueCmd)
+	require.Equal(t, []string{"!printf codog"}, m.queuedPrompts)
+	require.Contains(t, m.View(), "Queued bash 1")
+	require.Contains(t, m.View(), "bash: printf codog")
+
+	firstDone := firstCmd().(turnDoneMsg)
+	updated, slashCmd := m.Update(firstDone)
+	m = updated.(model)
+	require.True(t, m.busy)
+	require.NotNil(t, slashCmd)
+	require.Equal(t, []string{"first prompt"}, prompts)
+	require.Equal(t, "user", m.transcript[len(m.transcript)-1].Role)
+	require.Equal(t, "!printf codog", m.transcript[len(m.transcript)-1].Text)
+
+	updated, _ = m.Update(slashCmd())
+	m = updated.(model)
+	require.False(t, m.busy)
+	require.Equal(t, []string{"/run printf codog"}, slashLines)
+	require.Contains(t, m.View(), "ran /run printf codog")
 }
 
 func TestUpEditsQueuedPromptsWhileBusy(t *testing.T) {
