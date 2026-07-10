@@ -201,6 +201,18 @@ func TestPromptEmitsMultipleToolEventsInOneTurn(t *testing.T) {
 	require.Equal(t, "created by first tool\n", string(created))
 }
 
+func TestLineAnswerReaderReturnsEOFWhenCanceled(t *testing.T) {
+	done := make(chan struct{})
+	close(done)
+	reader := &lineAnswerReader{answers: make(chan string), done: done}
+	buffer := make([]byte, 8)
+
+	n, err := reader.Read(buffer)
+
+	require.Equal(t, 0, n)
+	require.ErrorIs(t, err, io.EOF)
+}
+
 func TestEnterpriseAuditListsEvents(t *testing.T) {
 	configHome := t.TempDir()
 	require.NoError(t, audit.NewStore(configHome).Append(audit.Event{

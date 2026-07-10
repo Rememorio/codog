@@ -46,6 +46,7 @@ type ShellOptions struct {
 	SubmitStream     StreamSubmitFunc
 	Slash            SlashFunc
 	PermissionAnswer func(string)
+	QuestionAnswer   func(string)
 }
 
 // Preview captures a deterministic TUI model state for tests and parity
@@ -78,6 +79,7 @@ type model struct {
 	submitStream       StreamSubmitFunc
 	slash              SlashFunc
 	permissionAnswer   func(string)
+	questionAnswer     func(string)
 	history            []string
 	historyPos         int
 	draft              string
@@ -88,6 +90,7 @@ type model struct {
 	turnMessages       <-chan tea.Msg
 	streamingIndex     int
 	awaitingPermission bool
+	awaitingQuestion   bool
 }
 
 type transcriptEntry struct {
@@ -169,6 +172,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.submitStream = options.SubmitStream
 	m.slash = options.Slash
 	m.permissionAnswer = options.PermissionAnswer
+	m.questionAnswer = options.QuestionAnswer
 	m.setHistory(options.History)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
@@ -249,6 +253,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.status = "permission answered"
 			}
+		} else if strings.EqualFold(msg.Role, "question") {
+			m.awaitingQuestion = true
+			m.status = "question"
 		} else {
 			m.status = "streaming"
 		}
@@ -345,6 +352,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "enter":
+			if m.busy && m.awaitingQuestion {
+				m.answerQuestion()
+				return m, nil
+			}
 			if m.busy {
 				return m, nil
 			}
@@ -381,6 +392,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if isLocalHelpInput(m.textarea.Value()) {
 		m.status = "help ready"
+	} else if m.awaitingQuestion {
+		m.status = "question"
 	} else if m.busy {
 		m.status = "running"
 	} else {
@@ -545,6 +558,25 @@ func (m *model) answerPermission(answer string) {
 	m.status = "permission answered"
 }
 
+func (m *model) answerQuestion() {
+	if m.questionAnswer == nil {
+		return
+	}
+	answer := strings.TrimSpace(m.textarea.Value())
+	m.questionAnswer(answer)
+	if answer == "" {
+		answer = "(default)"
+	}
+	m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: answer})
+	m.textarea.SetValue("")
+	m.matches = nil
+	m.selected = 0
+	m.awaitingQuestion = false
+	m.status = "question answered"
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+}
+
 func isPermissionRequestDelta(delta string) bool {
 	normalized := strings.ToLower(delta)
 	return strings.Contains(normalized, " requires ")
@@ -701,6 +733,14 @@ func statusBarText(status string, width int) string {
 			return "permission · y yes · n no · a always"
 		default:
 			return "permission · y approve · n deny · a always for session"
+		}
+	}
+	if strings.EqualFold(status, "question") {
+		switch {
+		case width > 0 && width < 70:
+			return "question · Enter reply · Esc cancel"
+		default:
+			return "question · type answer · Enter reply · Esc/Ctrl-C cancel current turn"
 		}
 	}
 	if isBusyStatus(status) {
@@ -1098,6 +1138,8 @@ func roleStyle(role string) lipgloss.Style {
 		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
 	case "permission":
 		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
+	case "question":
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("45"))
 	case "user":
 		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
 	default:

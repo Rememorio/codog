@@ -39045,15 +39045,26 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 	}
 	history := a.tuiPromptHistory(sess.ID)
 	permissionAnswers := make(chan string, 1)
+	questionAnswers := make(chan string, 1)
 	submit := func(ctx context.Context, prompt string, emit func(tui.Entry)) (string, error) {
 		var out bytes.Buffer
 		streamOut := tuiStreamWriter{buffer: &out, emit: emit}
 		toolCalls := []runloop.ToolCall{}
 		liveToolEvents := false
+		a.Tools.Register(tools.AskUserQuestionTool{
+			In: &lineAnswerReader{answers: questionAnswers, done: ctx.Done()},
+			Out: tuiQuestionWriter{emit: func(entry tui.Entry) {
+				liveToolEvents = true
+				emit(entry)
+			}},
+		})
+		defer func() {
+			_ = a.refreshBuiltinToolScope()
+		}()
 		err := a.runSessionTurnWithOptions(ctx, "tui", sess, prompt, "idle", turnOptions{
 			Out: &streamOut,
 			ConfigurePrompter: func(prompter *tools.Prompter) {
-				prompter.In = &permissionAnswerReader{answers: permissionAnswers}
+				prompter.In = &lineAnswerReader{answers: permissionAnswers, done: ctx.Done()}
 				prompter.Err = io.Discard
 				wrapTUIPermissionEvents(prompter, func(entry tui.Entry) {
 					liveToolEvents = true
@@ -39112,29 +39123,52 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 			case <-ctx.Done():
 			}
 		},
+		QuestionAnswer: func(answer string) {
+			select {
+			case questionAnswers <- answer + "\n":
+			case <-ctx.Done():
+			}
+		},
 	})
 	return a.finishREPL(ctx, sess, loopErr)
 }
 
-type permissionAnswerReader struct {
+type lineAnswerReader struct {
 	answers <-chan string
+	done    <-chan struct{}
 	buffer  string
 }
 
-func (r *permissionAnswerReader) Read(data []byte) (int, error) {
+func (r *lineAnswerReader) Read(data []byte) (int, error) {
 	if len(data) == 0 {
 		return 0, nil
 	}
 	for r.buffer == "" {
-		answer, ok := <-r.answers
-		if !ok {
+		select {
+		case answer, ok := <-r.answers:
+			if !ok {
+				return 0, io.EOF
+			}
+			r.buffer = answer
+		case <-r.done:
 			return 0, io.EOF
 		}
-		r.buffer = answer
 	}
 	n := copy(data, r.buffer)
 	r.buffer = r.buffer[n:]
 	return n, nil
+}
+
+type tuiQuestionWriter struct {
+	emit func(tui.Entry)
+}
+
+func (w tuiQuestionWriter) Write(data []byte) (int, error) {
+	text := strings.TrimSpace(string(data))
+	if text != "" && w.emit != nil {
+		w.emit(tui.Entry{Role: "question", Text: text})
+	}
+	return len(data), nil
 }
 
 func wrapTUIPermissionEvents(prompter *tools.Prompter, emit func(tui.Entry)) {

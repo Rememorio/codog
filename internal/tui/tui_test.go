@@ -379,6 +379,33 @@ func TestPermissionStreamEntryAcceptsKeyboardAnswer(t *testing.T) {
 	require.Equal(t, "permission answered", m.status)
 }
 
+func TestQuestionStreamEntryAcceptsComposerAnswerWhileBusy(t *testing.T) {
+	ta := newPromptTextarea("")
+	answers := []string{}
+	m := newModel(context.Background(), ta, nil, nil)
+	m.busy = true
+	m.questionAnswer = func(answer string) {
+		answers = append(answers, answer)
+	}
+
+	updated, _ := m.Update(turnStreamMsg{Role: "question", Delta: "Pick a TUI lane\n  1. alpha\n  2. beta\nAnswer:"})
+	m = updated.(model)
+	require.True(t, m.awaitingQuestion)
+	require.Equal(t, "question", m.status)
+	require.Contains(t, statusBarText(m.status, 80), "Enter reply")
+
+	m.textarea.SetValue("2")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	require.False(t, m.awaitingQuestion)
+	require.Equal(t, []string{"2"}, answers)
+	require.Equal(t, "question answered", m.status)
+	require.Equal(t, "", m.textarea.Value())
+	require.Equal(t, "user", m.transcript[len(m.transcript)-1].Role)
+	require.Equal(t, "2", m.transcript[len(m.transcript)-1].Text)
+}
+
 func TestCanceledSlashCommandRendersInterrupted(t *testing.T) {
 	cmd := runSlashCommand(context.Background(), func(context.Context, string) (string, bool, error) {
 		return "", true, context.Canceled

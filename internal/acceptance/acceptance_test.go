@@ -637,6 +637,54 @@ expect eof
 	require.Equal(t, "permission-tui", string(created))
 }
 
+func TestRealBinaryTUIAskUserQuestionWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	var mu sync.Mutex
+	requestBodies := []string{}
+	server := httptest.NewServer(mockanthropic.Server{
+		Turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-question",
+				Name:  "ask_user_question",
+				Input: json.RawMessage(`{"question":"Pick a TUI lane","choices":["alpha","beta"],"default":"alpha"}`),
+			}}},
+			{Text: "question tui answered ok"},
+		},
+		OnRequest: func(body json.RawMessage) {
+			mu.Lock()
+			requestBodies = append(requestBodies, string(body))
+			mu.Unlock()
+		},
+	}.Handler())
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, `
+set timeout 30
+spawn -noecho $env(CODOG_TEST_BIN) --permission-mode allow --model claude-sonnet-4-5 tui
+expect "Codog TUI"
+send "question tui smoke\r"
+expect "Pick a TUI lane"
+expect "2. beta"
+send "2\r"
+expect "question tui answered ok"
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, output, "Pick a TUI lane")
+	require.Contains(t, output, "2. beta")
+	require.Contains(t, output, "question tui answered ok")
+	mu.Lock()
+	joinedRequests := strings.Join(requestBodies, "\n")
+	mu.Unlock()
+	require.Contains(t, joinedRequests, `\"answer\": \"beta\"`)
+}
+
 func TestRealBinaryPromptResumeSendsPriorSessionHistory(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()
