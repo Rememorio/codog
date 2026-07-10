@@ -492,6 +492,36 @@ func TestQuickOpenShiftTabInsertsBarePath(t *testing.T) {
 	require.Equal(t, "path inserted", m.status)
 }
 
+func TestQuickOpenControlNavigation(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = []string{"a.go", "b.go", "c.go"}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(".go")})
+	m = updated.(model)
+
+	require.Equal(t, []string{"a.go", "b.go", "c.go"}, m.quickOpenMatches)
+	require.Equal(t, 0, m.quickOpenSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	m = updated.(model)
+	require.Equal(t, 1, m.quickOpenSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	m = updated.(model)
+	require.Equal(t, 0, m.quickOpenSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = updated.(model)
+	require.Equal(t, 2, m.quickOpenSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlUp})
+	m = updated.(model)
+	require.Equal(t, 0, m.quickOpenSelected)
+}
+
 func TestQuickOpenEscapeRestoresDraft(t *testing.T) {
 	ta := newPromptTextarea("unfinished")
 	m := newModel(context.Background(), ta, nil, nil)
@@ -602,6 +632,41 @@ func TestGlobalSearchShiftTabInsertsBareLocation(t *testing.T) {
 	require.Equal(t, "location inserted", m.status)
 }
 
+func TestGlobalSearchControlNavigation(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("a.go", []byte("package main\nconst NeedleA = true\n"), 0o644))
+	require.NoError(t, os.WriteFile("b.go", []byte("package main\nconst NeedleB = true\n"), 0o644))
+	require.NoError(t, os.WriteFile("c.go", []byte("package main\nconst NeedleC = true\n"), 0o644))
+
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.fileCandidates = []string{"a.go", "b.go", "c.go"}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Needle")})
+	m = updated.(model)
+
+	require.Len(t, m.globalSearchMatches, 3)
+	require.Equal(t, 0, m.globalSearchSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	m = updated.(model)
+	require.Equal(t, 1, m.globalSearchSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	m = updated.(model)
+	require.Equal(t, 0, m.globalSearchSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = updated.(model)
+	require.Equal(t, 2, m.globalSearchSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlUp})
+	m = updated.(model)
+	require.Equal(t, 0, m.globalSearchSelected)
+}
+
 func TestGlobalSearchEscapeRestoresDraft(t *testing.T) {
 	t.Chdir(t.TempDir())
 	require.NoError(t, os.WriteFile("main.go", []byte("package main\n"), 0o644))
@@ -679,6 +744,47 @@ func TestModelPickerSelectsRuntimeModel(t *testing.T) {
 	require.Equal(t, "model selected", m.status)
 	require.Contains(t, m.View(), "Model")
 	require.Contains(t, m.View(), "Model: opus")
+}
+
+func TestModelPickerVimNavigation(t *testing.T) {
+	ta := newPromptTextarea("keep draft")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.modelOptions = []string{"haiku", "sonnet", "opus"}
+	m.currentModel = "haiku"
+	m.selectModel = func(_ context.Context, model string) (RuntimeControlResult, error) {
+		return RuntimeControlResult{Title: "Model", Status: "model selected", Lines: []string{"Model: " + model}}, nil
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}, Alt: true})
+	m = updated.(model)
+	require.True(t, m.modelPicker)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = updated.(model)
+	require.Equal(t, 1, m.modelPickerSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	m = updated.(model)
+	require.Equal(t, 0, m.modelPickerSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'J'}})
+	m = updated.(model)
+	require.Equal(t, 2, m.modelPickerSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'K'}})
+	m = updated.(model)
+	require.Equal(t, 0, m.modelPickerSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	m = updated.(model)
+	require.Equal(t, 1, m.modelPickerSelected)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.Equal(t, "sonnet", m.currentModel)
 }
 
 func TestRuntimeToggleShortcutsAppendStatus(t *testing.T) {
@@ -841,6 +947,53 @@ func TestMessageActionsNavigateTargetMessages(t *testing.T) {
 	require.False(t, m.messageActions)
 	require.Equal(t, "first answer", m.textarea.Value())
 	require.Equal(t, "message copied", m.status)
+}
+
+func TestMessageActionsModalNavigation(t *testing.T) {
+	entries := []transcriptEntry{
+		{Role: "user", Text: "first prompt"},
+		{Role: "assistant", Text: "first answer"},
+		{Role: "user", Text: "second prompt"},
+		{Role: "assistant", Text: "second answer"},
+	}
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, entries)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	m = updated.(model)
+	require.True(t, m.messageActions)
+	require.Equal(t, 0, m.messageActionSelected)
+	require.Equal(t, 3, m.messageActionTarget)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = updated.(model)
+	require.Equal(t, 1, m.messageActionSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	m = updated.(model)
+	require.Equal(t, 0, m.messageActionSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'J'}})
+	m = updated.(model)
+	require.Equal(t, len(messageActionLabels)-1, m.messageActionSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'K'}})
+	m = updated.(model)
+	require.Equal(t, 0, m.messageActionSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	m = updated.(model)
+	require.Equal(t, 2, m.messageActionTarget)
+	require.Contains(t, m.View(), "user: second prompt")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	m = updated.(model)
+	require.Equal(t, 0, m.messageActionTarget)
+	require.Contains(t, m.View(), "user: first prompt")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftDown})
+	m = updated.(model)
+	require.Equal(t, 2, m.messageActionTarget)
 }
 
 func TestMessageActionsRestoreBeforeTurn(t *testing.T) {

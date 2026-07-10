@@ -1256,11 +1256,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c", "esc", "alt+p", "meta+p":
 				m.closeModelPicker()
 				return m, nil
-			case "up", "ctrl+p":
+			case "up", "ctrl+p", "k":
 				m.moveModelPicker(-1)
 				return m, nil
-			case "down", "ctrl+n":
+			case "down", "ctrl+n", "j":
 				m.moveModelPicker(1)
+				return m, nil
+			case "home", "ctrl+up", "meta+up", "alt+up", "K", "shift+k":
+				m.setModelPickerIndex(0)
+				return m, nil
+			case "end", "ctrl+down", "meta+down", "alt+down", "J", "shift+j":
+				m.setModelPickerIndex(len(m.modelOptions) - 1)
 				return m, nil
 			case "enter", "tab":
 				return m.acceptModelPicker()
@@ -1271,14 +1277,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.messageActions {
 			switch msg.String() {
-			case "ctrl+c", "esc", "shift+up":
+			case "ctrl+c", "esc":
 				m.closeMessageActions()
 				return m, nil
-			case "up", "ctrl+p":
+			case "up", "ctrl+p", "k":
 				m.moveMessageAction(-1)
 				return m, nil
-			case "down", "ctrl+n":
+			case "down", "ctrl+n", "j":
 				m.moveMessageAction(1)
+				return m, nil
+			case "home", "ctrl+up", "meta+up", "alt+up", "K", "shift+k":
+				m.setMessageActionIndex(0)
+				return m, nil
+			case "end", "ctrl+down", "meta+down", "alt+down", "J", "shift+j":
+				m.setMessageActionIndex(len(messageActionLabels) - 1)
+				return m, nil
+			case "shift+up":
+				m.moveMessageActionUserTarget(-1)
+				return m, nil
+			case "shift+down":
+				m.moveMessageActionUserTarget(1)
 				return m, nil
 			case "left":
 				m.moveMessageActionTarget(-1)
@@ -1307,6 +1325,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "down", "ctrl+n":
 				m.moveGlobalSearch(1)
 				return m, nil
+			case "home", "ctrl+up", "meta+up", "alt+up":
+				m.setGlobalSearchIndex(0)
+				return m, nil
+			case "end", "ctrl+down", "meta+down", "alt+down":
+				m.setGlobalSearchIndex(len(m.globalSearchMatches) - 1)
+				return m, nil
 			case "enter", "tab":
 				m.closeGlobalSearch(true, true)
 				return m, nil
@@ -1333,6 +1357,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "down", "ctrl+n":
 				m.moveQuickOpen(1)
+				return m, nil
+			case "home", "ctrl+up", "meta+up", "alt+up":
+				m.setQuickOpenIndex(0)
+				return m, nil
+			case "end", "ctrl+down", "meta+down", "alt+down":
+				m.setQuickOpenIndex(len(m.quickOpenMatches) - 1)
 				return m, nil
 			case "enter", "tab":
 				m.closeQuickOpen(true, true)
@@ -2868,6 +2898,14 @@ func (m *model) moveModelPicker(delta int) {
 	m.status = "model picker"
 }
 
+func (m *model) setModelPickerIndex(index int) {
+	if len(m.modelOptions) == 0 {
+		return
+	}
+	m.modelPickerSelected = clampIndex(index, len(m.modelOptions))
+	m.status = "model picker"
+}
+
 func (m model) acceptModelPicker() (tea.Model, tea.Cmd) {
 	if len(m.modelOptions) == 0 || m.selectModel == nil {
 		m.closeModelPicker()
@@ -3019,6 +3057,14 @@ func (m *model) moveMessageAction(delta int) {
 	m.status = "message actions"
 }
 
+func (m *model) setMessageActionIndex(index int) {
+	if len(messageActionLabels) == 0 {
+		return
+	}
+	m.messageActionSelected = clampIndex(index, len(messageActionLabels))
+	m.status = "message actions"
+}
+
 func (m *model) moveMessageActionTarget(delta int) {
 	targets := m.messageActionTargets()
 	if len(targets) == 0 {
@@ -3034,6 +3080,34 @@ func (m *model) moveMessageActionTarget(delta int) {
 	}
 	next := (position + delta + len(targets)) % len(targets)
 	m.messageActionTarget = targets[next]
+	m.status = "message actions"
+}
+
+func (m *model) moveMessageActionUserTarget(delta int) {
+	targets := m.messageActionRoleTargets("user")
+	if len(targets) == 0 {
+		m.status = "no user messages"
+		return
+	}
+	current := m.messageActionTarget
+	next := targets[0]
+	if delta < 0 {
+		next = targets[len(targets)-1]
+		for index := len(targets) - 1; index >= 0; index-- {
+			if targets[index] < current {
+				next = targets[index]
+				break
+			}
+		}
+	} else {
+		for _, target := range targets {
+			if target > current {
+				next = target
+				break
+			}
+		}
+	}
+	m.messageActionTarget = next
 	m.status = "message actions"
 }
 
@@ -3199,6 +3273,17 @@ func (m model) messageActionTargets() []int {
 	targets := []int{}
 	for index, entry := range m.transcript {
 		if strings.TrimSpace(entry.Text) != "" {
+			targets = append(targets, index)
+		}
+	}
+	return targets
+}
+
+func (m model) messageActionRoleTargets(role string) []int {
+	role = strings.TrimSpace(role)
+	targets := []int{}
+	for index, entry := range m.transcript {
+		if strings.TrimSpace(entry.Text) != "" && strings.EqualFold(entry.Role, role) {
 			targets = append(targets, index)
 		}
 	}
@@ -4007,6 +4092,15 @@ func (m *model) moveQuickOpen(delta int) {
 	m.status = fmt.Sprintf("quick open %d/%d", m.quickOpenSelected+1, len(m.quickOpenMatches))
 }
 
+func (m *model) setQuickOpenIndex(index int) {
+	if len(m.quickOpenMatches) == 0 {
+		return
+	}
+	m.quickOpenSelected = clampIndex(index, len(m.quickOpenMatches))
+	m.refreshQuickOpenPreview()
+	m.status = fmt.Sprintf("quick open %d/%d", m.quickOpenSelected+1, len(m.quickOpenMatches))
+}
+
 func (m *model) refreshQuickOpenPreview() {
 	if len(m.quickOpenMatches) == 0 {
 		m.quickOpenPreviewPath = ""
@@ -4099,6 +4193,15 @@ func (m *model) moveGlobalSearch(delta int) {
 		return
 	}
 	m.globalSearchSelected = (m.globalSearchSelected + delta + len(m.globalSearchMatches)) % len(m.globalSearchMatches)
+	m.refreshGlobalSearchPreview()
+	m.status = fmt.Sprintf("global search %d/%d", m.globalSearchSelected+1, len(m.globalSearchMatches))
+}
+
+func (m *model) setGlobalSearchIndex(index int) {
+	if len(m.globalSearchMatches) == 0 {
+		return
+	}
+	m.globalSearchSelected = clampIndex(index, len(m.globalSearchMatches))
 	m.refreshGlobalSearchPreview()
 	m.status = fmt.Sprintf("global search %d/%d", m.globalSearchSelected+1, len(m.globalSearchMatches))
 }
@@ -4199,6 +4302,13 @@ func truncateForComposer(text string, limit int) string {
 		return string(runes[:limit])
 	}
 	return string(runes[:limit-3]) + "..."
+}
+
+func clampIndex(index int, length int) int {
+	if length <= 0 {
+		return 0
+	}
+	return min(max(index, 0), length-1)
 }
 
 func (m model) completionCandidates() []string {

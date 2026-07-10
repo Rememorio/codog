@@ -20937,6 +20937,29 @@ func defaultKeybindingsTemplate() []byte {
 				},
 			},
 			{
+				Context: "tui-modal",
+				Bindings: map[string]string{
+					"j":          "move modal selection down",
+					"k":          "move modal selection up",
+					"ctrl+n":     "move modal selection down",
+					"ctrl+p":     "move modal selection up",
+					"home":       "jump modal selection to top",
+					"end":        "jump modal selection to bottom",
+					"ctrl+up":    "jump modal selection to top",
+					"ctrl+down":  "jump modal selection to bottom",
+					"meta+up":    "jump modal selection to top",
+					"meta+down":  "jump modal selection to bottom",
+					"alt+up":     "jump modal selection to top",
+					"alt+down":   "jump modal selection to bottom",
+					"shift+k":    "jump modal selection to top",
+					"shift+j":    "jump modal selection to bottom",
+					"left":       "move message target backward",
+					"right":      "move message target forward",
+					"shift+up":   "move to previous user message",
+					"shift+down": "move to next user message",
+				},
+			},
+			{
 				Context: "slash",
 				Bindings: map[string]string{
 					"/help":                 "show command help",
@@ -21031,6 +21054,17 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Up", Action: "edit queued prompts, choose completion, or recall history"},
 					{Key: "Esc", Action: "quit"},
 					{Key: "Ctrl-C", Action: "quit"},
+				},
+			},
+			{
+				Name: "TUI modal",
+				Entries: []keybindingEntry{
+					{Key: "J / Down / Ctrl-N", Action: "move selection down", Description: "model picker, message actions, quick open, and search dialogs"},
+					{Key: "K / Up / Ctrl-P", Action: "move selection up", Description: "model picker, message actions, quick open, and search dialogs"},
+					{Key: "Home / Ctrl-Up / Meta-Up / Alt-Up / Shift-K", Action: "jump selection to top"},
+					{Key: "End / Ctrl-Down / Meta-Down / Alt-Down / Shift-J", Action: "jump selection to bottom"},
+					{Key: "Left / Right", Action: "move message action target"},
+					{Key: "Shift-Up / Shift-Down", Action: "move between user messages in message actions"},
 				},
 			},
 			{
