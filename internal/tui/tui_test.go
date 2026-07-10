@@ -806,6 +806,43 @@ func TestMessageActionsForkBeforeTurn(t *testing.T) {
 	require.Contains(t, m.View(), "Removed: 2")
 }
 
+func TestMessageActionsSummarizeFromTurn(t *testing.T) {
+	entries := []transcriptEntry{
+		{Role: "system", Text: "ready"},
+		{Role: "user", Text: "first prompt"},
+		{Role: "assistant", Text: "first answer"},
+		{Role: "user", Text: "second prompt"},
+		{Role: "assistant", Text: "second answer"},
+	}
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, entries)
+	var keep int
+	m.summarizeConversation = func(_ context.Context, keepMessages int) (RuntimeControlResult, error) {
+		keep = keepMessages
+		return RuntimeControlResult{Title: "Conversation Summarized", Status: "summarized 2", Lines: []string{"Before: 2", "Summarized: 2"}}, nil
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	m = updated.(model)
+	for range 5 {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(model)
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "summarizing", m.status)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.Equal(t, 2, keep)
+	require.False(t, m.messageActions)
+	require.Equal(t, "summarized 2", m.status)
+	require.Contains(t, m.View(), "Conversation Summarized")
+	require.Contains(t, m.View(), "Summarized: 2")
+}
+
 func TestPreviewWithMessageActions(t *testing.T) {
 	preview := PreviewWithMessageActions([]Entry{{Role: "assistant", Text: "copy me"}}, 96, 24, -1)
 
@@ -825,6 +862,10 @@ func TestPreviewWithMessageActions(t *testing.T) {
 	forked := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 4)
 	require.False(t, forked.MessageMenu)
 	require.Contains(t, forked.View, "Conversation Forked")
+
+	summarized := PreviewWithMessageActions([]Entry{{Role: "user", Text: "first"}, {Role: "assistant", Text: "answer"}}, 96, 24, 5)
+	require.False(t, summarized.MessageMenu)
+	require.Contains(t, summarized.View, "Conversation Summarized")
 }
 
 func TestCtrlXCtrlKStopsBackgroundTasks(t *testing.T) {

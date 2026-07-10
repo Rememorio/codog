@@ -39241,6 +39241,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		ForkConversation: func(ctx context.Context, keepMessages int) (tui.RuntimeControlResult, error) {
 			return a.forkTUIConversation(ctx, sess, keepMessages)
 		},
+		SummarizeConversation: func(ctx context.Context, keepMessages int) (tui.RuntimeControlResult, error) {
+			return a.summarizeTUIConversation(ctx, sess, keepMessages)
+		},
 		ModeLabel: modeState.Label(),
 		CycleMode: func() string {
 			return modeState.Cycle()
@@ -39529,6 +39532,74 @@ func (a *App) forkTUIConversation(ctx context.Context, sess *session.Session, ke
 	}
 	return tui.RuntimeControlResult{
 		Title:  "Conversation Forked",
+		Status: status,
+		Lines:  lines,
+	}, nil
+}
+
+func (a *App) summarizeTUIConversation(ctx context.Context, sess *session.Session, keepMessages int) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if sess == nil || strings.TrimSpace(sess.ID) == "" {
+		return tui.RuntimeControlResult{}, errors.New("session is required")
+	}
+	if keepMessages < 0 {
+		return tui.RuntimeControlResult{}, errors.New("summarize point is invalid")
+	}
+	current, err := a.Sessions.Open(sess.ID)
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if keepMessages > len(current.Messages) {
+		keepMessages = len(current.Messages)
+	}
+	omitted := append([]anthropic.Message(nil), current.Messages[keepMessages:]...)
+	if len(omitted) == 0 {
+		return tui.RuntimeControlResult{
+			Title:  "Conversation Summarized",
+			Status: "nothing to summarize",
+			Lines: []string{
+				"Session: " + current.ID,
+				fmt.Sprintf("Before: %d", keepMessages),
+				"Summarized: 0",
+			},
+		}, nil
+	}
+	compactPayload := runloop.CompactHookPayload("tui_summarize", current.ID, len(current.Messages), keepMessages)
+	if err := a.lifecycleHookRunner().PreCompact(context.Background(), compactPayload); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	summaryText := sessionsummary.BuildCompactionSummary(omitted, 0).Summary
+	summary := anthropic.TextMessage("user", summaryText)
+	next := make([]anthropic.Message, 0, keepMessages+1)
+	next = append(next, current.Messages[:keepMessages]...)
+	next = append(next, summary)
+	result, err := a.Sessions.ReplaceMessages(current, next)
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if err := a.lifecycleHookRunner().PostCompact(context.Background(), compactPayload); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	refreshed, err := a.Sessions.Open(current.ID)
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	*sess = *refreshed
+	lines := []string{
+		"Session: " + result.SessionID,
+		fmt.Sprintf("Before: %d", keepMessages),
+		fmt.Sprintf("Summarized: %d", len(omitted)),
+		fmt.Sprintf("Remaining: %d", result.RemainingMessages),
+		fmt.Sprintf("Removed: %d", result.RemovedMessages),
+	}
+	status := "conversation summarized"
+	if len(omitted) > 0 {
+		status = fmt.Sprintf("summarized %d", len(omitted))
+	}
+	return tui.RuntimeControlResult{
+		Title:  "Conversation Summarized",
 		Status: status,
 		Lines:  lines,
 	}, nil

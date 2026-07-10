@@ -21119,6 +21119,50 @@ func TestForkTUIConversationCreatesTruncatedChildSession(t *testing.T) {
 	require.Len(t, forked.Messages, 2)
 }
 
+func TestSummarizeTUIConversationCompactsFromTurn(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("tui-summarize", anthropic.TextMessage("user", "one")))
+	require.NoError(t, store.Append("tui-summarize", anthropic.TextMessage("assistant", "two")))
+	require.NoError(t, store.Append("tui-summarize", anthropic.TextMessage("user", "three")))
+	require.NoError(t, store.Append("tui-summarize", anthropic.TextMessage("assistant", "four")))
+	sess, err := store.Open("tui-summarize")
+	require.NoError(t, err)
+	require.Len(t, sess.Messages, 4)
+
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome, MCPServers: map[string]config.MCPServerConfig{}},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+
+	result, err := app.summarizeTUIConversation(context.Background(), sess, 2)
+	require.NoError(t, err)
+
+	require.Equal(t, "Conversation Summarized", result.Title)
+	require.Equal(t, "summarized 2", result.Status)
+	require.Contains(t, result.Lines, "Session: tui-summarize")
+	require.Contains(t, result.Lines, "Before: 2")
+	require.Contains(t, result.Lines, "Summarized: 2")
+	require.Contains(t, result.Lines, "Remaining: 3")
+	require.Contains(t, result.Lines, "Removed: 1")
+	require.Len(t, sess.Messages, 3)
+	require.Equal(t, "one", sess.Messages[0].Content[0].Text)
+	require.Equal(t, "two", sess.Messages[1].Content[0].Text)
+	summary := sess.Messages[2].Content[0].Text
+	require.Contains(t, summary, "Conversation summary:")
+	require.Contains(t, summary, "three")
+	require.Contains(t, summary, "four")
+
+	reopened, err := store.Open("tui-summarize")
+	require.NoError(t, err)
+	require.Len(t, reopened.Messages, 3)
+	require.Equal(t, summary, reopened.Messages[2].Content[0].Text)
+}
+
 func TestReadTUITodosUsesWorkspaceState(t *testing.T) {
 	workspace := t.TempDir()
 	app := &App{Workspace: workspace}
