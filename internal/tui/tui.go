@@ -87,7 +87,7 @@ type model struct {
 	history            []string
 	historyPos         int
 	draft              string
-	queuedPrompt       string
+	queuedPrompts      []string
 	searchOpen         bool
 	searchHits         []string
 	searchPos          int
@@ -235,10 +235,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Interrupted || errors.Is(msg.Err, context.Canceled) {
 			m.streamingIndex = -1
+			m.queuedPrompts = nil
 			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Interrupted by user."})
 			m.status = "interrupted"
 		} else if msg.Err != nil {
 			m.streamingIndex = -1
+			m.queuedPrompts = nil
 			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
 			m.status = "error"
 		} else if strings.TrimSpace(msg.Output) != "" {
@@ -250,9 +252,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streamingIndex = -1
 		m.refreshViewport()
 		m.viewport.GotoBottom()
-		if m.queuedPrompt != "" && msg.Err == nil && !msg.Interrupted {
-			next := m.queuedPrompt
-			m.queuedPrompt = ""
+		if len(m.queuedPrompts) > 0 && msg.Err == nil && !msg.Interrupted {
+			next := m.queuedPrompts[0]
+			m.queuedPrompts = append([]string(nil), m.queuedPrompts[1:]...)
 			return m.startInput(next)
 		}
 		return m, nil
@@ -518,12 +520,12 @@ func (m *model) queueCurrentInput() {
 	if value == "" || m.awaitingPermission || m.awaitingQuestion {
 		return
 	}
-	m.queuedPrompt = value
+	m.queuedPrompts = append(m.queuedPrompts, value)
 	m.textarea.SetValue("")
 	m.matches = nil
 	m.selected = 0
 	m.status = "queued"
-	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Queued next prompt: " + truncateForComposer(value, 120)})
+	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Queued prompt %d: %s", len(m.queuedPrompts), truncateForComposer(value, 120))})
 	m.refreshViewport()
 	m.viewport.GotoBottom()
 }

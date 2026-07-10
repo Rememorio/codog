@@ -705,7 +705,11 @@ func TestRealBinaryTUIQueuesPromptWhileBusyWithTTY(t *testing.T) {
 			writeAcceptanceTextStream(t, w, "first queued done")
 			return
 		}
-		writeAcceptanceTextStream(t, w, "second queued done")
+		if current == 2 {
+			writeAcceptanceTextStream(t, w, "second queued done")
+			return
+		}
+		writeAcceptanceTextStream(t, w, "third queued done")
 	}))
 	defer server.Close()
 
@@ -719,9 +723,12 @@ expect "Codog TUI"
 send "first queued prompt\r"
 expect "running"
 send "second queued prompt\r"
-expect "Queued next prompt"
+expect "Queued prompt 1"
+send "third queued prompt\r"
+expect "Queued prompt 2"
 expect "first queued done"
 expect "second queued done"
+expect "third queued done"
 send "\003"
 expect {
   eof {}
@@ -729,16 +736,19 @@ expect {
 }
 `)
 
-	require.Contains(t, output, "Queued next prompt")
+	require.Contains(t, output, "Queued prompt 1")
+	require.Contains(t, output, "Queued prompt 2")
 	require.Contains(t, output, "first queued done")
 	require.Contains(t, output, "second queued done")
+	require.Contains(t, output, "third queued done")
 	mu.Lock()
 	joinedRequests := strings.Join(requestBodies, "\n")
 	count := requestCount
 	mu.Unlock()
-	require.Equal(t, 2, count)
+	require.Equal(t, 3, count)
 	require.Contains(t, joinedRequests, "first queued prompt")
 	require.Contains(t, joinedRequests, "second queued prompt")
+	require.Contains(t, joinedRequests, "third queued prompt")
 }
 
 func TestRealBinaryTUICyclesModeBeforeTurnWithTTY(t *testing.T) {

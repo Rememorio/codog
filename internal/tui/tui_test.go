@@ -271,7 +271,7 @@ func TestSubmittingPromptAppendsTUIHistory(t *testing.T) {
 	require.Equal(t, -1, m.historyPos)
 }
 
-func TestBusyEnterQueuesNextPromptAndRunsAfterTurnDone(t *testing.T) {
+func TestBusyEnterQueuesPromptsAndRunsAfterTurnDone(t *testing.T) {
 	ta := newPromptTextarea("first prompt")
 	m := newModel(context.Background(), ta, nil, nil)
 	prompts := []string{}
@@ -289,27 +289,44 @@ func TestBusyEnterQueuesNextPromptAndRunsAfterTurnDone(t *testing.T) {
 	updated, queueCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	require.Nil(t, queueCmd)
-	require.Equal(t, "second prompt", m.queuedPrompt)
+	require.Equal(t, []string{"second prompt"}, m.queuedPrompts)
 	require.Equal(t, "", m.textarea.Value())
 	require.Equal(t, "queued", m.status)
-	require.Contains(t, m.View(), "Queued next prompt")
+	require.Contains(t, m.View(), "Queued prompt 1")
+
+	m.textarea.SetValue("third prompt")
+	updated, queueCmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Nil(t, queueCmd)
+	require.Equal(t, []string{"second prompt", "third prompt"}, m.queuedPrompts)
+	require.Contains(t, m.View(), "Queued prompt 2")
 
 	firstDone := firstCmd().(turnDoneMsg)
 	updated, secondCmd := m.Update(firstDone)
 	m = updated.(model)
 	require.True(t, m.busy)
-	require.Empty(t, m.queuedPrompt)
+	require.Equal(t, []string{"third prompt"}, m.queuedPrompts)
 	require.NotNil(t, secondCmd)
 	require.Equal(t, []string{"first prompt"}, prompts)
 	require.Equal(t, "user", m.transcript[len(m.transcript)-1].Role)
 	require.Equal(t, "second prompt", m.transcript[len(m.transcript)-1].Text)
 
 	secondDone := secondCmd().(turnDoneMsg)
-	updated, _ = m.Update(secondDone)
+	updated, thirdCmd := m.Update(secondDone)
+	m = updated.(model)
+	require.True(t, m.busy)
+	require.Empty(t, m.queuedPrompts)
+	require.NotNil(t, thirdCmd)
+	require.Equal(t, []string{"first prompt", "second prompt"}, prompts)
+	require.Equal(t, "user", m.transcript[len(m.transcript)-1].Role)
+	require.Equal(t, "third prompt", m.transcript[len(m.transcript)-1].Text)
+
+	thirdDone := thirdCmd().(turnDoneMsg)
+	updated, _ = m.Update(thirdDone)
 	m = updated.(model)
 	require.False(t, m.busy)
-	require.Equal(t, []string{"first prompt", "second prompt"}, prompts)
-	require.Contains(t, m.View(), "done: second prompt")
+	require.Equal(t, []string{"first prompt", "second prompt", "third prompt"}, prompts)
+	require.Contains(t, m.View(), "done: third prompt")
 }
 
 func TestEscapeCancelsBusyTurnWithoutQuitting(t *testing.T) {
@@ -345,6 +362,32 @@ func TestEscapeCancelsBusyTurnWithoutQuitting(t *testing.T) {
 	require.Nil(t, m.turnCancel)
 	require.Equal(t, "interrupted", m.status)
 	require.Contains(t, m.View(), "Interrupted by user.")
+}
+
+func TestInterruptedTurnDropsQueuedPrompts(t *testing.T) {
+	ta := newPromptTextarea("first prompt")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.submit = func(ctx context.Context, prompt string) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+
+	updated, firstCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	m.textarea.SetValue("queued prompt")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Len(t, m.queuedPrompts, 1)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	done := firstCmd().(turnDoneMsg)
+	updated, _ = m.Update(done)
+	m = updated.(model)
+
+	require.False(t, m.busy)
+	require.Empty(t, m.queuedPrompts)
+	require.Equal(t, "interrupted", m.status)
 }
 
 func TestStreamedTurnDeltasRenderBeforeDone(t *testing.T) {
