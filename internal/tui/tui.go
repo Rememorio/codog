@@ -122,6 +122,7 @@ type ShellOptions struct {
 	CompactSession            RuntimeControlFunc
 	UndoLast                  RuntimeControlFunc
 	ExportConversation        RuntimeControlFunc
+	CopyConversation          RuntimeControlFunc
 	RestoreConversation       ConversationRestoreFunc
 	ForkConversation          ConversationForkFunc
 	SummarizeConversation     ConversationSummarizeFunc
@@ -224,6 +225,7 @@ type model struct {
 	compactSession            RuntimeControlFunc
 	undoLast                  RuntimeControlFunc
 	exportConversation        RuntimeControlFunc
+	copyConversation          RuntimeControlFunc
 	restoreConversation       ConversationRestoreFunc
 	forkConversation          ConversationForkFunc
 	summarizeConversation     ConversationSummarizeFunc
@@ -758,6 +760,8 @@ func PreviewWithRuntimeControl(input string, key string, result RuntimeControlRe
 		m.undoLast = control
 	case "ctrl+x ctrl+s":
 		m.exportConversation = control
+	case "ctrl+x ctrl+y":
+		m.copyConversation = control
 	}
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -810,12 +814,18 @@ func runtimeControlPreviewKey(key string, chordSecond bool) tea.KeyMsg {
 		}
 		return tea.KeyMsg{Type: tea.KeyCtrlX}
 	}
+	if key == "ctrl+x ctrl+y" {
+		if chordSecond {
+			return tea.KeyMsg{Type: tea.KeyCtrlY}
+		}
+		return tea.KeyMsg{Type: tea.KeyCtrlX}
+	}
 	return altRuneKey(key)
 }
 
 func runtimeControlPreviewChord(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "ctrl+x ctrl+u", "ctrl+x ctrl+s":
+	case "ctrl+x ctrl+u", "ctrl+x ctrl+s", "ctrl+x ctrl+y":
 		return true
 	default:
 		return false
@@ -1006,6 +1016,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.compactSession = options.CompactSession
 	m.undoLast = options.UndoLast
 	m.exportConversation = options.ExportConversation
+	m.copyConversation = options.CopyConversation
 	m.restoreConversation = options.RestoreConversation
 	m.forkConversation = options.ForkConversation
 	m.summarizeConversation = options.SummarizeConversation
@@ -1358,6 +1369,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.status = "exporting"
 				return m, runRuntimeControlCommand(m.ctx, m.exportConversation)
+			case "ctrl+y":
+				if m.copyConversation == nil {
+					m.status = "no copy"
+					return m, nil
+				}
+				m.status = "copying"
+				return m, runRuntimeControlCommand(m.ctx, m.copyConversation)
 			case "backspace", "delete":
 				m.removeLastAttachment()
 				return m, nil
@@ -4353,6 +4371,7 @@ func helpPanel(candidates []string, width int) string {
 		"  Ctrl+X Ctrl+C compact session",
 		"  Ctrl+X Ctrl+U undo last file change",
 		"  Ctrl+X Ctrl+S export conversation",
+		"  Ctrl+X Ctrl+Y copy conversation",
 		"  Ctrl+X Backspace remove last attachment",
 		"  Ctrl+_      undo composer edit",
 		"  Ctrl+Shift+- undo composer edit",

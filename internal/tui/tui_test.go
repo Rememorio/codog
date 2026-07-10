@@ -702,6 +702,15 @@ func TestRuntimeToggleShortcutsAppendStatus(t *testing.T) {
 
 	require.Contains(t, exported.View, "Conversation Exported")
 	require.Contains(t, exported.View, ".codog/exports/session-1.md")
+
+	copied := PreviewWithRuntimeControl("", "ctrl+x ctrl+y", RuntimeControlResult{
+		Title:  "Conversation Copied",
+		Status: "copied",
+		Lines:  []string{"Session: session-1", "Clipboard: pbcopy", "Bytes: 128"},
+	}, 96, 24)
+
+	require.Contains(t, copied.View, "Conversation Copied")
+	require.Contains(t, copied.View, "Clipboard: pbcopy")
 }
 
 func TestPreviewWithModelPicker(t *testing.T) {
@@ -1084,6 +1093,34 @@ func TestCtrlXCtrlSExportsConversation(t *testing.T) {
 	require.Equal(t, "exported", m.status)
 	require.Contains(t, m.View(), "Conversation Exported")
 	require.Contains(t, m.View(), ".codog/exports/session-1.md")
+}
+
+func TestCtrlXCtrlYCopiesConversation(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	called := false
+	m.copyConversation = func(context.Context) (RuntimeControlResult, error) {
+		called = true
+		return RuntimeControlResult{Title: "Conversation Copied", Status: "copied", Lines: []string{"Session: session-1", "Clipboard: pbcopy"}}, nil
+	}
+
+	updated, cmd := m.Update(teaKey("ctrl+x"))
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.True(t, m.ctrlXChord)
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlY})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "copying", m.status)
+
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.True(t, called)
+	require.False(t, m.ctrlXChord)
+	require.Equal(t, "copied", m.status)
+	require.Contains(t, m.View(), "Conversation Copied")
+	require.Contains(t, m.View(), "Clipboard: pbcopy")
 }
 
 func TestPreviewTogglesHelpPanel(t *testing.T) {

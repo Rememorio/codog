@@ -20826,38 +20826,42 @@ func defaultKeybindingsTemplate() []byte {
 			{
 				Context: "tui",
 				Bindings: map[string]string{
-					"enter":         "submit prompt",
-					"shift+enter":   "insert newline",
-					"alt+enter":     "insert newline fallback",
-					"ctrl+j":        "insert newline",
-					"ctrl+s":        "stash or restore composer",
-					"ctrl+g":        "edit composer in $EDITOR",
-					"ctrl+x ctrl+e": "edit composer in $EDITOR",
-					"ctrl+x ctrl+k": "stop running background tasks and agents",
-					"ctrl+x ctrl+c": "compact current session",
-					"ctrl+_":        "undo composer edit",
-					"ctrl+shift+-":  "undo composer edit",
-					"ctrl+v":        "paste clipboard text or image",
-					"ctrl+shift+p":  "quick open files",
-					"ctrl+p":        "quick open fallback",
-					"ctrl+shift+f":  "search workspace",
-					"ctrl+f":        "search workspace fallback",
-					"alt+p":         "open model picker",
-					"alt+o":         "toggle fast mode",
-					"alt+t":         "cycle thinking effort",
-					"shift+up":      "open message actions",
-					"ctrl+o":        "toggle expanded transcript",
-					"ctrl+l":        "clear screen",
-					"ctrl+u":        "delete before cursor",
-					"ctrl+k":        "delete after cursor",
-					"ctrl+d":        "exit when composer is empty",
-					"ctrl+b":        "run composer prompt in background",
-					"ctrl+t":        "toggle tasks",
-					"ctrl+shift+t":  "show background task board",
-					"tab":           "complete slash command",
-					"up":            "edit queued prompts, choose completion, or recall history",
-					"esc":           "quit",
-					"ctrl+c":        "quit",
+					"enter":            "submit prompt",
+					"shift+enter":      "insert newline",
+					"alt+enter":        "insert newline fallback",
+					"ctrl+j":           "insert newline",
+					"ctrl+s":           "stash or restore composer",
+					"ctrl+g":           "edit composer in $EDITOR",
+					"ctrl+x ctrl+e":    "edit composer in $EDITOR",
+					"ctrl+x ctrl+k":    "stop running background tasks and agents",
+					"ctrl+x ctrl+c":    "compact current session",
+					"ctrl+x ctrl+u":    "undo last file change",
+					"ctrl+x ctrl+s":    "export current conversation",
+					"ctrl+x ctrl+y":    "copy current conversation",
+					"ctrl+x backspace": "remove last attachment",
+					"ctrl+_":           "undo composer edit",
+					"ctrl+shift+-":     "undo composer edit",
+					"ctrl+v":           "paste clipboard text or image",
+					"ctrl+shift+p":     "quick open files",
+					"ctrl+p":           "quick open fallback",
+					"ctrl+shift+f":     "search workspace",
+					"ctrl+f":           "search workspace fallback",
+					"alt+p":            "open model picker",
+					"alt+o":            "toggle fast mode",
+					"alt+t":            "cycle thinking effort",
+					"shift+up":         "open message actions",
+					"ctrl+o":           "toggle expanded transcript",
+					"ctrl+l":           "clear screen",
+					"ctrl+u":           "delete before cursor",
+					"ctrl+k":           "delete after cursor",
+					"ctrl+d":           "exit when composer is empty",
+					"ctrl+b":           "run composer prompt in background",
+					"ctrl+t":           "toggle tasks",
+					"ctrl+shift+t":     "show background task board",
+					"tab":              "complete slash command",
+					"up":               "edit queued prompts, choose completion, or recall history",
+					"esc":              "quit",
+					"ctrl+c":           "quit",
 				},
 			},
 			{
@@ -20926,6 +20930,10 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Ctrl-X Ctrl-E", Action: "edit composer in $EDITOR"},
 					{Key: "Ctrl-X Ctrl-K", Action: "stop running background tasks and agents"},
 					{Key: "Ctrl-X Ctrl-C", Action: "compact current session"},
+					{Key: "Ctrl-X Ctrl-U", Action: "undo last file change"},
+					{Key: "Ctrl-X Ctrl-S", Action: "export current conversation"},
+					{Key: "Ctrl-X Ctrl-Y", Action: "copy current conversation"},
+					{Key: "Ctrl-X Backspace", Action: "remove last attachment"},
 					{Key: "Ctrl-_", Action: "undo composer edit"},
 					{Key: "Ctrl-Shift--", Action: "undo composer edit"},
 					{Key: "Ctrl-V", Action: "paste clipboard text or image"},
@@ -39241,6 +39249,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		ExportConversation: func(ctx context.Context) (tui.RuntimeControlResult, error) {
 			return a.exportTUIConversation(ctx, sess)
 		},
+		CopyConversation: func(ctx context.Context) (tui.RuntimeControlResult, error) {
+			return a.copyTUIConversation(ctx, sess)
+		},
 		RestoreConversation: func(ctx context.Context, keepMessages int) (tui.RuntimeControlResult, error) {
 			return a.restoreTUIConversation(ctx, sess, keepMessages)
 		},
@@ -39529,6 +39540,45 @@ func (a *App) exportTUIConversation(ctx context.Context, sess *session.Session) 
 	return tui.RuntimeControlResult{
 		Title:  "Conversation Exported",
 		Status: "exported",
+		Lines:  lines,
+	}, nil
+}
+
+func (a *App) copyTUIConversation(ctx context.Context, sess *session.Session) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if sess == nil || strings.TrimSpace(sess.ID) == "" {
+		return tui.RuntimeControlResult{}, errors.New("session is required")
+	}
+	req := copyRequest{SessionID: sess.ID, Scope: "all", Format: session.ExportMarkdown}
+	data, copiedSession, format, err := a.copyPayload(req)
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return tui.RuntimeControlResult{}, errors.New("nothing to copy")
+	}
+	clipboard, err := writeClipboard(ctx, data)
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	messageCount := 0
+	sessionID := sess.ID
+	if copiedSession != nil {
+		sessionID = copiedSession.ID
+		messageCount = len(copiedSession.Messages)
+	}
+	lines := []string{
+		"Session: " + sessionID,
+		"Clipboard: " + clipboard,
+		"Format: " + format,
+		fmt.Sprintf("Messages: %d", messageCount),
+		fmt.Sprintf("Bytes: %d", len(data)),
+	}
+	return tui.RuntimeControlResult{
+		Title:  "Conversation Copied",
+		Status: "copied",
 		Lines:  lines,
 	}, nil
 }
