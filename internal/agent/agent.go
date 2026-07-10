@@ -63341,16 +63341,16 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "subagent", "allowed-tools", "android", "ant-trace", "api", "api-key", "apikeystep", "app", "auth", "audit", "autofix-pr", "backfill-sessions", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
+	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "subagent", "allowed-tools", "android", "ant-trace", "api", "api-key", "apikeystep", "app", "auth", "audit", "autofix-pr", "backfill-sessions", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome", "cost",
 		"break-cache", "bridge", "bridge-kick", "bootstrap-plan", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "completion", "config", "continue", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "deferred-init", "definition", "desktop", "diagnostics", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "exit-plan", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
-		"format", "help", "hover", "ide", "init", "init-verifiers", "insights", "install", "install-slack-app", "ios", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "map", "marketplace", "max-tokens", "max-turns",
+		"format", "help", "history", "hover", "ide", "init", "init-verifiers", "insights", "install", "install-slack-app", "ios", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "map", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "open", "output-style", "parity", "parity-audit", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
-		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "pr_comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
-		"reference-audit", "remote", "remote-control", "remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "safer-scope", "sandbox-toggle",
+		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "pr_comments", "profile", "prompt", "prompt-history", "privacy-settings", "project", "providers", "parseargs", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
+		"reference-audit", "remote", "remote-control", "remote-env", "remote-setup", "rename", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "safer-scope", "sandbox-toggle",
 		"references", "scope", "search", "security-review", "self-test", "server", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "slash", "skill", "skills", "speak", "ssh", "state", "status", "statusline", "symbols",
-		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "terminalsetup", "theme", "tool-details", "trust",
+		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "successstep", "summary", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "terminalsetup", "theme", "tokens", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"teleport", "ultraplan", "ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "unpin", "upgrade", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
 		return true
@@ -64288,8 +64288,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"cost",
 			"cost",
-			"codog [--session ID|--resume ID|latest] cost",
-			"Cost\n\nUsage:\n  codog [--session ID|--resume ID|latest] cost\n\nPrints cumulative token usage and estimated cost for the selected session as JSON.\n",
+			"codog [--session ID|--resume ID|latest] cost [--output-format text|json]",
+			"Cost\n\nUsage:\n  codog [--session ID|--resume ID|latest] cost [--output-format text|json]\n\nPrints cumulative token usage and estimated cost for the selected session.\n",
 			[]string{"input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "total_tokens", "estimated_usd"},
 			[]string{"ok", "error"},
 			false,
@@ -64399,8 +64399,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"tokens",
 			"tokens",
-			"codog [--session ID|--resume ID|latest] tokens",
-			"Tokens\n\nUsage:\n  codog [--session ID|--resume ID|latest] tokens\n\nAlias for `codog cost`; prints cumulative token usage for the selected session as JSON.\n",
+			"codog [--session ID|--resume ID|latest] tokens [--output-format text|json]",
+			"Tokens\n\nUsage:\n  codog [--session ID|--resume ID|latest] tokens [--output-format text|json]\n\nShows cumulative token usage for the selected session.\n",
 			[]string{"input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "total_tokens", "estimated_usd"},
 			[]string{"ok", "error"},
 			false,

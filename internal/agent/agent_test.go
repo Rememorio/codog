@@ -61,6 +61,7 @@ import (
 	"github.com/Rememorio/codog/internal/perfissue"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/plugins"
+	"github.com/Rememorio/codog/internal/prompthistory"
 	"github.com/Rememorio/codog/internal/prworkflow"
 	"github.com/Rememorio/codog/internal/reportconformance"
 	"github.com/Rememorio/codog/internal/reportschema"
@@ -68,6 +69,7 @@ import (
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/sessionname"
+	"github.com/Rememorio/codog/internal/sessionsummary"
 	"github.com/Rememorio/codog/internal/skills"
 	localstatus "github.com/Rememorio/codog/internal/status"
 	"github.com/Rememorio/codog/internal/team"
@@ -586,6 +588,69 @@ func TestUsageOverviewDirectTokensDispatch(t *testing.T) {
 	require.Equal(t, "tokens", report.Kind)
 	require.Equal(t, 13, report.TotalTokens)
 	require.Equal(t, 200000, report.ContextWindowTokens)
+}
+
+func TestSessionCommandsHonorGlobalJSONOutputFormat(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := json.Marshal(map[string]string{
+		"config_home": configHome,
+		"model":       "claude-sonnet-4-5",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.AppendWithUsage("global-session", anthropic.TextMessage("user", "hello from global json"), &anthropic.Usage{InputTokens: 9}))
+	require.NoError(t, store.AppendWithUsage("global-session", anthropic.TextMessage("assistant", "global json answer"), &anthropic.Usage{OutputTokens: 4}))
+
+	base := []string{"--config", configPath, "--cwd", workspace, "--session", "global-session", "--output-format", "json"}
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), append(append([]string{}, base...), "cost"), config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var cost usageOverviewReport
+	require.NoError(t, json.Unmarshal([]byte(out), &cost))
+	require.Equal(t, "cost", cost.Kind)
+	require.Equal(t, 13, cost.TotalTokens)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), append(append([]string{}, base...), "tokens"), config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var tokens usageOverviewReport
+	require.NoError(t, json.Unmarshal([]byte(out), &tokens))
+	require.Equal(t, "tokens", tokens.Kind)
+	require.Equal(t, 13, tokens.TotalTokens)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), append(append([]string{}, base...), "history"), config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var history prompthistory.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &history))
+	require.Equal(t, "prompt_history", history.Kind)
+	require.Equal(t, "global-session", history.SessionID)
+	require.NotEmpty(t, history.Entries)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), append(append([]string{}, base...), "summary"), config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var summary sessionsummary.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &summary))
+	require.Equal(t, "summary", summary.Kind)
+	require.Equal(t, "global-session", summary.SessionID)
+	require.Equal(t, 2, summary.MessageCount)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), append(append([]string{}, base...), "rename", "global-renamed"), config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var rename session.RenameResult
+	require.NoError(t, json.Unmarshal([]byte(out), &rename))
+	require.Equal(t, "global-session", rename.OldID)
+	require.Equal(t, "global-renamed", rename.NewID)
 }
 
 func TestRunCLIPlanModeRequiredForcesReadOnlyStatus(t *testing.T) {
@@ -1481,6 +1546,12 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Zero(t, report.CommandSurface.MissingCompletionCommandCount)
 	require.Empty(t, report.CommandSurface.MissingCompletionCommands)
 	require.Contains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "tui")
+	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "cost")
+	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "tokens")
+	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "history")
+	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "prompt-history")
+	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "summary")
+	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "rename")
 	require.Greater(t, report.CommandCount, 20)
 	require.Greater(t, report.SlashCommandCount, 20)
 	require.Greater(t, report.ResumeSafeSlashCount, 20)
