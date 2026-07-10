@@ -2055,6 +2055,42 @@ func TestPreviewWithAttachmentNavigation(t *testing.T) {
 	require.Contains(t, closed.View, "attachments: 1")
 }
 
+func TestPreviewWithDiffDialogNavigatesFilesSourcesAndDetails(t *testing.T) {
+	sources := []DiffSource{
+		{
+			Name:     "Uncommitted changes",
+			Subtitle: "git diff HEAD",
+			Files: []DiffFile{
+				{Path: "main.go", Status: "modified", Summary: "+2 -1", Diff: "@@ main.go\n-old\n+new"},
+				{Path: "README.md", Status: "added", Summary: "+5", Diff: "new docs"},
+			},
+		},
+		{
+			Name:     "Turn 2",
+			Subtitle: "write tests",
+			Files: []DiffFile{
+				{Path: "main_test.go", Status: "modified", Summary: "+10", Diff: "@@ tests\n+assert"},
+			},
+		},
+	}
+
+	preview := PreviewWithDiffDialog(sources, []string{"down", "enter"}, 96, 24)
+	require.True(t, preview.DiffDialog)
+	require.Equal(t, "diff detail", preview.Mode)
+	require.Contains(t, preview.View, "diff 1/2: Uncommitted changes")
+	require.Contains(t, preview.View, "ADDED README.md")
+	require.Contains(t, preview.View, "new docs")
+
+	source := PreviewWithDiffDialog(sources, []string{"right"}, 96, 24)
+	require.True(t, source.DiffDialog)
+	require.Equal(t, "diff", source.Mode)
+	require.Contains(t, source.View, "diff 2/2: Turn 2")
+	require.Contains(t, source.View, "main_test.go")
+
+	closed := PreviewWithDiffDialog(sources, []string{"esc"}, 96, 24)
+	require.False(t, closed.DiffDialog)
+}
+
 func TestCtrlXBackspaceRemovesLastAttachment(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, nil)

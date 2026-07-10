@@ -3586,6 +3586,9 @@ func privacyKeybindingsScenario() scenario {
 			if !strings.Contains(string(keybindingsData), `"context": "tui-attachments"`) || !strings.Contains(string(keybindingsData), `"right"`) || !strings.Contains(string(keybindingsData), `"backspace"`) || !strings.Contains(string(keybindingsData), `"delete"`) {
 				return localScenarioResult{}, fmt.Errorf("keybindings template missing attachment navigation entries: %s", string(keybindingsData))
 			}
+			if !strings.Contains(string(keybindingsData), `"context": "tui-diff"`) || !strings.Contains(string(keybindingsData), `"enter"`) || !strings.Contains(string(keybindingsData), `"left"`) || !strings.Contains(string(keybindingsData), `"right"`) {
+				return localScenarioResult{}, fmt.Errorf("keybindings template missing diff dialog entries: %s", string(keybindingsData))
+			}
 
 			editorLog := filepath.Join(workspace, "keybindings-editor.log")
 			editorScript := filepath.Join(workspace, "keybindings-editor.sh")
@@ -3623,7 +3626,7 @@ func privacyKeybindingsScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 6 || validateReport.BindingCount != 77 {
+			if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 7 || validateReport.BindingCount != 83 {
 				return localScenarioResult{}, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
 			}
 
@@ -3690,6 +3693,7 @@ func privacyKeybindingsScenario() scenario {
 					"mode_cycle_keys":       strings.Contains(string(keybindingsData), `"alt+m"`) && strings.Contains(string(keybindingsData), `"meta+m"`),
 					"modal_navigation_keys": strings.Contains(string(keybindingsData), `"context": "tui-modal"`) && strings.Contains(string(keybindingsData), `"j"`) && strings.Contains(string(keybindingsData), `"k"`) && strings.Contains(string(keybindingsData), `"shift+down"`),
 					"attachment_nav_keys":   strings.Contains(string(keybindingsData), `"context": "tui-attachments"`) && strings.Contains(string(keybindingsData), `"right"`) && strings.Contains(string(keybindingsData), `"backspace"`) && strings.Contains(string(keybindingsData), `"delete"`),
+					"diff_dialog_keys":      strings.Contains(string(keybindingsData), `"context": "tui-diff"`) && strings.Contains(string(keybindingsData), `"enter"`) && strings.Contains(string(keybindingsData), `"left"`) && strings.Contains(string(keybindingsData), `"right"`),
 					"runtime_control_keys":  strings.Contains(string(keybindingsData), `"alt+p"`) && strings.Contains(string(keybindingsData), `"alt+o"`) && strings.Contains(string(keybindingsData), `"alt+t"`),
 					"message_actions_key":   strings.Contains(string(keybindingsData), `"shift+up"`),
 					"transcript_key":        strings.Contains(string(keybindingsData), `"ctrl+o"`),
@@ -5483,6 +5487,26 @@ func tuiPromptCompletionScenario() scenario {
 			if globalSearch.GlobalSearch || !strings.Contains(globalSearch.Value, "@"+previewFile+"#L4 ") {
 				return localScenarioResult{}, fmt.Errorf("expected global search line reference, got value=%q view=%s", globalSearch.Value, globalSearch.View)
 			}
+			diffDialog := tui.PreviewWithDiffDialog([]tui.DiffSource{
+				{
+					Name:     "Uncommitted changes",
+					Subtitle: "git diff HEAD",
+					Files: []tui.DiffFile{
+						{Path: "src/app.go", Status: "modified", Summary: "+2 -1", Diff: "@@ src/app.go\n-old\n+new"},
+						{Path: "src/app_test.go", Status: "added", Summary: "+8", Diff: "+func TestApp() {}"},
+					},
+				},
+				{
+					Name:     "Turn 2",
+					Subtitle: "write tests",
+					Files: []tui.DiffFile{
+						{Path: "src/app_test.go", Status: "modified", Summary: "+4", Diff: "+require.NoError(t, err)"},
+					},
+				},
+			}, []string{"down", "enter"}, 96, 24)
+			if !diffDialog.DiffDialog || diffDialog.Mode != "diff detail" || !strings.Contains(diffDialog.View, "ADDED src/app_test.go") {
+				return localScenarioResult{}, fmt.Errorf("expected diff dialog detail preview, got mode=%q view=%s", diffDialog.Mode, diffDialog.View)
+			}
 			modelPicker := tui.PreviewWithModelPicker("inspect", []string{"sonnet", "opus"}, "sonnet", 96, 24, false)
 			if !modelPicker.ModelPicker || !strings.Contains(modelPicker.View, "model picker") || !strings.Contains(modelPicker.View, "sonnet  current") {
 				return localScenarioResult{}, fmt.Errorf("expected model picker preview, got view=%s", modelPicker.View)
@@ -5589,6 +5613,7 @@ func tuiPromptCompletionScenario() scenario {
 				"quick_open":                   strings.Contains(quickOpen.Value, "@internal/tui/tui.go"),
 				"global_search_preview":        strings.Contains(globalSearchPreview.View, "NeedleValue"),
 				"global_search":                strings.Contains(globalSearch.Value, "#L4"),
+				"diff_dialog":                  diffDialog.DiffDialog && strings.Contains(diffDialog.View, "src/app_test.go"),
 				"model_picker":                 modelPicker.ModelPicker,
 				"runtime_fast_toggle":          strings.Contains(fastToggle.View, "Fast mode: on"),
 				"runtime_thinking":             strings.Contains(thinkingToggle.View, "Reasoning: medium"),

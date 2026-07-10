@@ -20971,6 +20971,17 @@ func defaultKeybindingsTemplate() []byte {
 				},
 			},
 			{
+				Context: "tui-diff",
+				Bindings: map[string]string{
+					"esc":   "close diff dialog",
+					"left":  "previous diff source or back from detail",
+					"right": "next diff source",
+					"up":    "select previous changed file",
+					"down":  "select next changed file",
+					"enter": "view selected file diff",
+				},
+			},
+			{
 				Context: "slash",
 				Bindings: map[string]string{
 					"/help":                 "show command help",
@@ -21084,6 +21095,15 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "Right / Left", Action: "select next or previous pending attachment"},
 					{Key: "Backspace / Delete", Action: "remove selected pending attachment"},
 					{Key: "Down / Esc", Action: "close attachment selector"},
+				},
+			},
+			{
+				Name: "TUI diff",
+				Entries: []keybindingEntry{
+					{Key: "Up / Down", Action: "select previous or next changed file"},
+					{Key: "Left / Right", Action: "move between diff sources or return from detail"},
+					{Key: "Enter", Action: "view selected file diff"},
+					{Key: "Esc", Action: "close diff dialog"},
 				},
 			},
 			{

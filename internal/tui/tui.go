@@ -152,6 +152,22 @@ type Preview struct {
 	ModelPicker     bool
 	MessageMenu     bool
 	AttachmentsOpen bool
+	DiffDialog      bool
+}
+
+// DiffSource describes one diff source rendered by the TUI diff dialog.
+type DiffSource struct {
+	Name     string
+	Subtitle string
+	Files    []DiffFile
+}
+
+// DiffFile describes one changed file rendered by the TUI diff dialog.
+type DiffFile struct {
+	Path    string
+	Status  string
+	Summary string
+	Diff    string
 }
 
 type composerStash struct {
@@ -241,6 +257,11 @@ type model struct {
 	attachments               []string
 	attachmentsOpen           bool
 	attachmentSelected        int
+	diffDialog                bool
+	diffSources               []DiffSource
+	diffSourceSelected        int
+	diffFileSelected          int
+	diffDetail                bool
 	stashedPrompt             *composerStash
 	searchOpen                bool
 	searchHits                []string
@@ -608,6 +629,62 @@ func attachmentPreviewKey(key string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyDelete}
 	case "down":
 		return tea.KeyMsg{Type: tea.KeyDown}
+	case "esc", "escape":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	default:
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+	}
+}
+
+// PreviewWithDiffDialog renders a deterministic TUI diff dialog after applying
+// the provided navigation keys.
+func PreviewWithDiffDialog(sources []DiffSource, keys []string, width int, height int) Preview {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	m.openDiffDialog(sources)
+	for _, key := range keys {
+		updated, _ := m.Update(diffPreviewKey(key))
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:            m.View(),
+		Value:           m.textarea.Value(),
+		Matches:         append([]string(nil), m.matches...),
+		Attachments:     append([]string(nil), m.attachments...),
+		Mode:            m.mode(),
+		HelpOpen:        m.helpOpen,
+		HasStash:        m.stashedPrompt != nil,
+		Transcript:      m.transcriptMode,
+		QuickOpen:       m.quickOpen,
+		GlobalSearch:    m.globalSearch,
+		TodosOpen:       m.todosOpen,
+		ModelPicker:     m.modelPicker,
+		MessageMenu:     m.messageActions,
+		AttachmentsOpen: m.attachmentsOpen,
+		DiffDialog:      m.diffDialog,
+	}
+}
+
+func diffPreviewKey(key string) tea.KeyMsg {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "left":
+		return tea.KeyMsg{Type: tea.KeyLeft}
+	case "right":
+		return tea.KeyMsg{Type: tea.KeyRight}
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc", "escape":
 		return tea.KeyMsg{Type: tea.KeyEsc}
 	default:
@@ -1314,6 +1391,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Paste {
 			return m.handlePastedInput(msg)
 		}
+		if m.diffDialog {
+			switch msg.String() {
+			case "ctrl+c", "esc":
+				m.closeDiffDialog()
+				return m, nil
+			case "left":
+				m.previousDiffSourceOrBack()
+				return m, nil
+			case "right":
+				m.nextDiffSource()
+				return m, nil
+			case "up":
+				m.moveDiffFile(-1)
+				return m, nil
+			case "down":
+				m.moveDiffFile(1)
+				return m, nil
+			case "enter":
+				m.openDiffDetail()
+				return m, nil
+			case "ctrl+r", "ctrl+s", "ctrl+_", "ctrl+shift+-", "ctrl+x", "ctrl+shift+f", "ctrl+f", "ctrl+shift+p", "ctrl+o", "ctrl+g", "ctrl+b", "ctrl+t", "ctrl+shift+t", "ctrl+v", "ctrl+l", "ctrl+d", "shift+up", "alt+m", "meta+m", "alt+p", "meta+p", "alt+o", "meta+o", "alt+t", "meta+t":
+				return m, nil
+			}
+			return m, nil
+		}
 		if m.attachmentsOpen {
 			switch msg.String() {
 			case "ctrl+c", "esc", "down":
@@ -1965,6 +2067,9 @@ func (m model) View() string {
 		targetPos, targetCount := m.messageActionTargetPosition()
 		composer += "\n" + renderMessageActions(m.messageActionEntry(), m.messageActionSelected, m.width, targetPos, targetCount)
 	}
+	if m.diffDialog {
+		composer += "\n" + renderDiffDialog(m.diffSources, m.diffSourceSelected, m.diffFileSelected, m.diffDetail, m.width)
+	}
 	if len(m.queuedPrompts) > 0 {
 		composer += "\n" + renderQueuedPrompts(m.queuedPrompts)
 	}
@@ -2366,6 +2471,137 @@ func (m *model) removeSelectedAttachment() {
 	m.viewport.GotoBottom()
 }
 
+func (m *model) openDiffDialog(sources []DiffSource) {
+	m.diffSources = normalizeDiffSources(sources)
+	if len(m.diffSources) == 0 {
+		m.status = "no diff"
+		return
+	}
+	if m.helpOpen {
+		m.helpOpen = false
+		m.refreshViewport()
+	}
+	m.matches = nil
+	m.selected = 0
+	m.searchOpen = false
+	m.quickOpen = false
+	m.globalSearch = false
+	m.todosOpen = false
+	m.modelPicker = false
+	m.messageActions = false
+	m.attachmentsOpen = false
+	m.diffDialog = true
+	m.diffDetail = false
+	m.diffSourceSelected = clampIndex(m.diffSourceSelected, len(m.diffSources))
+	m.diffFileSelected = clampIndex(m.diffFileSelected, len(m.currentDiffSource().Files))
+	m.status = "diff"
+}
+
+func (m *model) closeDiffDialog() {
+	m.diffDialog = false
+	m.diffDetail = false
+	m.diffSources = nil
+	m.diffSourceSelected = 0
+	m.diffFileSelected = 0
+	if !m.busy && !m.backgrounding {
+		m.status = m.mode()
+	}
+}
+
+func (m model) currentDiffSource() DiffSource {
+	if len(m.diffSources) == 0 {
+		return DiffSource{}
+	}
+	return m.diffSources[clampIndex(m.diffSourceSelected, len(m.diffSources))]
+}
+
+func (m model) currentDiffFile() DiffFile {
+	source := m.currentDiffSource()
+	if len(source.Files) == 0 {
+		return DiffFile{}
+	}
+	return source.Files[clampIndex(m.diffFileSelected, len(source.Files))]
+}
+
+func (m *model) previousDiffSourceOrBack() {
+	if m.diffDetail {
+		m.diffDetail = false
+		m.status = "diff"
+		return
+	}
+	m.moveDiffSource(-1)
+}
+
+func (m *model) nextDiffSource() {
+	if m.diffDetail {
+		return
+	}
+	m.moveDiffSource(1)
+}
+
+func (m *model) moveDiffSource(delta int) {
+	if len(m.diffSources) <= 1 {
+		return
+	}
+	m.diffSourceSelected = (m.diffSourceSelected + delta + len(m.diffSources)) % len(m.diffSources)
+	m.diffFileSelected = 0
+	m.diffDetail = false
+	m.status = "diff"
+}
+
+func (m *model) moveDiffFile(delta int) {
+	if m.diffDetail {
+		return
+	}
+	source := m.currentDiffSource()
+	if len(source.Files) == 0 {
+		return
+	}
+	m.diffFileSelected = (m.diffFileSelected + delta + len(source.Files)) % len(source.Files)
+	m.status = "diff"
+}
+
+func (m *model) openDiffDetail() {
+	if len(m.currentDiffSource().Files) == 0 {
+		return
+	}
+	m.diffDetail = true
+	m.status = "diff detail"
+}
+
+func normalizeDiffSources(sources []DiffSource) []DiffSource {
+	out := make([]DiffSource, 0, len(sources))
+	for _, source := range sources {
+		name := strings.TrimSpace(source.Name)
+		if name == "" {
+			name = "Diff"
+		}
+		files := make([]DiffFile, 0, len(source.Files))
+		for _, file := range source.Files {
+			path := strings.TrimSpace(filepathToSlash(file.Path))
+			if path == "" {
+				continue
+			}
+			status := strings.TrimSpace(file.Status)
+			if status == "" {
+				status = "modified"
+			}
+			files = append(files, DiffFile{
+				Path:    path,
+				Status:  status,
+				Summary: strings.TrimSpace(file.Summary),
+				Diff:    strings.TrimSpace(file.Diff),
+			})
+		}
+		out = append(out, DiffSource{
+			Name:     name,
+			Subtitle: strings.TrimSpace(source.Subtitle),
+			Files:    files,
+		})
+	}
+	return out
+}
+
 func addUniqueAttachment(attachments *[]string, path string) bool {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -2724,7 +2960,7 @@ func (m model) completeSlashCommand() model {
 
 func (m *model) refreshCompletionMenu() {
 	value := strings.Trim(m.textarea.Value(), "\r\n\t")
-	if value == "" || m.busy || m.searchOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.messageActions || m.attachmentsOpen {
+	if value == "" || m.busy || m.searchOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.messageActions || m.attachmentsOpen || m.diffDialog {
 		m.matches = nil
 		m.selected = 0
 		return
@@ -3924,6 +4160,77 @@ func renderAttachmentPanel(attachments []string, selected int, width int) string
 	return strings.Join(lines, "\n")
 }
 
+func renderDiffDialog(sources []DiffSource, sourceIndex int, fileIndex int, detail bool, width int) string {
+	sources = normalizeDiffSources(sources)
+	if len(sources) == 0 {
+		return completionTitleStyle().Render(" diff ") + "\n" + completionStyle().Render("  no changes")
+	}
+	sourceIndex = clampIndex(sourceIndex, len(sources))
+	source := sources[sourceIndex]
+	limit := 100
+	if width > 0 {
+		limit = max(40, width-8)
+	}
+	title := fmt.Sprintf(" diff %d/%d: %s ", sourceIndex+1, len(sources), source.Name)
+	lines := []string{completionTitleStyle().Render(title)}
+	if source.Subtitle != "" {
+		lines = append(lines, completionStyle().Render("  "+truncateForComposer(source.Subtitle, limit)))
+	}
+	if len(source.Files) == 0 {
+		lines = append(lines, completionStyle().Render("  no changed files"))
+		lines = append(lines, completionStyle().Render("  Left/Right source · Esc close"))
+		return strings.Join(lines, "\n")
+	}
+	fileIndex = clampIndex(fileIndex, len(source.Files))
+	selected := source.Files[fileIndex]
+	if detail {
+		header := fmt.Sprintf("  %s %s", strings.ToUpper(selected.Status), selected.Path)
+		lines = append(lines, selectedCompletionStyle().Render(truncateForComposer(header, limit)))
+		diff := strings.TrimSpace(selected.Diff)
+		if diff == "" {
+			diff = selected.Summary
+		}
+		if diff == "" {
+			diff = "(no diff preview)"
+		}
+		for _, line := range firstLines(diff, 12) {
+			lines = append(lines, completionStyle().Render("  "+truncateForComposer(line, limit)))
+		}
+		lines = append(lines, completionStyle().Render("  Left back · Esc close"))
+		return strings.Join(lines, "\n")
+	}
+	stats := fmt.Sprintf("%d changed %s", len(source.Files), plural("file", len(source.Files)))
+	lines = append(lines, completionStyle().Render("  "+stats))
+	for index, file := range source.Files {
+		prefix := "  "
+		style := completionStyle()
+		if index == fileIndex {
+			prefix = "> "
+			style = selectedCompletionStyle()
+		}
+		summary := strings.TrimSpace(file.Summary)
+		if summary != "" {
+			summary = " · " + summary
+		}
+		lines = append(lines, style.Render(truncateForComposer(fmt.Sprintf("%s%s %s%s", prefix, strings.ToUpper(file.Status), file.Path, summary), limit)))
+	}
+	lines = append(lines, completionStyle().Render("  Up/Down file · Left/Right source · Enter detail · Esc close"))
+	return strings.Join(lines, "\n")
+}
+
+func firstLines(text string, limit int) []string {
+	if limit <= 0 {
+		limit = 1
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+	if len(lines) > limit {
+		lines = lines[:limit]
+	}
+	return lines
+}
+
 func renderStashNotice(stash *composerStash) string {
 	if stash == nil {
 		return ""
@@ -4552,6 +4859,12 @@ func (m model) mode() string {
 	}
 	if m.attachmentsOpen {
 		return "attachments"
+	}
+	if m.diffDialog {
+		if m.diffDetail {
+			return "diff detail"
+		}
+		return "diff"
 	}
 	if len(m.matches) > 0 {
 		return fmt.Sprintf("%d completions", len(m.matches))
