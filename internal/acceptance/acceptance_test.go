@@ -847,6 +847,54 @@ func TestRealBinaryPromptResumeSendsPriorSessionHistory(t *testing.T) {
 	require.Contains(t, resumedRequest, "second prompt marker")
 }
 
+func TestRealBinaryBackgroundTasksPersistTerminalStateAfterLauncherExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("background command smoke uses POSIX sh")
+	}
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+
+	for _, testCase := range []struct {
+		name       string
+		command    string
+		wantStatus string
+		wantCode   int
+		wantLog    string
+	}{
+		{name: "success", command: "sleep 0.05; printf detached-success", wantStatus: "completed", wantCode: 0, wantLog: "detached-success"},
+		{name: "failure", command: "sleep 0.05; printf detached-failure; exit 7", wantStatus: "failed", wantCode: 7, wantLog: "detached-failure"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			started := runCodog(t, bin, workspace, configHome, nil, "background", "run", "--output-format", "json", testCase.command)
+			require.Equal(t, 0, started.Code, started.Combined())
+			var startReport struct {
+				TaskID string `json:"task_id"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(started.Stdout), &startReport), started.Combined())
+			require.NotEmpty(t, startReport.TaskID)
+
+			var statusReport struct {
+				Task *struct {
+					Status   string `json:"status"`
+					ExitCode *int   `json:"exit_code"`
+				} `json:"task"`
+			}
+			require.Eventually(t, func() bool {
+				status := runCodog(t, bin, workspace, configHome, nil, "background", "status", startReport.TaskID, "--output-format", "json")
+				if status.Code != 0 || json.Unmarshal([]byte(status.Stdout), &statusReport) != nil || statusReport.Task == nil || statusReport.Task.ExitCode == nil {
+					return false
+				}
+				return statusReport.Task.Status == testCase.wantStatus && *statusReport.Task.ExitCode == testCase.wantCode
+			}, 3*time.Second, 25*time.Millisecond)
+
+			logs := runCodog(t, bin, workspace, configHome, nil, "background", "logs", startReport.TaskID, "--output-format", "json")
+			require.Equal(t, 0, logs.Code, logs.Combined())
+			require.Contains(t, logs.Stdout, testCase.wantLog)
+		})
+	}
+}
+
 type commandResult struct {
 	Code   int
 	Stdout string

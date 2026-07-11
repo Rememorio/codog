@@ -3160,7 +3160,7 @@ func readBackgroundLog(store background.Store, id string, task background.Task, 
 			task = refreshed
 		}
 		result.TimeoutMS = options.TimeoutMS
-		if !options.Block || result.Output != "" || task.Status != "running" {
+		if !options.Block || result.Output != "" || !background.IsActiveStatus(task.Status) {
 			return result, task, nil
 		}
 		if !deadline.IsZero() && !time.Now().Before(deadline) {

@@ -192,6 +192,28 @@ func TestStatusForTaskUsesDefaultFreshnessWindow(t *testing.T) {
 	require.Equal(t, "stalled", status.Health.State)
 }
 
+func TestStoppingAgentRunRemainsActive(t *testing.T) {
+	configHome := t.TempDir()
+	taskStore := background.NewStore(configHome)
+	now := time.Now().UTC()
+	require.NoError(t, writeTask(taskStore, background.Task{
+		ID:        "task-stopping",
+		Status:    "stopping",
+		StartedAt: now.Add(-time.Minute),
+		LogPath:   filepath.Join(configHome, "stopping.log"),
+	}))
+	run := Run{ID: "run-stopping", Agent: "reviewer", TaskID: "task-stopping", CreatedAt: now}
+
+	status := StatusForTaskAt(taskStore, run, now, 30*time.Second)
+	require.Equal(t, "stopping", status.CurrentStatus)
+	require.False(t, status.Lifecycle.Terminal)
+	require.Equal(t, "heartbeat_unknown", status.Health.State)
+
+	board := BuildBoard(taskStore, []Run{run}, now, 30*time.Second)
+	require.Len(t, board.Active, 1)
+	require.Empty(t, board.Finished)
+}
+
 func TestPruneRemovesOldCompletedAndOrphanedRuns(t *testing.T) {
 	configHome := t.TempDir()
 	runStore := NewStore(configHome)

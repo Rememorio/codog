@@ -6966,7 +6966,7 @@ func (a *App) watchTeam(ctx context.Context, taskStore background.Store, item te
 				}
 				continue
 			}
-			if task.Status == "running" {
+			if background.IsActiveStatus(task.Status) {
 				running = true
 			}
 			if lastStatus[id] == "" || lastStatus[id] != task.Status {

@@ -74,7 +74,7 @@ func (s LSPStore) Start(language string, commandArgs []string) (LSPServerStatus,
 	if err != nil {
 		return LSPServerStatus{}, err
 	}
-	if existing, err := s.Status(language); err == nil && existing.Task.Status == "running" {
+	if existing, err := s.Status(language); err == nil && background.IsActiveStatus(existing.Task.Status) {
 		return LSPServerStatus{}, fmt.Errorf("lsp server %q is already running", language)
 	}
 	command, err := lspCommand(language, commandArgs)

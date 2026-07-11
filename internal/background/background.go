@@ -2,6 +2,7 @@ package background
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -202,9 +204,26 @@ type PruneResult struct {
 	Kept         int      `json:"kept"`
 }
 
+type taskCompletion struct {
+	ExitCode    int
+	CompletedAt time.Time
+}
+
 type Store struct {
 	Dir string
 }
+
+type taskMutationLock struct {
+	mutex sync.Mutex
+	refs  int
+}
+
+// Store values for the same directory share these locks so read-modify-write
+// operations cannot silently overwrite each other inside one Codog process.
+var taskMutationLockRegistry = struct {
+	sync.Mutex
+	locks map[string]*taskMutationLock
+}{locks: map[string]*taskMutationLock{}}
 
 func NewStore(configHome string) Store {
 	return Store{Dir: filepath.Join(configHome, "background")}
@@ -253,35 +272,39 @@ func (s Store) Restart(id string, cwd string) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
-	source := task
 	if task.Status == "running" {
-		stopped, err := s.Stop(id)
-		if err != nil {
+		if _, err := s.Stop(id); err != nil {
 			return Task{}, err
 		}
-		source = stopped
+	} else if IsActiveStatus(task.Status) {
+		return Task{}, errors.New("background task is still " + task.Status)
 	}
-	workspace := task.Workspace
-	if workspace == "" {
-		workspace = cwd
-	}
-	restarted, err := s.run(task.Command, workspace, RunOptions{
-		Kind:          task.Kind,
-		AgentType:     task.AgentType,
-		SessionID:     task.SessionID,
-		RestartedFrom: task.ID,
-		RestartPolicy: task.RestartPolicy,
-		RestartCount:  task.RestartCount,
-		Prompt:        task.Prompt,
-		Description:   task.Description,
-		TaskPacket:    task.TaskPacket,
-		ScopeBinding:  task.ScopeBinding,
+	var restarted Task
+	_, err = s.mutateTask(id, func(source *Task) (bool, error) {
+		workspace := source.Workspace
+		if workspace == "" {
+			workspace = cwd
+		}
+		next, err := s.run(source.Command, workspace, RunOptions{
+			Kind:          source.Kind,
+			AgentType:     source.AgentType,
+			SessionID:     source.SessionID,
+			RestartedFrom: source.ID,
+			RestartPolicy: source.RestartPolicy,
+			RestartCount:  source.RestartCount,
+			Prompt:        source.Prompt,
+			Description:   source.Description,
+			TaskPacket:    source.TaskPacket,
+			ScopeBinding:  source.ScopeBinding,
+		})
+		if err != nil {
+			return false, err
+		}
+		restarted = next
+		source.RestartedBy = restarted.ID
+		return true, nil
 	})
 	if err != nil {
-		return Task{}, err
-	}
-	source.RestartedBy = restarted.ID
-	if err := s.save(source); err != nil {
 		return Task{}, err
 	}
 	return restarted, nil
@@ -302,7 +325,7 @@ func (s Store) Prune(options PruneOptions) (PruneResult, error) {
 	seenNonRunning := 0
 	result := PruneResult{}
 	for _, task := range tasks {
-		if task.Status == "running" {
+		if IsActiveStatus(task.Status) {
 			result.Kept++
 			continue
 		}
@@ -315,8 +338,13 @@ func (s Store) Prune(options PruneOptions) (PruneResult, error) {
 			result.Kept++
 			continue
 		}
-		if err := s.remove(task); err != nil {
+		removed, err := s.removeIfEligible(task.ID, cutoff)
+		if err != nil {
 			return result, err
+		}
+		if !removed {
+			result.Kept++
+			continue
 		}
 		result.Removed = append(result.Removed, task.ID)
 	}
@@ -334,37 +362,52 @@ func (s Store) SuperviseOnce(now time.Time) (SuperviseResult, error) {
 	}
 	result := SuperviseResult{}
 	for _, task := range tasks {
+		restarted, reason, err := s.superviseTask(task.ID, now)
+		if err != nil {
+			return result, err
+		}
+		if reason != "" {
+			result.Skipped = append(result.Skipped, SuperviseSkip{ID: task.ID, Reason: reason})
+		}
+		if restarted != nil {
+			result.Restarted = append(result.Restarted, *restarted)
+		}
+	}
+	return result, nil
+}
+
+func (s Store) superviseTask(id string, now time.Time) (*Task, string, error) {
+	var restarted *Task
+	var skipReason string
+	_, err := s.mutateTask(id, func(task *Task) (bool, error) {
 		policy, err := normalizeRestartPolicy(task.RestartPolicy)
 		if err != nil {
-			result.Skipped = append(result.Skipped, SuperviseSkip{ID: task.ID, Reason: "policy"})
-			continue
+			skipReason = "policy"
+			return false, nil
 		}
-		if policy == nil || !policy.Enabled {
-			continue
-		}
-		if task.Status == "running" {
-			continue
+		if policy == nil || !policy.Enabled || IsActiveStatus(task.Status) {
+			return false, nil
 		}
 		if task.RestartedBy != "" {
-			result.Skipped = append(result.Skipped, SuperviseSkip{ID: task.ID, Reason: "restarted"})
-			continue
+			skipReason = "restarted"
+			return false, nil
 		}
-		if !shouldRestart(task, *policy) {
-			result.Skipped = append(result.Skipped, SuperviseSkip{ID: task.ID, Reason: "status"})
-			continue
+		if !shouldRestart(*task, *policy) {
+			skipReason = "status"
+			return false, nil
 		}
 		if policy.MaxAttempts > 0 && task.RestartCount >= policy.MaxAttempts {
-			result.Skipped = append(result.Skipped, SuperviseSkip{ID: task.ID, Reason: "max_attempts"})
-			continue
+			skipReason = "max_attempts"
+			return false, nil
 		}
 		if task.CompletedAt != nil && policy.DelaySeconds > 0 {
 			next := task.CompletedAt.Add(time.Duration(policy.DelaySeconds) * time.Second)
 			if now.Before(next) {
-				result.Skipped = append(result.Skipped, SuperviseSkip{ID: task.ID, Reason: "delay"})
-				continue
+				skipReason = "delay"
+				return false, nil
 			}
 		}
-		restarted, err := s.run(task.Command, task.Workspace, RunOptions{
+		next, err := s.run(task.Command, task.Workspace, RunOptions{
 			Kind:          task.Kind,
 			AgentType:     task.AgentType,
 			SessionID:     task.SessionID,
@@ -377,15 +420,13 @@ func (s Store) SuperviseOnce(now time.Time) (SuperviseResult, error) {
 			ScopeBinding:  task.ScopeBinding,
 		})
 		if err != nil {
-			return result, err
+			return false, err
 		}
-		task.RestartedBy = restarted.ID
-		if err := s.save(task); err != nil {
-			return result, err
-		}
-		result.Restarted = append(result.Restarted, restarted)
-	}
-	return result, nil
+		restarted = &next
+		task.RestartedBy = next.ID
+		return true, nil
+	})
+	return restarted, skipReason, err
 }
 
 func (s Store) run(command string, cwd string, options RunOptions) (Task, error) {
@@ -399,15 +440,18 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return Task{}, err
 	}
-	id := time.Now().UTC().Format("20060102T150405.000000000Z")
+	id, err := newTaskID()
+	if err != nil {
+		return Task{}, err
+	}
 	logPath := filepath.Join(s.Dir, id+".log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		return Task{}, err
 	}
 	defer logFile.Close()
 
-	cmd := exec.Command("sh", "-lc", command)
+	cmd := exec.Command("sh", "-c", backgroundShellWrapper, "codog-background", command, s.completionPath(id))
 	cmd.Dir = cwd
 	if len(options.Env) > 0 {
 		cmd.Env = append([]string(nil), options.Env...)
@@ -439,31 +483,84 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 	}
 	if err := s.save(task); err != nil {
 		_ = killBackgroundProcess(cmd.Process.Pid)
+		_ = cmd.Wait()
 		return Task{}, err
 	}
-	go func() {
-		err := cmd.Wait()
-		current, getErr := s.Get(task.ID)
-		if getErr == nil && current.Status != "running" && current.Status != "exited" {
-			return
-		}
-		if getErr == nil {
-			task = current
-		}
-		now := time.Now().UTC()
-		task.CompletedAt = &now
-		task.Status = "completed"
-		if cmd.ProcessState != nil {
-			exitCode := cmd.ProcessState.ExitCode()
-			task.ExitCode = &exitCode
-		}
-		if err != nil {
-			task.Status = "failed"
-			task.Error = err.Error()
-		}
-		_ = s.save(task)
-	}()
+	go s.waitForCompletion(task.ID, cmd)
 	return task, nil
+}
+
+func newTaskID() (string, error) {
+	var suffix [4]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", err
+	}
+	return time.Now().UTC().Format("20060102T150405.000000000Z") + "-" + hex.EncodeToString(suffix[:]), nil
+}
+
+func (s Store) waitForCompletion(id string, cmd *exec.Cmd) {
+	waitErr := cmd.Wait()
+	completion := taskCompletion{CompletedAt: time.Now().UTC()}
+	if cmd.ProcessState != nil {
+		completion.ExitCode = cmd.ProcessState.ExitCode()
+	}
+	if persisted, ok, err := s.readCompletion(id); err == nil && ok {
+		completion = persisted
+	}
+	_, err := s.mutateTask(id, func(task *Task) (bool, error) {
+		if task.Status != "running" && task.Status != "exited" {
+			return false, nil
+		}
+		applyTaskCompletion(task, completion, waitErr)
+		return true, nil
+	})
+	if err == nil {
+		_ = os.Remove(s.completionPath(id))
+	}
+}
+
+// The wrapper records the exit code before it exits so a later Codog process
+// can reconcile a detached task after the process that launched it is gone.
+const backgroundShellWrapper = `command=$1
+completion=$2
+sh -lc "$command"
+code=$?
+tmp="${completion}.tmp"
+umask 077
+if printf '%s\n' "$code" > "$tmp"; then
+  mv -f "$tmp" "$completion"
+else
+  rm -f "$tmp"
+fi
+exit "$code"`
+
+func applyTaskCompletion(task *Task, completion taskCompletion, waitErr error) {
+	if strings.EqualFold(strings.TrimSpace(task.Status), "exited") {
+		events := task.TerminalEvents[:0]
+		for _, event := range task.TerminalEvents {
+			if !strings.EqualFold(strings.TrimSpace(event.Status), "exited") {
+				events = append(events, event)
+			}
+		}
+		task.TerminalEvents = events
+		task.TerminalOutcome = nil
+	}
+	completedAt := completion.CompletedAt.UTC()
+	if completedAt.IsZero() {
+		completedAt = time.Now().UTC()
+	}
+	exitCode := completion.ExitCode
+	task.CompletedAt = &completedAt
+	task.ExitCode = &exitCode
+	task.Error = ""
+	task.Status = "completed"
+	if completion.ExitCode != 0 {
+		task.Status = "failed"
+		task.Error = "exit status " + strconv.Itoa(completion.ExitCode)
+		if waitErr != nil {
+			task.Error = waitErr.Error()
+		}
+	}
 }
 
 func (s Store) Update(id string, message string) (Task, error) {
@@ -471,25 +568,16 @@ func (s Store) Update(id string, message string) (Task, error) {
 	if message == "" {
 		return Task{}, errors.New("message is required")
 	}
-	task, err := s.Status(id)
-	if err != nil {
-		return Task{}, err
-	}
-	task.Messages = append(task.Messages, TaskMessage{
-		Message:   message,
-		CreatedAt: time.Now().UTC(),
+	return s.mutateTask(id, func(task *Task) (bool, error) {
+		task.Messages = append(task.Messages, TaskMessage{
+			Message:   message,
+			CreatedAt: time.Now().UTC(),
+		})
+		return true, nil
 	})
-	if err := s.save(task); err != nil {
-		return Task{}, err
-	}
-	return task, nil
 }
 
 func (s Store) UpdateHeartbeat(id string, heartbeat LaneHeartbeat) (Task, error) {
-	task, err := s.Status(id)
-	if err != nil {
-		return Task{}, err
-	}
 	if heartbeat.ObservedAt.IsZero() {
 		heartbeat.ObservedAt = time.Now().UTC()
 	} else {
@@ -497,23 +585,22 @@ func (s Store) UpdateHeartbeat(id string, heartbeat LaneHeartbeat) (Task, error)
 	}
 	heartbeat.Status = strings.TrimSpace(heartbeat.Status)
 	heartbeat.Provenance = NormalizeEventProvenance(heartbeat.Provenance)
-	task.Heartbeat = &heartbeat
-	if IsTerminalStatus(heartbeat.Status) {
-		task.Status = strings.ToLower(strings.TrimSpace(heartbeat.Status))
-		observedAt := heartbeat.ObservedAt
-		task.CompletedAt = &observedAt
-		task.TerminalEvents, task.TerminalOutcome = appendTerminalEvent(task.ID, task.TerminalEvents, TerminalEvent{
-			ObservedAt: observedAt,
-			Status:     heartbeat.Status,
-			ExitCode:   cloneIntPtr(task.ExitCode),
-			Error:      task.Error,
-			Provenance: heartbeat.Provenance,
-		})
-	}
-	if err := s.save(task); err != nil {
-		return Task{}, err
-	}
-	return task, nil
+	return s.mutateTask(id, func(task *Task) (bool, error) {
+		task.Heartbeat = &heartbeat
+		if IsTerminalStatus(heartbeat.Status) {
+			task.Status = strings.ToLower(strings.TrimSpace(heartbeat.Status))
+			observedAt := heartbeat.ObservedAt
+			task.CompletedAt = &observedAt
+			task.TerminalEvents, task.TerminalOutcome = appendTerminalEvent(task.ID, task.TerminalEvents, TerminalEvent{
+				ObservedAt: observedAt,
+				Status:     heartbeat.Status,
+				ExitCode:   cloneIntPtr(task.ExitCode),
+				Error:      task.Error,
+				Provenance: heartbeat.Provenance,
+			})
+		}
+		return true, nil
+	})
 }
 
 func (s Store) LaneBoard(stalledAfter time.Duration) (LaneBoard, error) {
@@ -655,9 +742,10 @@ func ResolveLifecycle(status string, freshness LaneFreshness) LifecycleResolutio
 			Reason:               "transport_dead_before_terminal_status",
 		}
 	}
-	switch normalized {
-	case "running", "created", "starting", "pending":
+	if IsActiveStatus(normalized) {
 		return LifecycleResolution{Status: normalized, Reason: "active_status"}
+	}
+	switch normalized {
 	case "blocked", "waiting":
 		return LifecycleResolution{Status: normalized, Reason: "blocked_status"}
 	case "unknown":
@@ -677,39 +765,46 @@ func IsTerminalStatus(status string) bool {
 	}
 }
 
+// IsActiveStatus reports whether a task is still expected to make progress or
+// transition into a terminal state.
+func IsActiveStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running", "created", "starting", "stopping", "pending":
+		return true
+	default:
+		return false
+	}
+}
+
 // RecordTerminalEvent appends a terminal notification while preserving only
 // one actionable outcome for downstream automation.
 func (s Store) RecordTerminalEvent(id string, event TerminalEvent) (Task, error) {
-	task, err := s.Status(id)
-	if err != nil {
-		return Task{}, err
-	}
-	event.Status = firstNonEmpty(event.Status, task.Status)
-	if !IsTerminalStatus(event.Status) {
-		return Task{}, errors.New("terminal event status must be terminal")
-	}
-	if event.ExitCode == nil && task.ExitCode != nil {
-		event.ExitCode = cloneIntPtr(task.ExitCode)
-	}
-	if strings.TrimSpace(event.Error) == "" {
-		event.Error = task.Error
-	}
-	if event.ObservedAt.IsZero() {
-		if task.CompletedAt != nil && !task.CompletedAt.IsZero() {
-			event.ObservedAt = task.CompletedAt.UTC()
-		} else {
-			event.ObservedAt = time.Now().UTC()
+	return s.mutateTask(id, func(task *Task) (bool, error) {
+		next := event
+		next.Status = firstNonEmpty(next.Status, task.Status)
+		if !IsTerminalStatus(next.Status) {
+			return false, errors.New("terminal event status must be terminal")
 		}
-	}
-	task.Status = strings.ToLower(strings.TrimSpace(event.Status))
-	task.CompletedAt = &event.ObservedAt
-	task.ExitCode = cloneIntPtr(event.ExitCode)
-	task.Error = strings.TrimSpace(event.Error)
-	task.TerminalEvents, task.TerminalOutcome = appendTerminalEvent(task.ID, task.TerminalEvents, event)
-	if err := s.save(task); err != nil {
-		return Task{}, err
-	}
-	return task, nil
+		if next.ExitCode == nil && task.ExitCode != nil {
+			next.ExitCode = cloneIntPtr(task.ExitCode)
+		}
+		if strings.TrimSpace(next.Error) == "" {
+			next.Error = task.Error
+		}
+		if next.ObservedAt.IsZero() {
+			if task.CompletedAt != nil && !task.CompletedAt.IsZero() {
+				next.ObservedAt = task.CompletedAt.UTC()
+			} else {
+				next.ObservedAt = time.Now().UTC()
+			}
+		}
+		task.Status = strings.ToLower(strings.TrimSpace(next.Status))
+		task.CompletedAt = &next.ObservedAt
+		task.ExitCode = cloneIntPtr(next.ExitCode)
+		task.Error = strings.TrimSpace(next.Error)
+		task.TerminalEvents, task.TerminalOutcome = appendTerminalEvent(task.ID, task.TerminalEvents, next)
+		return true, nil
+	})
 }
 
 // NormalizeEventProvenance fills missing event provenance fields with stable
@@ -957,9 +1052,10 @@ func firstNonEmpty(values ...string) string {
 }
 
 func taskLaneBucket(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "running", "created", "starting", "pending":
+	if IsActiveStatus(status) {
 		return "active"
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "blocked", "waiting":
 		return "blocked"
 	default:
@@ -983,6 +1079,38 @@ func (s Store) Get(id string) (Task, error) {
 	return task, nil
 }
 
+func (s Store) completionPath(id string) string {
+	return filepath.Join(s.Dir, id+".exit")
+}
+
+func (s Store) readCompletion(id string) (taskCompletion, bool, error) {
+	file, err := os.Open(s.completionPath(id))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return taskCompletion{}, false, nil
+		}
+		return taskCompletion{}, false, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return taskCompletion{}, false, err
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) != 1 {
+		return taskCompletion{}, false, errors.New("invalid background completion record for task " + id)
+	}
+	exitCode, err := strconv.Atoi(fields[0])
+	if err != nil || exitCode < 0 || exitCode > 255 {
+		return taskCompletion{}, false, errors.New("invalid background exit code for task " + id)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return taskCompletion{}, false, err
+	}
+	return taskCompletion{ExitCode: exitCode, CompletedAt: info.ModTime().UTC()}, true, nil
+}
+
 func (s Store) Status(id string) (Task, error) {
 	task, err := s.Get(id)
 	if err != nil {
@@ -990,11 +1118,35 @@ func (s Store) Status(id string) (Task, error) {
 	}
 	task.ScopeBinding = NormalizeScopeBinding(task.ScopeBinding)
 	normalizeTaskHeartbeat(&task)
+	if task.Status == "running" || task.Status == "exited" {
+		completion, ok, err := s.readCompletion(task.ID)
+		if err != nil {
+			return Task{}, err
+		}
+		if ok {
+			updated, err := s.mutateTask(id, func(current *Task) (bool, error) {
+				if current.Status != "running" && current.Status != "exited" {
+					return false, nil
+				}
+				applyTaskCompletion(current, completion, nil)
+				return true, nil
+			})
+			if err == nil {
+				_ = os.Remove(s.completionPath(task.ID))
+			}
+			return updated, err
+		}
+	}
 	if task.Status == "running" && !processRunning(task.PID) {
-		now := time.Now().UTC()
-		task.Status = "exited"
-		task.CompletedAt = &now
-		_ = s.save(task)
+		return s.mutateTask(id, func(current *Task) (bool, error) {
+			if current.Status != "running" || processRunning(current.PID) {
+				return false, nil
+			}
+			now := time.Now().UTC()
+			current.Status = "exited"
+			current.CompletedAt = &now
+			return true, nil
+		})
 	}
 	return task, nil
 }
@@ -1006,24 +1158,52 @@ func normalizeTaskHeartbeat(task *Task) {
 }
 
 func (s Store) Stop(id string) (Task, error) {
-	task, err := s.Get(id)
+	task, err := s.Status(id)
 	if err != nil {
 		return Task{}, err
 	}
 	if task.Status != "running" {
 		return task, nil
 	}
+	claimed := false
+	task, err = s.mutateTask(id, func(current *Task) (bool, error) {
+		if current.Status != "running" {
+			return false, nil
+		}
+		claimed = true
+		current.Status = "stopping"
+		return true, nil
+	})
+	if err != nil || !claimed {
+		return task, err
+	}
 	if err := killBackgroundProcess(task.PID); err != nil && processRunning(task.PID) {
+		_, _ = s.mutateTask(id, func(current *Task) (bool, error) {
+			if current.Status != "stopping" {
+				return false, nil
+			}
+			current.Status = "running"
+			return true, nil
+		})
 		return Task{}, err
 	}
 	waitForBackgroundProcessExit(task.PID, 500*time.Millisecond)
-	now := time.Now().UTC()
-	task.Status = "stopped"
-	task.CompletedAt = &now
-	if err := s.save(task); err != nil {
-		return Task{}, err
+	stopped, err := s.mutateTask(id, func(current *Task) (bool, error) {
+		if current.Status != "stopping" {
+			return false, nil
+		}
+		now := time.Now().UTC()
+		current.Status = "stopped"
+		current.CompletedAt = &now
+		current.ExitCode = nil
+		current.Error = ""
+		return true, nil
+	})
+	if err == nil {
+		_ = os.Remove(s.completionPath(task.ID))
+		_ = os.Remove(s.completionPath(task.ID) + ".tmp")
 	}
-	return task, nil
+	return stopped, err
 }
 
 func waitForBackgroundProcessExit(pid int, timeout time.Duration) {
@@ -1132,7 +1312,7 @@ func (s Store) Watch(ctx context.Context, id string, options WatchOptions, emit 
 				return nil
 			}
 		}
-		if task.Status != "running" {
+		if !IsActiveStatus(task.Status) {
 			return nil
 		}
 		select {
@@ -1180,7 +1360,104 @@ func (s Store) readLogRange(path string, offset int64, limitBytes int64) (int64,
 	return offset + int64(len(data)), string(data), nil
 }
 
+func (s Store) mutateTask(id string, mutate func(*Task) (bool, error)) (Task, error) {
+	id, err := validateTaskID(id)
+	if err != nil {
+		return Task{}, err
+	}
+	unlock, err := s.acquireTaskMutationLock(id, false)
+	if err != nil {
+		return Task{}, err
+	}
+	defer unlock()
+
+	task, err := s.Get(id)
+	if err != nil {
+		return Task{}, err
+	}
+	task.ScopeBinding = NormalizeScopeBinding(task.ScopeBinding)
+	normalizeTaskHeartbeat(&task)
+	changed, err := mutate(&task)
+	if err != nil {
+		return Task{}, err
+	}
+	if !changed {
+		return task, nil
+	}
+	task = ensureTerminalOutcome(task)
+	if err := s.saveUnlocked(task); err != nil {
+		return Task{}, err
+	}
+	return task, nil
+}
+
+func (s Store) acquireLocalTaskMutationLock(id string) func() {
+	dir, err := filepath.Abs(s.Dir)
+	if err != nil {
+		dir = filepath.Clean(s.Dir)
+	}
+	key := dir + "\x00" + id
+	taskMutationLockRegistry.Lock()
+	lock := taskMutationLockRegistry.locks[key]
+	if lock == nil {
+		lock = &taskMutationLock{}
+		taskMutationLockRegistry.locks[key] = lock
+	}
+	lock.refs++
+	taskMutationLockRegistry.Unlock()
+	lock.mutex.Lock()
+	return func() {
+		lock.mutex.Unlock()
+		taskMutationLockRegistry.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(taskMutationLockRegistry.locks, key)
+		}
+		taskMutationLockRegistry.Unlock()
+	}
+}
+
+func (s Store) acquireTaskMutationLock(id string, createParents bool) (func(), error) {
+	unlockLocal := s.acquireLocalTaskMutationLock(id)
+	lockDir := filepath.Join(s.Dir, ".locks")
+	var err error
+	if createParents {
+		err = os.MkdirAll(lockDir, 0o700)
+	} else {
+		err = os.Mkdir(lockDir, 0o700)
+		if os.IsExist(err) {
+			err = nil
+		}
+	}
+	if err != nil {
+		unlockLocal()
+		return nil, err
+	}
+	unlockFile, err := lockBackgroundTaskFile(filepath.Join(lockDir, id+".lock"))
+	if err != nil {
+		unlockLocal()
+		return nil, err
+	}
+	return func() {
+		unlockFile()
+		unlockLocal()
+	}, nil
+}
+
 func (s Store) save(task Task) error {
+	id, err := validateTaskID(task.ID)
+	if err != nil {
+		return err
+	}
+	unlock, err := s.acquireTaskMutationLock(id, true)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.saveUnlocked(task)
+}
+
+func (s Store) saveUnlocked(task Task) error {
 	id, err := validateTaskID(task.ID)
 	if err != nil {
 		return err
@@ -1242,7 +1519,7 @@ func validateTaskID(id string) (string, error) {
 }
 
 func (s Store) remove(task Task) error {
-	if task.Status == "running" {
+	if IsActiveStatus(task.Status) {
 		return errors.New("cannot prune a running background task")
 	}
 	if task.LogPath != "" && isPathInsideDir(task.LogPath, s.Dir) {
@@ -1250,10 +1527,45 @@ func (s Store) remove(task Task) error {
 			return err
 		}
 	}
+	if err := os.Remove(s.completionPath(task.ID)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Remove(s.completionPath(task.ID) + ".tmp"); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	if err := os.Remove(filepath.Join(s.Dir, task.ID+".json")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
+}
+
+func (s Store) removeIfEligible(id string, cutoff time.Time) (bool, error) {
+	id, err := validateTaskID(id)
+	if err != nil {
+		return false, err
+	}
+	unlock, err := s.acquireTaskMutationLock(id, false)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	task, err := s.Get(id)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if IsActiveStatus(task.Status) {
+		return false, nil
+	}
+	if !cutoff.IsZero() && taskRetentionTime(task).After(cutoff) {
+		return false, nil
+	}
+	if err := s.remove(task); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func taskRetentionTime(task Task) time.Time {

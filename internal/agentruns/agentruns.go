@@ -338,9 +338,10 @@ func freshness(heartbeat *background.LaneHeartbeat, now time.Time, stalledAfter 
 }
 
 func laneBucket(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "running", "created", "starting", "pending":
+	if background.IsActiveStatus(status) {
 		return "active"
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "blocked", "waiting":
 		return "blocked"
 	default:
@@ -432,8 +433,7 @@ func healthReport(status string, freshness background.LaneFreshness, task *backg
 			RecommendedAction: "Check logs and send a heartbeat or update; stop and restart if no progress is visible.",
 		}
 	}
-	switch normalized {
-	case "running", "created", "starting", "pending":
+	if background.IsActiveStatus(normalized) {
 		if freshness == background.LaneFreshnessUnknown {
 			return HealthReport{
 				State:             "heartbeat_unknown",
@@ -442,6 +442,8 @@ func healthReport(status string, freshness background.LaneFreshness, task *backg
 			}
 		}
 		return HealthReport{State: "healthy", Summary: "The agent task is active and heartbeat freshness is healthy."}
+	}
+	switch normalized {
 	case "":
 		return HealthReport{
 			State:             "unknown",
