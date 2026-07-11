@@ -302,6 +302,7 @@ func TestEnterpriseDefaultsToAudit(t *testing.T) {
 		nil,
 		{"--json"},
 		{"--output-format", "json"},
+		{"--output-format", "text"},
 		{"status", "3"},
 		{"show"},
 	} {
@@ -347,12 +348,58 @@ func TestEnterpriseVerifyCommand(t *testing.T) {
 }
 
 func TestEnterpriseVerifyErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
 	out, err := captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--output-format", "json", "enterprise", "verify"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "enterprise", "verify"}, config.FlagOverrides{})
 	})
 	requireStructuredCLIError(t, err, []byte(out), "missing_argument", "missing_argument")
 	require.Contains(t, out, `"command": "enterprise verify"`)
 	require.Contains(t, out, `"argument": "POLICY PUBLIC_KEY"`)
+}
+
+func TestLocalSetupCommandsHonorGlobalJSONOutputFormat(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "enterprise"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var enterprise enterpriseAuditReport
+	require.NoError(t, json.Unmarshal([]byte(out), &enterprise))
+	require.Equal(t, "enterprise", enterprise.Kind)
+	require.Equal(t, "audit", enterprise.Action)
+	require.Equal(t, "ok", enterprise.Status)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "oauth", "status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var oauthStatus oauth.Status
+	require.NoError(t, json.Unmarshal([]byte(out), &oauthStatus))
+	require.Equal(t, "oauth", oauthStatus.Kind)
+	require.Equal(t, "status", oauthStatus.Action)
+	require.Equal(t, "ok", oauthStatus.Status)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--cwd", workspace, "--output-format", "json", "install-github-app", "--workflow", "claude", "--dry-run"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var setup githubsetup.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &setup))
+	require.Equal(t, "install_github_app", setup.Kind)
+	require.Equal(t, "ok", setup.Status)
+	require.True(t, setup.DryRun)
+	require.Len(t, setup.Workflows, 1)
 }
 
 func TestEnterpriseErrorsHonorGlobalJSONFormat(t *testing.T) {
@@ -1552,6 +1599,11 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "prompt-history")
 	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "summary")
 	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "rename")
+	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "enterprise")
+	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "git")
+	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "install-github-app")
+	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "oauth")
+	require.NotContains(t, report.CommandSurface.NoGlobalOutputFormatCommands, "oauth-refresh")
 	require.Greater(t, report.CommandCount, 20)
 	require.Greater(t, report.SlashCommandCount, 20)
 	require.Greater(t, report.ResumeSafeSlashCount, 20)
