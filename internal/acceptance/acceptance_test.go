@@ -209,6 +209,31 @@ expect eof
 	require.Contains(t, output, "Tools")
 }
 
+func TestRealBinaryTUIExitCancelsRunningTurnWithoutQueueing(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model claude-sonnet-4-5 tui
+expect "Codog TUI"
+send "start a turn then exit\r"
+expect "running"
+send "/exit\r"
+expect eof
+`)
+
+	require.NotContains(t, output, "Queued prompt 1: /exit")
+}
+
 func TestRealBinaryTUIRendersStreamingDeltaBeforeTurnDoneWithTTY(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()

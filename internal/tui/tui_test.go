@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 )
 
@@ -530,6 +532,28 @@ func TestStatusBarShowsCancelHintWhileRunning(t *testing.T) {
 	require.LessOrEqual(t, len([]rune(text)), 80)
 }
 
+func TestPromptFooterConstrainsLongStatusAtTerminalWidth(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.status = "error · 12 queued restored"
+	m.modeLabel = "accept edits"
+
+	footer := fitFooterText(m.promptFooterText(80), 78)
+	require.Contains(t, footer, "12 queued restored")
+	require.True(t, strings.HasSuffix(strings.Split(footer, "\n")[0], "..."))
+	rendered := statusStyle().Width(80).Render(footer)
+	for _, line := range strings.Split(rendered, "\n") {
+		require.LessOrEqual(t, lipgloss.Width(line), 80, line)
+	}
+	m.layout(80, 24)
+	for _, line := range strings.Split(m.View(), "\n") {
+		require.LessOrEqual(t, lipgloss.Width(line), 80, line)
+	}
+	cjk := truncateFooterLine(strings.Repeat("界", 20), 20)
+	require.True(t, strings.HasSuffix(cjk, "..."))
+	require.LessOrEqual(t, lipgloss.Width(cjk), 20)
+}
+
 func TestPromptFooterShowsContextualIdleHints(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, nil)
@@ -671,7 +695,7 @@ func TestCtrlOTogglesExpandedTranscript(t *testing.T) {
 	require.Equal(t, "transcript", m.status)
 	require.Contains(t, m.View(), "001/002 user")
 	require.Contains(t, m.View(), "2 lines")
-	require.Contains(t, m.View(), "Ctrl-O")
+	require.Contains(t, m.View(), "Ctrl+O")
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(model)
@@ -2106,6 +2130,56 @@ func TestBusyEnterQueuesPromptsAndRunsAfterTurnDone(t *testing.T) {
 	require.Contains(t, m.View(), "done: third prompt")
 }
 
+func TestBusyExitCancelsTurnAndQuitsWithoutQueueing(t *testing.T) {
+	ta := newPromptTextarea("first prompt")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.submit = func(context.Context, string) (string, error) { return "done", nil }
+
+	updated, firstCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.True(t, m.busy)
+	require.NotNil(t, firstCmd)
+	require.NotNil(t, m.turnCancel)
+
+	m.textarea.SetValue("/exit")
+	updated, quitCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, quitCmd)
+	_, ok := quitCmd().(tea.QuitMsg)
+	require.True(t, ok)
+	require.Nil(t, m.turnCancel)
+	require.Empty(t, m.queuedPrompts)
+	require.Empty(t, m.textarea.Value())
+	require.Equal(t, "exiting", m.status)
+}
+
+func TestTurnErrorRestoresQueuedPromptsAndDraft(t *testing.T) {
+	ta := newPromptTextarea("first prompt")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.submit = func(context.Context, string) (string, error) { return "done", nil }
+
+	updated, firstCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, firstCmd)
+	m.textarea.SetValue("second prompt")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	m.textarea.SetValue("third prompt")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	m.textarea.SetValue("unsent draft")
+
+	updated, nextCmd := m.Update(turnDoneMsg{Role: "assistant", Err: errors.New("provider unavailable")})
+	m = updated.(model)
+	require.Nil(t, nextCmd)
+	require.False(t, m.busy)
+	require.Empty(t, m.queuedPrompts)
+	require.Equal(t, "second prompt\n\nthird prompt\n\nunsent draft", m.textarea.Value())
+	require.Equal(t, "error · 2 queued restored", m.status)
+	require.Contains(t, m.View(), "provider unavailable")
+	require.Contains(t, m.View(), "Restored 2 queued prompts to the composer after the failed turn.")
+}
+
 func TestBusyEnterQueuesBashPromptAndRunsThroughSlash(t *testing.T) {
 	ta := newPromptTextarea("first prompt")
 	m := newModel(context.Background(), ta, nil, nil)
@@ -2252,7 +2326,7 @@ func TestEscapeCancelsBusyTurnWithoutQuitting(t *testing.T) {
 	require.Contains(t, m.View(), "Interrupted by user.")
 }
 
-func TestInterruptedTurnDropsQueuedPrompts(t *testing.T) {
+func TestInterruptedTurnRestoresQueuedPrompts(t *testing.T) {
 	ta := newPromptTextarea("first prompt")
 	m := newModel(context.Background(), ta, nil, nil)
 	m.submit = func(ctx context.Context, prompt string) (string, error) {
@@ -2275,7 +2349,9 @@ func TestInterruptedTurnDropsQueuedPrompts(t *testing.T) {
 
 	require.False(t, m.busy)
 	require.Empty(t, m.queuedPrompts)
-	require.Equal(t, "interrupted", m.status)
+	require.Equal(t, "queued prompt", m.textarea.Value())
+	require.Equal(t, "interrupted · 1 queued restored", m.status)
+	require.Contains(t, m.View(), "Restored 1 queued prompt to the composer after the interrupted turn.")
 }
 
 func TestStreamedTurnDeltasRenderBeforeDone(t *testing.T) {

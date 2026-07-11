@@ -1677,14 +1677,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Interrupted || errors.Is(msg.Err, context.Canceled) {
 			m.streamingIndex = -1
-			m.queuedPrompts = nil
 			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Interrupted by user."})
 			m.status = "interrupted"
+			if restored := m.restoreQueuedPrompts("interrupted turn"); restored > 0 {
+				m.status = fmt.Sprintf("interrupted · %d queued restored", restored)
+			}
 		} else if msg.Err != nil {
 			m.streamingIndex = -1
-			m.queuedPrompts = nil
 			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
 			m.status = "error"
+			if restored := m.restoreQueuedPrompts("failed turn"); restored > 0 {
+				m.status = fmt.Sprintf("error · %d queued restored", restored)
+			}
 		} else if strings.TrimSpace(msg.Output) != "" {
 			m.finishStreamingOutput(msg.Role, msg.Output)
 			m.status = "ready"
@@ -2362,6 +2366,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.busy {
+				if cmd := m.quitFromBusyInput(); cmd != nil {
+					return m, cmd
+				}
 				m.queueCurrentInput()
 				return m, nil
 			}
@@ -2546,7 +2553,9 @@ func (m model) View() string {
 	if m.width == 0 {
 		m.layout(80, 24)
 	}
-	title := headerStyle().Width(max(40, m.width)).Render(m.headerText())
+	barWidth := max(3, m.width)
+	barContentWidth := barWidth - 2
+	title := headerStyle().Width(barWidth).Render(truncateFooterLine(m.headerText(), barContentWidth))
 	body := m.viewport.View()
 	composerTitle := panelTitleStyle().Render(" composer ")
 	composer := composerTitle + "\n" + m.textarea.View()
@@ -2589,8 +2598,8 @@ func (m model) View() string {
 	if m.stashedPrompt != nil {
 		composer += "\n" + renderStashNotice(m.stashedPrompt)
 	}
-	statusText := m.promptFooterText(m.width)
-	status := statusStyle().Width(max(40, m.width)).Render(statusText)
+	statusText := fitFooterText(m.promptFooterText(barWidth), barContentWidth)
+	status := statusStyle().Width(barWidth).Render(statusText)
 	return strings.Join([]string{title, body, composer, status}, "\n")
 }
 
@@ -2769,6 +2778,50 @@ func (m *model) queueCurrentInput() {
 	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Queued %s %d: %s", queuedPromptKind(value), len(m.queuedPrompts), truncateForComposer(queuedPromptDisplay(value), 120))})
 	m.refreshViewport()
 	m.viewport.GotoBottom()
+}
+
+func (m *model) quitFromBusyInput() tea.Cmd {
+	if !isREPLExitInput(m.textarea.Value()) {
+		return nil
+	}
+	if m.turnCancel != nil {
+		m.turnCancel()
+		m.turnCancel = nil
+	}
+	if m.backgroundCancel != nil {
+		m.backgroundCancel()
+		m.backgroundCancel = nil
+	}
+	m.queuedPrompts = nil
+	m.textarea.SetValue("")
+	m.matches = nil
+	m.selected = 0
+	m.status = "exiting"
+	return tea.Quit
+}
+
+func (m *model) restoreQueuedPrompts(reason string) int {
+	count := len(m.queuedPrompts)
+	if count == 0 {
+		return 0
+	}
+	parts := append([]string(nil), m.queuedPrompts...)
+	if current := strings.TrimSpace(m.textarea.Value()); current != "" {
+		parts = append(parts, current)
+	}
+	m.queuedPrompts = nil
+	m.textarea.SetValue(strings.Join(parts, "\n\n"))
+	m.textarea.CursorEnd()
+	m.undoStack = nil
+	m.matches = nil
+	m.selected = 0
+	m.historyPos = -1
+	m.transcript = append(m.transcript, transcriptEntry{
+		Role: "system",
+		Text: fmt.Sprintf("Restored %d queued %s to the composer after the %s.", count, plural("prompt", count), reason),
+	})
+	m.refreshCompletionMenu()
+	return count
 }
 
 func (m model) canEditQueuedPrompts() bool {
@@ -3001,6 +3054,9 @@ func (m model) handleBoundTUIActionKey(key string) (model, bool, tea.Cmd) {
 			return m, true, nil
 		}
 		if m.busy {
+			if cmd := m.quitFromBusyInput(); cmd != nil {
+				return m, true, cmd
+			}
 			m.queueCurrentInput()
 			return m, true, nil
 		}
@@ -6166,6 +6222,10 @@ func statusBarText(status string, width int) string {
 }
 
 func (m model) promptFooterText(width int) string {
+	limit := width
+	if limit <= 0 {
+		limit = 120
+	}
 	baseStatus := strings.TrimSpace(m.status)
 	if baseStatus == "" {
 		baseStatus = m.mode()
@@ -6175,13 +6235,10 @@ func (m model) promptFooterText(width int) string {
 		status = appendStatusMode(status, "transcript", width)
 	}
 	status = appendStatusMode(status, m.modeLabel, width)
+	status = truncateFooterLine(status, limit)
 	hints := m.promptFooterHints(width)
 	if len(hints) == 0 {
 		return status
-	}
-	limit := width
-	if limit <= 0 {
-		limit = 120
 	}
 	byline := truncateFooterLine(strings.Join(hints, " · "), limit)
 	if strings.TrimSpace(byline) == "" {
@@ -6392,17 +6449,31 @@ func trimFooterHints(hints []string, width int) []string {
 }
 
 func truncateFooterLine(line string, width int) string {
-	if width <= 0 {
-		return line
-	}
-	runes := []rune(line)
-	if len(runes) <= width {
+	if width <= 0 || lipgloss.Width(line) <= width {
 		return line
 	}
 	if width <= 3 {
-		return string(runes[:width])
+		return strings.Repeat(".", width)
 	}
-	return string(runes[:width-3]) + "..."
+	var builder strings.Builder
+	used := 0
+	for _, r := range line {
+		runeWidth := lipgloss.Width(string(r))
+		if used+runeWidth > width-3 {
+			break
+		}
+		builder.WriteRune(r)
+		used += runeWidth
+	}
+	return builder.String() + "..."
+}
+
+func fitFooterText(text string, width int) string {
+	lines := strings.Split(text, "\n")
+	for index := range lines {
+		lines[index] = truncateFooterLine(lines[index], width)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func appendStatusMode(status string, mode string, width int) string {
@@ -6418,8 +6489,7 @@ func appendStatusMode(status string, mode string, width int) string {
 	if width <= 0 || len([]rune(out)) <= width {
 		return out
 	}
-	runes := []rune(out)
-	return string(runes[:width])
+	return truncateFooterLine(out, width)
 }
 
 func isBusyStatus(status string) bool {

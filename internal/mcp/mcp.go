@@ -949,6 +949,7 @@ func Initialize(ctx context.Context, serverName string, server config.MCPServerC
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, server.Command, server.Args...)
+	cmd.WaitDelay = mcpProcessWaitTimeout
 	cmd.Env = append(os.Environ(), server.Env...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -963,7 +964,7 @@ func Initialize(ctx context.Context, serverName string, server config.MCPServerC
 	if err := cmd.Start(); err != nil {
 		return InitializeResult{Server: serverName, Status: "error", Error: err.Error(), Lifecycle: lifecycleFailure("spawn_connect", err.Error(), true, map[string]string{"server": serverName, "command": server.Command})}
 	}
-	defer cmd.Process.Kill()
+	defer stopMCPProcess(cmd)
 
 	reader := bufio.NewReader(stdout)
 	if err := send(stdin, rpcRequest{
@@ -1077,6 +1078,7 @@ func ListTools(ctx context.Context, serverName string, server config.MCPServerCo
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, server.Command, server.Args...)
+	cmd.WaitDelay = mcpProcessWaitTimeout
 	cmd.Env = append(os.Environ(), server.Env...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -1091,7 +1093,7 @@ func ListTools(ctx context.Context, serverName string, server config.MCPServerCo
 	if err := cmd.Start(); err != nil {
 		return ToolListResult{Server: serverName, Error: err.Error()}
 	}
-	defer cmd.Process.Kill()
+	defer stopMCPProcess(cmd)
 
 	reader := bufio.NewReader(stdout)
 	if err := send(stdin, rpcRequest{
@@ -1303,6 +1305,7 @@ func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, 
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, server.Command, server.Args...)
+	cmd.WaitDelay = mcpProcessWaitTimeout
 	cmd.Env = append(os.Environ(), server.Env...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -1317,7 +1320,7 @@ func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, 
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	defer cmd.Process.Kill()
+	defer stopMCPProcess(cmd)
 
 	reader := bufio.NewReader(stdout)
 	if err := send(stdin, rpcRequest{
@@ -1634,13 +1637,15 @@ func mcpError(err error, stderr *bytes.Buffer) error {
 	return fmt.Errorf("%w; stderr: %s", err, clipMCPText(preview, 4096))
 }
 
+const mcpProcessWaitTimeout = 200 * time.Millisecond
+
 func mcpProcessError(err error, cmd *exec.Cmd, stderr *bytes.Buffer) error {
-	waitForMCPProcess(cmd, 200*time.Millisecond)
+	stopMCPProcess(cmd)
 	return mcpError(err, stderr)
 }
 
 func waitForMCPProcess(cmd *exec.Cmd, timeout time.Duration) {
-	if cmd == nil || cmd.Process == nil {
+	if cmd == nil || cmd.Process == nil || cmd.ProcessState != nil {
 		return
 	}
 	done := make(chan struct{})
@@ -1650,8 +1655,19 @@ func waitForMCPProcess(cmd *exec.Cmd, timeout time.Duration) {
 	}()
 	select {
 	case <-done:
+		return
 	case <-time.After(timeout):
+		_ = cmd.Process.Kill()
+		<-done
 	}
+}
+
+func stopMCPProcess(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil || cmd.ProcessState != nil {
+		return
+	}
+	_ = cmd.Process.Kill()
+	waitForMCPProcess(cmd, mcpProcessWaitTimeout)
 }
 
 func clipMCPText(value string, limit int) string {
