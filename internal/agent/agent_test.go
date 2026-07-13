@@ -988,6 +988,72 @@ func TestTUISlashHandlerOpensWorkspaceWorkflowViews(t *testing.T) {
 	require.Contains(t, jsonIDE.Output, `"kind": "ide"`)
 }
 
+func TestTUISlashHandlerAlignsReferenceLocalWorkflows(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	store := session.NewWorkspaceStore(configHome, workspace)
+	current, err := store.Open("reference-workflows")
+	require.NoError(t, err)
+	require.NoError(t, store.Append(current.ID, anthropic.Message{Role: "assistant", Content: []anthropic.ContentBlock{
+		{Type: "tool_use", ID: "read-ok", Name: "Read", Input: json.RawMessage(`{"path":"pkg/auth.go"}`)},
+		{Type: "tool_use", ID: "read-failed", Name: "read_file", Input: json.RawMessage(`{"path":"missing.go"}`)},
+		{Type: "tool_use", ID: "write-ok", Name: "write_file", Input: json.RawMessage(`{"path":"` + filepath.ToSlash(filepath.Join(workspace, "generated.go")) + `"}`)},
+		{Type: "tool_use", ID: "notebook-ok", Name: "notebook_read", Input: json.RawMessage(`{"notebook_path":"analysis.ipynb"}`)},
+	}}))
+	require.NoError(t, store.Append(current.ID, anthropic.ToolResultMessage("read-ok", "contents", false)))
+	require.NoError(t, store.Append(current.ID, anthropic.ToolResultMessage("read-failed", "not found", true)))
+	current, err = store.OpenExisting(current.ID)
+	require.NoError(t, err)
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome, Model: "glm52"},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+	handler := app.tuiSlashHandler(current, newTUIModeState(app.Config))
+
+	files, err := handler(context.Background(), "/files")
+	require.NoError(t, err)
+	require.NotNil(t, files.Information)
+	require.Equal(t, "Files in context", files.Information.Title)
+	require.Equal(t, []string{"pkg/auth.go", "generated.go", "analysis.ipynb"}, files.Information.Lines)
+	require.NotContains(t, strings.Join(files.Information.Lines, "\n"), "missing.go")
+
+	statusline, err := handler(context.Background(), "/statusline use git branch and context remaining")
+	require.NoError(t, err)
+	require.Contains(t, statusline.Query, "Set up Codog's status line UI")
+	require.Contains(t, statusline.Query, "use git branch and context remaining")
+	require.Contains(t, statusline.Query, "codog statusline")
+
+	terminalView, err := handler(context.Background(), "/terminal-setup")
+	require.NoError(t, err)
+	require.NotNil(t, terminalView.CommandView)
+	require.Equal(t, "Terminal setup", terminalView.CommandView.Title)
+	require.Contains(t, commandViewItemLabels(terminalView.CommandView.Tabs[0].Items), "Install shell integration")
+	require.Contains(t, commandViewItemLabels(terminalView.CommandView.Tabs[0].Items), "Show installation snippet")
+
+	installed, err := handler(context.Background(), "/terminal-setup install --target shell")
+	require.NoError(t, err)
+	require.NotNil(t, installed.CommandView)
+	require.Contains(t, commandViewItemLabels(installed.CommandView.Tabs[0].Items), "Remove shell integration")
+
+	keybindingsView, err := handler(context.Background(), "/keybindings")
+	require.NoError(t, err)
+	require.NotNil(t, keybindingsView.CommandView)
+	require.Equal(t, "Keybindings", keybindingsView.CommandView.Title)
+	require.Contains(t, commandViewItemLabels(keybindingsView.CommandView.Tabs[0].Items), "Create template")
+
+	created, err := handler(context.Background(), "/keybindings init")
+	require.NoError(t, err)
+	require.NotNil(t, created.CommandView)
+	require.NotContains(t, commandViewItemLabels(created.CommandView.Tabs[0].Items), "Create template")
+	require.FileExists(t, filepath.Join(configHome, "keybindings.json"))
+}
+
 func TestTUISlashHandlerRenamesAndBranchesConversations(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()

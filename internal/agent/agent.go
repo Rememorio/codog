@@ -38172,6 +38172,25 @@ func (a *App) tuiInteractiveSlashResult(ctx context.Context, line string, sess *
 			view, err := a.tuiDoctorInformation()
 			return tui.SlashResult{Handled: true, Information: view}, true, err
 		}
+	case "/statusline":
+		if !tuiSlashRequestsJSON(args) {
+			return tui.SlashResult{Handled: true, Query: a.tuiStatuslineSetupQuery(rawArgs)}, true, nil
+		}
+	case "/files":
+		if len(args) == 0 {
+			view := a.tuiFilesInformation(sess)
+			return tui.SlashResult{Handled: true, Information: &view}, true, nil
+		}
+	case "/terminal-setup":
+		if len(args) == 0 {
+			view, err := a.tuiTerminalSetupCommandView()
+			return tui.SlashResult{Handled: true, CommandView: view}, true, err
+		}
+	case "/keybindings":
+		if len(args) == 0 {
+			view, err := a.tuiKeybindingsCommandView()
+			return tui.SlashResult{Handled: true, CommandView: view}, true, err
+		}
 	case "/ide":
 		if len(args) == 0 || (len(args) == 1 && strings.EqualFold(strings.TrimSpace(args[0]), "status")) {
 			view, err := a.tuiIDECommandView()
@@ -39279,6 +39298,186 @@ func tuiWorkspaceRelativePath(workspace string, path string) string {
 	return filepath.ToSlash(path)
 }
 
+func (a *App) tuiStatuslineSetupQuery(request string) string {
+	request = strings.TrimSpace(request)
+	if request == "" {
+		request = "Configure my status line from my shell PS1 configuration."
+	}
+	configPath := "the active Codog config"
+	if path, err := a.preferenceConfigPath("user", ""); err == nil && strings.TrimSpace(path) != "" {
+		configPath = path
+	}
+	return strings.Join([]string{
+		"Set up Codog's status line UI.",
+		request,
+		"Inspect the current shell prompt configuration and " + configPath + ".",
+		"Preserve unrelated settings. A custom statusLine command receives Codog status JSON on stdin; verify the result with `codog statusline`.",
+	}, " ")
+}
+
+func (a *App) tuiFilesInformation(sess *session.Session) tui.InformationView {
+	paths := sessionContextFilePaths(sess)
+	if len(paths) == 0 {
+		return tui.InformationView{Title: "Files in context", Lines: []string{"No files in context"}}
+	}
+	lines := make([]string, 0, len(paths))
+	for _, path := range paths {
+		lines = append(lines, tuiContextFilePath(a.Workspace, path))
+	}
+	return tui.InformationView{Title: "Files in context", Lines: lines}
+}
+
+func sessionContextFilePaths(sess *session.Session) []string {
+	if sess == nil {
+		return nil
+	}
+	failedToolUses := map[string]bool{}
+	for _, message := range sess.Messages {
+		for _, block := range message.Content {
+			if strings.EqualFold(strings.TrimSpace(block.Type), "tool_result") && block.IsError && strings.TrimSpace(block.ToolUseID) != "" {
+				failedToolUses[strings.TrimSpace(block.ToolUseID)] = true
+			}
+		}
+	}
+	paths := []string{}
+	for _, message := range sess.Messages {
+		for _, block := range message.Content {
+			if !strings.EqualFold(strings.TrimSpace(block.Type), "tool_use") || failedToolUses[strings.TrimSpace(block.ID)] {
+				continue
+			}
+			switch tools.CanonicalToolName(block.Name) {
+			case "read_file", "write_file", "edit_file", "multi_edit", "notebook_read", "notebook_edit":
+			default:
+				continue
+			}
+			call := runloop.ToolCall{Name: block.Name, Input: string(block.Input)}
+			for _, path := range toolContextPaths(call) {
+				paths = appendRecentUniquePath(paths, path, maxDynamicSkillContextPaths)
+			}
+		}
+	}
+	return paths
+}
+
+func tuiContextFilePath(workspace string, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return path
+	}
+	if !filepath.IsAbs(path) {
+		return filepath.ToSlash(filepath.Clean(path))
+	}
+	base := firstNonEmpty(strings.TrimSpace(workspace), ".")
+	if absolute, err := filepath.Abs(base); err == nil {
+		base = absolute
+	}
+	for _, candidate := range []string{base, resolvedTUIPath(base)} {
+		if rel, err := filepath.Rel(candidate, path); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return tuiWorkspaceRelativePath(workspace, path)
+}
+
+func resolvedTUIPath(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path
+	}
+	return resolved
+}
+
+func (a *App) tuiTerminalSetupCommandView() (*tui.CommandView, error) {
+	report, err := terminalsetup.Run(terminalsetup.Options{Action: "status"})
+	if err != nil {
+		return nil, err
+	}
+	lines := []string{
+		tuiInformationLine("Shell", report.Shell),
+		tuiInformationLine("Path", report.Path),
+		tuiInformationLine("Status", firstNonEmpty(report.Message, report.Status)),
+	}
+	items := []tui.CommandViewItem{}
+	if report.Installed {
+		items = append(items, tui.CommandViewItem{
+			Label:       "Remove shell integration",
+			Value:       report.Shell,
+			Description: report.Path,
+			Command:     "/terminal-setup uninstall --target shell",
+		})
+	} else {
+		items = append(items, tui.CommandViewItem{
+			Label:       "Install shell integration",
+			Value:       report.Shell,
+			Description: report.Path,
+			Command:     "/terminal-setup install --target shell",
+		})
+	}
+	items = append(items, tui.CommandViewItem{
+		Label:       "Show installation snippet",
+		Value:       report.Shell,
+		Description: "Preview without modifying the shell profile",
+		Command:     "/terminal-setup snippet --target shell",
+	})
+	view := tui.CommandView{Title: "Terminal setup", Tabs: []tui.CommandViewTab{{
+		Title:          "Shell",
+		Lines:          lines,
+		Items:          items,
+		RefreshCommand: "/terminal-setup",
+	}}}
+	return &view, nil
+}
+
+func (a *App) tuiKeybindingsCommandView() (*tui.CommandView, error) {
+	path, err := a.keybindingsPath()
+	if err != nil {
+		return nil, err
+	}
+	exists := fileExists(path)
+	state := "not created"
+	if exists {
+		state = "ready"
+	}
+	items := []tui.CommandViewItem{{
+		Label:       "Open in editor",
+		Value:       state,
+		Description: path,
+		Command:     "/keybindings open",
+	}}
+	if !exists {
+		items = append(items, tui.CommandViewItem{
+			Label:       "Create template",
+			Value:       "default bindings",
+			Description: path,
+			Command:     "/keybindings init",
+		})
+	}
+	items = append(items,
+		tui.CommandViewItem{
+			Label:       "Validate bindings",
+			Value:       state,
+			Description: "Check contexts, actions, and key chords",
+			Command:     "/keybindings validate",
+		},
+		tui.CommandViewItem{
+			Label:       "Show active bindings",
+			Value:       "runtime",
+			Description: "Inspect defaults and user overrides",
+			Command:     "/keybindings show",
+		},
+	)
+	view := tui.CommandView{Title: "Keybindings", Tabs: []tui.CommandViewTab{{
+		Title: "Config",
+		Lines: []string{
+			tuiInformationLine("Path", path),
+			tuiInformationLine("Status", state),
+		},
+		Items:          items,
+		RefreshCommand: "/keybindings",
+	}}}
+	return &view, nil
+}
+
 func (a *App) tuiBackgroundSlashResult(args []string, sess *session.Session) (tui.SlashResult, bool, error) {
 	if tuiSlashRequestsJSON(args) {
 		return tui.SlashResult{}, false, nil
@@ -39839,6 +40038,20 @@ func (a *App) tuiPreferenceRefreshView(line string) (*tui.CommandView, bool) {
 		}
 		view := a.tuiSandboxCommandView()
 		return &view, true
+	case "/terminal-setup":
+		req, err := parseTerminalSetupArgs(fields[1:])
+		if err != nil || (req.Action != "install" && req.Action != "uninstall") {
+			return nil, false
+		}
+		view, err := a.tuiTerminalSetupCommandView()
+		return view, err == nil
+	case "/keybindings":
+		req, err := parseKeybindingsArgs(fields[1:])
+		if err != nil || req.Action != "init" {
+			return nil, false
+		}
+		view, err := a.tuiKeybindingsCommandView()
+		return view, err == nil
 	default:
 		return nil, false
 	}

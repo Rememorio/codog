@@ -104,6 +104,10 @@ func TestRealBinaryTUITagsAndSearchesSavedSessionWithTTY(t *testing.T) {
 	configHome := t.TempDir()
 	store := session.NewWorkspaceStore(configHome, workspace)
 	require.NoError(t, store.Append("tagged-session", anthropic.TextMessage("user", "investigate auth flow")))
+	require.NoError(t, store.Append("tagged-session", anthropic.Message{Role: "assistant", Content: []anthropic.ContentBlock{{
+		Type: "tool_use", ID: "read-auth", Name: "read_file", Input: json.RawMessage(`{"path":"internal/auth.go"}`),
+	}}}))
+	require.NoError(t, store.Append("tagged-session", anthropic.ToolResultMessage("read-auth", "package auth", false)))
 	_, err := store.SetTag("tagged-session", "security")
 	require.NoError(t, err)
 	require.NoError(t, store.Append("other-session", anthropic.TextMessage("user", "prepare release notes")))
@@ -127,6 +131,21 @@ expect "Yes, remove tag"
 expect "No, keep tag"
 send "\033\[B\r"
 expect "Kept tag #security"
+send "/files\r"
+expect "Files in context"
+expect "internal/auth.go"
+send "\033"
+after 300
+send "/terminal-setup\r"
+expect "terminal setup"
+expect "Show installation snippet"
+send "\033"
+after 300
+send "/keybindings\r"
+expect "keybindings"
+expect "Open in editor"
+send "\033"
+after 300
 send "/exit\r"
 expect eof
 `)
