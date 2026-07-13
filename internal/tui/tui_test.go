@@ -26,13 +26,13 @@ func TestCompleteSlashCommand(t *testing.T) {
 
 func TestCompleteSlashCommandShowsMultipleMatches(t *testing.T) {
 	ta := textarea.New()
-	ta.SetValue("/comp")
+	ta.SetValue("/con")
 	m := model{textarea: ta}
 
 	m = m.completeSlashCommand()
 	require.NotEmpty(t, m.matches)
-	require.Contains(t, m.matches, "/compact")
-	require.Contains(t, m.matches, "/completion")
+	require.Contains(t, m.matches, "/config")
+	require.Contains(t, m.matches, "/context")
 	require.Equal(t, 0, m.selected)
 }
 
@@ -135,6 +135,31 @@ func TestCompletionListRendersSelectedSuggestion(t *testing.T) {
 	require.Contains(t, view, "Enter accept")
 }
 
+func TestCompletionListKeepsAllMatchesAndScrollsVisibleWindow(t *testing.T) {
+	candidates := []string{
+		"/command-01", "/command-02", "/command-03", "/command-04",
+		"/command-05", "/command-06", "/command-07", "/command-08",
+		"/command-09", "/command-10", "/command-11", "/command-12",
+	}
+	preview := PreviewWithCandidates("/", candidates, 96, 24, false, false)
+	require.Equal(t, candidates, preview.Matches)
+	require.Contains(t, preview.View, "suggestions · 1/12")
+	require.Contains(t, preview.View, "/command-08")
+	require.NotContains(t, preview.View, "/command-09")
+
+	scrolled := renderCompletions(candidates, 10)
+	require.Contains(t, scrolled, "suggestions · 11/12")
+	require.Contains(t, scrolled, "> /command-11")
+	require.NotContains(t, scrolled, "/command-01")
+}
+
+func TestCompletionMenuSuggestsMisspelledCommand(t *testing.T) {
+	preview := PreviewWithCandidates("/statuz", []string{"/status", "/stats"}, 96, 24, false, false)
+
+	require.Contains(t, preview.Matches, "/status")
+	require.Contains(t, preview.View, "Show local workspace")
+}
+
 func TestCompletionDisplayLineFallsBackForCustomCandidate(t *testing.T) {
 	require.Equal(t, "/custom thing", completionDisplayLine("/custom thing"))
 }
@@ -146,6 +171,13 @@ func TestSlashCommandArgumentHintRendersAfterCommandSpace(t *testing.T) {
 	require.Contains(t, preview.CommandHint, "Show or switch the current model.")
 	require.Contains(t, preview.View, "command args")
 	require.Contains(t, preview.View, "arguments: [name]")
+}
+
+func TestSlashCommandArgumentHintOmitsNoArgumentCommands(t *testing.T) {
+	preview := PreviewWithCandidates("/status ", []string{"/status"}, 96, 24, false, false)
+
+	require.Empty(t, preview.CommandHint)
+	require.NotContains(t, preview.View, "usage: /status")
 }
 
 func TestMidInputSlashCommandGhostCompletesWithTab(t *testing.T) {

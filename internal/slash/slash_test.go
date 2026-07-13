@@ -2,6 +2,7 @@ package slash
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -479,6 +480,36 @@ func TestCandidatesWithOptionsIncludeModelAndSessions(t *testing.T) {
 func TestCandidatesWithOptionsIncludeExtraCandidates(t *testing.T) {
 	candidates := CandidatesWithOptions("/team/", CandidateOptions{Extra: []string{"/team/review ", "/team/audit "}})
 	require.Equal(t, []string{"/team/audit ", "/team/review "}, candidates)
+}
+
+func TestMenuCandidatesPrioritizeCommandsAndCollapseRuntimeEntries(t *testing.T) {
+	candidates := MenuCandidates(CandidateOptions{Extra: []string{
+		"/team/review ARGUMENT",
+		"/custom ",
+		"/.system/internal ",
+		"/model custom",
+	}})
+
+	require.NotEmpty(t, candidates)
+	require.Equal(t, "/add-dir", candidates[0])
+	require.Contains(t, candidates, "/help")
+	require.Contains(t, candidates, "/model")
+	require.Contains(t, candidates, "/usage")
+	require.Contains(t, candidates, "/custom")
+	require.Contains(t, candidates, "/team/review")
+	require.NotContains(t, candidates, "/acp")
+	require.NotContains(t, candidates, "/.system/internal")
+	require.NotContains(t, candidates, "/team/review ARGUMENT")
+	modelIndex := slices.Index(candidates, "/model")
+	require.NotContains(t, candidates[modelIndex+1:], "/model")
+	require.Less(t, slices.Index(candidates, "/usage"), slices.Index(candidates, "/custom"))
+}
+
+func TestFilterCandidatesStablePreservesCategoryOrder(t *testing.T) {
+	candidates := []string{"/status", "/skills", "/custom", "/session"}
+
+	require.Equal(t, []string{"/status", "/skills", "/session"}, FilterCandidatesStable("/s", candidates))
+	require.Equal(t, []string{"/status"}, FilterCandidatesStable("/ST", candidates))
 }
 
 func TestSuggestReturnsNearbySlashCommands(t *testing.T) {

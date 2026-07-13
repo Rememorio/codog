@@ -676,6 +676,117 @@ func CandidatesWithOptions(prefix string, options CandidateOptions) []string {
 	return FilterCandidates(prefix, AllCandidates(options))
 }
 
+var interactiveMenuCommands = map[string]bool{
+	"/add-dir":            true,
+	"/advisor":            true,
+	"/agents":             true,
+	"/branch":             true,
+	"/btw":                true,
+	"/chrome":             true,
+	"/clear":              true,
+	"/color":              true,
+	"/compact":            true,
+	"/config":             true,
+	"/context":            true,
+	"/copy":               true,
+	"/cost":               true,
+	"/desktop":            true,
+	"/diff":               true,
+	"/doctor":             true,
+	"/effort":             true,
+	"/exit":               true,
+	"/export":             true,
+	"/extra-usage":        true,
+	"/fast":               true,
+	"/feedback":           true,
+	"/files":              true,
+	"/help":               true,
+	"/hooks":              true,
+	"/ide":                true,
+	"/init":               true,
+	"/install-github-app": true,
+	"/install-slack-app":  true,
+	"/keybindings":        true,
+	"/login":              true,
+	"/logout":             true,
+	"/mcp":                true,
+	"/memory":             true,
+	"/mobile":             true,
+	"/model":              true,
+	"/output-style":       true,
+	"/passes":             true,
+	"/permissions":        true,
+	"/plan":               true,
+	"/plugin":             true,
+	"/pr-comments":        true,
+	"/privacy-settings":   true,
+	"/rate-limit-options": true,
+	"/release-notes":      true,
+	"/reload-plugins":     true,
+	"/remote-env":         true,
+	"/rename":             true,
+	"/resume":             true,
+	"/review":             true,
+	"/rewind":             true,
+	"/sandbox-toggle":     true,
+	"/security-review":    true,
+	"/session":            true,
+	"/skills":             true,
+	"/stats":              true,
+	"/status":             true,
+	"/statusline":         true,
+	"/stickers":           true,
+	"/tag":                true,
+	"/tasks":              true,
+	"/terminal-setup":     true,
+	"/theme":              true,
+	"/thinkback":          true,
+	"/thinkback-play":     true,
+	"/ultrareview":        true,
+	"/upgrade":            true,
+	"/usage":              true,
+	"/vim":                true,
+}
+
+// MenuCandidates returns command-level entries for the interactive slash
+// menu. Detailed argument templates remain available through AllCandidates.
+func MenuCandidates(options CandidateOptions) []string {
+	builtins := []string{}
+	seen := map[string]bool{}
+	for _, spec := range Specs() {
+		if spec.Hidden || spec.Disabled || !interactiveMenuCommands[strings.ToLower(spec.Name)] {
+			continue
+		}
+		name := normalizeSuggestionCandidate(spec.Name)
+		if name == "" || seen[strings.ToLower(name)] {
+			continue
+		}
+		seen[strings.ToLower(name)] = true
+		builtins = append(builtins, name)
+	}
+	runtime := []string{}
+	for _, candidate := range options.Extra {
+		name := normalizeSuggestionCandidate(candidate)
+		if name == "" || hiddenRuntimeCandidate(name) || seen[strings.ToLower(name)] {
+			continue
+		}
+		seen[strings.ToLower(name)] = true
+		runtime = append(runtime, name)
+	}
+	sort.Strings(builtins)
+	sort.Strings(runtime)
+	return append(builtins, runtime...)
+}
+
+func hiddenRuntimeCandidate(candidate string) bool {
+	for _, part := range strings.Split(strings.TrimPrefix(candidate, "/"), "/") {
+		if strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
+}
+
 // AllCandidates returns every visible slash completion candidate for options.
 func AllCandidates(options CandidateOptions) []string {
 	seen := map[string]bool{}
@@ -1041,6 +1152,27 @@ func FilterCandidates(prefix string, candidates []string) []string {
 		out = append(out, candidate)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// FilterCandidatesStable filters candidates without changing their category
+// order, which keeps built-ins ahead of runtime commands in interactive menus.
+func FilterCandidatesStable(prefix string, candidates []string) []string {
+	prefix = strings.Trim(prefix, "\r\n\t")
+	if !strings.HasPrefix(prefix, "/") {
+		return nil
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		candidate = strings.Trim(candidate, "\r\n\t")
+		key := strings.ToLower(candidate)
+		if candidate == "" || seen[key] || !strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(prefix)) {
+			continue
+		}
+		seen[key] = true
+		out = append(out, candidate)
+	}
 	return out
 }
 

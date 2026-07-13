@@ -304,6 +304,33 @@ func TestCompatibilityConfigAndHomeSkillRoots(t *testing.T) {
 	require.True(t, opencodeSource.Exists)
 }
 
+func TestLoadIgnoresHiddenSkillsAndSupportMarkdown(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	skillsRoot := filepath.Join(configHome, "skills")
+	reviewRoot := filepath.Join(skillsRoot, "review")
+	referencesRoot := filepath.Join(reviewRoot, "references")
+	hiddenRoot := filepath.Join(skillsRoot, ".system", "internal")
+	commandsRoot := filepath.Join(configHome, "commands", "team")
+	require.NoError(t, os.MkdirAll(referencesRoot, 0o755))
+	require.NoError(t, os.MkdirAll(hiddenRoot, 0o755))
+	require.NoError(t, os.MkdirAll(commandsRoot, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillsRoot, "plain.md"), []byte("Plain skill"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(reviewRoot, "SKILL.md"), []byte("Review skill"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(referencesRoot, "checklist.md"), []byte("Supporting material"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(hiddenRoot, "SKILL.md"), []byte("Managed internal skill"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(commandsRoot, "deploy.md"), []byte("Deploy command"), 0o644))
+
+	all, err := Load(configHome, workspace)
+	require.NoError(t, err)
+	names := skillNames(all)
+	require.Contains(t, names, "plain")
+	require.Contains(t, names, "review")
+	require.Contains(t, names, "team:deploy")
+	require.NotContains(t, names, "review:references:checklist")
+	require.NotContains(t, names, ".system:internal")
+}
+
 func TestRenderInvocationSubstitutesNamedAndIndexedArguments(t *testing.T) {
 	doc := `---
 description: Review a target.

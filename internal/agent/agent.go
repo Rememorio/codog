@@ -37785,7 +37785,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		return strings.TrimSpace(out.String()), handled, nil
 	}
 	loopErr := tui.Shell(ctx, tui.ShellOptions{
-		Candidates:              a.slashCompletionCandidates(sess.ID),
+		Candidates:              a.slashMenuCandidates(sess.ID),
 		FileCandidates:          fileCandidates,
 		Prefill:                 overrides.Prefill,
 		InitialPrompt:           overrides.InitialPrompt,
@@ -60084,6 +60084,14 @@ func containsFold(values []string, target string) bool {
 }
 
 func (a *App) slashCompletionCandidates(activeSessionID string) []string {
+	return slash.AllCandidates(a.slashCandidateOptions(activeSessionID))
+}
+
+func (a *App) slashMenuCandidates(activeSessionID string) []string {
+	return slash.MenuCandidates(a.slashCandidateOptions(activeSessionID))
+}
+
+func (a *App) slashCandidateOptions(activeSessionID string) slash.CandidateOptions {
 	recent := []string{}
 	if a.Sessions != nil {
 		if sessions, err := a.Sessions.List(); err == nil {
@@ -60096,12 +60104,12 @@ func (a *App) slashCompletionCandidates(activeSessionID string) []string {
 		}
 	}
 	extra := a.customSlashCompletionCandidates()
-	return slash.AllCandidates(slash.CandidateOptions{
+	return slash.CandidateOptions{
 		Model:            a.Config.Model,
 		ActiveSessionID:  activeSessionID,
 		RecentSessionIDs: recent,
 		Extra:            extra,
-	})
+	}
 }
 
 func (a *App) customSlashCompletionCandidates() []string {

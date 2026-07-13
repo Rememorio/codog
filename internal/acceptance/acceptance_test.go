@@ -91,6 +91,42 @@ expect eof
 	require.NotContains(t, output, "\x1b[?1049h")
 }
 
+func TestRealBinaryTUISlashMenuFiltersAndScrollsWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	visibleSkill := filepath.Join(configHome, "skills", "workspace-review")
+	hiddenSkill := filepath.Join(configHome, "skills", ".system", "internal")
+	references := filepath.Join(visibleSkill, "references")
+	require.NoError(t, os.MkdirAll(references, 0o755))
+	require.NoError(t, os.MkdirAll(hiddenSkill, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(visibleSkill, "SKILL.md"), []byte("Review the workspace."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(references, "checklist.md"), []byte("Supporting material."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(hiddenSkill, "SKILL.md"), []byte("Managed internal skill."), 0o644))
+
+	output := runExpectCodog(t, bin, workspace, configHome, nil, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model glm52 tui
+expect "codog"
+send "/"
+expect "/add-dir"
+send "\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B"
+expect "/context"
+send "\025/statuz"
+expect "/status"
+send "\025/exit\r"
+expect eof
+`)
+
+	plain := ansi.Strip(output)
+	require.Contains(t, plain, "suggestions")
+	require.Contains(t, plain, "/add-dir")
+	require.Contains(t, plain, "/context")
+	require.Contains(t, plain, "/status")
+	require.NotContains(t, plain, "/.system")
+	require.NotContains(t, plain, "references/checklist")
+}
+
 func TestRealBinaryInteractiveStartupPersistsWorkspaceTrustWithTTY(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()

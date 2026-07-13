@@ -380,9 +380,12 @@ func load(configHome, workspace string, extraRoots []root, manifests []plugins.M
 				return err
 			}
 			if entry.IsDir() {
+				if path != root.path && strings.HasPrefix(entry.Name(), ".") {
+					return filepath.SkipDir
+				}
 				return nil
 			}
-			if !isSkillFile(path, entry.Name()) {
+			if !isSkillFile(root, path, entry.Name()) {
 				return nil
 			}
 			name, err := skillName(root, path)
@@ -1240,11 +1243,21 @@ func copyFile(source string, dest string, mode os.FileMode) error {
 	return os.WriteFile(dest, data, mode)
 }
 
-func isSkillFile(path string, name string) bool {
+func isSkillFile(root root, path string, name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return false
+	}
 	if name == "SKILL.md" {
 		return true
 	}
-	return strings.HasSuffix(name, ".md") && filepath.Base(filepath.Dir(path)) != ""
+	if !strings.HasSuffix(name, ".md") {
+		return false
+	}
+	if root.originID == originLegacyCommandsDir {
+		return true
+	}
+	rel, err := filepath.Rel(root.path, path)
+	return err == nil && filepath.Dir(rel) == "."
 }
 
 func skillName(root root, path string) (string, error) {

@@ -5426,9 +5426,6 @@ func (m model) completeSlashCommand() model {
 		m.commandArgumentHint = slashCommandArgumentHint(m.textarea.Value())
 		m.inlineGhostText = ""
 	default:
-		if len(candidates) > 8 {
-			candidates = candidates[:8]
-		}
 		m.matches = candidates
 		if m.selected < 0 || m.selected >= len(m.matches) {
 			m.selected = 0
@@ -5465,9 +5462,6 @@ func (m *model) refreshCompletionMenu() {
 		return
 	}
 	candidates = automaticCompletionCandidates(value, candidates)
-	if len(candidates) > 8 {
-		candidates = candidates[:8]
-	}
 	m.matches = candidates
 	if len(m.matches) == 0 {
 		m.selected = 0
@@ -5486,12 +5480,22 @@ func (m model) filteredCompletionCandidates(value string) []string {
 		return nil
 	}
 	if strings.HasPrefix(value, "/") {
-		return slash.FilterCandidates(value, m.completionCandidates())
+		candidates := m.completionCandidates()
+		matches := slash.FilterCandidatesStable(value, candidates)
+		if len(matches) == 0 && isSlashCommandNameInput(value) {
+			return slash.SuggestWithCandidates(value, 8, candidates)
+		}
+		return matches
 	}
 	if prefix, ok := activeFileReferencePrefix(value); ok {
 		return filterFileReferenceCandidates(prefix, m.fileCandidates)
 	}
 	return nil
+}
+
+func isSlashCommandNameInput(value string) bool {
+	value = strings.Trim(value, "\r\n\t")
+	return strings.HasPrefix(value, "/") && !strings.ContainsAny(strings.TrimPrefix(value, "/"), " \t\r\n")
 }
 
 func (m model) bashHistoryCompletion(value string) (string, bool) {
@@ -5606,7 +5610,7 @@ func slashCommandArgumentHint(value string) string {
 	}
 	args := strings.TrimSpace(strings.TrimPrefix(usage, spec.Name))
 	if args == "" {
-		return "usage: " + usage
+		return ""
 	}
 	return "arguments: " + args + "  ·  " + spec.Description
 }
@@ -5933,6 +5937,8 @@ func filepathToSlash(path string) string {
 }
 
 func renderCompletions(matches []string, selected int, themed ...themeStyles) string {
+	const maxVisible = 8
+
 	styles := resolveThemeStyles(themed)
 	if len(matches) == 0 {
 		return ""
@@ -5940,11 +5946,20 @@ func renderCompletions(matches []string, selected int, themed ...themeStyles) st
 	if selected < 0 || selected >= len(matches) {
 		selected = 0
 	}
-	lines := []string{styles.completionTitle().Render(" suggestions ")}
-	for index, match := range matches {
+	title := " suggestions "
+	start := 0
+	end := len(matches)
+	if len(matches) > maxVisible {
+		start = min(max(selected-maxVisible/2, 0), len(matches)-maxVisible)
+		end = start + maxVisible
+		title = fmt.Sprintf(" suggestions · %d/%d ", selected+1, len(matches))
+	}
+	lines := []string{styles.completionTitle().Render(title)}
+	for index, match := range matches[start:end] {
+		actualIndex := start + index
 		prefix := "  "
 		style := styles.completion()
-		if index == selected {
+		if actualIndex == selected {
 			prefix = "> "
 			style = styles.selectedCompletion()
 		}
@@ -8274,7 +8289,7 @@ func (m model) completionCandidates() []string {
 	if len(m.candidates) > 0 {
 		return m.candidates
 	}
-	return slash.AllCandidates(slash.CandidateOptions{})
+	return slash.MenuCandidates(slash.CandidateOptions{})
 }
 
 func (m *model) layout(width int, height int) {

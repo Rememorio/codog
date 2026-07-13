@@ -16902,6 +16902,15 @@ func TestSlashCompletionCandidatesIncludeRuntimeContext(t *testing.T) {
 	require.Contains(t, candidates, "/permissions workspace-write")
 	require.Contains(t, candidates, "/team/review ")
 	require.Contains(t, candidates, "/team/audit ")
+
+	menu := app.slashMenuCandidates("active-session")
+	require.Contains(t, menu, "/model")
+	require.Contains(t, menu, "/resume")
+	require.Contains(t, menu, "/team/review")
+	require.Contains(t, menu, "/team/audit")
+	require.NotContains(t, menu, "/model claude-test")
+	require.NotContains(t, menu, "/resume active-session")
+	require.NotContains(t, menu, "/permissions workspace-write")
 }
 
 func TestBookmarksCommandAndSlash(t *testing.T) {
