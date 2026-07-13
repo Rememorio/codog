@@ -178,6 +178,9 @@ func TestRealBinaryTUIOpensInteractiveSlashControlViews(t *testing.T) {
 	skillDir := filepath.Join(configHome, "skills", "acceptance-review")
 	require.NoError(t, os.MkdirAll(skillDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: acceptance-review\ndescription: Review acceptance changes\n---\n\n# Acceptance Review\n\nInspect acceptance changes.\n"), 0o644))
+	agentDir := filepath.Join(workspace, ".codog", "agents")
+	require.NoError(t, os.MkdirAll(agentDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(agentDir, "acceptance-agent.json"), []byte(`{"name":"acceptance-agent","description":"Review acceptance changes","prompt":"Inspect changes and report risks."}`), 0o644))
 	_, err := cron.NewStore(configHome).Create("@daily", "Inspect acceptance changes", "Acceptance schedule")
 	require.NoError(t, err)
 
@@ -245,7 +248,14 @@ send "\r"
 expect "Inspect acceptance changes"
 send "\033"
 after 300
-send "/exit\r"
+send "/agents\r"
+expect " extensions "
+expect "Create new agent"
+expect "acceptance-agent"
+send "\033\[B"
+send " "
+expect "/agents run acceptance-agent "
+send "\025/exit\r"
 expect eof
 `)
 
@@ -262,6 +272,8 @@ expect eof
 	require.Contains(t, plain, "Inspect acceptance changes.")
 	require.Contains(t, plain, " runtime ")
 	require.Contains(t, plain, "Acceptance schedule")
+	require.Contains(t, plain, "acceptance-agent")
+	require.Contains(t, plain, "/agents run acceptance-agent ")
 	require.NotContains(t, plain, "UNTRACKED .codog")
 	require.NotContains(t, plain, "· model=glm52")
 }

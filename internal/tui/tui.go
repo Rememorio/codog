@@ -162,6 +162,7 @@ type CommandViewItem struct {
 	Action           string
 	Command          string
 	SecondaryLabel   string
+	SecondaryAction  string
 	SecondaryCommand string
 	SecondaryKey     string
 }
@@ -7138,15 +7139,22 @@ func (m model) acceptCommandViewItem(secondary bool) (tea.Model, tea.Cmd) {
 	}
 	item := tab.Items[clampIndex(m.commandViewItem, len(tab.Items))]
 	action := strings.ToLower(strings.TrimSpace(item.Action))
-	command := strings.TrimSpace(item.Command)
+	rawCommand := item.Command
 	if secondary {
-		command = strings.TrimSpace(item.SecondaryCommand)
-		if command == "" {
+		rawCommand = item.SecondaryCommand
+		if strings.TrimSpace(rawCommand) == "" {
 			return m, nil
 		}
-		action = ""
+		action = strings.ToLower(strings.TrimSpace(item.SecondaryAction))
 	}
+	command := strings.TrimSpace(rawCommand)
 	switch action {
+	case "prefill":
+		m.closeCommandView()
+		m.textarea.SetValue(strings.TrimLeft(rawCommand, " \t\r\n"))
+		m.textarea.CursorEnd()
+		m.textarea.Focus()
+		return m, nil
 	case "model":
 		m.closeCommandView()
 		m.openModelPicker()

@@ -8620,8 +8620,7 @@ func (a *App) listAgents(format string, filter string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
-	data, _ := json.MarshalIndent(defs, "", "  ")
-	fmt.Fprintln(a.Out, string(data))
+	renderAgentsListText(a.Out, defs)
 	return nil
 }
 
@@ -8642,8 +8641,7 @@ func (a *App) showAgent(name string, format string) error {
 				fmt.Fprintln(a.Out, string(data))
 				return nil
 			}
-			data, _ := json.MarshalIndent(def, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
+			renderAgentDefinitionText(a.Out, def)
 			return nil
 		}
 	}
@@ -8655,6 +8653,52 @@ func (a *App) showAgent(name string, format string) error {
 		Message:   fmt.Sprintf("agent %q was not found", name),
 		Hint:      "Run `codog agents list` to see available agents.",
 	}, format)
+}
+
+func renderAgentsListText(out io.Writer, definitions []agentdefs.Definition) {
+	fmt.Fprintln(out, "Agents")
+	fmt.Fprintf(out, "  Count            %d\n", len(definitions))
+	for _, definition := range definitions {
+		value := definition.Name
+		if definition.Model != "" {
+			value += " · " + definition.Model
+		}
+		if definition.Source != "" {
+			value += " · " + definition.Source
+		}
+		fmt.Fprintf(out, "  %s\n", value)
+		if definition.Description != "" {
+			fmt.Fprintf(out, "    %s\n", trimSingleLine(definition.Description, 160))
+		}
+	}
+}
+
+func renderAgentDefinitionText(out io.Writer, definition agentdefs.Definition) {
+	fmt.Fprintln(out, "Agent")
+	fmt.Fprintf(out, "  Name             %s\n", definition.Name)
+	if definition.Description != "" {
+		fmt.Fprintf(out, "  Description      %s\n", definition.Description)
+	}
+	if definition.Model != "" {
+		fmt.Fprintf(out, "  Model            %s\n", definition.Model)
+	}
+	if len(definition.Tools) > 0 {
+		fmt.Fprintf(out, "  Tools            %s\n", strings.Join(definition.Tools, ", "))
+	}
+	if definition.Source != "" {
+		fmt.Fprintf(out, "  Source           %s\n", definition.Source)
+	}
+	if definition.Format != "" {
+		fmt.Fprintf(out, "  Format           %s\n", definition.Format)
+	}
+	if definition.Path != "" {
+		fmt.Fprintf(out, "  Path             %s\n", definition.Path)
+	}
+	if definition.Prompt != "" {
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Prompt")
+		fmt.Fprintln(out, definition.Prompt)
+	}
 }
 
 func (a *App) createAgent(rawName string, format string) error {
@@ -8701,6 +8745,10 @@ func (a *App) createAgent(rawName string, format string) error {
 	}
 	def.Path = path
 	def.Source = "workspace"
+	if err := a.activateCreatedAgentDefinition(def); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
 	report := agentCreateReport{
 		Kind:    "agents",
 		Action:  "create",
@@ -8718,6 +8766,38 @@ func (a *App) createAgent(rawName string, format string) error {
 		return nil
 	}
 	renderAgentCreateReport(a.Out, report)
+	return nil
+}
+
+func (a *App) activateCreatedAgentDefinition(definition agentdefs.Definition) error {
+	previousDefinitions := append([]agentdefs.Definition(nil), a.AgentDefinitions...)
+	manifests, err := a.runtimePluginManifests()
+	if err != nil {
+		return err
+	}
+	loaded, err := agentdefs.LoadWithManifests(a.Workspace, manifests)
+	if err != nil {
+		return err
+	}
+	a.AgentDefinitions = agentdefs.Merge(loaded, a.InlineAgents, a.AgentDefinitions, []agentdefs.Definition{definition})
+	if a.Tools == nil {
+		return nil
+	}
+	previousTools := a.Tools
+	previousMCPLoaded := a.mcpToolsLoaded
+	next, err := a.newToolRegistry()
+	if err != nil {
+		a.AgentDefinitions = previousDefinitions
+		return err
+	}
+	a.Tools = next
+	a.mcpToolsLoaded = false
+	if err := a.RegisterPluginTools(); err != nil {
+		a.AgentDefinitions = previousDefinitions
+		a.Tools = previousTools
+		a.mcpToolsLoaded = previousMCPLoaded
+		return err
+	}
 	return nil
 }
 
@@ -37971,6 +38051,10 @@ func (a *App) tuiSlashHandler(sess *session.Session, modeState *tuiModeState) tu
 				view := a.tuiRuntimeCommandView(sess, selectedTab)
 				result.CommandView = &view
 				result.Output = ""
+			} else if selectedTab, ok := tuiExtensionsRefreshTab(line); ok {
+				view := a.tuiExtensionsCommandView(selectedTab)
+				result.CommandView = &view
+				result.Output = ""
 			}
 		}
 		if handled && result.Output != "" {
@@ -38014,12 +38098,16 @@ func (a *App) tuiInteractiveSlashResult(line string, sess *session.Session, mode
 			view := a.tuiSettingsCommandView(sess, modeState, selectedTab)
 			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
 		}
-	case "/skill", "/skills", "/mcp", "/hooks", "/plugin", "/plugins", "/marketplace", "/agents":
+	case "/skill", "/skills", "/mcp", "/hooks", "/plugin", "/plugins", "/marketplace":
 		if len(args) == 0 {
 			selectedTab := tuiExtensionTab(command)
 			view := a.tuiExtensionsCommandView(selectedTab)
 			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
 		}
+	case "/agents":
+		return a.tuiAgentsSlashResult(args, sess)
+	case "/subagent":
+		return a.tuiSubagentSlashResult(args, sess)
 	case "/background", "/tasks", "/bashes":
 		return a.tuiBackgroundSlashResult(args, sess)
 	case "/team":
@@ -38501,6 +38589,13 @@ func (a *App) tuiPluginsCommandTab() tui.CommandViewTab {
 
 func (a *App) tuiAgentsCommandTab() tui.CommandViewTab {
 	tab := tui.CommandViewTab{Title: "Agents", RefreshCommand: "/agents"}
+	tab.Items = append(tab.Items, tui.CommandViewItem{
+		Label:       "Create new agent",
+		Value:       "workspace",
+		Description: "Create a reusable agent definition in this workspace",
+		Action:      "prefill",
+		Command:     "/agents create ",
+	})
 	definitions, err := a.runtimeAgentDefinitions()
 	if err != nil {
 		tab.Lines = []string{"Agents unavailable: " + err.Error()}
@@ -38513,14 +38608,14 @@ func (a *App) tuiAgentsCommandTab() tui.CommandViewTab {
 	for _, definition := range definitions {
 		value := firstNonEmpty(definition.Model, definition.Source, "default model")
 		tab.Items = append(tab.Items, tui.CommandViewItem{
-			Label:       definition.Name,
-			Value:       value,
-			Description: trimSingleLine(definition.Description, 96),
-			Command:     tuiNamedSlashCommand("/agents show", definition.Name),
+			Label:            definition.Name,
+			Value:            value,
+			Description:      trimSingleLine(definition.Description, 96),
+			Command:          tuiNamedSlashCommand("/agents show", definition.Name),
+			SecondaryLabel:   "run",
+			SecondaryAction:  "prefill",
+			SecondaryCommand: tuiNamedSlashCommandPrefix("/agents run", definition.Name),
 		})
-	}
-	if len(tab.Items) == 0 {
-		tab.Lines = []string{"No agent definitions found."}
 	}
 	return tab
 }
@@ -38531,6 +38626,14 @@ func tuiNamedSlashCommand(prefix string, name string) string {
 		return ""
 	}
 	return strings.TrimSpace(prefix) + " " + name
+}
+
+func tuiNamedSlashCommandPrefix(prefix string, name string) string {
+	command := tuiNamedSlashCommand(prefix, name)
+	if command == "" {
+		return ""
+	}
+	return command + " "
 }
 
 func tuiReportLines(text string, heading string) []string {
@@ -38576,6 +38679,63 @@ func tuiSlashRequestsJSON(args []string) bool {
 		}
 	}
 	return false
+}
+
+func (a *App) tuiAgentsSlashResult(args []string, sess *session.Session) (tui.SlashResult, bool, error) {
+	cleanArgs, format, err := stripJSONOnlyOutputFormat("agents", args)
+	if err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	if format == "json" {
+		return tui.SlashResult{}, false, nil
+	}
+	action := "list"
+	if len(cleanArgs) > 0 {
+		action = normalizeAgentsAction(cleanArgs[0])
+	}
+	switch action {
+	case "list":
+		if len(cleanArgs) > 1 {
+			return tui.SlashResult{}, false, nil
+		}
+		view := a.tuiExtensionsCommandView(4)
+		return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+	case "show":
+		if len(cleanArgs) != 2 {
+			return tui.SlashResult{}, false, nil
+		}
+		view, err := a.tuiAgentDefinitionInformation(cleanArgs[1])
+		return tui.SlashResult{Handled: true, Information: &view}, true, err
+	case "runs":
+		if len(cleanArgs) > 1 {
+			return tui.SlashResult{}, false, nil
+		}
+		view := a.tuiRuntimeCommandView(sess, 3)
+		return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+	case "status":
+		if len(cleanArgs) != 2 {
+			return tui.SlashResult{}, false, nil
+		}
+		view, err := a.tuiAgentRunInformation(cleanArgs[1], 32*1024)
+		return tui.SlashResult{Handled: true, Information: &view}, true, err
+	case "output":
+		id, limit, err := parseAgentRunOutputArgs(cleanArgs[1:])
+		if err != nil {
+			return tui.SlashResult{Handled: true}, true, err
+		}
+		view, err := a.tuiAgentRunInformation(id, limit)
+		return tui.SlashResult{Handled: true, Information: &view}, true, err
+	default:
+		return tui.SlashResult{}, false, nil
+	}
+}
+
+func (a *App) tuiSubagentSlashResult(args []string, sess *session.Session) (tui.SlashResult, bool, error) {
+	mapped, err := normalizeSubagentArgs(args)
+	if err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	return a.tuiAgentsSlashResult(mapped, sess)
 }
 
 func (a *App) tuiBackgroundSlashResult(args []string, sess *session.Session) (tui.SlashResult, bool, error) {
@@ -38657,6 +38817,7 @@ func (a *App) tuiRuntimeCommandView(sess *session.Session, selectedTab int) tui.
 			a.tuiTasksCommandTab(sess),
 			a.tuiTeamsCommandTab(),
 			a.tuiSchedulesCommandTab(),
+			a.tuiAgentRunsCommandTab(sess),
 		},
 	}
 }
@@ -38775,6 +38936,136 @@ func (a *App) tuiSchedulesCommandTab() tui.CommandViewTab {
 		tab.Lines = []string{"No schedules configured."}
 	}
 	return tab
+}
+
+func (a *App) tuiAgentRunsCommandTab(sess *session.Session) tui.CommandViewTab {
+	tab := tui.CommandViewTab{Title: "Agent runs", RefreshCommand: "/agents runs"}
+	runs, err := agentruns.NewStore(a.Config.ConfigHome).List()
+	if err != nil {
+		tab.Lines = []string{"Agent runs unavailable: " + err.Error()}
+		return tab
+	}
+	if sess != nil {
+		filtered := runs[:0]
+		for _, run := range runs {
+			if run.SessionID == sess.ID {
+				filtered = append(filtered, run)
+			}
+		}
+		runs = filtered
+	}
+	taskStore := background.NewStore(a.Config.ConfigHome)
+	statuses := make([]agentruns.Status, 0, len(runs))
+	for _, run := range runs {
+		statuses = append(statuses, agentruns.StatusForTask(taskStore, run))
+	}
+	sort.SliceStable(statuses, func(i, j int) bool {
+		activeI := background.IsActiveStatus(statuses[i].CurrentStatus)
+		activeJ := background.IsActiveStatus(statuses[j].CurrentStatus)
+		if activeI != activeJ {
+			return activeI
+		}
+		return statuses[i].Run.CreatedAt.After(statuses[j].Run.CreatedAt)
+	})
+	active := 0
+	for _, status := range statuses {
+		run := status.Run
+		if background.IsActiveStatus(status.CurrentStatus) {
+			active++
+		}
+		label := "@" + firstNonEmpty(run.Agent, "agent")
+		if run.Prompt != "" {
+			label += " · " + trimSingleLine(run.Prompt, 64)
+		}
+		item := tui.CommandViewItem{
+			Label:       label,
+			Value:       firstNonEmpty(status.CurrentStatus, "unknown") + " · " + firstNonEmpty(status.Health.State, "unknown"),
+			Description: run.ID,
+			Command:     tuiNamedSlashCommand("/agents status", run.ID),
+		}
+		if background.IsActiveStatus(status.CurrentStatus) {
+			item.SecondaryLabel = "stop"
+			item.SecondaryCommand = tuiNamedSlashCommand("/agents stop", run.ID)
+			item.SecondaryKey = "x"
+		}
+		tab.Items = append(tab.Items, item)
+	}
+	tab.Lines = []string{fmt.Sprintf("%d active · %d total", active, len(statuses))}
+	if len(tab.Items) == 0 {
+		tab.Lines = []string{"No agent runs for this session."}
+	}
+	return tab
+}
+
+func (a *App) tuiAgentDefinitionInformation(name string) (tui.InformationView, error) {
+	definitions, err := a.runtimeAgentDefinitions()
+	if err != nil {
+		return tui.InformationView{}, err
+	}
+	for _, definition := range definitions {
+		if !strings.EqualFold(definition.Name, name) {
+			continue
+		}
+		lines := []string{
+			tuiInformationLine("Name", definition.Name),
+			tuiInformationLine("Model", firstNonEmpty(definition.Model, "default")),
+			tuiInformationLine("Source", firstNonEmpty(definition.Source, "unknown")),
+		}
+		if definition.Description != "" {
+			lines = append(lines, tuiInformationLine("Description", definition.Description))
+		}
+		if len(definition.Tools) > 0 {
+			lines = append(lines, tuiInformationLine("Tools", strings.Join(definition.Tools, ", ")))
+		}
+		if definition.Path != "" {
+			lines = append(lines, tuiInformationLine("Path", definition.Path))
+		}
+		if definition.Prompt != "" {
+			lines = append(lines, "", "Prompt")
+			lines = append(lines, strings.Split(strings.TrimSpace(definition.Prompt), "\n")...)
+		}
+		return tui.InformationView{Title: "Agent", Lines: lines}, nil
+	}
+	return tui.InformationView{}, fmt.Errorf("agent %q was not found", name)
+}
+
+func (a *App) tuiAgentRunInformation(id string, logLimit int64) (tui.InformationView, error) {
+	run, err := agentruns.NewStore(a.Config.ConfigHome).Get(id)
+	if err != nil {
+		return tui.InformationView{}, err
+	}
+	taskStore := background.NewStore(a.Config.ConfigHome)
+	status := agentruns.StatusForTask(taskStore, run)
+	lines := []string{
+		tuiInformationLine("Run", run.ID),
+		tuiInformationLine("Agent", run.Agent),
+		tuiInformationLine("Status", firstNonEmpty(status.CurrentStatus, "unknown")),
+		tuiInformationLine("Health", firstNonEmpty(status.Health.State, "unknown")),
+		tuiInformationLine("Task", run.TaskID),
+	}
+	if run.Prompt != "" {
+		lines = append(lines, tuiInformationLine("Prompt", trimSingleLine(run.Prompt, 200)))
+	}
+	if status.Health.Summary != "" {
+		lines = append(lines, tuiInformationLine("Summary", status.Health.Summary))
+	}
+	if status.Health.RecommendedAction != "" {
+		lines = append(lines, tuiInformationLine("Next", status.Health.RecommendedAction))
+	}
+	if status.Error != "" {
+		lines = append(lines, tuiInformationLine("Error", status.Error))
+	}
+	lines = append(lines, "", "Output")
+	log, logErr := taskStore.Logs(run.TaskID, logLimit)
+	switch {
+	case logErr != nil:
+		lines = append(lines, "Output unavailable: "+logErr.Error())
+	case strings.TrimSpace(log) == "":
+		lines = append(lines, "No output yet.")
+	default:
+		lines = append(lines, strings.Split(strings.TrimRight(log, "\n"), "\n")...)
+	}
+	return tui.InformationView{Title: "Agent run", Lines: lines}, nil
 }
 
 func (a *App) tuiTaskInformation(id string, logLimit int64, logsOnly bool) (tui.InformationView, error) {
@@ -38927,6 +39218,31 @@ func tuiRuntimeRefreshTab(line string) (int, bool) {
 		case "create", "delete", "enable", "disable", "mark-run", "run-due":
 			return 2, true
 		}
+	case "/agents":
+		switch normalizeAgentsAction(action) {
+		case "run", "stop", "update", "heartbeat", "run-remove", "prune":
+			return 3, true
+		}
+	case "/subagent":
+		switch strings.ToLower(strings.TrimSpace(action)) {
+		case "steer", "message", "update", "kill", "stop":
+			return 3, true
+		}
+	}
+	return 0, false
+}
+
+func tuiExtensionsRefreshTab(line string) (int, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 2 || tuiSlashRequestsJSON(fields[1:]) {
+		return 0, false
+	}
+	command := fields[0]
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
+	}
+	if command == "/agents" && normalizeAgentsAction(fields[1]) == "create" {
+		return 4, true
 	}
 	return 0, false
 }

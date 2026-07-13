@@ -648,11 +648,26 @@ func TestTUISlashHandlerOpensExtensionManagementViews(t *testing.T) {
 	skillsView, err := handler(context.Background(), "/skills")
 	require.NoError(t, err)
 	require.Equal(t, "/skills disable demo", commandViewItemByLabel(t, skillsView.CommandView.Tabs[0].Items, "demo").SecondaryCommand)
+	agentsView, err := handler(context.Background(), "/agents")
+	require.NoError(t, err)
+	require.Contains(t, commandViewItemLabels(agentsView.CommandView.Tabs[4].Items), "Create new agent")
+	reviewer := commandViewItemByLabel(t, agentsView.CommandView.Tabs[4].Items, "reviewer")
+	require.Equal(t, "prefill", reviewer.SecondaryAction)
+	require.Equal(t, "/agents run reviewer ", reviewer.SecondaryCommand)
 
 	detail, err := handler(context.Background(), "/skills show demo")
 	require.NoError(t, err)
 	require.NotNil(t, detail.Information)
 	require.Contains(t, strings.Join(detail.Information.Lines, "\n"), "Inspect the workspace")
+	agentDetail, err := handler(context.Background(), "/agents show reviewer")
+	require.NoError(t, err)
+	require.NotNil(t, agentDetail.Information)
+	require.Contains(t, strings.Join(agentDetail.Information.Lines, "\n"), "Review changes")
+	createdAgent, err := handler(context.Background(), "/agents create helper")
+	require.NoError(t, err)
+	require.NotNil(t, createdAgent.CommandView)
+	require.Equal(t, 4, createdAgent.CommandView.SelectedTab)
+	require.Contains(t, commandViewItemLabels(createdAgent.CommandView.Tabs[4].Items), "helper")
 
 	jsonList, err := handler(context.Background(), "/skills list --json")
 	require.NoError(t, err)
@@ -672,16 +687,28 @@ func TestTUISlashHandlerOpensRuntimeManagementViews(t *testing.T) {
 	require.NoError(t, err)
 
 	taskStore := background.NewStore(configHome)
-	task, err := taskStore.RunWithOptions("printf runtime-output", workspace, background.RunOptions{
+	task, err := taskStore.RunWithOptions("printf runtime-output; sleep 30", workspace, background.RunOptions{
 		Kind:        "agent",
 		SessionID:   current.ID,
 		Description: "Review runtime changes",
 	})
 	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = taskStore.Stop(task.ID) })
 	require.Eventually(t, func() bool {
 		log, logErr := taskStore.Logs(task.ID, 1024)
 		return logErr == nil && strings.Contains(log, "runtime-output")
 	}, 2*time.Second, 20*time.Millisecond)
+	agentRun, err := agentruns.NewStore(configHome).Save(agentruns.Run{
+		ID:        "run-runtime",
+		Agent:     "reviewer",
+		Prompt:    "Review runtime changes",
+		Workspace: workspace,
+		SessionID: current.ID,
+		TaskID:    task.ID,
+		CreatedAt: task.StartedAt,
+		UpdatedAt: task.StartedAt,
+	})
+	require.NoError(t, err)
 
 	teamEntry, err := team.NewStore(configHome).Create("reviewers", []team.TaskSpec{{
 		Prompt: "Review runtime changes", TaskID: task.ID,
@@ -707,6 +734,8 @@ func TestTUISlashHandlerOpensRuntimeManagementViews(t *testing.T) {
 		{command: "/tasks", tab: 0, item: "Review runtime changes"},
 		{command: "/team", tab: 1, item: "reviewers"},
 		{command: "/cron", tab: 2, item: "Daily review"},
+		{command: "/agents runs", tab: 3, item: "@reviewer · Review runtime changes"},
+		{command: "/subagent", tab: 3, item: "@reviewer · Review runtime changes"},
 	} {
 		result, err := handler(context.Background(), test.command)
 		require.NoError(t, err, test.command)
@@ -730,6 +759,11 @@ func TestTUISlashHandlerOpensRuntimeManagementViews(t *testing.T) {
 	require.NotNil(t, scheduleDetail.Information)
 	require.Contains(t, strings.Join(scheduleDetail.Information.Lines, "\n"), "Review pending changes")
 
+	agentRunDetail, err := handler(context.Background(), "/subagent status "+agentRun.ID)
+	require.NoError(t, err)
+	require.NotNil(t, agentRunDetail.Information)
+	require.Contains(t, strings.Join(agentRunDetail.Information.Lines, "\n"), "runtime-output")
+
 	disabled, err := handler(context.Background(), "/cron disable "+schedule.ID)
 	require.NoError(t, err)
 	require.NotNil(t, disabled.CommandView)
@@ -745,6 +779,17 @@ func TestTUISlashHandlerOpensRuntimeManagementViews(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, jsonSchedule.Information)
 	require.Contains(t, jsonSchedule.Output, `"action": "show"`)
+
+	jsonAgentRun, err := handler(context.Background(), "/agents status "+agentRun.ID+" --json")
+	require.NoError(t, err)
+	require.Nil(t, jsonAgentRun.Information)
+	require.Contains(t, jsonAgentRun.Output, `"action": "status"`)
+
+	stoppedRun, err := handler(context.Background(), "/agents stop "+agentRun.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stoppedRun.CommandView)
+	require.Equal(t, 3, stoppedRun.CommandView.SelectedTab)
+	require.Contains(t, commandViewItemByLabel(t, stoppedRun.CommandView.Tabs[3].Items, "@reviewer · Review runtime changes").Value, "stopped")
 }
 
 func diffFilePaths(files []tui.DiffFile) []string {
@@ -31755,7 +31800,9 @@ Use Claude Code-style markdown agent definitions.
 	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
 
 	require.NoError(t, app.AgentsWithOverrides(nil, config.FlagOverrides{}))
-	require.True(t, strings.HasPrefix(strings.TrimSpace(out.String()), "["))
+	require.Contains(t, out.String(), "Agents\n")
+	require.Contains(t, out.String(), "planner")
+	require.Contains(t, out.String(), "reviews code")
 	out.Reset()
 
 	require.NoError(t, app.AgentsWithOverrides([]string{"--output-format", "json", "list", "review"}, config.FlagOverrides{}))
@@ -31794,8 +31841,9 @@ Use Claude Code-style markdown agent definitions.
 	out.Reset()
 
 	require.NoError(t, app.AgentsWithOverrides([]string{"info", "planner"}, config.FlagOverrides{}))
-	require.Contains(t, out.String(), `"name": "planner"`)
-	require.Contains(t, out.String(), `"description": "plans work"`)
+	require.Contains(t, out.String(), "Agent\n")
+	require.Contains(t, out.String(), "Name             planner")
+	require.Contains(t, out.String(), "Description      plans work")
 	out.Reset()
 
 	require.NoError(t, app.AgentsWithOverrides([]string{"describe", "reviewer", "--json"}, config.FlagOverrides{}))
@@ -31822,6 +31870,9 @@ Use Claude Code-style markdown agent definitions.
 
 func TestAgentsCreateCommandCreatesWorkspaceDefinition(t *testing.T) {
 	workspace := t.TempDir()
+	agentDir := filepath.Join(workspace, ".codog", "agents")
+	require.NoError(t, os.MkdirAll(agentDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(agentDir, "existing.json"), []byte(`{"name":"existing","description":"Existing agent","prompt":"Keep working."}`), 0o644))
 	var out bytes.Buffer
 	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
 
@@ -31854,6 +31905,12 @@ func TestAgentsCreateCommandCreatesWorkspaceDefinition(t *testing.T) {
 	require.Equal(t, "show", showReport.Action)
 	require.Equal(t, "review-bot", showReport.Agent.Name)
 	require.Equal(t, createReport.Path, showReport.Agent.Path)
+	out.Reset()
+	require.NoError(t, app.AgentsWithOverrides([]string{"list", "--json"}, config.FlagOverrides{}))
+	var listReport agentsListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &listReport))
+	require.True(t, agentDefinitionExists(listReport.Agents, "existing", "workspace"))
+	require.True(t, agentDefinitionExists(listReport.Agents, "review-bot", "workspace"))
 
 	out.Reset()
 	require.ErrorContains(t, app.AgentsWithOverrides([]string{"create", "review-bot", "--json"}, config.FlagOverrides{}), "agent_already_exists")

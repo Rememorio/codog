@@ -2478,6 +2478,40 @@ func TestCommandViewUsesCustomSecondaryKeyAndRefreshes(t *testing.T) {
 	require.NotNil(t, m.commandView)
 }
 
+func TestCommandViewPrefillsComposerForPrimaryAndSecondaryActions(t *testing.T) {
+	view := CommandView{Title: "Extensions", Tabs: []CommandViewTab{{
+		Title: "Agents",
+		Items: []CommandViewItem{
+			{Label: "Create new agent", Action: "prefill", Command: "/agents create "},
+			{
+				Label:            "reviewer",
+				Command:          "/agents show reviewer",
+				SecondaryLabel:   "run",
+				SecondaryAction:  "prefill",
+				SecondaryCommand: "/agents run reviewer ",
+			},
+		},
+	}}}
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.openCommandView(view)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.Nil(t, m.commandView)
+	require.Equal(t, "/agents create ", m.textarea.Value())
+
+	m.textarea.SetValue("")
+	m.openCommandView(view)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.Nil(t, m.commandView)
+	require.Equal(t, "/agents run reviewer ", m.textarea.Value())
+}
+
 func TestSlashPermissionsSelectsSessionMode(t *testing.T) {
 	m := newModel(context.Background(), newPromptTextarea("/permissions"), nil, nil)
 	selected := ""
