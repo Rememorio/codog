@@ -797,7 +797,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, tuiPrompt.Output, `"bash_path_completion":true`)
 	require.Contains(t, tuiPrompt.Output, `"bash_mode_run":true`)
 	require.Contains(t, tuiPrompt.Output, `"escape_clear":true`)
-	require.Contains(t, tuiPrompt.Output, `"escape_double_exit":true`)
+	require.Contains(t, tuiPrompt.Output, `"escape_no_exit":true`)
 	require.Contains(t, tuiPrompt.Output, `"command_args":true`)
 	require.Contains(t, tuiPrompt.Output, `"mid_input_command":true`)
 	require.Contains(t, tuiPrompt.Output, `"mid_input_command_completion":true`)

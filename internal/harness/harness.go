@@ -5459,13 +5459,17 @@ func tuiPromptCompletionScenario() scenario {
 			if bashRun.Prompt != "/run printf codog" || !strings.Contains(bashRun.View, "bash ok: /run printf codog") {
 				return localScenarioResult{}, fmt.Errorf("expected bash mode to route through /run, got %#v", bashRun)
 			}
-			escapeClear := tui.PreviewWithEscape("draft prompt", 1, 96, 24)
-			if escapeClear.Quit || escapeClear.Value != "" || !strings.Contains(escapeClear.View, "input cleared") {
-				return localScenarioResult{}, fmt.Errorf("expected escape to clear composer before exit, got %#v", escapeClear)
+			escapePending := tui.PreviewWithEscape("draft prompt", 1, 96, 24)
+			if escapePending.Quit || escapePending.Value != "draft prompt" || !strings.Contains(escapePending.View, "Esc again to clear") {
+				return localScenarioResult{}, fmt.Errorf("expected first escape to preserve composer, got %#v", escapePending)
 			}
-			escapeExit := tui.PreviewWithEscape("", 2, 96, 24)
-			if !escapeExit.Quit {
-				return localScenarioResult{}, fmt.Errorf("expected double escape to exit from empty composer, got %#v", escapeExit)
+			escapeClear := tui.PreviewWithEscape("draft prompt", 2, 96, 24)
+			if escapeClear.Quit || escapeClear.Value != "" || !strings.Contains(escapeClear.View, "input cleared") {
+				return localScenarioResult{}, fmt.Errorf("expected double escape to clear composer without exiting, got %#v", escapeClear)
+			}
+			escapeIdle := tui.PreviewWithEscape("", 2, 96, 24)
+			if escapeIdle.Quit {
+				return localScenarioResult{}, fmt.Errorf("expected escape not to exit from empty composer, got %#v", escapeIdle)
 			}
 			commandArgs := tui.PreviewWithCandidates("/model ", []string{"/model claude-test"}, 96, 24, false, false)
 			if !strings.Contains(commandArgs.CommandHint, "arguments: [name]") || !strings.Contains(commandArgs.View, "command args") {
@@ -5732,7 +5736,7 @@ func tuiPromptCompletionScenario() scenario {
 				"bash_path_completion":           bashPath.Value == "!cat internal/tui/tui.go ",
 				"bash_mode_run":                  bashRun.Prompt == "/run printf codog",
 				"escape_clear":                   !escapeClear.Quit && escapeClear.Value == "" && strings.Contains(escapeClear.View, "input cleared"),
-				"escape_double_exit":             escapeExit.Quit,
+				"escape_no_exit":                 !escapeIdle.Quit,
 				"command_args":                   strings.Contains(commandArgs.CommandHint, "arguments: [name]"),
 				"mid_input_command":              midInputCommand.InlineHint == "/status",
 				"mid_input_command_completion":   midInputCompleted.Value == "please /status ",

@@ -14,6 +14,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func testQueuedPrompts(texts ...string) []queuedPrompt {
+	queued := make([]queuedPrompt, 0, len(texts))
+	for _, text := range texts {
+		queued = append(queued, queuedPrompt{Text: text})
+	}
+	return queued
+}
+
+func queuedPromptTexts(queued []queuedPrompt) []string {
+	texts := make([]string, 0, len(queued))
+	for _, prompt := range queued {
+		texts = append(texts, prompt.Text)
+	}
+	return texts
+}
+
 func TestCompleteSlashCommand(t *testing.T) {
 	ta := textarea.New()
 	ta.SetValue("/doctor")
@@ -192,7 +208,7 @@ func TestMidInputSlashCommandGhostCompletesWithTab(t *testing.T) {
 }
 
 func TestQueuedPromptsRenderBelowComposer(t *testing.T) {
-	view := renderQueuedPrompts([]string{"first queued prompt", "second queued prompt"})
+	view := renderQueuedPrompts(testQueuedPrompts("first queued prompt", "second queued prompt"))
 
 	require.Contains(t, view, "queued prompts: 2")
 	require.Contains(t, view, "1. first queued prompt")
@@ -201,7 +217,7 @@ func TestQueuedPromptsRenderBelowComposer(t *testing.T) {
 }
 
 func TestQueuedPromptsRenderBashMode(t *testing.T) {
-	view := renderQueuedPrompts([]string{"!printf codog", "regular prompt"})
+	view := renderQueuedPrompts(testQueuedPrompts("!printf codog", "regular prompt"))
 
 	require.Contains(t, view, "queued prompts: 2")
 	require.Contains(t, view, "1. bash: printf codog")
@@ -209,7 +225,7 @@ func TestQueuedPromptsRenderBashMode(t *testing.T) {
 }
 
 func TestQueuedPromptPreviewTruncatesOlderItems(t *testing.T) {
-	view := renderQueuedPrompts([]string{"one", "two", "three", "four"})
+	view := renderQueuedPrompts(testQueuedPrompts("one", "two", "three", "four"))
 
 	require.Contains(t, view, "... 1 earlier")
 	require.NotContains(t, view, "1. one")
@@ -461,37 +477,96 @@ func TestBareBashModeStaysInComposer(t *testing.T) {
 	require.Contains(t, m.View(), "! for bash mode")
 }
 
-func TestEscapeClearsComposerBeforeExit(t *testing.T) {
+func TestEscapeRequiresDoublePressToClearComposer(t *testing.T) {
 	ta := newPromptTextarea("draft prompt")
 	m := newModel(context.Background(), ta, nil, nil)
+	m.attachments = []string{"draft.txt"}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(model)
 
+	require.NotNil(t, cmd)
+	require.Equal(t, "draft prompt", m.textarea.Value())
+	require.Equal(t, []string{"draft.txt"}, m.attachments)
+	require.Equal(t, "Esc again to clear", m.status)
+	require.Contains(t, m.View(), "Esc again to clear")
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
 	require.Nil(t, cmd)
 	require.Empty(t, m.textarea.Value())
-	require.Equal(t, "input cleared · press esc again to exit", m.status)
-	require.Contains(t, m.View(), "Esc again to exit")
-
-	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	require.NotNil(t, cmd)
-	_, ok := cmd().(tea.QuitMsg)
-	require.True(t, ok)
+	require.Empty(t, m.attachments)
+	require.False(t, m.exitPending)
+	require.Equal(t, "input cleared", m.status)
+	require.Contains(t, m.history, "draft prompt")
 }
 
 func TestEscapeExitPendingResetsAfterTyping(t *testing.T) {
-	ta := newPromptTextarea("")
+	ta := newPromptTextarea("draft")
 	m := newModel(context.Background(), ta, nil, nil)
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(model)
-	require.Nil(t, cmd)
+	require.NotNil(t, cmd)
 	require.True(t, m.exitPending)
 
 	updated, _ = m.Update(teaKey("x"))
 	m = updated.(model)
 	require.False(t, m.exitPending)
-	require.Equal(t, "x", m.textarea.Value())
+	require.Equal(t, "draftx", m.textarea.Value())
+}
+
+func TestEscapePendingExpiresWithoutClearingComposer(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("draft"), nil, nil)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	generation := m.exitPendingGeneration
+	updated, _ = m.Update(exitPendingExpiredMsg{Key: "esc", Generation: generation})
+	m = updated.(model)
+
+	require.False(t, m.exitPending)
+	require.Equal(t, "draft", m.textarea.Value())
+	require.Equal(t, "compose", m.status)
+}
+
+func TestStaleExitPendingTimerDoesNotClearNewConfirmation(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("draft"), nil, nil)
+
+	_ = m.armExit("esc", "first confirmation")
+	staleGeneration := m.exitPendingGeneration
+	_ = m.armExit("esc", "new confirmation")
+
+	updated, _ := m.Update(exitPendingExpiredMsg{Key: "esc", Generation: staleGeneration})
+	m = updated.(model)
+	require.True(t, m.exitPending)
+	require.Equal(t, "new confirmation", m.status)
+
+	updated, _ = m.Update(exitPendingExpiredMsg{Key: "esc", Generation: m.exitPendingGeneration})
+	m = updated.(model)
+	require.False(t, m.exitPending)
+}
+
+func TestDoubleEscapeOnEmptyComposerOpensLatestUserMessageActions(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.transcript = append(m.transcript,
+		transcriptEntry{Role: "user", Text: "first prompt"},
+		transcriptEntry{Role: "assistant", Text: "answer"},
+		transcriptEntry{Role: "user", Text: "latest prompt"},
+	)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.True(t, m.exitPending)
+	require.False(t, m.messageActions)
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.False(t, m.exitPending)
+	require.True(t, m.messageActions)
+	require.Equal(t, "latest prompt", m.transcript[m.messageActionTarget].Text)
 }
 
 func TestControlCClearsComposerThenExitsOnSecondPress(t *testing.T) {
@@ -500,7 +575,7 @@ func TestControlCClearsComposerThenExitsOnSecondPress(t *testing.T) {
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	m = updated.(model)
-	require.Nil(t, cmd)
+	require.NotNil(t, cmd)
 	require.Empty(t, m.textarea.Value())
 	require.True(t, m.exitPending)
 	require.Equal(t, "ctrl+c", m.exitKey)
@@ -737,7 +812,7 @@ func TestPromptFooterShowsRunningQueueHints(t *testing.T) {
 	m := newModel(context.Background(), ta, nil, nil)
 	m.busy = true
 	m.status = "running"
-	m.queuedPrompts = []string{"next"}
+	m.queuedPrompts = testQueuedPrompts("next")
 
 	footer := m.promptFooterText(90)
 
@@ -2249,30 +2324,33 @@ func TestBusyEnterQueuesPromptsAndRunsAfterTurnDone(t *testing.T) {
 	m = updated.(model)
 	require.True(t, m.busy)
 	require.NotNil(t, firstCmd)
+	transcriptCount := len(m.transcript)
 
 	m.textarea.SetValue("second prompt")
 	updated, queueCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	require.Nil(t, queueCmd)
-	require.Equal(t, []string{"second prompt"}, m.queuedPrompts)
+	require.Equal(t, []string{"second prompt"}, queuedPromptTexts(m.queuedPrompts))
 	require.Equal(t, "", m.textarea.Value())
 	require.Equal(t, "queued", m.status)
-	require.Contains(t, m.View(), "Queued prompt 1")
+	require.Len(t, m.transcript, transcriptCount)
+	require.Contains(t, m.View(), "queued prompts: 1")
 	require.Contains(t, m.View(), "1 queued")
 
 	m.textarea.SetValue("third prompt")
 	updated, queueCmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	require.Nil(t, queueCmd)
-	require.Equal(t, []string{"second prompt", "third prompt"}, m.queuedPrompts)
-	require.Contains(t, m.View(), "Queued prompt 2")
+	require.Equal(t, []string{"second prompt", "third prompt"}, queuedPromptTexts(m.queuedPrompts))
+	require.Len(t, m.transcript, transcriptCount)
+	require.Contains(t, m.View(), "queued prompts: 2")
 	require.Contains(t, m.View(), "2 queued")
 
 	firstDone := firstCmd().(turnDoneMsg)
 	updated, secondCmd := m.Update(firstDone)
 	m = updated.(model)
 	require.True(t, m.busy)
-	require.Equal(t, []string{"third prompt"}, m.queuedPrompts)
+	require.Equal(t, []string{"third prompt"}, queuedPromptTexts(m.queuedPrompts))
 	require.NotNil(t, secondCmd)
 	require.Equal(t, []string{"first prompt"}, prompts)
 	require.Equal(t, "user", m.transcript[len(m.transcript)-1].Role)
@@ -2343,7 +2421,7 @@ func TestTurnErrorRestoresQueuedPromptsAndDraft(t *testing.T) {
 	require.Equal(t, "second prompt\n\nthird prompt\n\nunsent draft", m.textarea.Value())
 	require.Equal(t, "error · 2 queued restored", m.status)
 	require.Contains(t, m.View(), "provider unavailable")
-	require.Contains(t, m.View(), "Restored 2 queued prompts to the composer after the failed turn.")
+	require.NotContains(t, m.View(), "Restored 2 queued prompts")
 }
 
 func TestBusyEnterQueuesBashPromptAndRunsThroughSlash(t *testing.T) {
@@ -2369,8 +2447,8 @@ func TestBusyEnterQueuesBashPromptAndRunsThroughSlash(t *testing.T) {
 	updated, queueCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	require.Nil(t, queueCmd)
-	require.Equal(t, []string{"!printf codog"}, m.queuedPrompts)
-	require.Contains(t, m.View(), "Queued bash 1")
+	require.Equal(t, []string{"!printf codog"}, queuedPromptTexts(m.queuedPrompts))
+	require.Contains(t, m.View(), "queued prompts: 1")
 	require.Contains(t, m.View(), "bash: printf codog")
 
 	firstDone := firstCmd().(turnDoneMsg)
@@ -2409,7 +2487,7 @@ func TestUpEditsQueuedPromptsWhileBusy(t *testing.T) {
 	m.textarea.SetValue("third prompt")
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
-	require.Equal(t, []string{"second prompt", "third prompt"}, m.queuedPrompts)
+	require.Equal(t, []string{"second prompt", "third prompt"}, queuedPromptTexts(m.queuedPrompts))
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m = updated.(model)
@@ -2417,14 +2495,13 @@ func TestUpEditsQueuedPromptsWhileBusy(t *testing.T) {
 	require.Empty(t, m.queuedPrompts)
 	require.Equal(t, "second prompt\nthird prompt", m.textarea.Value())
 	require.Equal(t, "editing queued prompts", m.status)
-	require.Contains(t, m.View(), "Editing 2 queued prompts.")
 	require.NotContains(t, m.View(), "queued prompts:")
 
 	m.textarea.SetValue("second prompt\nthird prompt edited")
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	require.Nil(t, cmd)
-	require.Equal(t, []string{"second prompt\nthird prompt edited"}, m.queuedPrompts)
+	require.Equal(t, []string{"second prompt\nthird prompt edited"}, queuedPromptTexts(m.queuedPrompts))
 	require.Empty(t, m.textarea.Value())
 
 	firstDone := firstCmd().(turnDoneMsg)
@@ -2445,7 +2522,7 @@ func TestUpEditsQueuedPromptsWithCurrentComposer(t *testing.T) {
 	m := newModel(context.Background(), ta, nil, nil)
 	m.busy = true
 	m.status = "running"
-	m.queuedPrompts = []string{"queued one", "queued two"}
+	m.queuedPrompts = testQueuedPrompts("queued one", "queued two")
 	m.textarea.SetValue("draft")
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyUp})
@@ -2455,6 +2532,22 @@ func TestUpEditsQueuedPromptsWithCurrentComposer(t *testing.T) {
 	require.Empty(t, m.queuedPrompts)
 	require.Equal(t, "queued one\nqueued two\ndraft", m.textarea.Value())
 	require.Equal(t, "editing queued prompts", m.status)
+}
+
+func TestUpMovesWithinMultilineDraftBeforeEditingQueue(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("first line\nsecond line"), nil, nil)
+	m.busy = true
+	m.queuedPrompts = testQueuedPrompts("queued one")
+	m.textarea.CursorEnd()
+	require.Equal(t, 1, m.textarea.Line())
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(model)
+
+	require.NotNil(t, cmd)
+	require.Equal(t, []string{"queued one"}, queuedPromptTexts(m.queuedPrompts))
+	require.Equal(t, "first line\nsecond line", m.textarea.Value())
+	require.Equal(t, 0, m.textarea.Line())
 }
 
 func TestEscapeCancelsBusyTurnWithoutQuitting(t *testing.T) {
@@ -2503,9 +2596,11 @@ func TestInterruptedTurnRestoresQueuedPrompts(t *testing.T) {
 	updated, firstCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	m.textarea.SetValue("queued prompt")
+	m.attachments = []string{"queued.txt"}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	require.Len(t, m.queuedPrompts, 1)
+	m.attachments = []string{"draft.txt"}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(model)
@@ -2516,8 +2611,9 @@ func TestInterruptedTurnRestoresQueuedPrompts(t *testing.T) {
 	require.False(t, m.busy)
 	require.Empty(t, m.queuedPrompts)
 	require.Equal(t, "queued prompt", m.textarea.Value())
+	require.Equal(t, []string{"queued.txt", "draft.txt"}, m.attachments)
 	require.Equal(t, "interrupted · 1 queued restored", m.status)
-	require.Contains(t, m.View(), "Restored 1 queued prompt to the composer after the interrupted turn.")
+	require.NotContains(t, m.View(), "Restored 1 queued prompt")
 }
 
 func TestStreamedTurnDeltasRenderBeforeDone(t *testing.T) {
@@ -2982,6 +3078,57 @@ func TestQuestionStreamEntryNavigatesAndAcceptsChoice(t *testing.T) {
 	require.Equal(t, "", m.textarea.Value())
 	require.Equal(t, "user", m.transcript[len(m.transcript)-1].Role)
 	require.Equal(t, "beta", m.transcript[len(m.transcript)-1].Text)
+}
+
+func TestQuestionChoiceRestoresComposerDraft(t *testing.T) {
+	answers := []string{}
+	m := newModel(context.Background(), newPromptTextarea("draft in progress"), nil, nil)
+	m.busy = true
+	m.questionAnswer = func(answer string) { answers = append(answers, answer) }
+	m.openQuestionRequest(QuestionRequest{Question: "Pick", Choices: []string{"alpha", "beta"}})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	require.Equal(t, []string{"beta"}, answers)
+	require.False(t, m.awaitingQuestion)
+	require.Equal(t, "draft in progress", m.textarea.Value())
+}
+
+func TestFreeformQuestionDoesNotConsumeComposerDraft(t *testing.T) {
+	answers := []string{}
+	m := newModel(context.Background(), newPromptTextarea("unrelated draft"), nil, nil)
+	m.busy = true
+	m.questionAnswer = func(answer string) { answers = append(answers, answer) }
+	m.openQuestionRequest(QuestionRequest{Question: "Explain"})
+
+	require.True(t, m.questionCustom)
+	require.Empty(t, m.textarea.Value())
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("focused answer")})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	require.Equal(t, []string{"focused answer"}, answers)
+	require.False(t, m.awaitingQuestion)
+	require.Equal(t, "unrelated draft", m.textarea.Value())
+}
+
+func TestCancelingQuestionRestoresComposerDraft(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("keep this draft"), nil, nil)
+	m.busy = true
+	m.turnCancel = func() {}
+	m.questionAnswer = func(string) {}
+	m.openQuestionRequest(QuestionRequest{Question: "Explain"})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+
+	require.False(t, m.awaitingQuestion)
+	require.Equal(t, "keep this draft", m.textarea.Value())
+	require.Equal(t, "interrupting", m.status)
 }
 
 func TestQuestionRequestSupportsNumberShortcutAndCustomInput(t *testing.T) {
@@ -3638,20 +3785,80 @@ func TestSubmittingWithAttachmentsPassesThemToSubmitter(t *testing.T) {
 	require.Contains(t, next.View(), "working")
 }
 
-func TestPendingAttachmentsCannotBeQueuedWhileBusy(t *testing.T) {
+func TestSubmittingOnlyAttachmentsPassesThemToSubmitter(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.attachments = []string{"screenshot.png"}
+	var gotPrompt string
+	var gotAttachments []string
+	m.submitAttachments = func(_ context.Context, prompt string, attachments []string) (string, error) {
+		gotPrompt = prompt
+		gotAttachments = append([]string(nil), attachments...)
+		return "described", nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next := updated.(model)
+	require.True(t, next.busy)
+	require.Empty(t, next.attachments)
+	require.Equal(t, "Attachments:\n- screenshot.png", next.transcript[len(next.transcript)-1].Text)
+	require.NotNil(t, cmd)
+
+	done := cmd().(turnDoneMsg)
+	require.Equal(t, "", gotPrompt)
+	require.Equal(t, []string{"screenshot.png"}, gotAttachments)
+	require.Equal(t, "described", done.Output)
+}
+
+func TestPendingAttachmentsQueueWhileBusy(t *testing.T) {
 	ta := newPromptTextarea("queued with file")
 	m := newModel(context.Background(), ta, nil, nil)
 	m.busy = true
 	m.attachments = []string{"notes.txt"}
+	transcriptCount := len(m.transcript)
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next := updated.(model)
 
 	require.Nil(t, cmd)
-	require.Empty(t, next.queuedPrompts)
-	require.Equal(t, []string{"notes.txt"}, next.attachments)
-	require.Equal(t, "attachments pending", next.status)
-	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "Send or clear pending attachments")
+	require.Equal(t, []string{"queued with file"}, queuedPromptTexts(next.queuedPrompts))
+	require.Equal(t, []string{"notes.txt"}, next.queuedPrompts[0].Attachments)
+	require.Empty(t, next.attachments)
+	require.Equal(t, "queued", next.status)
+	require.Len(t, next.transcript, transcriptCount)
+	require.Contains(t, next.View(), "queued with file [1 attachment]")
+}
+
+func TestQueuedPromptExecutesWithAttachmentsAndPreservesDraft(t *testing.T) {
+	ta := newPromptTextarea("queued with file")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.busy = true
+	m.attachments = []string{"queued.txt"}
+	var gotPrompt string
+	var gotAttachments []string
+	m.submitAttachments = func(_ context.Context, prompt string, attachments []string) (string, error) {
+		gotPrompt = prompt
+		gotAttachments = append([]string(nil), attachments...)
+		return "queued done", nil
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	m.textarea.SetValue("draft in progress")
+	m.attachments = []string{"draft.txt"}
+
+	updated, cmd := m.Update(turnDoneMsg{Role: "assistant", Output: "first done"})
+	m = updated.(model)
+	require.True(t, m.busy)
+	require.Empty(t, m.queuedPrompts)
+	require.Equal(t, "draft in progress", m.textarea.Value())
+	require.Equal(t, []string{"draft.txt"}, m.attachments)
+	require.NotNil(t, cmd)
+
+	done := cmd().(turnDoneMsg)
+	require.Equal(t, "queued with file", gotPrompt)
+	require.Equal(t, []string{"queued.txt"}, gotAttachments)
+	require.Equal(t, "queued done", done.Output)
 }
 
 func TestCtrlTShowsTodos(t *testing.T) {
@@ -3753,7 +3960,7 @@ func TestCtrlShiftTRendersTaskBoardErrors(t *testing.T) {
 	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "task board failed")
 }
 
-func TestCtrlDExitsWhenComposerIsEmpty(t *testing.T) {
+func TestCtrlDRequiresDoublePressWhenComposerIsEmpty(t *testing.T) {
 	ta := newPromptTextarea("")
 	m := newModel(context.Background(), ta, nil, nil)
 
@@ -3761,9 +3968,31 @@ func TestCtrlDExitsWhenComposerIsEmpty(t *testing.T) {
 	next := updated.(model)
 
 	require.NotNil(t, cmd)
+	require.True(t, next.exitPending)
+	require.Equal(t, "ctrl+d", next.exitKey)
+	require.Contains(t, next.View(), "Ctrl+D again to exit")
+
+	updated, cmd = next.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	next = updated.(model)
+	require.NotNil(t, cmd)
 	_, ok := cmd().(tea.QuitMsg)
 	require.True(t, ok)
 	require.False(t, next.result.Submitted)
+}
+
+func TestCtrlDPreservesAttachmentOnlyComposer(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.attachments = []string{"screenshot.png"}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	next := updated.(model)
+
+	require.False(t, next.exitPending)
+	require.Equal(t, []string{"screenshot.png"}, next.attachments)
+	if cmd != nil {
+		_, quit := cmd().(tea.QuitMsg)
+		require.False(t, quit)
+	}
 }
 
 func TestCtrlDDeletesForwardWhenComposerHasText(t *testing.T) {

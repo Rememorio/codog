@@ -429,6 +429,39 @@ expect eof
 	require.Contains(t, output, "Tools")
 }
 
+func TestRealBinaryTUIDoubleEscapeClearsAndOpensMessageActionsWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	server := httptest.NewServer(mockanthropic.Server{
+		Turns: []mockanthropic.Turn{{Text: "escape flow complete"}},
+	}.Handler())
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --permission-mode allow --model claude-sonnet-4-5 tui
+expect "codog"
+send "draft prompt"
+send "\033"
+expect "Esc again to clear"
+send "\033"
+expect "input cleared"
+send "run escape flow\r"
+expect "escape flow complete"
+send "\033\033"
+expect "message actions"
+send "\033"
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, output, "escape flow complete")
+}
+
 func TestRealBinaryTUIExitCancelsRunningTurnWithoutQueueing(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()
@@ -1119,14 +1152,14 @@ expect "codog"
 send "first queued prompt\r"
 expect "running"
 send "second queued prompt\r"
-expect "Queued prompt 1"
+expect "queued prompts: 1"
 send "third queued prompt\r"
-expect "Queued prompt 2"
+expect "queued prompts: 2"
 expect "first queued done"
 expect "second queued done"
 expect "third queued done"
 send "\003"
-expect "press ctrl+c again to exit"
+after 50
 send "\003"
 expect {
   eof {}
@@ -1134,8 +1167,8 @@ expect {
 }
 `)
 
-	require.Contains(t, output, "Queued prompt 1")
-	require.Contains(t, output, "Queued prompt 2")
+	require.Contains(t, output, "queued prompts: 1")
+	require.Contains(t, output, "queued prompts: 2")
 	require.Contains(t, output, "first queued done")
 	require.Contains(t, output, "second queued done")
 	require.Contains(t, output, "third queued done")
@@ -1191,7 +1224,7 @@ expect {
   timeout { exit 1 }
 }
 send "\003"
-expect "press ctrl+c again to exit"
+after 50
 send "\003"
 expect {
   eof {}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -253,6 +254,11 @@ type composerStash struct {
 	Attachments []string
 }
 
+type queuedPrompt struct {
+	Text        string
+	Attachments []string
+}
+
 type globalSearchMatch struct {
 	File string
 	Line int
@@ -347,7 +353,7 @@ type model struct {
 	messageActions            bool
 	messageActionTarget       int
 	messageActionSelected     int
-	queuedPrompts             []string
+	queuedPrompts             []queuedPrompt
 	initialPrompt             string
 	attachments               []string
 	attachmentsOpen           bool
@@ -359,6 +365,7 @@ type model struct {
 	diffDetail                bool
 	exitPending               bool
 	exitKey                   string
+	exitPendingGeneration     uint64
 	inline                    bool
 	printedEntries            int
 	initialPrint              string
@@ -390,6 +397,8 @@ type model struct {
 	questionCursors           []int
 	questionSelections        [][]bool
 	questionCustomValues      []string
+	questionComposerDraft     string
+	questionDraftCaptured     bool
 }
 
 type transcriptEntry struct {
@@ -518,7 +527,10 @@ func PreviewWithQueued(input string, queued []string, width int, height int) Pre
 	m := newModel(context.Background(), ta, nil, nil)
 	m.busy = true
 	m.status = "running"
-	m.queuedPrompts = append([]string(nil), queued...)
+	m.queuedPrompts = make([]queuedPrompt, 0, len(queued))
+	for _, prompt := range queued {
+		m.queuedPrompts = append(m.queuedPrompts, queuedPrompt{Text: prompt})
+	}
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 		if next, ok := updated.(model); ok {
@@ -541,8 +553,8 @@ func PreviewWithQueued(input string, queued []string, width int, height int) Pre
 }
 
 // PreviewWithEscape renders the TUI after pressing Escape the requested number
-// of times. It is used to verify safe clear/exit behavior without owning a
-// terminal.
+// of times. It is used to verify safe clear and message-action behavior without
+// owning a terminal.
 func PreviewWithEscape(input string, presses int, width int, height int) Preview {
 	ta := newPromptTextarea(input)
 	m := newModel(context.Background(), ta, nil, nil)
@@ -552,16 +564,10 @@ func PreviewWithEscape(input string, presses int, width int, height int) Preview
 			m = next
 		}
 	}
-	quit := false
 	for index := 0; index < presses; index++ {
-		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 		if next, ok := updated.(model); ok {
 			m = next
-		}
-		if cmd != nil {
-			if _, ok := cmd().(tea.QuitMsg); ok {
-				quit = true
-			}
 		}
 	}
 	return Preview{
@@ -577,7 +583,7 @@ func PreviewWithEscape(input string, presses int, width int, height int) Preview
 		TodosOpen:   m.todosOpen,
 		CommandHint: m.commandArgumentHint,
 		InlineHint:  m.inlineGhostText,
-		Quit:        quit,
+		Quit:        false,
 	}
 }
 
@@ -1809,6 +1815,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case initialPromptMsg:
 		m.initialPrompt = ""
 		return m.startInput(msg.Value)
+	case exitPendingExpiredMsg:
+		if m.exitPending && m.exitKey == msg.Key && m.exitPendingGeneration == msg.Generation {
+			m.clearExitPending()
+			m.status = m.mode()
+		}
+		return m, nil
 	case turnDoneMsg:
 		m.busy = false
 		m.refreshModeLabel()
@@ -1822,14 +1834,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamingIndex = -1
 			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Interrupted by user."})
 			m.status = "interrupted"
-			if restored := m.restoreQueuedPrompts("interrupted turn"); restored > 0 {
+			if restored := m.restoreQueuedPrompts(); restored > 0 {
 				m.status = fmt.Sprintf("interrupted · %d queued restored", restored)
 			}
 		} else if msg.Err != nil {
 			m.streamingIndex = -1
 			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
 			m.status = "error"
-			if restored := m.restoreQueuedPrompts("failed turn"); restored > 0 {
+			if restored := m.restoreQueuedPrompts(); restored > 0 {
 				m.status = fmt.Sprintf("error · %d queued restored", restored)
 			}
 		} else if strings.TrimSpace(msg.Output) != "" {
@@ -1847,8 +1859,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		flushCmd := m.flushInlineTranscript()
 		if len(m.queuedPrompts) > 0 && msg.Err == nil && !msg.Interrupted {
 			next := m.queuedPrompts[0]
-			m.queuedPrompts = append([]string(nil), m.queuedPrompts[1:]...)
-			nextModel, nextCmd := m.startInput(next)
+			m.queuedPrompts = append([]queuedPrompt(nil), m.queuedPrompts[1:]...)
+			nextModel, nextCmd := m.startQueuedInput(next)
 			return nextModel, sequenceCommands(flushCmd, nextCmd)
 		}
 		return m, flushCmd
@@ -2264,19 +2276,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.exitPending && m.exitKey == "ctrl+c" {
 				return m, tea.Quit
 			}
-			if strings.TrimSpace(m.textarea.Value()) != "" {
-				m.pushComposerUndo()
-				m.textarea.SetValue("")
-				m.matches = nil
-				m.selected = 0
-				m.commandArgumentHint = ""
-				m.inlineGhostText = ""
-				m.historyPos = -1
-				m.armExit("ctrl+c", "input cleared · press ctrl+c again to exit")
-				return m, nil
+			if strings.TrimSpace(m.textarea.Value()) != "" || len(m.attachments) > 0 {
+				m.clearComposerInput(false)
+				return m, m.armExit("ctrl+c", "input cleared · press ctrl+c again to exit")
 			}
-			m.armExit("ctrl+c", "press ctrl+c again to exit")
-			return m, nil
+			return m, m.armExit("ctrl+c", "press ctrl+c again to exit")
 		case "esc":
 			if m.shouldEnterVimNormalMode() {
 				m.vimNormal = true
@@ -2326,25 +2330,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.refreshViewport()
 				return m, nil
 			}
-			if strings.TrimSpace(m.textarea.Value()) != "" {
-				m.pushComposerUndo()
-				m.textarea.SetValue("")
-				m.matches = nil
-				m.selected = 0
-				m.commandArgumentHint = ""
-				m.inlineGhostText = ""
-				m.historyPos = -1
-				m.armExit("esc", "input cleared · press esc again to exit")
-				return m, nil
+			hasComposer := strings.TrimSpace(m.textarea.Value()) != "" || len(m.attachments) > 0
+			if hasComposer {
+				if m.exitPending && m.exitKey == "esc" {
+					m.clearComposerInput(true)
+					m.clearExitPending()
+					m.status = "input cleared"
+					return m, nil
+				}
+				return m, m.armExit("esc", "Esc again to clear")
 			}
 			if m.exitPending && m.exitKey == "esc" {
-				return m, tea.Quit
+				m.clearExitPending()
+				m.openLatestUserMessageActions()
+				return m, nil
 			}
-			m.armExit("esc", "press esc again to exit")
+			if m.hasUserTranscriptEntry() {
+				return m, m.armExit("esc", m.status)
+			}
 			return m, nil
 		case "ctrl+d":
-			if !m.busy && !m.searchOpen && !m.quickOpen && !m.globalSearch && !m.todosOpen && !m.modelPicker && !m.messageActions && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
-				return m, tea.Quit
+			if !m.busy && !m.searchOpen && !m.quickOpen && !m.globalSearch && !m.todosOpen && !m.modelPicker && !m.messageActions && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" && len(m.attachments) == 0 {
+				if m.exitPending && m.exitKey == "ctrl+d" {
+					return m, tea.Quit
+				}
+				return m, m.armExit("ctrl+d", "press ctrl+d again to exit")
 			}
 		case "ctrl+l":
 			if m.busy {
@@ -2951,13 +2961,18 @@ type initialPromptMsg struct {
 	Value string
 }
 
+type exitPendingExpiredMsg struct {
+	Key        string
+	Generation uint64
+}
+
 func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
 	value := strings.TrimSpace(m.textarea.Value())
 	return m.startInput(value)
 }
 
 func (m model) startInput(value string) (tea.Model, tea.Cmd) {
-	if value == "" {
+	if value == "" && len(m.attachments) == 0 {
 		return m, nil
 	}
 	if isREPLExitInput(value) {
@@ -3058,6 +3073,34 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 	return m, runSubmitCommand(ctx, m.submit, value)
 }
 
+func (m model) startQueuedInput(queued queuedPrompt) (tea.Model, tea.Cmd) {
+	draft := m.textarea.Value()
+	draftAttachments := append([]string(nil), m.attachments...)
+	draftAttachmentsOpen := m.attachmentsOpen
+	draftAttachmentSelected := m.attachmentSelected
+	draftUndo := append([]string(nil), m.undoStack...)
+	draftHistoryPos := m.historyPos
+
+	m.textarea.SetValue(queued.Text)
+	m.attachments = append([]string(nil), queued.Attachments...)
+	next, cmd := m.startInput(queued.Text)
+	nextModel, ok := next.(model)
+	if !ok {
+		return next, cmd
+	}
+
+	nextModel.textarea.SetValue(draft)
+	nextModel.textarea.CursorEnd()
+	nextModel.attachments = draftAttachments
+	nextModel.attachmentsOpen = draftAttachmentsOpen && len(draftAttachments) > 0
+	nextModel.attachmentSelected = draftAttachmentSelected
+	nextModel.normalizeAttachmentSelection()
+	nextModel.undoStack = draftUndo
+	nextModel.historyPos = draftHistoryPos
+	nextModel.refreshCompletionMenu()
+	return nextModel, cmd
+}
+
 func isThemePickerInput(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "/theme", "/color":
@@ -3099,25 +3142,20 @@ func (m model) startBashInput(value string) (tea.Model, tea.Cmd) {
 
 func (m *model) queueCurrentInput() {
 	value := strings.TrimSpace(m.textarea.Value())
-	if value == "" || m.awaitingPermission || m.awaitingQuestion {
+	if (value == "" && len(m.attachments) == 0) || m.awaitingPermission || m.awaitingQuestion {
 		return
 	}
-	if len(m.attachments) > 0 {
-		m.status = "attachments pending"
-		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Send or clear pending attachments before queueing another prompt."})
-		m.refreshViewport()
-		m.viewport.GotoBottom()
-		return
-	}
-	m.queuedPrompts = append(m.queuedPrompts, value)
+	m.queuedPrompts = append(m.queuedPrompts, queuedPrompt{
+		Text:        value,
+		Attachments: append([]string(nil), m.attachments...),
+	})
 	m.textarea.SetValue("")
+	m.attachments = nil
+	m.closeAttachmentsPanel()
 	m.undoStack = nil
 	m.matches = nil
 	m.selected = 0
 	m.status = "queued"
-	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Queued %s %d: %s", queuedPromptKind(value), len(m.queuedPrompts), truncateForComposer(queuedPromptDisplay(value), 120))})
-	m.refreshViewport()
-	m.viewport.GotoBottom()
 }
 
 func (m *model) quitFromBusyInput() tea.Cmd {
@@ -3140,26 +3178,32 @@ func (m *model) quitFromBusyInput() tea.Cmd {
 	return tea.Quit
 }
 
-func (m *model) restoreQueuedPrompts(reason string) int {
+func (m *model) restoreQueuedPrompts() int {
 	count := len(m.queuedPrompts)
 	if count == 0 {
 		return 0
 	}
-	parts := append([]string(nil), m.queuedPrompts...)
+	parts := make([]string, 0, count+1)
+	attachments := make([]string, 0)
+	for _, queued := range m.queuedPrompts {
+		if text := strings.TrimSpace(queued.Text); text != "" {
+			parts = append(parts, text)
+		}
+		attachments = appendUniqueAttachments(attachments, queued.Attachments)
+	}
 	if current := strings.TrimSpace(m.textarea.Value()); current != "" {
 		parts = append(parts, current)
 	}
+	attachments = appendUniqueAttachments(attachments, m.attachments)
 	m.queuedPrompts = nil
 	m.textarea.SetValue(strings.Join(parts, "\n\n"))
 	m.textarea.CursorEnd()
+	m.attachments = attachments
+	m.closeAttachmentsPanel()
 	m.undoStack = nil
 	m.matches = nil
 	m.selected = 0
 	m.historyPos = -1
-	m.transcript = append(m.transcript, transcriptEntry{
-		Role: "system",
-		Text: fmt.Sprintf("Restored %d queued %s to the composer after the %s.", count, plural("prompt", count), reason),
-	})
 	m.refreshCompletionMenu()
 	return count
 }
@@ -3169,6 +3213,7 @@ func (m model) canEditQueuedPrompts() bool {
 		!m.awaitingPermission &&
 		!m.awaitingQuestion &&
 		!m.searchOpen &&
+		m.textarea.Line() == 0 &&
 		len(m.matches) == 0 &&
 		len(m.queuedPrompts) > 0
 }
@@ -3178,21 +3223,29 @@ func (m *model) editQueuedPrompts() {
 		return
 	}
 	count := len(m.queuedPrompts)
-	parts := append([]string(nil), m.queuedPrompts...)
+	parts := make([]string, 0, count+1)
+	attachments := make([]string, 0)
+	for _, queued := range m.queuedPrompts {
+		if text := strings.TrimSpace(queued.Text); text != "" {
+			parts = append(parts, text)
+		}
+		attachments = appendUniqueAttachments(attachments, queued.Attachments)
+	}
 	if current := strings.TrimSpace(m.textarea.Value()); current != "" {
 		parts = append(parts, current)
 	}
+	attachments = appendUniqueAttachments(attachments, m.attachments)
 	value := strings.Join(parts, "\n")
 	m.queuedPrompts = nil
 	m.textarea.SetValue(value)
 	m.textarea.CursorEnd()
+	m.attachments = attachments
+	m.closeAttachmentsPanel()
 	m.matches = nil
 	m.selected = 0
 	m.historyPos = -1
 	m.status = "editing queued prompts"
-	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: fmt.Sprintf("Editing %d queued %s.", count, plural("prompt", count))})
-	m.refreshViewport()
-	m.viewport.GotoBottom()
+	m.refreshCompletionMenu()
 }
 
 func (m *model) togglePromptStash() {
@@ -4390,6 +4443,13 @@ func addUniqueAttachment(attachments *[]string, path string) bool {
 	return true
 }
 
+func appendUniqueAttachments(attachments []string, paths []string) []string {
+	for _, path := range paths {
+		addUniqueAttachment(&attachments, path)
+	}
+	return attachments
+}
+
 func runSubmitCommand(ctx context.Context, submit SubmitFunc, prompt string) tea.Cmd {
 	return func() tea.Msg {
 		output, err := submit(ctx, prompt)
@@ -4861,6 +4921,10 @@ func (m *model) movePermissionSelection(delta int) {
 }
 
 func (m *model) openQuestionRequest(request QuestionRequest) {
+	if !m.questionDraftCaptured {
+		m.questionComposerDraft = m.textarea.Value()
+		m.questionDraftCaptured = true
+	}
 	request.Question = strings.TrimSpace(request.Question)
 	request.Default = strings.TrimSpace(request.Default)
 	request.Choices = normalizeQuestionRequestChoices(request.Choices)
@@ -4894,6 +4958,7 @@ func (m *model) openQuestionRequest(request QuestionRequest) {
 	m.questionCustom = len(request.Questions[0].Options) == 0
 	m.awaitingQuestion = true
 	if m.questionCustom {
+		m.textarea.SetValue("")
 		m.textarea.Placeholder = "Type your answer..."
 	}
 	m.status = "question"
@@ -4951,6 +5016,10 @@ func normalizeQuestionRequestChoices(choices []string) []string {
 }
 
 func (m *model) closeQuestionRequest() {
+	if m.questionDraftCaptured {
+		m.textarea.SetValue(m.questionComposerDraft)
+		m.textarea.CursorEnd()
+	}
 	m.awaitingQuestion = false
 	m.questionRequest = nil
 	m.questionSelected = 0
@@ -4960,6 +5029,8 @@ func (m *model) closeQuestionRequest() {
 	m.questionCursors = nil
 	m.questionSelections = nil
 	m.questionCustomValues = nil
+	m.questionComposerDraft = ""
+	m.questionDraftCaptured = false
 	m.textarea.Placeholder = "Ask codog..."
 }
 
@@ -5250,15 +5321,40 @@ func (m *model) clearInteractionPrompts() {
 	m.closeQuestionRequest()
 }
 
-func (m *model) armExit(key string, status string) {
+const exitConfirmationWindow = 800 * time.Millisecond
+
+func (m *model) armExit(key string, status string) tea.Cmd {
 	m.exitPending = true
 	m.exitKey = key
+	m.exitPendingGeneration++
 	m.status = status
+	generation := m.exitPendingGeneration
+	return tea.Tick(exitConfirmationWindow, func(time.Time) tea.Msg {
+		return exitPendingExpiredMsg{Key: key, Generation: generation}
+	})
 }
 
 func (m *model) clearExitPending() {
 	m.exitPending = false
 	m.exitKey = ""
+}
+
+func (m *model) clearComposerInput(saveHistory bool) {
+	value := m.textarea.Value()
+	if saveHistory {
+		m.appendHistory(value)
+	}
+	if value != "" {
+		m.pushComposerUndo()
+	}
+	m.textarea.SetValue("")
+	m.attachments = nil
+	m.closeAttachmentsPanel()
+	m.matches = nil
+	m.selected = 0
+	m.commandArgumentHint = ""
+	m.inlineGhostText = ""
+	m.historyPos = -1
 }
 
 func (m *model) clearScreen() {
@@ -6043,7 +6139,7 @@ func renderHistorySearch(matches []string, selected int, query string, themed ..
 	return strings.Join(lines, "\n")
 }
 
-func renderQueuedPrompts(queued []string, themed ...themeStyles) string {
+func renderQueuedPrompts(queued []queuedPrompt, themed ...themeStyles) string {
 	styles := resolveThemeStyles(themed)
 	if len(queued) == 0 {
 		return ""
@@ -6060,23 +6156,24 @@ func renderQueuedPrompts(queued []string, themed ...themeStyles) string {
 	return strings.Join(lines, "\n")
 }
 
-func queuedPromptKind(prompt string) string {
-	if isBashModeInput(prompt) {
-		return "bash"
-	}
-	return "prompt"
-}
-
-func queuedPromptDisplay(prompt string) string {
-	prompt = strings.TrimSpace(prompt)
-	if isBashModeInput(prompt) {
-		command := bashModeCommand(prompt)
+func queuedPromptDisplay(prompt queuedPrompt) string {
+	text := strings.TrimSpace(prompt.Text)
+	if isBashModeInput(text) {
+		command := bashModeCommand(text)
 		if command == "" {
-			return "bash:"
+			text = "bash:"
+		} else {
+			text = "bash: " + command
 		}
-		return "bash: " + command
 	}
-	return prompt
+	if len(prompt.Attachments) == 0 {
+		return text
+	}
+	attachmentLabel := fmt.Sprintf("%d %s", len(prompt.Attachments), plural("attachment", len(prompt.Attachments)))
+	if text == "" {
+		return attachmentLabel
+	}
+	return fmt.Sprintf("%s [%s]", text, attachmentLabel)
 }
 
 func (m *model) openModelPicker() {
@@ -6458,6 +6555,19 @@ func (m *model) openMessageActions() {
 	m.messageActionTarget = target
 	m.messageActionSelected = 0
 	m.status = "message actions"
+}
+
+func (m model) hasUserTranscriptEntry() bool {
+	return len(m.messageActionRoleTargets("user")) > 0
+}
+
+func (m *model) openLatestUserMessageActions() {
+	targets := m.messageActionRoleTargets("user")
+	if len(targets) == 0 {
+		return
+	}
+	m.openMessageActions()
+	m.messageActionTarget = targets[len(targets)-1]
 }
 
 func (m *model) closeMessageActions() {
@@ -7504,7 +7614,11 @@ func renderSubmittedInput(prompt string, attachments []string) string {
 	if len(attachments) == 0 {
 		return prompt
 	}
-	lines := []string{prompt, "", "Attachments:"}
+	lines := make([]string, 0, len(attachments)+2)
+	if prompt != "" {
+		lines = append(lines, prompt, "")
+	}
+	lines = append(lines, "Attachments:")
 	for _, attachment := range attachments {
 		lines = append(lines, "- "+attachment)
 	}
@@ -7698,14 +7812,22 @@ func (m model) promptFooterHints(width int) []string {
 		return trimFooterHints(hints, width)
 	}
 	if m.exitPending {
-		exitLabel := "Esc"
-		if m.exitKey == "ctrl+c" {
-			exitLabel = "Ctrl+C"
+		switch m.exitKey {
+		case "ctrl+c":
+			add("Ctrl+C again to exit")
+		case "ctrl+d":
+			add("Ctrl+D again to exit")
+		case "esc":
+			if strings.TrimSpace(m.textarea.Value()) == "" && len(m.attachments) == 0 {
+				break
+			}
+			add("Esc again to clear")
 		}
-		add(exitLabel + " again to exit")
-		add("type to continue")
-		add("Ctrl+_ undo")
-		return trimFooterHints(hints, width)
+		if len(hints) > 0 {
+			add("type to continue")
+			add("Ctrl+_ undo")
+			return trimFooterHints(hints, width)
+		}
 	}
 	if status == "bash" || isBashModeInput(m.textarea.Value()) {
 		add("! for bash mode")
