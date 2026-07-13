@@ -50,6 +50,8 @@ type Report struct {
 	TUIExtensionTabs          bool     `json:"tui_extension_tabs"`
 	TUIRuntimeTabs            bool     `json:"tui_runtime_tabs"`
 	TUIConversationTabs       bool     `json:"tui_conversation_tabs"`
+	TUIMemorySelector         bool     `json:"tui_memory_selector"`
+	TUIExportDialog           bool     `json:"tui_export_dialog"`
 	TUIStatusBar              bool     `json:"tui_status_bar"`
 	TUIPreviewWidth           int      `json:"tui_preview_width"`
 	TUIPreviewHeight          int      `json:"tui_preview_height"`
@@ -110,6 +112,22 @@ func Build() Report {
 			{Title: "Bookmarks", Items: []tui.CommandViewItem{{Label: "before-review", Value: "session-1"}}, RefreshCommand: "/bookmarks"},
 		},
 	}, []string{"right", "right"}, 80, 24)
+	memoryPreview := tui.PreviewWithCommandView(tui.CommandView{
+		Title: "Memory",
+		Tabs: []tui.CommandViewTab{{
+			Title: "Files",
+			Items: []tui.CommandViewItem{{
+				Label:            "AGENTS.md",
+				Value:            "project · 12 lines",
+				Command:          "/memory edit AGENTS.md",
+				SecondaryLabel:   "view",
+				SecondaryCommand: "/memory show AGENTS.md",
+				SecondaryKey:     "v",
+			}},
+			RefreshCommand: "/memory",
+		}},
+	}, nil, 80, 24)
+	exportPreview := tui.PreviewWithExportDialog(tui.ExportDialog{DefaultFilename: "session.md"}, []string{"down", "enter"}, 80, 24)
 	report := Report{
 		Status:                    "ready",
 		SlashCommandCount:         len(specs),
@@ -130,6 +148,8 @@ func Build() Report {
 		TUIExtensionTabs:          extensionsPreview.CommandView && strings.Contains(extensionsPreview.View, "Skills") && strings.Contains(extensionsPreview.View, "MCP") && strings.Contains(extensionsPreview.View, "Hooks") && strings.Contains(extensionsPreview.View, "Plugins") && strings.Contains(extensionsPreview.View, "Agents") && strings.Contains(extensionsPreview.View, "local"),
 		TUIRuntimeTabs:            runtimePreview.CommandView && strings.Contains(runtimePreview.View, "Tasks") && strings.Contains(runtimePreview.View, "Teams") && strings.Contains(runtimePreview.View, "Schedules") && strings.Contains(runtimePreview.View, "Agent runs") && strings.Contains(runtimePreview.View, "@reviewer") && strings.Contains(runtimePreview.View, "R refresh"),
 		TUIConversationTabs:       conversationPreview.CommandView && strings.Contains(conversationPreview.View, "History") && strings.Contains(conversationPreview.View, "Sessions") && strings.Contains(conversationPreview.View, "Bookmarks") && strings.Contains(conversationPreview.View, "before-review") && strings.Contains(conversationPreview.View, "R refresh"),
+		TUIMemorySelector:         memoryPreview.CommandView && strings.Contains(memoryPreview.View, "AGENTS.md") && strings.Contains(memoryPreview.View, "V view") && strings.Contains(memoryPreview.View, "R refresh"),
+		TUIExportDialog:           exportPreview.ExportDialog && strings.Contains(exportPreview.View, "Enter filename") && exportPreview.Value == "session.md",
 		TUIStatusBar:              strings.Contains(submitPreview.View, "Enter send") && strings.Contains(submitPreview.View, "Tab") && strings.Contains(submitPreview.View, "Esc"),
 		TUIPreviewWidth:           80,
 		TUIPreviewHeight:          24,
@@ -152,6 +172,8 @@ func Build() Report {
 		!report.TUIExtensionTabs ||
 		!report.TUIRuntimeTabs ||
 		!report.TUIConversationTabs ||
+		!report.TUIMemorySelector ||
+		!report.TUIExportDialog ||
 		!report.TUIStatusBar ||
 		!report.PermissionCommandsPresent ||
 		!report.StatusCommandsPresent ||

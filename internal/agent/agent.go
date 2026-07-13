@@ -37936,6 +37936,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		ExportConversation: func(ctx context.Context) (tui.RuntimeControlResult, error) {
 			return a.exportTUIConversation(ctx, sess)
 		},
+		ExportConversationTo: func(ctx context.Context, filename string) (tui.RuntimeControlResult, error) {
+			return a.exportTUIConversationTo(ctx, sess, filename)
+		},
 		CopyConversation: func(ctx context.Context) (tui.RuntimeControlResult, error) {
 			return a.copyTUIConversation(ctx, sess)
 		},
@@ -38059,6 +38062,16 @@ func (a *App) tuiSlashHandler(sess *session.Session, modeState *tuiModeState) tu
 				view := a.tuiConversationCommandView(sess, selectedTab)
 				result.CommandView = &view
 				result.Output = ""
+			} else if tuiMemoryRefresh(line) {
+				if view, viewErr := a.tuiMemoryCommandView(); viewErr == nil {
+					result.CommandView = view
+					result.Output = ""
+				}
+			} else if tuiIDERefresh(line) {
+				if view, viewErr := a.tuiIDECommandView(); viewErr == nil {
+					result.CommandView = view
+					result.Output = ""
+				}
 			}
 		}
 		if handled && result.Output != "" {
@@ -38133,6 +38146,35 @@ func (a *App) tuiInteractiveSlashResult(line string, sess *session.Session, mode
 	case "/rewind":
 		if len(args) == 0 {
 			return tui.SlashResult{Handled: true, OpenMessageActions: true}, true, nil
+		}
+	case "/memory":
+		return a.tuiMemorySlashResult(args)
+	case "/doctor":
+		if len(args) == 0 {
+			view, err := a.tuiDoctorInformation()
+			return tui.SlashResult{Handled: true, Information: view}, true, err
+		}
+	case "/ide":
+		if len(args) == 0 || (len(args) == 1 && strings.EqualFold(strings.TrimSpace(args[0]), "status")) {
+			view, err := a.tuiIDECommandView()
+			return tui.SlashResult{Handled: true, CommandView: view}, true, err
+		}
+	case "/export":
+		if len(args) == 0 {
+			filename := "conversation.md"
+			if sess != nil && strings.TrimSpace(sess.ID) != "" {
+				filename = safeTUIExportName(sess.ID) + ".md"
+			}
+			dialog := tui.ExportDialog{DefaultFilename: filename}
+			return tui.SlashResult{Handled: true, ExportDialog: &dialog}, true, nil
+		}
+	case "/compact":
+		if len(args) == 0 {
+			return tui.SlashResult{Handled: true, RuntimeAction: "compact"}, true, nil
+		}
+	case "/copy":
+		if len(args) == 0 {
+			return tui.SlashResult{Handled: true, RuntimeAction: "copy"}, true, nil
 		}
 	case "/model":
 		if len(args) == 0 {
@@ -38924,6 +38966,113 @@ func (a *App) tuiBookmarkInformation(ref string) (tui.InformationView, error) {
 	return tui.InformationView{Title: "Bookmark", Lines: lines}, nil
 }
 
+func (a *App) tuiMemorySlashResult(args []string) (tui.SlashResult, bool, error) {
+	req, err := parseMemoryArgs(args)
+	if err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	if req.Format == "json" {
+		return tui.SlashResult{}, false, nil
+	}
+	switch req.Action {
+	case "list", "select":
+		view, err := a.tuiMemoryCommandView()
+		return tui.SlashResult{Handled: true, CommandView: view}, true, err
+	case "show":
+		view, err := a.tuiMemoryInformation(strings.Join(req.Rest, " "))
+		return tui.SlashResult{Handled: true, Information: view}, true, err
+	default:
+		return tui.SlashResult{}, false, nil
+	}
+}
+
+func (a *App) tuiMemoryCommandView() (*tui.CommandView, error) {
+	report, err := memory.BuildReportWithRulesImport(a.Workspace, a.memoryRulesImportOptions())
+	if err != nil {
+		return nil, err
+	}
+	tab := tui.CommandViewTab{
+		Title:          "Files",
+		Lines:          []string{fmt.Sprintf("%d instruction files", report.InstructionFiles)},
+		RefreshCommand: "/memory",
+	}
+	for _, file := range report.Files {
+		path := tuiWorkspaceRelativePath(a.Workspace, file.Path)
+		item := tui.CommandViewItem{
+			Label:            path,
+			Value:            fmt.Sprintf("%s · %d lines", firstNonEmpty(file.Scope, "project"), file.Lines),
+			Description:      firstNonEmpty(trimSingleLine(file.Preview, 96), file.Name),
+			Command:          tuiNamedSlashCommand("/memory edit", path),
+			SecondaryLabel:   "view",
+			SecondaryCommand: tuiNamedSlashCommand("/memory show", path),
+			SecondaryKey:     "v",
+		}
+		if item.Command == "" {
+			item.Action = "prefill"
+			item.Command = "/memory edit " + path
+			item.SecondaryAction = "prefill"
+			item.SecondaryCommand = "/memory show " + path
+		}
+		tab.Items = append(tab.Items, item)
+	}
+	if len(tab.Items) == 0 {
+		tab.Lines = []string{"No instruction files found. Select AGENTS.md to create one."}
+		tab.Items = append(tab.Items, tui.CommandViewItem{
+			Label:       "AGENTS.md",
+			Value:       "new · project",
+			Description: "Create the workspace instruction file and open it in the configured editor",
+			Command:     "/memory edit AGENTS.md",
+		})
+	}
+	return &tui.CommandView{Title: "Memory", Tabs: []tui.CommandViewTab{tab}}, nil
+}
+
+func (a *App) tuiMemoryInformation(target string) (*tui.InformationView, error) {
+	report, err := memory.ShowWithRulesImport(a.Workspace, target, a.memoryRulesImportOptions())
+	if err != nil {
+		return nil, err
+	}
+	lines := []string{
+		tuiInformationLine("Path", tuiWorkspaceRelativePath(a.Workspace, report.File.Path)),
+		tuiInformationLine("Scope", firstNonEmpty(report.File.Scope, "project")),
+		tuiInformationLine("Size", fmt.Sprintf("%d bytes", report.File.SizeBytes)),
+	}
+	if !report.File.ModifiedAt.IsZero() {
+		lines = append(lines, tuiInformationLine("Modified", report.File.ModifiedAt.Local().Format(time.RFC3339)))
+	}
+	lines = append(lines, "", "Contents")
+	if strings.TrimSpace(report.Body) == "" {
+		lines = append(lines, "Empty file.")
+	} else {
+		lines = append(lines, strings.Split(strings.TrimRight(report.Body, "\n"), "\n")...)
+	}
+	return &tui.InformationView{Title: "Memory", Lines: lines}, nil
+}
+
+func tuiWorkspaceRelativePath(workspace string, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	base := firstNonEmpty(strings.TrimSpace(workspace), ".")
+	if absolute, err := filepath.Abs(base); err == nil {
+		base = absolute
+	}
+	if resolved, err := filepath.EvalSymlinks(base); err == nil {
+		base = resolved
+	}
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	if rel, err := filepath.Rel(base, path); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(path)
+}
+
 func (a *App) tuiBackgroundSlashResult(args []string, sess *session.Session) (tui.SlashResult, bool, error) {
 	if tuiSlashRequestsJSON(args) {
 		return tui.SlashResult{}, false, nil
@@ -39453,6 +39602,110 @@ func tuiConversationRefreshTab(line string) (int, bool) {
 	}
 }
 
+func (a *App) tuiDoctorInformation() (*tui.InformationView, error) {
+	var out bytes.Buffer
+	previous := a.Out
+	a.Out = &out
+	err := a.Doctor(nil)
+	a.Out = previous
+	if err != nil && strings.TrimSpace(out.String()) == "" {
+		return nil, err
+	}
+	return &tui.InformationView{Title: "Doctor", Lines: tuiReportLines(out.String(), "Doctor")}, nil
+}
+
+func (a *App) tuiIDECommandView() (*tui.CommandView, error) {
+	var out bytes.Buffer
+	previous := a.Out
+	a.Out = &out
+	err := a.IDE(nil)
+	a.Out = previous
+	if err != nil {
+		return nil, err
+	}
+	server := bridge.Server{
+		Sessions:   a.Sessions,
+		Version:    version,
+		Workspace:  a.Workspace,
+		ConfigHome: a.Config.ConfigHome,
+		TrustToken: a.Config.Future.EditorBridgeToken,
+	}
+	state, err := server.EditorState()
+	if err != nil {
+		return nil, err
+	}
+	tab := tui.CommandViewTab{
+		Title:          "Connections",
+		Lines:          tuiReportLines(out.String(), "IDE Bridge"),
+		RefreshCommand: "/ide",
+	}
+	if state.Identity == nil {
+		tab.Items = append(tab.Items, tui.CommandViewItem{
+			Label:       "No IDE connected",
+			Value:       "disconnected",
+			Description: "Start the bridge, then connect a trusted IDE client for this workspace",
+			Command:     "/ide status",
+		})
+	} else {
+		label := firstNonEmpty(state.Identity.Editor, "IDE")
+		if state.Identity.Version != "" {
+			label += " " + state.Identity.Version
+		}
+		status := "connected"
+		if !state.Identity.Trusted {
+			status = "untrusted"
+		}
+		tab.Items = append(tab.Items, tui.CommandViewItem{
+			Label:            label,
+			Value:            status,
+			Description:      firstNonEmpty(state.Identity.Workspace, a.Workspace),
+			Command:          "/ide status",
+			SecondaryLabel:   "disconnect",
+			SecondaryCommand: "/ide clear",
+			SecondaryKey:     "x",
+		})
+	}
+	tab.Items = append(tab.Items, tui.CommandViewItem{
+		Label:       "Start IDE bridge",
+		Value:       "background",
+		Description: "Run the local editor bridge for IDE clients",
+		Command:     "/bridge serve",
+	})
+	return &tui.CommandView{Title: "IDE", Tabs: []tui.CommandViewTab{tab}}, nil
+}
+
+func tuiMemoryRefresh(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) < 2 || tuiSlashRequestsJSON(fields[1:]) {
+		return false
+	}
+	command := fields[0]
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
+	}
+	if command != "/memory" {
+		return false
+	}
+	switch normalizeMemoryAction(fields[1]) {
+	case "add", "ensure", "edit", "reset":
+		return true
+	default:
+		return false
+	}
+}
+
+func tuiIDERefresh(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) != 2 || tuiSlashRequestsJSON(fields[1:]) {
+		return false
+	}
+	command := fields[0]
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
+	}
+	return command == "/ide" && strings.EqualFold(strings.TrimSpace(fields[1]), "clear")
+}
+
 func (a *App) tuiDiffView(req diffRequest) (tui.DiffView, error) {
 	if req.Staged || len(req.Paths) > 0 {
 		name := "Unstaged changes"
@@ -39965,6 +40218,20 @@ func (a *App) exportTUIConversation(ctx context.Context, sess *session.Session) 
 		return tui.RuntimeControlResult{}, err
 	}
 	output := filepath.Join(".codog", "exports", safeTUIExportName(sess.ID)+".md")
+	return a.exportTUIConversationTo(ctx, sess, output)
+}
+
+func (a *App) exportTUIConversationTo(ctx context.Context, sess *session.Session, output string) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if sess == nil || strings.TrimSpace(sess.ID) == "" {
+		return tui.RuntimeControlResult{}, errors.New("session is required")
+	}
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return tui.RuntimeControlResult{}, errors.New("export filename is required")
+	}
 	var out bytes.Buffer
 	oldOut, oldErr := a.Out, a.Err
 	a.Out, a.Err = &out, &out

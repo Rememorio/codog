@@ -2298,6 +2298,18 @@ func TestSlashInteractiveViewsOpenWithoutTranscriptNoise(t *testing.T) {
 				require.Contains(t, m.View(), "Model glm52")
 			},
 		},
+		{
+			name:  "export",
+			input: "/export",
+			result: SlashResult{Handled: true, ExportDialog: &ExportDialog{
+				DefaultFilename: "conversation.md",
+			}},
+			assert: func(t *testing.T, m model) {
+				require.NotNil(t, m.exportDialog)
+				require.Contains(t, m.View(), "Copy to clipboard")
+				require.Contains(t, m.View(), "Save to file")
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -2321,6 +2333,73 @@ func TestSlashInteractiveViewsOpenWithoutTranscriptNoise(t *testing.T) {
 			require.NotContains(t, m.View(), test.input)
 		})
 	}
+}
+
+func TestExportDialogSavesEnteredFilename(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("/export"), nil, nil)
+	m.slash = func(context.Context, string) (SlashResult, error) {
+		return SlashResult{Handled: true, ExportDialog: &ExportDialog{DefaultFilename: "session.md"}}, nil
+	}
+	exported := ""
+	m.exportConversationTo = func(_ context.Context, filename string) (RuntimeControlResult, error) {
+		exported = filename
+		return RuntimeControlResult{
+			Title:  "Conversation Exported",
+			Status: "exported",
+			Lines:  []string{"File: " + filename},
+		}, nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.NotNil(t, m.exportDialog)
+	require.NotContains(t, m.View(), "/export")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.True(t, m.exportFilenameInput)
+	require.Equal(t, "session.md", m.textarea.Value())
+	require.Contains(t, m.View(), "Enter filename")
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Nil(t, m.exportDialog)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.Equal(t, "session.md", exported)
+	require.Equal(t, "exported", m.status)
+	require.Contains(t, m.View(), "Conversation Exported")
+	require.Contains(t, m.View(), "File: session.md")
+}
+
+func TestSlashRuntimeActionUsesConversationControl(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("/compact"), nil, nil)
+	m.slash = func(context.Context, string) (SlashResult, error) {
+		return SlashResult{Handled: true, RuntimeAction: "compact"}, nil
+	}
+	m.compactSession = func(context.Context) (RuntimeControlResult, error) {
+		return RuntimeControlResult{Title: "Session Compacted", Status: "compacted", Lines: []string{"Removed: 2"}}, nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	updated, cmd = m.Update(cmd())
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.Equal(t, "compacted", m.status)
+	require.Contains(t, m.View(), "Session Compacted")
+	require.NotContains(t, m.View(), "/compact")
 }
 
 func TestSlashCommandViewOpensTabsAndActionsWithoutTranscriptNoise(t *testing.T) {

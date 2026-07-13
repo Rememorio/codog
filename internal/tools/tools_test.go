@@ -4649,6 +4649,10 @@ printf 'codog:%s\n' "$*"
 		logs, err := background.NewStore(configHome).Logs(report.TaskID, 4096)
 		return err == nil && strings.Contains(logs, "Task: audit auth") && strings.Contains(logs, "check auth")
 	}, 20*time.Second, 50*time.Millisecond)
+	require.Eventually(t, func() bool {
+		task, err := background.NewStore(configHome).Status(report.TaskID)
+		return err == nil && task.Status == "completed"
+	}, 20*time.Second, 50*time.Millisecond)
 
 	getOut, err := TaskGetTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+report.TaskID+`"}`))
 	require.NoError(t, err)

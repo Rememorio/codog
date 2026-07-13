@@ -860,6 +860,84 @@ func TestTUISlashHandlerOpensConversationManagementViews(t *testing.T) {
 	require.Contains(t, commandViewItemLabels(added.CommandView.Tabs[2].Items), "checkpoint")
 }
 
+func TestTUISlashHandlerOpensWorkspaceWorkflowViews(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("# Instructions\n\nRun focused tests.\n"), 0o644))
+	store := session.NewWorkspaceStore(configHome, workspace)
+	current, err := store.Open("workspace-workflows")
+	require.NoError(t, err)
+	require.NoError(t, store.AppendInput(current.ID, "inspect workspace workflows"))
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "glm52",
+			PermissionMode: "read-only",
+		},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+	handler := app.tuiSlashHandler(current, newTUIModeState(app.Config))
+
+	memoryView, err := handler(context.Background(), "/memory")
+	require.NoError(t, err)
+	require.NotNil(t, memoryView.CommandView)
+	require.Equal(t, "Memory", memoryView.CommandView.Title)
+	require.Contains(t, commandViewItemLabels(memoryView.CommandView.Tabs[0].Items), "AGENTS.md")
+	memoryItem := commandViewItemByLabel(t, memoryView.CommandView.Tabs[0].Items, "AGENTS.md")
+	require.Equal(t, "/memory edit AGENTS.md", memoryItem.Command)
+	require.Equal(t, "/memory show AGENTS.md", memoryItem.SecondaryCommand)
+
+	memoryDetail, err := handler(context.Background(), "/memory show AGENTS.md")
+	require.NoError(t, err)
+	require.NotNil(t, memoryDetail.Information)
+	require.Contains(t, strings.Join(memoryDetail.Information.Lines, "\n"), "Run focused tests.")
+
+	doctorView, err := handler(context.Background(), "/doctor")
+	require.NoError(t, err)
+	require.NotNil(t, doctorView.Information)
+	require.Equal(t, "Doctor", doctorView.Information.Title)
+	require.Contains(t, strings.Join(doctorView.Information.Lines, "\n"), "Summary")
+
+	ideView, err := handler(context.Background(), "/ide")
+	require.NoError(t, err)
+	require.NotNil(t, ideView.CommandView)
+	require.Equal(t, "IDE", ideView.CommandView.Title)
+	require.Contains(t, commandViewItemLabels(ideView.CommandView.Tabs[0].Items), "No IDE connected")
+	require.Contains(t, commandViewItemLabels(ideView.CommandView.Tabs[0].Items), "Start IDE bridge")
+
+	exportView, err := handler(context.Background(), "/export")
+	require.NoError(t, err)
+	require.NotNil(t, exportView.ExportDialog)
+	require.Equal(t, "workspace-workflows.md", exportView.ExportDialog.DefaultFilename)
+
+	compact, err := handler(context.Background(), "/compact")
+	require.NoError(t, err)
+	require.Equal(t, "compact", compact.RuntimeAction)
+	copyResult, err := handler(context.Background(), "/copy")
+	require.NoError(t, err)
+	require.Equal(t, "copy", copyResult.RuntimeAction)
+
+	added, err := handler(context.Background(), "/memory add Keep output concise.")
+	require.NoError(t, err)
+	require.NotNil(t, added.CommandView)
+	require.Contains(t, commandViewItemLabels(added.CommandView.Tabs[0].Items), "AGENTS.md")
+	contents, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(contents), "Keep output concise.")
+
+	jsonMemory, err := handler(context.Background(), "/memory list --json")
+	require.NoError(t, err)
+	require.Nil(t, jsonMemory.CommandView)
+	require.Contains(t, jsonMemory.Output, `"kind": "memory"`)
+	jsonIDE, err := handler(context.Background(), "/ide --json")
+	require.NoError(t, err)
+	require.Nil(t, jsonIDE.CommandView)
+	require.Contains(t, jsonIDE.Output, `"kind": "ide"`)
+}
+
 func diffFilePaths(files []tui.DiffFile) []string {
 	paths := make([]string, 0, len(files))
 	for _, file := range files {
@@ -31270,6 +31348,13 @@ func TestExportTUIConversationWritesMarkdownFile(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(workspace, ".codog", "exports", "source.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "# Conversation Export")
+	require.Contains(t, string(data), "export from tui")
+
+	custom, err := app.exportTUIConversationTo(context.Background(), sess, "conversation.md")
+	require.NoError(t, err)
+	require.Contains(t, custom.Lines, "File: conversation.md")
+	data, err = os.ReadFile(filepath.Join(workspace, "conversation.md"))
+	require.NoError(t, err)
 	require.Contains(t, string(data), "export from tui")
 }
 

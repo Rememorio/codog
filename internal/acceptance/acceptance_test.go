@@ -175,6 +175,7 @@ func TestRealBinaryTUIOpensInteractiveSlashControlViews(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "staged.txt"), []byte("staged\n"), 0o644))
 	runAcceptanceGit(t, workspace, "add", "staged.txt")
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "untracked.txt"), []byte("untracked\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("# Instructions\n\nRun focused acceptance tests.\n"), 0o644))
 	skillDir := filepath.Join(configHome, "skills", "acceptance-review")
 	require.NoError(t, os.MkdirAll(skillDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: acceptance-review\ndescription: Review acceptance changes\n---\n\n# Acceptance Review\n\nInspect acceptance changes.\n"), 0o644))
@@ -214,6 +215,34 @@ send "/context\r"
 expect "context"
 expect "Model"
 expect "glm52"
+send "\033"
+after 300
+send "/memory\r"
+expect " memory "
+expect "AGENTS.md"
+send "v"
+expect "Run focused acceptance tests."
+send "\033"
+after 300
+send "/doctor\r"
+expect " doctor "
+expect "Summary"
+send "\033"
+after 300
+send "/ide\r"
+expect " ide "
+expect "No IDE connected"
+expect "Start IDE bridge"
+send "\033"
+after 300
+send "/export\r"
+expect "export conversation"
+expect "Copy to clipboard"
+expect "Save to file"
+send "\033\[B\r"
+expect "Enter filename"
+send "\033"
+after 100
 send "\033"
 after 300
 send "/diff\r"
@@ -273,6 +302,11 @@ expect eof
 	require.Contains(t, plain, " settings ")
 	require.Contains(t, plain, "Total tokens")
 	require.Contains(t, plain, "Mode: accept edits")
+	require.Contains(t, plain, "Run focused acceptance tests.")
+	require.Contains(t, plain, "Summary")
+	require.Contains(t, plain, "No IDE connected")
+	require.Contains(t, plain, "Copy to clipboard")
+	require.Contains(t, plain, "Enter filename")
 	require.Contains(t, plain, "tracked.txt")
 	require.Contains(t, plain, "staged.txt")
 	require.Contains(t, plain, "untracked.txt")

@@ -139,6 +139,11 @@ type InformationView struct {
 	Lines []string
 }
 
+// ExportDialog describes the initial state of the conversation export dialog.
+type ExportDialog struct {
+	DefaultFilename string
+}
+
 // CommandView is a tabbed local-command panel with optional actions.
 type CommandView struct {
 	Title       string
@@ -176,10 +181,12 @@ type SlashResult struct {
 	OpenModelPicker    bool
 	OpenTodos          bool
 	OpenMessageActions bool
+	RuntimeAction      string
 	Diff               *DiffView
 	PermissionSettings *PermissionSettings
 	Information        *InformationView
 	CommandView        *CommandView
+	ExportDialog       *ExportDialog
 }
 
 // SlashFunc runs one local slash command. Structured result fields let the
@@ -212,6 +219,9 @@ type TaskBoardFunc func(context.Context) (string, error)
 // TodoListFunc returns the current workspace todo list for the TUI task panel.
 type TodoListFunc func(context.Context) ([]TodoItem, error)
 type RuntimeControlFunc func(context.Context) (RuntimeControlResult, error)
+
+// ConversationExportFunc saves the active conversation to a user-selected path.
+type ConversationExportFunc func(context.Context, string) (RuntimeControlResult, error)
 type ModelSelectFunc func(context.Context, string) (RuntimeControlResult, error)
 
 // PermissionModeSelectFunc applies one permission mode to the current shell.
@@ -279,6 +289,7 @@ type ShellOptions struct {
 	CompactSession            RuntimeControlFunc
 	UndoLast                  RuntimeControlFunc
 	ExportConversation        RuntimeControlFunc
+	ExportConversationTo      ConversationExportFunc
 	CopyConversation          RuntimeControlFunc
 	RestoreConversation       ConversationRestoreFunc
 	ForkConversation          ConversationForkFunc
@@ -319,6 +330,7 @@ type Preview struct {
 	AttachmentsOpen bool
 	DiffDialog      bool
 	CommandView     bool
+	ExportDialog    bool
 	CommandHint     string
 	InlineHint      string
 	Quit            bool
@@ -432,6 +444,10 @@ type model struct {
 	commandViewTab            int
 	commandViewItem           int
 	commandViewOffset         int
+	exportDialog              *ExportDialog
+	exportDialogSelected      int
+	exportFilenameInput       bool
+	exportComposerDraft       string
 	theme                     string
 	themePicker               bool
 	themePickerSelected       int
@@ -444,6 +460,7 @@ type model struct {
 	compactSession            RuntimeControlFunc
 	undoLast                  RuntimeControlFunc
 	exportConversation        RuntimeControlFunc
+	exportConversationTo      ConversationExportFunc
 	copyConversation          RuntimeControlFunc
 	restoreConversation       ConversationRestoreFunc
 	forkConversation          ConversationForkFunc
@@ -1055,6 +1072,31 @@ func PreviewWithCommandView(view CommandView, keys []string, width int, height i
 		Value:       m.textarea.Value(),
 		Mode:        m.mode(),
 		CommandView: m.commandView != nil,
+	}
+}
+
+// PreviewWithExportDialog renders a deterministic conversation export dialog
+// after applying the provided navigation keys.
+func PreviewWithExportDialog(dialog ExportDialog, keys []string, width int, height int) Preview {
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	m.openExportDialog(dialog)
+	for _, key := range keys {
+		updated, _ := m.Update(diffPreviewKey(key))
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:         m.View(),
+		Value:        m.textarea.Value(),
+		Mode:         m.mode(),
+		ExportDialog: m.exportDialog != nil,
 	}
 }
 
@@ -1847,6 +1889,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.compactSession = options.CompactSession
 	m.undoLast = options.UndoLast
 	m.exportConversation = options.ExportConversation
+	m.exportConversationTo = options.ExportConversationTo
 	m.copyConversation = options.CopyConversation
 	m.restoreConversation = options.RestoreConversation
 	m.forkConversation = options.ForkConversation
@@ -2000,6 +2043,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openLatestUserMessageActions()
 			m.refreshViewport()
 			return m, m.flushInlineTranscript()
+		}
+		if msg.Err == nil && !msg.Interrupted && msg.ExportDialog != nil {
+			m.streamingIndex = -1
+			m.discardLatestSlashInput()
+			m.openExportDialog(*msg.ExportDialog)
+			return m, m.flushInlineTranscript()
+		}
+		if msg.Err == nil && !msg.Interrupted && strings.TrimSpace(msg.RuntimeAction) != "" {
+			m.streamingIndex = -1
+			m.discardLatestSlashInput()
+			next, cmd := m.runSlashRuntimeAction(msg.RuntimeAction)
+			return next, sequenceCommands(m.flushInlineTranscript(), cmd)
 		}
 		if msg.Err == nil && !msg.Interrupted && msg.Diff != nil {
 			m.streamingIndex = -1
@@ -2235,6 +2290,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.sessionPicker != nil {
 			return m.updateSessionPicker(msg)
+		}
+		if m.exportDialog != nil {
+			return m.updateExportDialog(msg)
 		}
 		if msg.Paste {
 			return m.handlePastedInput(msg)
@@ -3122,6 +3180,9 @@ func (m model) View() string {
 	if m.stashedPrompt != nil {
 		composer += "\n" + renderStashNotice(m.stashedPrompt, styles)
 	}
+	if m.exportDialog != nil {
+		composer = renderExportDialog(*m.exportDialog, m.exportDialogSelected, m.exportFilenameInput, composerTextarea.View(), m.width, styles)
+	}
 	if m.sessionPicker != nil {
 		composer = m.sessionPicker.View()
 	} else if m.awaitingPermission && m.permissionRequest != nil {
@@ -3240,10 +3301,12 @@ type turnDoneMsg struct {
 	OpenModelPicker    bool
 	OpenTodos          bool
 	OpenMessageActions bool
+	RuntimeAction      string
 	Diff               *DiffView
 	PermissionSettings *PermissionSettings
 	Information        *InformationView
 	CommandView        *CommandView
+	ExportDialog       *ExportDialog
 }
 
 type initialPromptMsg struct {
@@ -4816,16 +4879,18 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 			OpenModelPicker:    result.OpenModelPicker,
 			OpenTodos:          result.OpenTodos,
 			OpenMessageActions: result.OpenMessageActions,
+			RuntimeAction:      result.RuntimeAction,
 			Diff:               result.Diff,
 			PermissionSettings: result.PermissionSettings,
 			Information:        result.Information,
 			CommandView:        result.CommandView,
+			ExportDialog:       result.ExportDialog,
 		}
 	}
 }
 
 func slashResultHasInteractiveView(result SlashResult) bool {
-	return result.Session != nil || len(result.SessionChoices) > 0 || result.OpenModelPicker || result.OpenTodos || result.OpenMessageActions || result.Diff != nil || result.PermissionSettings != nil || result.Information != nil || result.CommandView != nil
+	return result.Session != nil || len(result.SessionChoices) > 0 || result.OpenModelPicker || result.OpenTodos || result.OpenMessageActions || strings.TrimSpace(result.RuntimeAction) != "" || result.Diff != nil || result.PermissionSettings != nil || result.Information != nil || result.CommandView != nil || result.ExportDialog != nil
 }
 
 type turnStreamMsg struct {
@@ -4909,6 +4974,13 @@ func runTodoListCommand(ctx context.Context, todos TodoListFunc) tea.Cmd {
 func runRuntimeControlCommand(ctx context.Context, control RuntimeControlFunc) tea.Cmd {
 	return func() tea.Msg {
 		result, err := control(ctx)
+		return runtimeControlDoneMsg{Result: result, Err: err}
+	}
+}
+
+func runConversationExportCommand(ctx context.Context, export ConversationExportFunc, filename string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := export(ctx, filename)
 		return runtimeControlDoneMsg{Result: result, Err: err}
 	}
 }
@@ -7224,7 +7296,133 @@ func commandViewSecondaryKeyLabel(item CommandViewItem) string {
 	return strings.ToUpper(key)
 }
 
+func (m *model) openExportDialog(dialog ExportDialog) {
+	m.closeInteractivePanels()
+	dialog.DefaultFilename = strings.TrimSpace(dialog.DefaultFilename)
+	if dialog.DefaultFilename == "" {
+		dialog.DefaultFilename = "conversation.md"
+	}
+	m.exportComposerDraft = m.textarea.Value()
+	m.textarea.SetValue("")
+	m.textarea.Focus()
+	m.exportDialog = &dialog
+	m.exportDialogSelected = 0
+	m.exportFilenameInput = false
+	m.status = "export"
+}
+
+func (m *model) closeExportDialog() {
+	draft := m.exportComposerDraft
+	m.exportDialog = nil
+	m.exportDialogSelected = 0
+	m.exportFilenameInput = false
+	m.exportComposerDraft = ""
+	m.textarea.SetValue(draft)
+	m.textarea.CursorEnd()
+	m.textarea.Focus()
+	m.status = m.mode()
+}
+
+func (m model) updateExportDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.exportDialog == nil {
+		return m, nil
+	}
+	if m.exportFilenameInput {
+		switch msg.String() {
+		case "ctrl+c":
+			m.closeExportDialog()
+			return m, nil
+		case "esc":
+			m.exportFilenameInput = false
+			m.textarea.SetValue("")
+			m.status = "export"
+			return m, nil
+		case "enter":
+			filename := strings.TrimSpace(m.textarea.Value())
+			if filename == "" {
+				m.status = "filename required"
+				return m, nil
+			}
+			if m.exportConversationTo == nil {
+				m.closeExportDialog()
+				m.status = "export unavailable"
+				return m, nil
+			}
+			m.closeExportDialog()
+			m.status = "exporting"
+			return m, runConversationExportCommand(m.ctx, m.exportConversationTo, filename)
+		default:
+			var cmd tea.Cmd
+			m.textarea, cmd = m.textarea.Update(msg)
+			return m, cmd
+		}
+	}
+
+	switch msg.String() {
+	case "ctrl+c", "esc":
+		m.closeExportDialog()
+		return m, nil
+	case "up", "ctrl+p", "k", "shift+tab":
+		m.exportDialogSelected = (m.exportDialogSelected + 1) % 2
+		return m, nil
+	case "down", "ctrl+n", "j", "tab":
+		m.exportDialogSelected = (m.exportDialogSelected + 1) % 2
+		return m, nil
+	case "home":
+		m.exportDialogSelected = 0
+		return m, nil
+	case "end":
+		m.exportDialogSelected = 1
+		return m, nil
+	case "enter":
+		if m.exportDialogSelected == 0 {
+			if m.copyConversation == nil {
+				m.closeExportDialog()
+				m.status = "copy unavailable"
+				return m, nil
+			}
+			m.closeExportDialog()
+			m.status = "copying"
+			return m, runRuntimeControlCommand(m.ctx, m.copyConversation)
+		}
+		m.exportFilenameInput = true
+		m.textarea.SetValue(m.exportDialog.DefaultFilename)
+		m.textarea.CursorEnd()
+		m.textarea.Focus()
+		m.status = "export filename"
+		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func (m model) runSlashRuntimeAction(action string) (tea.Model, tea.Cmd) {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "compact":
+		if m.compactSession == nil {
+			m.status = "compact unavailable"
+			return m, nil
+		}
+		m.status = "compacting"
+		return m, runRuntimeControlCommand(m.ctx, m.compactSession)
+	case "copy":
+		if m.copyConversation == nil {
+			m.status = "copy unavailable"
+			return m, nil
+		}
+		m.status = "copying"
+		return m, runRuntimeControlCommand(m.ctx, m.copyConversation)
+	default:
+		m.status = "unsupported action"
+		return m, nil
+	}
+}
+
 func (m *model) closeInteractivePanels() {
+	if m.exportDialog != nil {
+		m.textarea.SetValue(m.exportComposerDraft)
+		m.textarea.CursorEnd()
+	}
 	m.helpOpen = false
 	m.searchOpen = false
 	m.quickOpen = false
@@ -7248,6 +7446,10 @@ func (m *model) closeInteractivePanels() {
 	m.commandViewTab = 0
 	m.commandViewItem = 0
 	m.commandViewOffset = 0
+	m.exportDialog = nil
+	m.exportDialogSelected = 0
+	m.exportFilenameInput = false
+	m.exportComposerDraft = ""
 	m.matches = nil
 	m.selected = 0
 }
@@ -8496,6 +8698,50 @@ func renderCommandView(view CommandView, tabIndex int, itemIndex int, offset int
 	return strings.Join(lines, "\n")
 }
 
+func renderExportDialog(dialog ExportDialog, selected int, filenameInput bool, input string, width int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
+	limit := 100
+	if width > 0 {
+		limit = max(12, width-8)
+	}
+	lines := []string{styles.completionTitle().Render(" export conversation ")}
+	if filenameInput {
+		lines = append(lines,
+			styles.completion().Render("  Enter filename:"),
+			truncateForComposer(input, limit),
+			styles.completion().Render("  Enter save · Esc go back"),
+		)
+		return strings.Join(lines, "\n")
+	}
+	options := []struct {
+		label       string
+		description string
+	}{
+		{label: "Copy to clipboard", description: "Copy the conversation to the system clipboard"},
+		{label: "Save to file", description: "Save the conversation in the current workspace"},
+	}
+	selected = clampIndex(selected, len(options))
+	lines = append(lines, styles.completion().Render("  Select export method:"))
+	for index, option := range options {
+		prefix := "  "
+		style := styles.completion()
+		if index == selected {
+			prefix = "> "
+			style = styles.selectedCompletion()
+		}
+		lines = append(lines, style.Render(truncateForComposer(prefix+option.label, limit)))
+		if index == selected {
+			description := option.description
+			if index == 1 && strings.TrimSpace(dialog.DefaultFilename) != "" {
+				description += " · " + strings.TrimSpace(dialog.DefaultFilename)
+			}
+			lines = append(lines, styles.completion().Render(truncateForComposer("    "+description, limit)))
+		}
+	}
+	lines = append(lines, styles.completion().Render("  ↑/↓ select · Enter continue · Esc cancel"))
+	return strings.Join(lines, "\n")
+}
+
 func renderDiffDialog(sources []DiffSource, sourceIndex int, fileIndex int, detail bool, width int, themed ...themeStyles) string {
 	styles := resolveThemeStyles(themed)
 	sources = normalizeDiffSources(sources)
@@ -9570,6 +9816,9 @@ func (m model) mode() string {
 			return title
 		}
 		return "settings"
+	}
+	if m.exportDialog != nil {
+		return "export"
 	}
 	if m.information != nil {
 		if title := strings.ToLower(strings.TrimSpace(m.information.Title)); title != "" {
