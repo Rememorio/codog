@@ -48,6 +48,7 @@ type Report struct {
 	TUILocalHelpPanel         bool     `json:"tui_local_help_panel"`
 	TUISettingsTabs           bool     `json:"tui_settings_tabs"`
 	TUIExtensionTabs          bool     `json:"tui_extension_tabs"`
+	TUIRuntimeTabs            bool     `json:"tui_runtime_tabs"`
 	TUIStatusBar              bool     `json:"tui_status_bar"`
 	TUIPreviewWidth           int      `json:"tui_preview_width"`
 	TUIPreviewHeight          int      `json:"tui_preview_height"`
@@ -91,6 +92,14 @@ func Build() Report {
 			{Title: "Agents", Lines: []string{"No agents found"}},
 		},
 	}, []string{"right"}, 80, 24)
+	runtimePreview := tui.PreviewWithCommandView(tui.CommandView{
+		Title: "Runtime",
+		Tabs: []tui.CommandViewTab{
+			{Title: "Tasks", Items: []tui.CommandViewItem{{Label: "run tests", Value: "running · shell", SecondaryLabel: "stop", SecondaryCommand: "/tasks stop task-1", SecondaryKey: "x"}}, RefreshCommand: "/tasks"},
+			{Title: "Teams", Items: []tui.CommandViewItem{{Label: "reviewers", Value: "running · 2 tasks"}}, RefreshCommand: "/team"},
+			{Title: "Schedules", Items: []tui.CommandViewItem{{Label: "Daily review", Value: "@daily · enabled"}}, RefreshCommand: "/cron"},
+		},
+	}, []string{"right", "right"}, 80, 24)
 	report := Report{
 		Status:                    "ready",
 		SlashCommandCount:         len(specs),
@@ -109,6 +118,7 @@ func Build() Report {
 		TUILocalHelpPanel:         helpPreview.HelpOpen && strings.Contains(helpPreview.View, "Core commands"),
 		TUISettingsTabs:           settingsPreview.CommandView && strings.Contains(settingsPreview.View, "Status") && strings.Contains(settingsPreview.View, "Config") && strings.Contains(settingsPreview.View, "Usage") && strings.Contains(settingsPreview.View, "Model") && strings.Contains(settingsPreview.View, "glm52"),
 		TUIExtensionTabs:          extensionsPreview.CommandView && strings.Contains(extensionsPreview.View, "Skills") && strings.Contains(extensionsPreview.View, "MCP") && strings.Contains(extensionsPreview.View, "Hooks") && strings.Contains(extensionsPreview.View, "Plugins") && strings.Contains(extensionsPreview.View, "Agents") && strings.Contains(extensionsPreview.View, "local"),
+		TUIRuntimeTabs:            runtimePreview.CommandView && strings.Contains(runtimePreview.View, "Tasks") && strings.Contains(runtimePreview.View, "Teams") && strings.Contains(runtimePreview.View, "Schedules") && strings.Contains(runtimePreview.View, "Daily review") && strings.Contains(runtimePreview.View, "R refresh"),
 		TUIStatusBar:              strings.Contains(submitPreview.View, "Enter send") && strings.Contains(submitPreview.View, "Tab") && strings.Contains(submitPreview.View, "Esc"),
 		TUIPreviewWidth:           80,
 		TUIPreviewHeight:          24,
@@ -129,6 +139,7 @@ func Build() Report {
 		!report.TUILocalHelpPanel ||
 		!report.TUISettingsTabs ||
 		!report.TUIExtensionTabs ||
+		!report.TUIRuntimeTabs ||
 		!report.TUIStatusBar ||
 		!report.PermissionCommandsPresent ||
 		!report.StatusCommandsPresent ||

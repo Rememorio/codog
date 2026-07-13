@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/cron"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -177,6 +178,8 @@ func TestRealBinaryTUIOpensInteractiveSlashControlViews(t *testing.T) {
 	skillDir := filepath.Join(configHome, "skills", "acceptance-review")
 	require.NoError(t, os.MkdirAll(skillDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: acceptance-review\ndescription: Review acceptance changes\n---\n\n# Acceptance Review\n\nInspect acceptance changes.\n"), 0o644))
+	_, err := cron.NewStore(configHome).Create("@daily", "Inspect acceptance changes", "Acceptance schedule")
+	require.NoError(t, err)
 
 	output := runExpectCodog(t, bin, workspace, configHome, nil, `
 set timeout 10
@@ -231,6 +234,17 @@ send "\r"
 expect "Inspect acceptance changes."
 send "\033"
 after 300
+send "/tasks\r"
+expect " runtime "
+expect "No background tasks for this session."
+send "\033\[C"
+expect "No teams created."
+send "\033\[C"
+expect "Acceptance schedule"
+send "\r"
+expect "Inspect acceptance changes"
+send "\033"
+after 300
 send "/exit\r"
 expect eof
 `)
@@ -246,6 +260,8 @@ expect eof
 	require.Contains(t, plain, " extensions ")
 	require.Contains(t, plain, "acceptance-review")
 	require.Contains(t, plain, "Inspect acceptance changes.")
+	require.Contains(t, plain, " runtime ")
+	require.Contains(t, plain, "Acceptance schedule")
 	require.NotContains(t, plain, "UNTRACKED .codog")
 	require.NotContains(t, plain, "· model=glm52")
 }

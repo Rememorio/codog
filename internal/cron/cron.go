@@ -88,7 +88,8 @@ func (s Store) List() ([]Entry, error) {
 	return out, nil
 }
 
-func (s Store) Delete(id string) (Entry, error) {
+// Get returns one scheduled entry by ID.
+func (s Store) Get(id string) (Entry, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return Entry{}, errors.New("cron_id is required")
@@ -96,14 +97,36 @@ func (s Store) Delete(id string) (Entry, error) {
 	if !safeID(id) {
 		return Entry{}, fmt.Errorf("invalid cron_id %q", id)
 	}
-	path := s.path(id)
-	entry, err := s.read(path)
+	entry, err := s.read(s.path(id))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Entry{}, fmt.Errorf("cron not found: %s", id)
 		}
 		return Entry{}, err
 	}
+	return entry, nil
+}
+
+// SetEnabled changes whether a scheduled entry can become due.
+func (s Store) SetEnabled(id string, enabled bool) (Entry, error) {
+	entry, err := s.Get(id)
+	if err != nil {
+		return Entry{}, err
+	}
+	entry.Enabled = enabled
+	entry.UpdatedAt = time.Now().UTC()
+	if err := s.save(entry); err != nil {
+		return Entry{}, err
+	}
+	return entry, nil
+}
+
+func (s Store) Delete(id string) (Entry, error) {
+	entry, err := s.Get(id)
+	if err != nil {
+		return Entry{}, err
+	}
+	path := s.path(entry.ID)
 	if err := os.Remove(path); err != nil {
 		return Entry{}, err
 	}

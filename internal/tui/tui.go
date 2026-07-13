@@ -148,9 +148,10 @@ type CommandView struct {
 
 // CommandViewTab is one tab in a CommandView.
 type CommandViewTab struct {
-	Title string
-	Lines []string
-	Items []CommandViewItem
+	Title          string
+	Lines          []string
+	Items          []CommandViewItem
+	RefreshCommand string
 }
 
 // CommandViewItem is one selectable action in a CommandView tab.
@@ -162,6 +163,7 @@ type CommandViewItem struct {
 	Command          string
 	SecondaryLabel   string
 	SecondaryCommand string
+	SecondaryKey     string
 }
 
 // SlashResult is the structured outcome of one local slash command.
@@ -7011,9 +7013,10 @@ func cloneCommandViewTabs(tabs []CommandViewTab) []CommandViewTab {
 	cloned := make([]CommandViewTab, len(tabs))
 	for index, tab := range tabs {
 		cloned[index] = CommandViewTab{
-			Title: strings.TrimSpace(tab.Title),
-			Lines: append([]string(nil), tab.Lines...),
-			Items: append([]CommandViewItem(nil), tab.Items...),
+			Title:          strings.TrimSpace(tab.Title),
+			Lines:          append([]string(nil), tab.Lines...),
+			Items:          append([]CommandViewItem(nil), tab.Items...),
+			RefreshCommand: strings.TrimSpace(tab.RefreshCommand),
 		}
 	}
 	return cloned
@@ -7066,7 +7069,18 @@ func (m *model) currentCommandViewTab() (CommandViewTab, bool) {
 }
 
 func (m model) updateCommandView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	key := msg.String()
+	secondaryKey := key
+	if secondaryKey == " " {
+		secondaryKey = "space"
+	}
+	if tab, ok := m.currentCommandViewTab(); ok && len(tab.Items) > 0 {
+		item := tab.Items[clampIndex(m.commandViewItem, len(tab.Items))]
+		if commandViewSecondaryKey(item) == secondaryKey && strings.TrimSpace(item.SecondaryCommand) != "" {
+			return m.acceptCommandViewItem(true)
+		}
+	}
+	switch key {
 	case "ctrl+c", "esc":
 		m.closeCommandView()
 		return m, nil
@@ -7089,12 +7103,14 @@ func (m model) updateCommandView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveCommandViewSelection(commandViewVisibleLines(m.height))
 		return m, nil
 	case " ", "space":
-		tab, ok := m.currentCommandViewTab()
-		if ok && len(tab.Items) > 0 {
-			return m.acceptCommandViewItem(true)
-		}
 		m.moveCommandViewSelection(commandViewVisibleLines(m.height))
 		return m, nil
+	case "r":
+		tab, ok := m.currentCommandViewTab()
+		if !ok || strings.TrimSpace(tab.RefreshCommand) == "" {
+			return m, nil
+		}
+		return m.runCommandViewCommand(tab.RefreshCommand)
 	case "home":
 		m.commandViewItem = 0
 		m.commandViewOffset = 0
@@ -7161,9 +7177,33 @@ func (m model) acceptCommandViewItem(secondary bool) (tea.Model, tea.Cmd) {
 	if command == "" {
 		return m, nil
 	}
+	return m.runCommandViewCommand(command)
+}
+
+func (m model) runCommandViewCommand(command string) (tea.Model, tea.Cmd) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return m, nil
+	}
 	m.closeCommandView()
 	m.textarea.SetValue(command)
 	return m.startInput(command)
+}
+
+func commandViewSecondaryKey(item CommandViewItem) string {
+	key := strings.ToLower(strings.TrimSpace(item.SecondaryKey))
+	if key == "" || key == " " {
+		return "space"
+	}
+	return key
+}
+
+func commandViewSecondaryKeyLabel(item CommandViewItem) string {
+	key := commandViewSecondaryKey(item)
+	if key == "space" {
+		return "Space"
+	}
+	return strings.ToUpper(key)
 }
 
 func (m *model) closeInteractivePanels() {
@@ -8400,13 +8440,16 @@ func renderCommandView(view CommandView, tabIndex int, itemIndex int, offset int
 				lines = append(lines, styles.completion().Render(truncateForComposer("    "+strings.TrimSpace(item.Description), limit)))
 			}
 		}
-		footer := "Left/Right tab · Up/Down choose · Enter open"
+		footer := "←/→ tab · ↑/↓ select · Enter open"
 		if strings.TrimSpace(tab.Items[itemIndex].SecondaryCommand) != "" {
 			label := strings.TrimSpace(tab.Items[itemIndex].SecondaryLabel)
 			if label == "" {
 				label = "action"
 			}
-			footer += " · Space " + label
+			footer += " · " + commandViewSecondaryKeyLabel(tab.Items[itemIndex]) + " " + label
+		}
+		if strings.TrimSpace(tab.RefreshCommand) != "" {
+			footer += " · R refresh"
 		}
 		if len(tab.Items) > capacity {
 			footer = fmt.Sprintf("%d-%d/%d · %s", offset+1, end, len(tab.Items), footer)
@@ -8423,9 +8466,13 @@ func renderCommandView(view CommandView, tabIndex int, itemIndex int, offset int
 	if len(tab.Lines) == 0 {
 		lines = append(lines, styles.completion().Render("  no information"))
 	}
-	footer := "Left/Right tab · Esc close"
+	footer := "←/→ tab"
+	if strings.TrimSpace(tab.RefreshCommand) != "" {
+		footer += " · R refresh"
+	}
+	footer += " · Esc close"
 	if len(tab.Lines) > visible {
-		footer = fmt.Sprintf("%d-%d/%d · Up/Down scroll · Left/Right tab · Esc close", offset+1, end, len(tab.Lines))
+		footer = fmt.Sprintf("%d-%d/%d · ↑/↓ scroll · %s", offset+1, end, len(tab.Lines), footer)
 	}
 	lines = append(lines, styles.completion().Render("  "+footer))
 	return strings.Join(lines, "\n")

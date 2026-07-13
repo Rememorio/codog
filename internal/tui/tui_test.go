@@ -2438,6 +2438,46 @@ func TestCommandViewScrollsAndRunsSecondaryAction(t *testing.T) {
 	require.Contains(t, m.View(), "Enabled skill-00")
 }
 
+func TestCommandViewUsesCustomSecondaryKeyAndRefreshes(t *testing.T) {
+	view := CommandView{Title: "Runtime", Tabs: []CommandViewTab{{
+		Title:          "Tasks",
+		RefreshCommand: "/tasks",
+		Items: []CommandViewItem{{
+			Label:            "sleep 30",
+			Value:            "running",
+			Command:          "/tasks status task-1",
+			SecondaryLabel:   "stop",
+			SecondaryCommand: "/tasks stop task-1",
+			SecondaryKey:     "x",
+		}},
+	}}}
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	calls := []string{}
+	m.slash = func(_ context.Context, line string) (SlashResult, error) {
+		calls = append(calls, line)
+		return SlashResult{Handled: true, CommandView: &view}, nil
+	}
+	m.openCommandView(view)
+	require.Contains(t, m.View(), "X stop")
+	require.Contains(t, m.View(), "R refresh")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.Equal(t, []string{"/tasks stop task-1"}, calls)
+	require.NotNil(t, m.commandView)
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.Equal(t, []string{"/tasks stop task-1", "/tasks"}, calls)
+	require.NotNil(t, m.commandView)
+}
+
 func TestSlashPermissionsSelectsSessionMode(t *testing.T) {
 	m := newModel(context.Background(), newPromptTextarea("/permissions"), nil, nil)
 	selected := ""

@@ -6541,6 +6541,13 @@ func (a *App) CronWithFormat(args []string, defaultFormat string) error {
 		}
 		report.Entries = entries
 		report.Count = len(entries)
+	case "show":
+		entry, err := store.Get(req.ID)
+		if err != nil {
+			return err
+		}
+		report.Entry = &entry
+		report.Count = 1
 	case "create":
 		entry, err := store.Create(req.Schedule, req.Prompt, req.Description)
 		if err != nil {
@@ -6557,6 +6564,14 @@ func (a *App) CronWithFormat(args []string, defaultFormat string) error {
 		report.Entry = &entry
 		report.Count = 1
 		report.Message = "Cron entry deleted"
+	case "enable", "disable":
+		entry, err := store.SetEnabled(req.ID, req.Action == "enable")
+		if err != nil {
+			return err
+		}
+		report.Entry = &entry
+		report.Count = 1
+		report.Message = "Cron entry " + req.Action + "d"
 	case "due":
 		entries, err := store.Due(now)
 		if err != nil {
@@ -6699,12 +6714,9 @@ func parseCronArgsWithDefault(args []string, defaultFormat string) (cronRequest,
 		}
 		req.Schedule = positionals[0]
 		req.Prompt = strings.Join(positionals[1:], " ")
-	case "delete", "mark-run":
+	case "show", "delete", "enable", "disable", "mark-run":
 		if len(positionals) != 1 {
-			if req.Action == "delete" {
-				return req, requiredArgumentError{Command: "cron delete", Argument: "CRON_ID", Usage: cronUsage}
-			}
-			return req, requiredArgumentError{Command: "cron mark-run", Argument: "CRON_ID", Usage: cronUsage}
+			return req, requiredArgumentError{Command: "cron " + req.Action, Argument: "CRON_ID", Usage: cronUsage}
 		}
 		req.ID = positionals[0]
 	case "due", "run-due":
@@ -6721,13 +6733,13 @@ func parseCronArgsWithDefault(args []string, defaultFormat string) (cronRequest,
 	return req, nil
 }
 
-const cronUsage = "codog cron [list|ls|create|add|new|delete|remove|rm|due|mark-run|mark|touch|run-due|run] [ARGS...] [--json|--output-format text|json]"
+const cronUsage = "codog cron [list|ls|show|get|create|add|new|delete|remove|rm|enable|disable|due|mark-run|mark|touch|run-due|run] [ARGS...] [--json|--output-format text|json]"
 
-var cronActionCandidates = []string{"list", "ls", "create", "add", "new", "delete", "remove", "rm", "due", "mark-run", "mark", "touch", "run-due", "run"}
+var cronActionCandidates = []string{"list", "ls", "show", "get", "create", "add", "new", "delete", "remove", "rm", "enable", "disable", "due", "mark-run", "mark", "touch", "run-due", "run"}
 
 func isCronAction(value string) bool {
 	switch normalizeCronAction(value) {
-	case "list", "create", "delete", "due", "mark-run", "run-due":
+	case "list", "show", "create", "delete", "enable", "disable", "due", "mark-run", "run-due":
 		return true
 	default:
 		return false
@@ -6738,10 +6750,14 @@ func normalizeCronAction(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", "list", "ls":
 		return "list"
+	case "show", "get":
+		return "show"
 	case "create", "add", "new":
 		return "create"
 	case "delete", "remove", "rm":
 		return "delete"
+	case "enable", "disable":
+		return strings.ToLower(strings.TrimSpace(value))
 	case "due":
 		return "due"
 	case "mark-run", "mark", "touch":
@@ -6769,16 +6785,25 @@ func renderCronReport(out io.Writer, report cronCommandReport) {
 			}
 			fmt.Fprintf(out, "  %s  %s  %s  %s\n", entry.ID, entry.Schedule, state, description)
 		}
-	case "create", "delete", "mark-run":
+	case "show", "create", "delete", "enable", "disable", "mark-run":
 		if report.Entry == nil {
 			return
 		}
 		fmt.Fprintf(out, "  Action           %s\n", report.Action)
 		fmt.Fprintf(out, "  ID               %s\n", report.Entry.ID)
 		fmt.Fprintf(out, "  Schedule         %s\n", report.Entry.Schedule)
+		state := "disabled"
+		if report.Entry.Enabled {
+			state = "enabled"
+		}
+		fmt.Fprintf(out, "  Status           %s\n", state)
 		if report.Entry.Description != "" {
 			fmt.Fprintf(out, "  Description      %s\n", report.Entry.Description)
 		}
+		if report.Entry.Prompt != "" {
+			fmt.Fprintf(out, "  Prompt           %s\n", report.Entry.Prompt)
+		}
+		fmt.Fprintf(out, "  Runs             %d\n", report.Entry.RunCount)
 		if report.Message != "" {
 			fmt.Fprintf(out, "  Message          %s\n", report.Message)
 		}
@@ -37941,6 +37966,13 @@ func (a *App) tuiSlashHandler(sess *session.Session, modeState *tuiModeState) tu
 		}()
 		handled := a.handleSlash(ctx, line, sess)
 		result := tui.SlashResult{Output: strings.TrimSpace(out.String()), Handled: handled}
+		if handled && result.Output != "" && !strings.HasPrefix(strings.ToLower(result.Output), "error:") {
+			if selectedTab, ok := tuiRuntimeRefreshTab(line); ok {
+				view := a.tuiRuntimeCommandView(sess, selectedTab)
+				result.CommandView = &view
+				result.Output = ""
+			}
+		}
 		if handled && result.Output != "" {
 			if title, ok := tuiExtensionInformationTitle(line); ok {
 				view := tui.InformationView{Title: title, Lines: tuiReportLines(result.Output, title)}
@@ -37988,6 +38020,12 @@ func (a *App) tuiInteractiveSlashResult(line string, sess *session.Session, mode
 			view := a.tuiExtensionsCommandView(selectedTab)
 			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
 		}
+	case "/background", "/tasks", "/bashes":
+		return a.tuiBackgroundSlashResult(args, sess)
+	case "/team":
+		return a.tuiTeamSlashResult(args, sess)
+	case "/cron":
+		return a.tuiCronSlashResult(args, sess)
 	case "/model":
 		if len(args) == 0 {
 			return tui.SlashResult{Handled: true, OpenModelPicker: true}, true, nil
@@ -38312,7 +38350,7 @@ func (a *App) tuiExtensionsCommandView(selectedTab int) tui.CommandView {
 }
 
 func (a *App) tuiSkillsCommandTab() tui.CommandViewTab {
-	tab := tui.CommandViewTab{Title: "Skills"}
+	tab := tui.CommandViewTab{Title: "Skills", RefreshCommand: "/skills"}
 	all, err := a.runtimeSkills()
 	if err != nil {
 		tab.Lines = []string{"Skills unavailable: " + err.Error()}
@@ -38357,7 +38395,7 @@ func (a *App) tuiSkillsCommandTab() tui.CommandViewTab {
 }
 
 func (a *App) tuiMCPCommandTab() tui.CommandViewTab {
-	tab := tui.CommandViewTab{Title: "MCP"}
+	tab := tui.CommandViewTab{Title: "MCP", RefreshCommand: "/mcp"}
 	names := sortedMCPServerNames(a.Config.MCPServers)
 	tab.Lines = []string{fmt.Sprintf("%d configured", len(names))}
 	for _, name := range names {
@@ -38404,7 +38442,7 @@ func tuiMCPServerDescription(server config.MCPServerConfig) string {
 }
 
 func (a *App) tuiHooksCommandTab() tui.CommandViewTab {
-	tab := tui.CommandViewTab{Title: "Hooks"}
+	tab := tui.CommandViewTab{Title: "Hooks", RefreshCommand: "/hooks"}
 	configured := 0
 	for _, event := range allHookEvents() {
 		count := hookConfiguredCount(a.Config.Hooks, event)
@@ -38425,7 +38463,7 @@ func (a *App) tuiHooksCommandTab() tui.CommandViewTab {
 }
 
 func (a *App) tuiPluginsCommandTab() tui.CommandViewTab {
-	tab := tui.CommandViewTab{Title: "Plugins"}
+	tab := tui.CommandViewTab{Title: "Plugins", RefreshCommand: "/plugins"}
 	manifests, err := a.runtimePluginManifests()
 	if err != nil {
 		tab.Lines = []string{"Plugins unavailable: " + err.Error()}
@@ -38462,7 +38500,7 @@ func (a *App) tuiPluginsCommandTab() tui.CommandViewTab {
 }
 
 func (a *App) tuiAgentsCommandTab() tui.CommandViewTab {
-	tab := tui.CommandViewTab{Title: "Agents"}
+	tab := tui.CommandViewTab{Title: "Agents", RefreshCommand: "/agents"}
 	definitions, err := a.runtimeAgentDefinitions()
 	if err != nil {
 		tab.Lines = []string{"Agents unavailable: " + err.Error()}
@@ -38538,6 +38576,359 @@ func tuiSlashRequestsJSON(args []string) bool {
 		}
 	}
 	return false
+}
+
+func (a *App) tuiBackgroundSlashResult(args []string, sess *session.Session) (tui.SlashResult, bool, error) {
+	if tuiSlashRequestsJSON(args) {
+		return tui.SlashResult{}, false, nil
+	}
+	cleanArgs, _, err := parseBackgroundOutputFormat(args, "text")
+	if err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	if len(cleanArgs) == 0 || (len(cleanArgs) == 1 && normalizeBackgroundAction(cleanArgs[0]) == "list") {
+		view := a.tuiRuntimeCommandView(sess, 0)
+		return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+	}
+	switch normalizeBackgroundAction(cleanArgs[0]) {
+	case "status":
+		if len(cleanArgs) != 2 {
+			return tui.SlashResult{}, false, nil
+		}
+		view, err := a.tuiTaskInformation(cleanArgs[1], 32*1024, false)
+		return tui.SlashResult{Handled: true, Information: &view}, true, err
+	case "logs":
+		id, limit, err := parseBackgroundLogsArgs(cleanArgs[1:])
+		if err != nil {
+			return tui.SlashResult{Handled: true}, true, err
+		}
+		view, err := a.tuiTaskInformation(id, limit, true)
+		return tui.SlashResult{Handled: true, Information: &view}, true, err
+	default:
+		return tui.SlashResult{}, false, nil
+	}
+}
+
+func (a *App) tuiTeamSlashResult(args []string, sess *session.Session) (tui.SlashResult, bool, error) {
+	req, err := parseTeamArgsWithDefault(args, "text")
+	if err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	if req.Format == "json" {
+		return tui.SlashResult{}, false, nil
+	}
+	switch req.Action {
+	case "list":
+		view := a.tuiRuntimeCommandView(sess, 1)
+		return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+	case "get", "status", "logs":
+		view, err := a.tuiTeamInformation(req.ID, req.Action != "get", req.Action == "logs", req.Limit)
+		return tui.SlashResult{Handled: true, Information: &view}, true, err
+	default:
+		return tui.SlashResult{}, false, nil
+	}
+}
+
+func (a *App) tuiCronSlashResult(args []string, sess *session.Session) (tui.SlashResult, bool, error) {
+	req, err := parseCronArgsWithDefault(args, "text")
+	if err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	if req.Format == "json" {
+		return tui.SlashResult{}, false, nil
+	}
+	switch req.Action {
+	case "list":
+		view := a.tuiRuntimeCommandView(sess, 2)
+		return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+	case "show":
+		view, err := a.tuiCronInformation(req.ID)
+		return tui.SlashResult{Handled: true, Information: &view}, true, err
+	default:
+		return tui.SlashResult{}, false, nil
+	}
+}
+
+func (a *App) tuiRuntimeCommandView(sess *session.Session, selectedTab int) tui.CommandView {
+	return tui.CommandView{
+		Title:       "Runtime",
+		SelectedTab: selectedTab,
+		Tabs: []tui.CommandViewTab{
+			a.tuiTasksCommandTab(sess),
+			a.tuiTeamsCommandTab(),
+			a.tuiSchedulesCommandTab(),
+		},
+	}
+}
+
+func (a *App) tuiTasksCommandTab(sess *session.Session) tui.CommandViewTab {
+	tab := tui.CommandViewTab{Title: "Tasks", RefreshCommand: "/tasks"}
+	tasks, err := background.NewStore(a.Config.ConfigHome).List()
+	if err != nil {
+		tab.Lines = []string{"Tasks unavailable: " + err.Error()}
+		return tab
+	}
+	if sess != nil {
+		tasks = background.FilterBySession(tasks, sess.ID)
+	}
+	sort.SliceStable(tasks, func(i, j int) bool {
+		activeI := background.IsActiveStatus(tasks[i].Status)
+		activeJ := background.IsActiveStatus(tasks[j].Status)
+		if activeI != activeJ {
+			return activeI
+		}
+		return tasks[i].StartedAt.After(tasks[j].StartedAt)
+	})
+	active := 0
+	for _, task := range tasks {
+		if background.IsActiveStatus(task.Status) {
+			active++
+		}
+		label := firstNonEmpty(task.Description, task.Prompt, task.Command, task.ID)
+		value := firstNonEmpty(task.Status, "unknown") + " · " + firstNonEmpty(task.Kind, "shell")
+		description := task.ID
+		if !task.StartedAt.IsZero() {
+			description += " · " + task.StartedAt.Local().Format("2006-01-02 15:04:05")
+		}
+		item := tui.CommandViewItem{
+			Label:       trimSingleLine(label, 72),
+			Value:       value,
+			Description: description,
+			Command:     tuiNamedSlashCommand("/tasks status", task.ID),
+		}
+		if background.IsActiveStatus(task.Status) {
+			item.SecondaryLabel = "stop"
+			item.SecondaryCommand = tuiNamedSlashCommand("/tasks stop", task.ID)
+			item.SecondaryKey = "x"
+		}
+		tab.Items = append(tab.Items, item)
+	}
+	tab.Lines = []string{fmt.Sprintf("%d active · %d total", active, len(tasks))}
+	if len(tab.Items) == 0 {
+		tab.Lines = []string{"No background tasks for this session."}
+	}
+	return tab
+}
+
+func (a *App) tuiTeamsCommandTab() tui.CommandViewTab {
+	tab := tui.CommandViewTab{Title: "Teams", RefreshCommand: "/team"}
+	teams, err := team.NewStore(a.Config.ConfigHome).List()
+	if err != nil {
+		tab.Lines = []string{"Teams unavailable: " + err.Error()}
+		return tab
+	}
+	active := 0
+	for _, item := range teams {
+		if strings.EqualFold(item.Status, "running") {
+			active++
+		}
+		tab.Items = append(tab.Items, tui.CommandViewItem{
+			Label:            firstNonEmpty(item.Name, item.ID),
+			Value:            fmt.Sprintf("%s · %d tasks", firstNonEmpty(item.Status, "unknown"), len(item.Tasks)),
+			Description:      item.ID,
+			Command:          tuiNamedSlashCommand("/team status", item.ID),
+			SecondaryLabel:   "logs",
+			SecondaryCommand: tuiNamedSlashCommand("/team logs", item.ID),
+			SecondaryKey:     "l",
+		})
+	}
+	tab.Lines = []string{fmt.Sprintf("%d running · %d total", active, len(teams))}
+	if len(tab.Items) == 0 {
+		tab.Lines = []string{"No teams created."}
+	}
+	return tab
+}
+
+func (a *App) tuiSchedulesCommandTab() tui.CommandViewTab {
+	tab := tui.CommandViewTab{Title: "Schedules", RefreshCommand: "/cron"}
+	entries, err := cron.NewStore(a.Config.ConfigHome).List()
+	if err != nil {
+		tab.Lines = []string{"Schedules unavailable: " + err.Error()}
+		return tab
+	}
+	enabled := 0
+	now := time.Now().UTC()
+	for _, entry := range entries {
+		state := "disabled"
+		secondaryLabel := "enable"
+		secondaryCommand := tuiNamedSlashCommand("/cron enable", entry.ID)
+		if entry.Enabled {
+			enabled++
+			state = "enabled"
+			secondaryLabel = "disable"
+			secondaryCommand = tuiNamedSlashCommand("/cron disable", entry.ID)
+		}
+		if cron.IsDue(entry, now) {
+			state = "due"
+		}
+		tab.Items = append(tab.Items, tui.CommandViewItem{
+			Label:            trimSingleLine(firstNonEmpty(entry.Description, entry.Prompt, entry.ID), 72),
+			Value:            entry.Schedule + " · " + state,
+			Description:      fmt.Sprintf("%s · %d runs", entry.ID, entry.RunCount),
+			Command:          tuiNamedSlashCommand("/cron show", entry.ID),
+			SecondaryLabel:   secondaryLabel,
+			SecondaryCommand: secondaryCommand,
+		})
+	}
+	tab.Lines = []string{fmt.Sprintf("%d enabled · %d total", enabled, len(entries))}
+	if len(tab.Items) == 0 {
+		tab.Lines = []string{"No schedules configured."}
+	}
+	return tab
+}
+
+func (a *App) tuiTaskInformation(id string, logLimit int64, logsOnly bool) (tui.InformationView, error) {
+	store := background.NewStore(a.Config.ConfigHome)
+	task, err := store.Status(id)
+	if err != nil {
+		return tui.InformationView{}, err
+	}
+	log, logErr := store.Logs(id, logLimit)
+	if logsOnly && logErr != nil {
+		return tui.InformationView{}, logErr
+	}
+	lines := []string{tuiInformationLine("ID", task.ID)}
+	if !logsOnly {
+		lines = append(lines,
+			tuiInformationLine("Status", firstNonEmpty(task.Status, "unknown")),
+			tuiInformationLine("Type", firstNonEmpty(task.Kind, "shell")),
+			tuiInformationLine("Command", trimSingleLine(task.Command, 160)),
+		)
+		if task.Description != "" {
+			lines = append(lines, tuiInformationLine("Description", trimSingleLine(task.Description, 160)))
+		}
+		if task.SessionID != "" {
+			lines = append(lines, tuiInformationLine("Session", task.SessionID))
+		}
+		if task.PID > 0 {
+			lines = append(lines, tuiInformationLine("PID", strconv.Itoa(task.PID)))
+		}
+		if !task.StartedAt.IsZero() {
+			lines = append(lines, tuiInformationLine("Started", task.StartedAt.Local().Format(time.RFC3339)))
+		}
+		if task.CompletedAt != nil {
+			lines = append(lines, tuiInformationLine("Completed", task.CompletedAt.Local().Format(time.RFC3339)))
+		}
+		if task.ExitCode != nil {
+			lines = append(lines, tuiInformationLine("Exit code", strconv.Itoa(*task.ExitCode)))
+		}
+		if task.Error != "" {
+			lines = append(lines, tuiInformationLine("Error", trimSingleLine(task.Error, 160)))
+		}
+	}
+	lines = append(lines, "", "Output")
+	if logErr != nil {
+		lines = append(lines, "Output unavailable: "+logErr.Error())
+	} else if strings.TrimSpace(log) == "" {
+		lines = append(lines, "No output yet.")
+	} else {
+		lines = append(lines, strings.Split(strings.TrimRight(log, "\n"), "\n")...)
+	}
+	return tui.InformationView{Title: "Task", Lines: lines}, nil
+}
+
+func (a *App) tuiTeamInformation(id string, refresh bool, includeLogs bool, limit int64) (tui.InformationView, error) {
+	teamStore := team.NewStore(a.Config.ConfigHome)
+	taskStore := background.NewStore(a.Config.ConfigHome)
+	item, err := teamStore.Get(id)
+	if err != nil {
+		return tui.InformationView{}, err
+	}
+	var tasks []background.Task
+	var missing []string
+	if refresh {
+		item, tasks, missing, err = refreshTeamStatus(teamStore, taskStore, id)
+	} else {
+		tasks, missing = loadTeamTasks(taskStore, item.TaskIDs, false)
+	}
+	if err != nil {
+		return tui.InformationView{}, err
+	}
+	lines := []string{
+		tuiInformationLine("ID", item.ID),
+		tuiInformationLine("Name", item.Name),
+		tuiInformationLine("Status", item.Status),
+		tuiInformationLine("Tasks", strconv.Itoa(len(item.Tasks))),
+	}
+	for _, task := range tasks {
+		lines = append(lines, fmt.Sprintf("  %s  %s  %s", task.ID, firstNonEmpty(task.Status, "unknown"), trimSingleLine(firstNonEmpty(task.Description, task.Prompt, task.Command), 96)))
+	}
+	for _, taskID := range missing {
+		lines = append(lines, "  "+taskID+"  missing")
+	}
+	if includeLogs {
+		for _, entry := range readTeamLogs(taskStore, item, limit) {
+			lines = append(lines, "", "Output · "+entry.TaskID)
+			switch {
+			case entry.Error != "":
+				lines = append(lines, "Output unavailable: "+entry.Error)
+			case strings.TrimSpace(entry.Log) == "":
+				lines = append(lines, "No output yet.")
+			default:
+				lines = append(lines, strings.Split(strings.TrimRight(entry.Log, "\n"), "\n")...)
+			}
+		}
+	}
+	return tui.InformationView{Title: "Team", Lines: lines}, nil
+}
+
+func (a *App) tuiCronInformation(id string) (tui.InformationView, error) {
+	entry, err := cron.NewStore(a.Config.ConfigHome).Get(id)
+	if err != nil {
+		return tui.InformationView{}, err
+	}
+	state := "disabled"
+	if entry.Enabled {
+		state = "enabled"
+	}
+	lines := []string{
+		tuiInformationLine("ID", entry.ID),
+		tuiInformationLine("Schedule", entry.Schedule),
+		tuiInformationLine("Status", state),
+		tuiInformationLine("Prompt", trimSingleLine(entry.Prompt, 200)),
+		tuiInformationLine("Runs", strconv.Itoa(entry.RunCount)),
+	}
+	if entry.Description != "" {
+		lines = append(lines, tuiInformationLine("Description", trimSingleLine(entry.Description, 200)))
+	}
+	if entry.LastRunAt != nil {
+		lines = append(lines, tuiInformationLine("Last run", entry.LastRunAt.Local().Format(time.RFC3339)))
+	}
+	return tui.InformationView{Title: "Schedule", Lines: lines}, nil
+}
+
+func tuiInformationLine(label string, value string) string {
+	return fmt.Sprintf("%-14s%s", strings.TrimSpace(label), strings.TrimSpace(value))
+}
+
+func tuiRuntimeRefreshTab(line string) (int, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 2 || tuiSlashRequestsJSON(fields[1:]) {
+		return 0, false
+	}
+	command := fields[0]
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
+	}
+	action := fields[1]
+	switch command {
+	case "/background", "/tasks", "/bashes":
+		switch normalizeBackgroundAction(action) {
+		case "run", "heartbeat", "stop", "restart", "prune", "supervise":
+			return 0, true
+		}
+	case "/team":
+		switch normalizeTeamAction(action) {
+		case "create", "delete":
+			return 1, true
+		}
+	case "/cron":
+		switch normalizeCronAction(action) {
+		case "create", "delete", "enable", "disable", "mark-run", "run-due":
+			return 2, true
+		}
+	}
+	return 0, false
 }
 
 func (a *App) tuiDiffView(req diffRequest) (tui.DiffView, error) {

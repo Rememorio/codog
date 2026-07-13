@@ -661,6 +661,92 @@ func TestTUISlashHandlerOpensExtensionManagementViews(t *testing.T) {
 	require.Contains(t, jsonList.Output, `"kind": "skills"`)
 }
 
+func TestTUISlashHandlerOpensRuntimeManagementViews(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell command")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	sessions := session.NewWorkspaceStore(configHome, workspace)
+	current, err := sessions.Open("runtime-session")
+	require.NoError(t, err)
+
+	taskStore := background.NewStore(configHome)
+	task, err := taskStore.RunWithOptions("printf runtime-output", workspace, background.RunOptions{
+		Kind:        "agent",
+		SessionID:   current.ID,
+		Description: "Review runtime changes",
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		log, logErr := taskStore.Logs(task.ID, 1024)
+		return logErr == nil && strings.Contains(log, "runtime-output")
+	}, 2*time.Second, 20*time.Millisecond)
+
+	teamEntry, err := team.NewStore(configHome).Create("reviewers", []team.TaskSpec{{
+		Prompt: "Review runtime changes", TaskID: task.ID,
+	}}, []string{task.ID})
+	require.NoError(t, err)
+	schedule, err := cron.NewStore(configHome).Create("@daily", "Review pending changes", "Daily review")
+	require.NoError(t, err)
+
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  sessions,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+	handler := app.tuiSlashHandler(current, newTUIModeState(app.Config))
+
+	for _, test := range []struct {
+		command string
+		tab     int
+		item    string
+	}{
+		{command: "/tasks", tab: 0, item: "Review runtime changes"},
+		{command: "/team", tab: 1, item: "reviewers"},
+		{command: "/cron", tab: 2, item: "Daily review"},
+	} {
+		result, err := handler(context.Background(), test.command)
+		require.NoError(t, err, test.command)
+		require.NotNil(t, result.CommandView, test.command)
+		require.Equal(t, test.tab, result.CommandView.SelectedTab, test.command)
+		require.Contains(t, commandViewItemLabels(result.CommandView.Tabs[test.tab].Items), test.item, test.command)
+	}
+
+	taskDetail, err := handler(context.Background(), "/tasks status "+task.ID)
+	require.NoError(t, err)
+	require.NotNil(t, taskDetail.Information)
+	require.Contains(t, strings.Join(taskDetail.Information.Lines, "\n"), "runtime-output")
+
+	teamDetail, err := handler(context.Background(), "/team status "+teamEntry.ID)
+	require.NoError(t, err)
+	require.NotNil(t, teamDetail.Information)
+	require.Contains(t, strings.Join(teamDetail.Information.Lines, "\n"), "reviewers")
+
+	scheduleDetail, err := handler(context.Background(), "/cron show "+schedule.ID)
+	require.NoError(t, err)
+	require.NotNil(t, scheduleDetail.Information)
+	require.Contains(t, strings.Join(scheduleDetail.Information.Lines, "\n"), "Review pending changes")
+
+	disabled, err := handler(context.Background(), "/cron disable "+schedule.ID)
+	require.NoError(t, err)
+	require.NotNil(t, disabled.CommandView)
+	require.Equal(t, 2, disabled.CommandView.SelectedTab)
+	require.Contains(t, commandViewItemByLabel(t, disabled.CommandView.Tabs[2].Items, "Daily review").Value, "disabled")
+
+	jsonTask, err := handler(context.Background(), "/tasks status "+task.ID+" --json")
+	require.NoError(t, err)
+	require.Nil(t, jsonTask.Information)
+	require.Contains(t, jsonTask.Output, `"kind": "background"`)
+
+	jsonSchedule, err := handler(context.Background(), "/cron show "+schedule.ID+" --json")
+	require.NoError(t, err)
+	require.Nil(t, jsonSchedule.Information)
+	require.Contains(t, jsonSchedule.Output, `"action": "show"`)
+}
+
 func diffFilePaths(files []tui.DiffFile) []string {
 	paths := make([]string, 0, len(files))
 	for _, file := range files {
@@ -32672,6 +32758,31 @@ func TestCronCommandAndSlash(t *testing.T) {
 	require.Equal(t, 1, listed.Count)
 	require.Len(t, listed.Entries, 1)
 	require.Equal(t, created.Entry.ID, listed.Entries[0].ID)
+	out.Reset()
+
+	require.NoError(t, app.Cron([]string{"show", created.Entry.ID, "--json"}))
+	var shown cronCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &shown))
+	require.Equal(t, "show", shown.Action)
+	require.Equal(t, created.Entry.ID, shown.Entry.ID)
+	out.Reset()
+	require.NoError(t, app.Cron([]string{"get", created.Entry.ID}))
+	require.Contains(t, out.String(), "Action           show")
+	require.Contains(t, out.String(), created.Entry.ID)
+	out.Reset()
+
+	require.NoError(t, app.Cron([]string{"disable", created.Entry.ID, "--json"}))
+	var disabled cronCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &disabled))
+	require.Equal(t, "disable", disabled.Action)
+	require.False(t, disabled.Entry.Enabled)
+	out.Reset()
+
+	require.NoError(t, app.Cron([]string{"enable", created.Entry.ID, "--json"}))
+	var enabled cronCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &enabled))
+	require.Equal(t, "enable", enabled.Action)
+	require.True(t, enabled.Entry.Enabled)
 	out.Reset()
 
 	configPath := filepath.Join(t.TempDir(), "config.json")

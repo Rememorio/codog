@@ -22,6 +22,17 @@ func TestStoreCreateListDeleteCronEntries(t *testing.T) {
 	require.Len(t, entries, 1)
 	require.Equal(t, entry.ID, entries[0].ID)
 
+	loaded, err := store.Get(entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, entry.ID, loaded.ID)
+	disabled, err := store.SetEnabled(entry.ID, false)
+	require.NoError(t, err)
+	require.False(t, disabled.Enabled)
+	require.False(t, IsDue(disabled, time.Now().UTC()))
+	enabled, err := store.SetEnabled(entry.ID, true)
+	require.NoError(t, err)
+	require.True(t, enabled.Enabled)
+
 	deleted, err := store.Delete(entry.ID)
 	require.NoError(t, err)
 	require.Equal(t, entry.ID, deleted.ID)
@@ -38,6 +49,10 @@ func TestStoreRejectsInvalidCronInput(t *testing.T) {
 	_, err = store.Create("* * * * *", "", "")
 	require.Error(t, err)
 	_, err = store.Delete("../bad")
+	require.Error(t, err)
+	_, err = store.Get("../bad")
+	require.Error(t, err)
+	_, err = store.SetEnabled("missing", true)
 	require.Error(t, err)
 }
 
