@@ -157,6 +157,66 @@ expect eof
 	require.NotContains(t, plain, "Mode: plan")
 }
 
+func TestRealBinaryTUIOpensInteractiveSlashControlViews(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	runAcceptanceGit(t, workspace, "init")
+	runAcceptanceGit(t, workspace, "config", "user.email", "codog@example.test")
+	runAcceptanceGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("before\n"), 0o644))
+	runAcceptanceGit(t, workspace, "add", "tracked.txt")
+	runAcceptanceGit(t, workspace, "commit", "-m", "initial")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("after\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "staged.txt"), []byte("staged\n"), 0o644))
+	runAcceptanceGit(t, workspace, "add", "staged.txt")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "untracked.txt"), []byte("untracked\n"), 0o644))
+
+	output := runExpectCodog(t, bin, workspace, configHome, nil, `
+set timeout 10
+spawn -noecho $env(CODOG_TEST_BIN) --model glm52 --permission-mode prompt
+expect "codog"
+send "/model\r"
+expect "model picker"
+send "\033"
+after 300
+send "/permissions\r"
+expect " permissions "
+expect "accept edits"
+send "\033\[B\r"
+expect "Mode: accept edits"
+expect "accept edits on"
+send "/context\r"
+expect "context"
+expect "Model"
+expect "glm52"
+send "\033"
+after 300
+send "/diff\r"
+expect "tracked.txt"
+expect "untracked.txt"
+send "\033\[C"
+expect "staged.txt"
+send "\033"
+after 300
+send "/todos\r"
+expect "todos"
+send "\033"
+after 300
+send "/exit\r"
+expect eof
+`)
+
+	plain := ansi.Strip(output)
+	require.Contains(t, plain, "model picker")
+	require.Contains(t, plain, "Mode: accept edits")
+	require.Contains(t, plain, "tracked.txt")
+	require.Contains(t, plain, "staged.txt")
+	require.Contains(t, plain, "untracked.txt")
+	require.NotContains(t, plain, "UNTRACKED .codog")
+	require.NotContains(t, plain, "· model=glm52")
+}
+
 func TestRealBinaryInteractiveStartupPersistsWorkspaceTrustWithTTY(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()
@@ -1378,6 +1438,17 @@ func runCodogWithExtraEnv(t *testing.T, bin string, workspace string, configHome
 		}
 	}
 	return commandResult{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}
+}
+
+func runAcceptanceGit(t *testing.T, workspace string, args ...string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is required for this acceptance test")
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = workspace
+	data, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(data))
 }
 
 func runExpectCodog(t *testing.T, bin string, workspace string, configHome string, extraEnv []string, script string) string {

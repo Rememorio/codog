@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -2258,6 +2259,163 @@ func TestBareResumeOpensEmbeddedPickerAndResumesSelection(t *testing.T) {
 	updated, _ = m.Update(done)
 	m = updated.(model)
 	require.Contains(t, m.View(), "target prompt")
+}
+
+func TestSlashInteractiveViewsOpenWithoutTranscriptNoise(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		result SlashResult
+		assert func(*testing.T, model)
+	}{
+		{
+			name:   "model",
+			input:  "/model",
+			result: SlashResult{Handled: true, OpenModelPicker: true},
+			assert: func(t *testing.T, m model) {
+				require.True(t, m.modelPicker)
+				require.Contains(t, m.View(), "model picker")
+			},
+		},
+		{
+			name:  "diff",
+			input: "/diff",
+			result: SlashResult{Handled: true, Diff: &DiffView{Sources: []DiffSource{{
+				Name:  "Unstaged changes",
+				Files: []DiffFile{{Path: "main.go", Status: "modified", Summary: "+1 -1", Diff: "-old\n+new"}},
+			}}}},
+			assert: func(t *testing.T, m model) {
+				require.True(t, m.diffDialog)
+				require.Contains(t, m.View(), "main.go")
+			},
+		},
+		{
+			name:   "information",
+			input:  "/context",
+			result: SlashResult{Handled: true, Information: &InformationView{Title: "Context", Lines: []string{"Model glm52", "Tokens 42"}}},
+			assert: func(t *testing.T, m model) {
+				require.NotNil(t, m.information)
+				require.Contains(t, m.View(), "Model glm52")
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			m := newModel(context.Background(), newPromptTextarea(test.input), nil, nil)
+			m.modelOptions = []string{"glm52", "sonnet"}
+			m.selectModel = func(context.Context, string) (RuntimeControlResult, error) {
+				return RuntimeControlResult{}, nil
+			}
+			m.slash = func(context.Context, string) (SlashResult, error) {
+				return test.result, nil
+			}
+
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = updated.(model)
+			require.NotNil(t, cmd)
+			updated, _ = m.Update(cmd())
+			m = updated.(model)
+
+			test.assert(t, m)
+			require.NotContains(t, m.View(), test.input)
+		})
+	}
+}
+
+func TestSlashPermissionsSelectsSessionMode(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("/permissions"), nil, nil)
+	selected := ""
+	modeLabel := "default"
+	m.readModeLabel = func() string { return modeLabel }
+	m.selectPermissionMode = func(_ context.Context, mode string) (RuntimeControlResult, error) {
+		selected = mode
+		modeLabel = mode
+		return RuntimeControlResult{Title: "Permissions", Status: "permissions updated", Lines: []string{"Mode: " + mode}}, nil
+	}
+	m.slash = func(context.Context, string) (SlashResult, error) {
+		return SlashResult{Handled: true, PermissionSettings: &PermissionSettings{
+			Modes: []PermissionModeOption{
+				{Name: "default", Label: "default", Current: true},
+				{Name: "accept edits", Label: "accept edits", Description: "Apply workspace edits"},
+			},
+			Allow: []string{"read_file"},
+		}}, nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.NotNil(t, m.permissionSettings)
+	require.Contains(t, m.View(), "read_file")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.Equal(t, "accept edits", selected)
+	require.Equal(t, "accept edits", m.modeLabel)
+	require.Nil(t, m.permissionSettings)
+	require.Contains(t, m.View(), "permissions updated")
+}
+
+func TestRuntimeControlDoesNotResetTemporaryPermissionMode(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.modeLabel = "accept edits"
+	m.readModeLabel = func() string { return "default" }
+
+	updated, _ := m.Update(runtimeControlDoneMsg{Result: RuntimeControlResult{Status: "fast mode on"}})
+	m = updated.(model)
+
+	require.Equal(t, "accept edits", m.modeLabel)
+}
+
+func TestSlashTodosLoadsInteractivePanel(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("/todos"), nil, nil)
+	m.todos = func(context.Context) ([]TodoItem, error) {
+		return []TodoItem{{ID: "1", Content: "Close the loop", Status: "in_progress"}}, nil
+	}
+	m.slash = func(context.Context, string) (SlashResult, error) {
+		return SlashResult{Handled: true, OpenTodos: true}, nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	updated, cmd = m.Update(cmd())
+	m = updated.(model)
+	require.True(t, m.todosOpen)
+	require.NotNil(t, cmd)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.Contains(t, m.View(), "Close the loop")
+	for _, entry := range m.transcript {
+		require.NotEqual(t, "/todos", strings.TrimSpace(entry.Text))
+	}
+}
+
+func TestInformationViewScrollsAndCloses(t *testing.T) {
+	lines := make([]string, 20)
+	for index := range lines {
+		lines[index] = fmt.Sprintf("line %02d", index+1)
+	}
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.height = 12
+	m.openInformation(InformationView{Title: "Context", Lines: lines})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	m = updated.(model)
+	require.Greater(t, m.informationOffset, 0)
+	require.Contains(t, m.View(), "/20")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.Nil(t, m.information)
 }
 
 func TestHistoryNavigationFromEmptyComposer(t *testing.T) {

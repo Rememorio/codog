@@ -37772,7 +37772,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		}
 		return response, err
 	}
-	slashHandler := a.tuiSlashHandler(sess)
+	slashHandler := a.tuiSlashHandler(sess, modeState)
 	loopErr := tui.Shell(ctx, tui.ShellOptions{
 		Candidates:              a.slashMenuCandidates(sess.ID),
 		FileCandidates:          fileCandidates,
@@ -37802,6 +37802,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		CurrentModel: strings.TrimSpace(a.Config.Model),
 		SelectModel: func(ctx context.Context, model string) (tui.RuntimeControlResult, error) {
 			return a.selectTUIModel(ctx, model)
+		},
+		SelectPermissionMode: func(ctx context.Context, mode string) (tui.RuntimeControlResult, error) {
+			return a.selectTUIPermissionMode(ctx, mode, modeState)
 		},
 		Theme: effectiveTUITheme(a.Config.Theme),
 		SelectTheme: func(ctx context.Context, theme string) (tui.RuntimeControlResult, error) {
@@ -37906,8 +37909,11 @@ func resumeSessionChoices(sessions []session.Session) []tui.SessionChoice {
 	return choices
 }
 
-func (a *App) tuiSlashHandler(sess *session.Session) tui.SlashFunc {
+func (a *App) tuiSlashHandler(sess *session.Session, modeState *tuiModeState) tui.SlashFunc {
 	return func(ctx context.Context, line string) (tui.SlashResult, error) {
+		if result, handled, err := a.tuiInteractiveSlashResult(line, sess, modeState); handled {
+			return result, err
+		}
 		if isBareTUIResumeCommand(line) {
 			choices, err := a.tuiResumeSessionChoices(sess.ID)
 			if err != nil {
@@ -37941,6 +37947,52 @@ func (a *App) tuiSlashHandler(sess *session.Session) tui.SlashFunc {
 		}
 		return result, nil
 	}
+}
+
+func (a *App) tuiInteractiveSlashResult(line string, sess *session.Session, modeState *tuiModeState) (tui.SlashResult, bool, error) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return tui.SlashResult{}, false, nil
+	}
+	command := fields[0]
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
+	}
+	args := fields[1:]
+	switch command {
+	case "/model":
+		if len(args) == 0 {
+			return tui.SlashResult{Handled: true, OpenModelPicker: true}, true, nil
+		}
+	case "/todos":
+		if len(args) == 0 {
+			return tui.SlashResult{Handled: true, OpenTodos: true}, true, nil
+		}
+	case "/permissions":
+		if len(args) == 0 {
+			settings := a.tuiPermissionSettings(modeState)
+			return tui.SlashResult{Handled: true, PermissionSettings: &settings}, true, nil
+		}
+	case "/context":
+		if len(args) == 0 {
+			view := a.tuiContextInformation(sess)
+			return tui.SlashResult{Handled: true, Information: &view}, true, nil
+		}
+	case "/diff":
+		req, err := parseDiffArgs(args)
+		if err != nil {
+			return tui.SlashResult{Handled: true}, true, err
+		}
+		if req.Format == "json" {
+			return tui.SlashResult{}, false, nil
+		}
+		view, err := a.tuiDiffView(req)
+		if err != nil {
+			return tui.SlashResult{Handled: true}, true, err
+		}
+		return tui.SlashResult{Handled: true, Diff: &view}, true, nil
+	}
+	return tui.SlashResult{}, false, nil
 }
 
 func tuiSlashMayChangeSession(line string) bool {
@@ -38105,6 +38157,236 @@ func tuiSessionEntries(sess *session.Session) []tui.Entry {
 		flushText()
 	}
 	return entries
+}
+
+func (a *App) tuiPermissionSettings(modeState *tuiModeState) tui.PermissionSettings {
+	settings := tui.PermissionSettings{
+		Allow: append([]string(nil), a.Config.PermissionRules.Allow...),
+		Ask:   append([]string(nil), a.Config.PermissionRules.Ask...),
+		Deny:  append([]string(nil), a.Config.PermissionRules.Deny...),
+	}
+	settings.Deny = addRuleValues(settings.Deny, a.Config.PermissionRules.DeniedTools)
+	if modeState == nil {
+		modeState = newTUIModeState(a.Config)
+	}
+	for index, option := range modeState.options {
+		settings.Modes = append(settings.Modes, tui.PermissionModeOption{
+			Name:        option.Label,
+			Label:       option.Label,
+			Description: tuiPermissionModeDescription(option),
+			Current:     index == modeState.index,
+		})
+	}
+	return settings
+}
+
+func tuiPermissionModeDescription(option tuiModeOption) string {
+	if option.PlanMode {
+		return "Plan the work without modifying files or running write-capable tools"
+	}
+	switch option.PermissionMode {
+	case "read-only":
+		return "Read and search without modifying the workspace"
+	case "workspace-write":
+		return "Apply edits inside the workspace and ask for broader access"
+	case "allow":
+		return "Allow tool calls without confirmation"
+	case "danger-full-access":
+		return "Allow unrestricted local tool access"
+	default:
+		return "Ask before tool calls that require approval"
+	}
+}
+
+func (a *App) tuiContextInformation(sess *session.Session) tui.InformationView {
+	report := a.buildContextReport(sess)
+	var out bytes.Buffer
+	contextview.RenderText(&out, report)
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) > 0 && strings.EqualFold(strings.TrimSpace(lines[0]), "context") {
+		lines = lines[1:]
+	}
+	return tui.InformationView{Title: "Context", Lines: lines}
+}
+
+func (a *App) tuiDiffView(req diffRequest) (tui.DiffView, error) {
+	if req.Staged || len(req.Paths) > 0 {
+		name := "Unstaged changes"
+		subtitle := "git diff"
+		if req.Staged {
+			name = "Staged changes"
+			subtitle = "git diff --staged"
+		}
+		source, err := a.tuiDiffSource(name, subtitle, req)
+		if err != nil {
+			return tui.DiffView{}, err
+		}
+		return tui.DiffView{Sources: []tui.DiffSource{source}}, nil
+	}
+
+	unstaged, err := a.tuiDiffSource("Unstaged changes", "git diff", diffRequest{Format: "text"})
+	if err != nil {
+		return tui.DiffView{}, err
+	}
+	untracked, err := a.tuiUntrackedDiffFiles()
+	if err != nil {
+		return tui.DiffView{}, err
+	}
+	unstaged.Files = append(unstaged.Files, untracked...)
+	staged, err := a.tuiDiffSource("Staged changes", "git diff --staged", diffRequest{Format: "text", Staged: true})
+	if err != nil {
+		return tui.DiffView{}, err
+	}
+	sources := []tui.DiffSource{}
+	if len(unstaged.Files) > 0 {
+		sources = append(sources, unstaged)
+	}
+	if len(staged.Files) > 0 {
+		sources = append(sources, staged)
+	}
+	if len(sources) == 0 {
+		sources = append(sources, tui.DiffSource{Name: "Uncommitted changes", Subtitle: "working tree clean"})
+	}
+	return tui.DiffView{Sources: sources}, nil
+}
+
+func (a *App) tuiDiffSource(name string, subtitle string, req diffRequest) (tui.DiffSource, error) {
+	report, err := a.buildDiffReport(req)
+	if err != nil {
+		return tui.DiffSource{}, err
+	}
+	source := tui.DiffSource{Name: name, Subtitle: subtitle}
+	for _, path := range report.ChangedFiles {
+		patch, err := gitops.DiffWithOptions(a.Workspace, gitops.DiffOptions{Staged: req.Staged, Paths: []string{path}})
+		if err != nil {
+			return tui.DiffSource{}, err
+		}
+		source.Files = append(source.Files, tui.DiffFile{
+			Path:    path,
+			Status:  tuiDiffStatus(patch),
+			Summary: tuiDiffSummary(patch),
+			Diff:    patch,
+		})
+	}
+	return source, nil
+}
+
+func tuiDiffStatus(patch string) string {
+	switch {
+	case strings.Contains(patch, "\nnew file mode "):
+		return "added"
+	case strings.Contains(patch, "\ndeleted file mode "):
+		return "deleted"
+	case strings.Contains(patch, "\nrename from "):
+		return "renamed"
+	default:
+		return "modified"
+	}
+}
+
+func tuiDiffSummary(patch string) string {
+	added, removed := 0, 0
+	for _, line := range strings.Split(patch, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
+			added++
+		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
+			removed++
+		}
+	}
+	return fmt.Sprintf("+%d -%d", added, removed)
+}
+
+func (a *App) tuiUntrackedDiffFiles() ([]tui.DiffFile, error) {
+	raw, err := gitops.Run(a.Workspace, "status", "--short", "--branch", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	status := buildGitStatusReport(raw)
+	files := []tui.DiffFile{}
+	for _, entry := range status.Entries {
+		if entry.Code != "??" {
+			continue
+		}
+		path := decodeGitStatusPath(entry.Path)
+		if path == ".codog" || strings.HasPrefix(filepath.ToSlash(path), ".codog/") {
+			continue
+		}
+		preview, lines := a.tuiUntrackedPreview(path)
+		files = append(files, tui.DiffFile{
+			Path:    path,
+			Status:  "untracked",
+			Summary: fmt.Sprintf("+%d", lines),
+			Diff:    preview,
+		})
+	}
+	return files, nil
+}
+
+func decodeGitStatusPath(path string) string {
+	path = strings.TrimSpace(path)
+	if strings.HasPrefix(path, "\"") {
+		if decoded, err := strconv.Unquote(path); err == nil {
+			return decoded
+		}
+	}
+	return path
+}
+
+func (a *App) tuiUntrackedPreview(path string) (string, int) {
+	const maxPreviewBytes = 16 * 1024
+	workspace, err := filepath.Abs(a.Workspace)
+	if err != nil {
+		return "(preview unavailable)", 0
+	}
+	target, err := filepath.Abs(filepath.Join(workspace, filepath.FromSlash(path)))
+	if err != nil {
+		return "(preview unavailable)", 0
+	}
+	relative, err := filepath.Rel(workspace, target)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "(preview unavailable)", 0
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		return "(preview unavailable)", 0
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		destination, err := os.Readlink(target)
+		if err != nil {
+			return "(symlink preview unavailable)", 0
+		}
+		return "symlink: " + path + " -> " + destination, 0
+	}
+	if !info.Mode().IsRegular() {
+		return "(preview unavailable for non-regular file)", 0
+	}
+	file, err := os.Open(target)
+	if err != nil {
+		return "(preview unavailable)", 0
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxPreviewBytes+1))
+	if err != nil || !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
+		return "(binary or unreadable file)", 0
+	}
+	truncated := len(data) > maxPreviewBytes
+	if truncated {
+		data = data[:maxPreviewBytes]
+	}
+	content := strings.TrimSuffix(string(data), "\n")
+	lineCount := 0
+	if content != "" {
+		lineCount = strings.Count(content, "\n") + 1
+	}
+	lines := []string{"new file: " + path}
+	for _, line := range strings.Split(content, "\n") {
+		lines = append(lines, "+"+line)
+	}
+	if truncated {
+		lines = append(lines, "... preview truncated")
+	}
+	return strings.Join(lines, "\n"), lineCount
 }
 
 func (a *App) tuiModelOptions() []string {
@@ -39071,6 +39353,19 @@ func (s *tuiModeState) Cycle() string {
 	return s.Label()
 }
 
+func (s *tuiModeState) Select(label string) bool {
+	if s == nil {
+		return false
+	}
+	for index, option := range s.options {
+		if strings.EqualFold(option.Label, strings.TrimSpace(label)) {
+			s.index = index
+			return true
+		}
+	}
+	return false
+}
+
 func (s *tuiModeState) Sync(cfg config.Config) {
 	if s == nil {
 		return
@@ -39087,6 +39382,31 @@ func (s *tuiModeState) Apply(cfg *config.Config) {
 	option := s.options[s.index]
 	cfg.PermissionMode = option.PermissionMode
 	cfg.PlanMode = option.PlanMode
+}
+
+func (a *App) selectTUIPermissionMode(ctx context.Context, selected string, modeState *tuiModeState) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	if modeState == nil || !modeState.Select(selected) {
+		return tui.RuntimeControlResult{}, fmt.Errorf("unknown interactive permission mode %q", selected)
+	}
+	previousMode := a.Config.PermissionMode
+	previousPlan := a.Config.PlanMode
+	modeState.Apply(&a.Config)
+	lines := []string{"Mode: " + modeState.Label()}
+	if previousMode != a.Config.PermissionMode || previousPlan != a.Config.PlanMode {
+		previous := previousMode
+		if previousPlan {
+			previous = "plan"
+		}
+		lines = append(lines, "Previous: "+previous)
+	}
+	return tui.RuntimeControlResult{
+		Title:  "Permissions",
+		Status: "permissions updated",
+		Lines:  lines,
+	}, nil
 }
 
 type lineAnswerReader struct {

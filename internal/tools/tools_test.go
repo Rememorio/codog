@@ -5342,6 +5342,10 @@ func TestRunTaskPacketToolCreatesPromptTask(t *testing.T) {
 		logs, err := background.NewStore(configHome).Logs(payload.TaskID, 4096)
 		return err == nil && strings.Contains(logs, "shim:prompt") && strings.Contains(logs, "Update docs")
 	}, 20*time.Second, 50*time.Millisecond)
+	require.Eventually(t, func() bool {
+		task, err := background.NewStore(configHome).Status(payload.TaskID)
+		return err == nil && task.Status == "completed"
+	}, 2*time.Second, 20*time.Millisecond)
 }
 
 func TestRunTaskPacketToolAcceptsRichPacket(t *testing.T) {

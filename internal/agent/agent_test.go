@@ -441,7 +441,7 @@ func TestTUISlashHandlerOffersPickerAndSynchronizesResumedSession(t *testing.T) 
 		Out:       io.Discard,
 		Err:       io.Discard,
 	}
-	handler := app.tuiSlashHandler(current)
+	handler := app.tuiSlashHandler(current, newTUIModeState(app.Config))
 
 	picker, err := handler(context.Background(), "/resume")
 	require.NoError(t, err)
@@ -468,6 +468,132 @@ func TestTUISlashHandlerOffersPickerAndSynchronizesResumedSession(t *testing.T) 
 	require.Equal(t, cleared.Session.ID, current.ID)
 	require.Len(t, cleared.Session.Entries, 1)
 	require.NotContains(t, cleared.Session.Entries[0].Text, "target prompt")
+}
+
+func TestTUISlashHandlerOpensInteractiveControlViews(t *testing.T) {
+	workspace := initGitRepo(t)
+	configHome := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("before\n"), 0o644))
+	runGit(t, workspace, "add", "tracked.txt")
+	runGit(t, workspace, "commit", "-m", "initial")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("after\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "staged.txt"), []byte("staged\n"), 0o644))
+	runGit(t, workspace, "add", "staged.txt")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "untracked.txt"), []byte("untracked\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "nested"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "nested", "note.txt"), []byte("nested\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "worker-state.json"), []byte("{}\n"), 0o644))
+
+	store := session.NewWorkspaceStore(configHome, workspace)
+	current, err := store.Open("control-session")
+	require.NoError(t, err)
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "glm52",
+			PermissionMode: "prompt",
+			PermissionRules: config.PermissionRules{
+				Allow: []string{"read_file"},
+				Ask:   []string{"bash"},
+				Deny:  []string{"write_file"},
+			},
+		},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+	modeState := newTUIModeState(app.Config)
+	handler := app.tuiSlashHandler(current, modeState)
+
+	modelResult, err := handler(context.Background(), "/model")
+	require.NoError(t, err)
+	require.True(t, modelResult.OpenModelPicker)
+
+	todosResult, err := handler(context.Background(), "/todos")
+	require.NoError(t, err)
+	require.True(t, todosResult.OpenTodos)
+
+	permissionsResult, err := handler(context.Background(), "/permissions")
+	require.NoError(t, err)
+	require.NotNil(t, permissionsResult.PermissionSettings)
+	require.Contains(t, permissionsResult.PermissionSettings.Allow, "read_file")
+	require.Contains(t, permissionsResult.PermissionSettings.Ask, "bash")
+	require.Contains(t, permissionsResult.PermissionSettings.Deny, "write_file")
+
+	contextResult, err := handler(context.Background(), "/context")
+	require.NoError(t, err)
+	require.NotNil(t, contextResult.Information)
+	require.Equal(t, "Context", contextResult.Information.Title)
+	require.Contains(t, strings.Join(contextResult.Information.Lines, "\n"), "glm52")
+
+	diffResult, err := handler(context.Background(), "/diff")
+	require.NoError(t, err)
+	require.NotNil(t, diffResult.Diff)
+	require.Len(t, diffResult.Diff.Sources, 2)
+	allFiles := []tui.DiffFile{}
+	for _, source := range diffResult.Diff.Sources {
+		allFiles = append(allFiles, source.Files...)
+	}
+	require.ElementsMatch(t, []string{"tracked.txt", "staged.txt", "untracked.txt", "nested/note.txt"}, diffFilePaths(allFiles))
+	require.Equal(t, "modified", diffFileByPath(t, allFiles, "tracked.txt").Status)
+	require.Equal(t, "added", diffFileByPath(t, allFiles, "staged.txt").Status)
+	require.Equal(t, "untracked", diffFileByPath(t, allFiles, "untracked.txt").Status)
+
+	jsonResult, err := handler(context.Background(), "/diff --json")
+	require.NoError(t, err)
+	require.Nil(t, jsonResult.Diff)
+	require.Contains(t, jsonResult.Output, `"kind": "diff"`)
+}
+
+func diffFilePaths(files []tui.DiffFile) []string {
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, file.Path)
+	}
+	return paths
+}
+
+func diffFileByPath(t *testing.T, files []tui.DiffFile, path string) tui.DiffFile {
+	t.Helper()
+	for _, file := range files {
+		if file.Path == path {
+			return file
+		}
+	}
+	t.Fatalf("missing diff file %q", path)
+	return tui.DiffFile{}
+}
+
+func TestSelectTUIPermissionModeUpdatesCurrentSessionOnly(t *testing.T) {
+	app := &App{Config: config.Config{PermissionMode: "prompt"}}
+	state := newTUIModeState(app.Config)
+
+	result, err := app.selectTUIPermissionMode(context.Background(), "accept edits", state)
+
+	require.NoError(t, err)
+	require.Equal(t, "workspace-write", app.Config.PermissionMode)
+	require.False(t, app.Config.PlanMode)
+	require.Equal(t, "accept edits", state.Label())
+	require.Contains(t, result.Lines, "Mode: accept edits")
+}
+
+func TestTUIUntrackedPreviewDoesNotFollowSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires additional privileges on windows")
+	}
+	workspace := t.TempDir()
+	external := filepath.Join(t.TempDir(), "secret.txt")
+	require.NoError(t, os.WriteFile(external, []byte("external secret\n"), 0o600))
+	require.NoError(t, os.Symlink(external, filepath.Join(workspace, "link.txt")))
+	app := &App{Workspace: workspace}
+
+	preview, lines := app.tuiUntrackedPreview("link.txt")
+
+	require.Zero(t, lines)
+	require.Contains(t, preview, "symlink: link.txt ->")
+	require.NotContains(t, preview, "external secret")
 }
 
 func TestResumeSlashDoesNotCreateMissingSession(t *testing.T) {

@@ -110,16 +110,50 @@ type SessionState struct {
 	Candidates []string
 }
 
-// SlashResult is the structured outcome of one local slash command.
-type SlashResult struct {
-	Output         string
-	Handled        bool
-	Session        *SessionState
-	SessionChoices []SessionChoice
+// DiffView is a file-oriented diff browser opened by a slash command.
+type DiffView struct {
+	Sources []DiffSource
 }
 
-// SlashFunc runs one local slash command. Session and SessionChoices let the
-// shell synchronize conversation changes without parsing display text.
+// PermissionModeOption is one session permission mode shown in the interactive
+// permissions panel.
+type PermissionModeOption struct {
+	Name        string
+	Label       string
+	Description string
+	Current     bool
+}
+
+// PermissionSettings describes the current session modes and configured tool
+// rules shown by the interactive permissions panel.
+type PermissionSettings struct {
+	Modes []PermissionModeOption
+	Allow []string
+	Ask   []string
+	Deny  []string
+}
+
+// InformationView is a scrollable read-only panel opened by a slash command.
+type InformationView struct {
+	Title string
+	Lines []string
+}
+
+// SlashResult is the structured outcome of one local slash command.
+type SlashResult struct {
+	Output             string
+	Handled            bool
+	Session            *SessionState
+	SessionChoices     []SessionChoice
+	OpenModelPicker    bool
+	OpenTodos          bool
+	Diff               *DiffView
+	PermissionSettings *PermissionSettings
+	Information        *InformationView
+}
+
+// SlashFunc runs one local slash command. Structured result fields let the
+// shell open interactive views without parsing display text.
 type SlashFunc func(context.Context, string) (SlashResult, error)
 
 // ExternalEditorFunc edits the current composer value outside the TUI and
@@ -149,6 +183,9 @@ type TaskBoardFunc func(context.Context) (string, error)
 type TodoListFunc func(context.Context) ([]TodoItem, error)
 type RuntimeControlFunc func(context.Context) (RuntimeControlResult, error)
 type ModelSelectFunc func(context.Context, string) (RuntimeControlResult, error)
+
+// PermissionModeSelectFunc applies one permission mode to the current shell.
+type PermissionModeSelectFunc func(context.Context, string) (RuntimeControlResult, error)
 
 // ThemeSelectFunc persists a theme selected from the live TUI picker.
 type ThemeSelectFunc func(context.Context, string) (RuntimeControlResult, error)
@@ -199,6 +236,7 @@ type ShellOptions struct {
 	ModelOptions              []string
 	CurrentModel              string
 	SelectModel               ModelSelectFunc
+	SelectPermissionMode      PermissionModeSelectFunc
 	Theme                     string
 	SelectTheme               ThemeSelectFunc
 	ToggleFast                RuntimeControlFunc
@@ -350,6 +388,11 @@ type model struct {
 	currentModel              string
 	modelPickerSelected       int
 	selectModel               ModelSelectFunc
+	selectPermissionMode      PermissionModeSelectFunc
+	permissionSettings        *PermissionSettings
+	permissionModeSelected    int
+	information               *InformationView
+	informationOffset         int
 	theme                     string
 	themePicker               bool
 	themePickerSelected       int
@@ -1723,6 +1766,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.modelOptions = normalizeModelOptions(options.ModelOptions)
 	m.currentModel = strings.TrimSpace(options.CurrentModel)
 	m.selectModel = options.SelectModel
+	m.selectPermissionMode = options.SelectPermissionMode
 	m.theme, _ = NormalizeThemeName(options.Theme)
 	if m.theme == "" {
 		m.theme = "auto"
@@ -1855,6 +1899,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Err == nil && !msg.Interrupted && len(msg.SessionChoices) > 0 {
 			m.streamingIndex = -1
+			m.discardLatestSlashInput()
 			m.openSessionPicker(msg.SessionChoices)
 			m.refreshViewport()
 			m.viewport.GotoBottom()
@@ -1862,6 +1907,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Err == nil && !msg.Interrupted && msg.Session != nil {
 			m.applySessionState(*msg.Session)
+		}
+		if msg.Err == nil && !msg.Interrupted && msg.OpenModelPicker {
+			m.streamingIndex = -1
+			m.discardLatestSlashInput()
+			m.openModelPicker()
+			return m, m.flushInlineTranscript()
+		}
+		if msg.Err == nil && !msg.Interrupted && msg.OpenTodos {
+			m.streamingIndex = -1
+			m.discardLatestSlashInput()
+			if m.todos == nil {
+				m.status = "todos unavailable"
+				m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: "todo list is unavailable"})
+				m.refreshViewport()
+				return m, m.flushInlineTranscript()
+			}
+			next, cmd := m.toggleTodos()
+			return next, sequenceCommands(m.flushInlineTranscript(), cmd)
+		}
+		if msg.Err == nil && !msg.Interrupted && msg.Diff != nil {
+			m.streamingIndex = -1
+			m.discardLatestSlashInput()
+			m.openDiffDialog(msg.Diff.Sources)
+			return m, m.flushInlineTranscript()
+		}
+		if msg.Err == nil && !msg.Interrupted && msg.PermissionSettings != nil {
+			m.streamingIndex = -1
+			m.discardLatestSlashInput()
+			m.openPermissionSettings(*msg.PermissionSettings)
+			return m, m.flushInlineTranscript()
+		}
+		if msg.Err == nil && !msg.Interrupted && msg.Information != nil {
+			m.streamingIndex = -1
+			m.discardLatestSlashInput()
+			m.openInformation(*msg.Information)
+			return m, m.flushInlineTranscript()
 		}
 		if msg.Interrupted || errors.Is(msg.Err, context.Canceled) {
 			m.streamingIndex = -1
@@ -2004,6 +2085,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.applyRuntimeControlResult(msg.Result)
 		return m, m.flushInlineTranscript()
+	case permissionModeSelectDoneMsg:
+		if msg.Err != nil {
+			m.status = "permissions error"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return m, m.flushInlineTranscript()
+		}
+		m.refreshModeLabel()
+		m.applyRuntimeControlResult(msg.Result)
+		return m, m.flushInlineTranscript()
 	case themeSelectDoneMsg:
 		if msg.Err != nil {
 			m.theme = msg.Previous
@@ -2071,6 +2163,56 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.awaitingQuestion {
 			return m.updateQuestionRequest(msg)
+		}
+		if m.permissionSettings != nil {
+			switch msg.String() {
+			case "ctrl+c", "esc":
+				m.closePermissionSettings()
+				return m, nil
+			case "up", "ctrl+p", "k", "shift+tab":
+				m.movePermissionSettings(-1)
+				return m, nil
+			case "down", "ctrl+n", "j", "tab":
+				m.movePermissionSettings(1)
+				return m, nil
+			case "home":
+				m.permissionModeSelected = 0
+				return m, nil
+			case "end":
+				m.permissionModeSelected = max(0, len(m.permissionSettings.Modes)-1)
+				return m, nil
+			case "enter":
+				return m.acceptPermissionSettings()
+			default:
+				return m, nil
+			}
+		}
+		if m.information != nil {
+			switch msg.String() {
+			case "ctrl+c", "esc", "left":
+				m.closeInformation()
+				return m, nil
+			case "up", "ctrl+p", "k":
+				m.moveInformation(-1)
+				return m, nil
+			case "down", "ctrl+n", "j":
+				m.moveInformation(1)
+				return m, nil
+			case "pgup":
+				m.moveInformation(-informationVisibleLines(m.height))
+				return m, nil
+			case "pgdown", "space":
+				m.moveInformation(informationVisibleLines(m.height))
+				return m, nil
+			case "home":
+				m.informationOffset = 0
+				return m, nil
+			case "end":
+				m.moveInformation(len(m.information.Lines))
+				return m, nil
+			default:
+				return m, nil
+			}
 		}
 		if m.themePicker {
 			switch msg.String() {
@@ -2869,6 +3011,12 @@ func (m model) View() string {
 	if m.themePicker {
 		composer += "\n" + renderThemePicker(m.theme, m.themePickerSelected, m.width, styles)
 	}
+	if m.permissionSettings != nil {
+		composer += "\n" + renderPermissionSettings(*m.permissionSettings, m.permissionModeSelected, m.width, styles)
+	}
+	if m.information != nil {
+		composer += "\n" + renderInformation(*m.information, m.informationOffset, m.width, m.height, styles)
+	}
 	if m.messageActions {
 		targetPos, targetCount := m.messageActionTargetPosition()
 		composer += "\n" + renderMessageActions(m.messageActionEntry(), m.messageActionSelected, m.width, targetPos, targetCount, styles)
@@ -2996,12 +3144,17 @@ func (m *model) refreshModeLabel() {
 }
 
 type turnDoneMsg struct {
-	Role           string
-	Output         string
-	Err            error
-	Interrupted    bool
-	Session        *SessionState
-	SessionChoices []SessionChoice
+	Role               string
+	Output             string
+	Err                error
+	Interrupted        bool
+	Session            *SessionState
+	SessionChoices     []SessionChoice
+	OpenModelPicker    bool
+	OpenTodos          bool
+	Diff               *DiffView
+	PermissionSettings *PermissionSettings
+	Information        *InformationView
 }
 
 type initialPromptMsg struct {
@@ -4561,18 +4714,27 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 		if !result.Handled && err == nil {
 			err = fmt.Errorf("unknown slash command: %s", line)
 		}
-		if result.Handled && err == nil && strings.TrimSpace(result.Output) == "" && result.Session == nil && len(result.SessionChoices) == 0 {
+		if result.Handled && err == nil && strings.TrimSpace(result.Output) == "" && !slashResultHasInteractiveView(result) {
 			result.Output = "Done."
 		}
 		return turnDoneMsg{
-			Role:           "system",
-			Output:         result.Output,
-			Err:            err,
-			Interrupted:    errors.Is(err, context.Canceled),
-			Session:        result.Session,
-			SessionChoices: append([]SessionChoice(nil), result.SessionChoices...),
+			Role:               "system",
+			Output:             result.Output,
+			Err:                err,
+			Interrupted:        errors.Is(err, context.Canceled),
+			Session:            result.Session,
+			SessionChoices:     append([]SessionChoice(nil), result.SessionChoices...),
+			OpenModelPicker:    result.OpenModelPicker,
+			OpenTodos:          result.OpenTodos,
+			Diff:               result.Diff,
+			PermissionSettings: result.PermissionSettings,
+			Information:        result.Information,
 		}
 	}
+}
+
+func slashResultHasInteractiveView(result SlashResult) bool {
+	return result.Session != nil || len(result.SessionChoices) > 0 || result.OpenModelPicker || result.OpenTodos || result.Diff != nil || result.PermissionSettings != nil || result.Information != nil
 }
 
 type turnStreamMsg struct {
@@ -4609,6 +4771,11 @@ type todoListDoneMsg struct {
 }
 
 type runtimeControlDoneMsg struct {
+	Result RuntimeControlResult
+	Err    error
+}
+
+type permissionModeSelectDoneMsg struct {
 	Result RuntimeControlResult
 	Err    error
 }
@@ -4666,6 +4833,13 @@ func runModelSelectCommand(ctx context.Context, selectModel ModelSelectFunc, mod
 	return func() tea.Msg {
 		result, err := selectModel(ctx, model)
 		return runtimeControlDoneMsg{Result: result, Err: err}
+	}
+}
+
+func runPermissionModeSelectCommand(ctx context.Context, selectMode PermissionModeSelectFunc, mode string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := selectMode(ctx, mode)
+		return permissionModeSelectDoneMsg{Result: result, Err: err}
 	}
 }
 
@@ -5444,6 +5618,10 @@ func (m *model) clearScreen() {
 	m.modelPicker = false
 	m.modelPickerSelected = 0
 	m.sessionPicker = nil
+	m.permissionSettings = nil
+	m.permissionModeSelected = 0
+	m.information = nil
+	m.informationOffset = 0
 	m.messageActions = false
 	m.messageActionTarget = 0
 	m.messageActionSelected = 0
@@ -6625,6 +6803,109 @@ func (m *model) openLatestUserMessageActions() {
 	m.messageActionTarget = targets[len(targets)-1]
 }
 
+func (m *model) discardLatestSlashInput() {
+	if len(m.transcript) == 0 {
+		return
+	}
+	last := m.transcript[len(m.transcript)-1]
+	if strings.EqualFold(last.Role, "user") && strings.HasPrefix(strings.TrimSpace(last.Text), "/") {
+		m.transcript = m.transcript[:len(m.transcript)-1]
+	}
+}
+
+func (m *model) openPermissionSettings(settings PermissionSettings) {
+	settings.Modes = append([]PermissionModeOption(nil), settings.Modes...)
+	settings.Allow = append([]string(nil), settings.Allow...)
+	settings.Ask = append([]string(nil), settings.Ask...)
+	settings.Deny = append([]string(nil), settings.Deny...)
+	m.closeInteractivePanels()
+	m.permissionSettings = &settings
+	m.permissionModeSelected = 0
+	for index, option := range settings.Modes {
+		if option.Current {
+			m.permissionModeSelected = index
+			break
+		}
+	}
+	m.status = "permissions"
+}
+
+func (m *model) closePermissionSettings() {
+	m.permissionSettings = nil
+	m.permissionModeSelected = 0
+	m.status = m.mode()
+}
+
+func (m *model) movePermissionSettings(delta int) {
+	if m.permissionSettings == nil || len(m.permissionSettings.Modes) == 0 {
+		return
+	}
+	m.permissionModeSelected = (m.permissionModeSelected + delta + len(m.permissionSettings.Modes)) % len(m.permissionSettings.Modes)
+	m.status = "permissions"
+}
+
+func (m model) acceptPermissionSettings() (tea.Model, tea.Cmd) {
+	if m.permissionSettings == nil || len(m.permissionSettings.Modes) == 0 || m.selectPermissionMode == nil {
+		m.closePermissionSettings()
+		return m, nil
+	}
+	selected := m.permissionSettings.Modes[clampIndex(m.permissionModeSelected, len(m.permissionSettings.Modes))]
+	m.closePermissionSettings()
+	m.status = "updating permissions"
+	return m, runPermissionModeSelectCommand(m.ctx, m.selectPermissionMode, selected.Name)
+}
+
+func (m *model) openInformation(view InformationView) {
+	view.Title = strings.TrimSpace(view.Title)
+	view.Lines = append([]string(nil), view.Lines...)
+	m.closeInteractivePanels()
+	m.information = &view
+	m.informationOffset = 0
+	m.status = strings.ToLower(view.Title)
+	if m.status == "" {
+		m.status = "information"
+	}
+}
+
+func (m *model) closeInformation() {
+	m.information = nil
+	m.informationOffset = 0
+	m.status = m.mode()
+}
+
+func (m *model) moveInformation(delta int) {
+	if m.information == nil {
+		return
+	}
+	visible := informationVisibleLines(m.height)
+	maximum := max(0, len(m.information.Lines)-visible)
+	m.informationOffset = min(max(0, m.informationOffset+delta), maximum)
+}
+
+func (m *model) closeInteractivePanels() {
+	m.helpOpen = false
+	m.searchOpen = false
+	m.quickOpen = false
+	m.globalSearch = false
+	m.todosOpen = false
+	m.modelPicker = false
+	m.themePicker = false
+	m.messageActions = false
+	m.attachmentsOpen = false
+	m.diffDialog = false
+	m.diffSources = nil
+	m.diffSourceSelected = 0
+	m.diffFileSelected = 0
+	m.diffDetail = false
+	m.sessionPicker = nil
+	m.permissionSettings = nil
+	m.permissionModeSelected = 0
+	m.information = nil
+	m.informationOffset = 0
+	m.matches = nil
+	m.selected = 0
+}
+
 func (m *model) openSessionPicker(choices []SessionChoice) {
 	picker := newSessionPickerModelWithTheme(choices, m.theme)
 	width := m.width
@@ -7646,6 +7927,95 @@ func renderedQuestionAnswer(index int, question Question, selections [][]bool, c
 		}
 	}
 	return strings.Join(parts, ", ")
+}
+
+func renderPermissionSettings(settings PermissionSettings, selected int, width int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
+	limit := 100
+	if width > 0 {
+		limit = max(12, width-8)
+	}
+	lines := []string{styles.completionTitle().Render(" permissions ")}
+	if len(settings.Modes) == 0 {
+		lines = append(lines, styles.completion().Render("  no permission modes"))
+	} else {
+		selected = clampIndex(selected, len(settings.Modes))
+		for index, option := range settings.Modes {
+			prefix := "  "
+			style := styles.completion()
+			if index == selected {
+				prefix = "> "
+				style = styles.selectedCompletion()
+			}
+			label := strings.TrimSpace(option.Label)
+			if label == "" {
+				label = option.Name
+			}
+			if option.Current {
+				label += " · current"
+			}
+			lines = append(lines, style.Render(truncateForComposer(prefix+label, limit)))
+			if index == selected && strings.TrimSpace(option.Description) != "" {
+				lines = append(lines, styles.completion().Render(truncateForComposer("    "+option.Description, limit)))
+			}
+		}
+	}
+	lines = appendPermissionRuleSummary(lines, "Allow", settings.Allow, limit, styles)
+	lines = appendPermissionRuleSummary(lines, "Ask", settings.Ask, limit, styles)
+	lines = appendPermissionRuleSummary(lines, "Deny", settings.Deny, limit, styles)
+	lines = append(lines, styles.completion().Render("  Up/Down choose · Enter apply · Esc close"))
+	return strings.Join(lines, "\n")
+}
+
+func appendPermissionRuleSummary(lines []string, label string, rules []string, limit int, styles themeStyles) []string {
+	if len(rules) == 0 {
+		return lines
+	}
+	shown := rules
+	if len(shown) > 2 {
+		shown = shown[:2]
+	}
+	text := fmt.Sprintf("  %s: %s", label, strings.Join(shown, ", "))
+	if len(shown) < len(rules) {
+		text += fmt.Sprintf(" · %d more", len(rules)-len(shown))
+	}
+	return append(lines, styles.completion().Render(truncateForComposer(text, limit)))
+}
+
+func informationVisibleLines(height int) int {
+	if height <= 0 {
+		return 12
+	}
+	return max(4, height-8)
+}
+
+func renderInformation(view InformationView, offset int, width int, height int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
+	title := strings.TrimSpace(view.Title)
+	if title == "" {
+		title = "Information"
+	}
+	limit := 100
+	if width > 0 {
+		limit = max(12, width-8)
+	}
+	visible := informationVisibleLines(height)
+	maximum := max(0, len(view.Lines)-visible)
+	offset = min(max(0, offset), maximum)
+	end := min(len(view.Lines), offset+visible)
+	lines := []string{styles.completionTitle().Render(" " + strings.ToLower(title) + " ")}
+	for _, line := range view.Lines[offset:end] {
+		lines = append(lines, styles.completion().Render(truncateForComposer("  "+line, limit)))
+	}
+	if len(view.Lines) == 0 {
+		lines = append(lines, styles.completion().Render("  no information"))
+	}
+	position := "Esc close"
+	if len(view.Lines) > visible {
+		position = fmt.Sprintf("%d-%d/%d · Up/Down scroll · Esc close", offset+1, end, len(view.Lines))
+	}
+	lines = append(lines, styles.completion().Render("  "+position))
+	return strings.Join(lines, "\n")
 }
 
 func renderDiffDialog(sources []DiffSource, sourceIndex int, fileIndex int, detail bool, width int, themed ...themeStyles) string {
@@ -8713,6 +9083,15 @@ func (m model) mode() string {
 	}
 	if m.sessionPicker != nil {
 		return "resume"
+	}
+	if m.permissionSettings != nil {
+		return "permissions"
+	}
+	if m.information != nil {
+		if title := strings.ToLower(strings.TrimSpace(m.information.Title)); title != "" {
+			return title
+		}
+		return "information"
 	}
 	if m.modelPicker {
 		return "model picker"
