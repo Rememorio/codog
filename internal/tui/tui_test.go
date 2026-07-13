@@ -102,9 +102,9 @@ func TestCompletionSelectionUsesArrowKeysAndEnter(t *testing.T) {
 func TestEnterSubmitsExactSlashCommandBeforeLongerCompletion(t *testing.T) {
 	ta := newPromptTextarea("/status")
 	m := newModel(context.Background(), ta, []string{"/status", "/statusline --json"}, nil)
-	m.slash = func(_ context.Context, line string) (string, bool, error) {
+	m.slash = func(_ context.Context, line string) (SlashResult, error) {
 		require.Equal(t, "/status", line)
-		return "Tools ok", true, nil
+		return SlashResult{Output: "Tools ok", Handled: true}, nil
 	}
 	m.refreshCompletionMenu()
 	require.Empty(t, m.matches)
@@ -318,9 +318,9 @@ func TestSlashPasteInsertsClipboardIntoComposer(t *testing.T) {
 	m.paste = func(context.Context) (PasteContent, error) {
 		return PasteContent{Text: "clipboard text"}, nil
 	}
-	m.slash = func(context.Context, string) (string, bool, error) {
+	m.slash = func(context.Context, string) (SlashResult, error) {
 		t.Fatal("bare /paste should be handled by the TUI")
-		return "", false, nil
+		return SlashResult{}, nil
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -343,10 +343,10 @@ func TestSlashPasteWithArgsFallsThroughToSlash(t *testing.T) {
 		t.Fatal("/paste with args should stay a slash command")
 		return PasteContent{}, nil
 	}
-	m.slash = func(_ context.Context, line string) (string, bool, error) {
+	m.slash = func(_ context.Context, line string) (SlashResult, error) {
 		called = true
 		require.Equal(t, "/paste --json", line)
-		return "{}", true, nil
+		return SlashResult{Output: "{}", Handled: true}, nil
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -463,9 +463,9 @@ func TestBashModeHistoryGhostIgnoresNonBashAndExactMatches(t *testing.T) {
 func TestBareBashModeStaysInComposer(t *testing.T) {
 	ta := newPromptTextarea("!")
 	m := newModel(context.Background(), ta, nil, nil)
-	m.slash = func(context.Context, string) (string, bool, error) {
+	m.slash = func(context.Context, string) (SlashResult, error) {
 		t.Fatal("bare bash mode should not run")
-		return "", false, nil
+		return SlashResult{}, nil
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -2176,13 +2176,88 @@ func TestPreviewTogglesHelpPanel(t *testing.T) {
 }
 
 func TestSlashCommandWithEmptyOutputShowsDone(t *testing.T) {
-	cmd := runSlashCommand(context.Background(), func(context.Context, string) (string, bool, error) {
-		return "", true, nil
+	cmd := runSlashCommand(context.Background(), func(context.Context, string) (SlashResult, error) {
+		return SlashResult{Handled: true}, nil
 	}, "/clear")
 	msg := cmd().(turnDoneMsg)
 
 	require.Equal(t, "Done.", msg.Output)
 	require.NoError(t, msg.Err)
+}
+
+func TestSlashSessionStateReplacesTranscriptHistoryAndCandidates(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("/resume target"), []string{"/resume old"}, []transcriptEntry{{Role: "assistant", Text: "old answer"}})
+	m.setHistory([]string{"old prompt"})
+	m.slash = func(_ context.Context, line string) (SlashResult, error) {
+		require.Equal(t, "/resume target", line)
+		return SlashResult{
+			Output:  "session resumed: target",
+			Handled: true,
+			Session: &SessionState{
+				ID: "target",
+				Entries: []Entry{
+					{Role: "system", Text: "Session target"},
+					{Role: "user", Text: "restored prompt"},
+					{Role: "assistant", Text: "restored answer"},
+				},
+				History:    []string{"restored prompt"},
+				Candidates: []string{"/resume target", "/status"},
+			},
+		}, nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.False(t, m.busy)
+	require.Equal(t, []string{"restored prompt"}, m.history)
+	require.Equal(t, []string{"/resume target", "/status"}, m.candidates)
+	require.Contains(t, m.View(), "restored prompt")
+	require.Contains(t, m.View(), "restored answer")
+	require.Contains(t, m.View(), "session resumed: target")
+	require.NotContains(t, m.View(), "old answer")
+}
+
+func TestBareResumeOpensEmbeddedPickerAndResumesSelection(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("/resume"), nil, nil)
+	calls := []string{}
+	m.slash = func(_ context.Context, line string) (SlashResult, error) {
+		calls = append(calls, line)
+		if line == "/resume" {
+			return SlashResult{Handled: true, SessionChoices: []SessionChoice{{ID: "target", Title: "Target session", MessageCount: 2}}}, nil
+		}
+		return SlashResult{
+			Handled: true,
+			Session: &SessionState{
+				ID:      "target",
+				Entries: []Entry{{Role: "system", Text: "Session target"}, {Role: "user", Text: "target prompt"}},
+			},
+		}, nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.NotNil(t, m.sessionPicker)
+	require.Contains(t, m.View(), "Resume a session")
+	require.Contains(t, m.View(), "Target session")
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Nil(t, m.sessionPicker)
+	require.True(t, m.busy)
+
+	done := cmd()
+	require.Equal(t, []string{"/resume", "/resume target"}, calls)
+	updated, _ = m.Update(done)
+	m = updated.(model)
+	require.Contains(t, m.View(), "target prompt")
 }
 
 func TestHistoryNavigationFromEmptyComposer(t *testing.T) {
@@ -2433,9 +2508,9 @@ func TestBusyEnterQueuesBashPromptAndRunsThroughSlash(t *testing.T) {
 		prompts = append(prompts, prompt)
 		return "done: " + prompt, nil
 	}
-	m.slash = func(_ context.Context, line string) (string, bool, error) {
+	m.slash = func(_ context.Context, line string) (SlashResult, error) {
 		slashLines = append(slashLines, line)
-		return "ran " + line, true, nil
+		return SlashResult{Output: "ran " + line, Handled: true}, nil
 	}
 
 	updated, firstCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -3419,8 +3494,8 @@ func TestInteractionRequestsFitNarrowNoColorTerminal(t *testing.T) {
 }
 
 func TestCanceledSlashCommandRendersInterrupted(t *testing.T) {
-	cmd := runSlashCommand(context.Background(), func(context.Context, string) (string, bool, error) {
-		return "", true, context.Canceled
+	cmd := runSlashCommand(context.Background(), func(context.Context, string) (SlashResult, error) {
+		return SlashResult{Handled: true}, context.Canceled
 	}, "/status")
 	msg := cmd().(turnDoneMsg)
 

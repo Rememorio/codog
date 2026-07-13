@@ -37693,10 +37693,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		return err
 	}
 	a.writeWorkerState("tui", "idle", sess, "")
-	entries := []tui.Entry{{
-		Role: "system",
-		Text: fmt.Sprintf("Session %s", sess.ID),
-	}}
+	entries := tuiSessionEntries(sess)
 	if banner := buildDeepLinkBanner(a.Workspace, overrides, time.Now()); banner != "" {
 		entries = append(entries, tui.Entry{Role: "system", Text: banner})
 	}
@@ -37775,16 +37772,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		}
 		return response, err
 	}
-	slashHandler := func(ctx context.Context, line string) (string, bool, error) {
-		var out bytes.Buffer
-		oldOut, oldErr := a.Out, a.Err
-		a.Out, a.Err = &out, &out
-		defer func() {
-			a.Out, a.Err = oldOut, oldErr
-		}()
-		handled := a.handleSlash(ctx, line, sess)
-		return strings.TrimSpace(out.String()), handled, nil
-	}
+	slashHandler := a.tuiSlashHandler(sess)
 	loopErr := tui.Shell(ctx, tui.ShellOptions{
 		Candidates:              a.slashMenuCandidates(sess.ID),
 		FileCandidates:          fileCandidates,
@@ -37916,6 +37904,207 @@ func resumeSessionChoices(sessions []session.Session) []tui.SessionChoice {
 		})
 	}
 	return choices
+}
+
+func (a *App) tuiSlashHandler(sess *session.Session) tui.SlashFunc {
+	return func(ctx context.Context, line string) (tui.SlashResult, error) {
+		if isBareTUIResumeCommand(line) {
+			choices, err := a.tuiResumeSessionChoices(sess.ID)
+			if err != nil {
+				return tui.SlashResult{Handled: true}, err
+			}
+			if len(choices) == 0 {
+				return tui.SlashResult{Output: "No conversations found to resume.", Handled: true}, nil
+			}
+			return tui.SlashResult{Handled: true, SessionChoices: choices}, nil
+		}
+
+		trackSession := tuiSlashMayChangeSession(line)
+		before := ""
+		if trackSession {
+			before = tuiSessionRevision(sess)
+		}
+		var out bytes.Buffer
+		oldOut, oldErr := a.Out, a.Err
+		a.Out, a.Err = &out, &out
+		defer func() {
+			a.Out, a.Err = oldOut, oldErr
+		}()
+		handled := a.handleSlash(ctx, line, sess)
+		result := tui.SlashResult{Output: strings.TrimSpace(out.String()), Handled: handled}
+		if handled && trackSession && before != tuiSessionRevision(sess) {
+			state := a.tuiSessionState(sess)
+			result.Session = &state
+			if tuiSlashOutputIsPersisted(line) {
+				result.Output = ""
+			}
+		}
+		return result, nil
+	}
+}
+
+func tuiSlashMayChangeSession(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	command := fields[0]
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
+	}
+	switch command {
+	case "/attach", "/clear", "/compact", "/conversation", "/generatesessionname", "/rename", "/resume", "/rewind", "/sessions":
+		return true
+	}
+	_, builtIn := slash.Lookup(command)
+	return !builtIn
+}
+
+func tuiSlashOutputIsPersisted(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	command := fields[0]
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
+	}
+	if command == "/attach" {
+		return true
+	}
+	_, builtIn := slash.Lookup(command)
+	return !builtIn
+}
+
+func isBareTUIResumeCommand(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) != 1 {
+		return false
+	}
+	command := fields[0]
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
+	}
+	return command == "/resume"
+}
+
+func (a *App) tuiResumeSessionChoices(activeSessionID string) ([]tui.SessionChoice, error) {
+	if a.Sessions == nil {
+		return nil, errors.New("session store is not configured")
+	}
+	sessions, err := a.Sessions.List()
+	if err != nil {
+		return nil, err
+	}
+	filtered := sessions[:0]
+	for _, candidate := range sessions {
+		if candidate.ID == activeSessionID || len(candidate.Messages) == 0 {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	return resumeSessionChoices(filtered), nil
+}
+
+func (a *App) tuiSessionState(sess *session.Session) tui.SessionState {
+	if sess == nil {
+		return tui.SessionState{}
+	}
+	return tui.SessionState{
+		ID:         sess.ID,
+		Entries:    tuiSessionEntries(sess),
+		History:    a.tuiPromptHistory(sess.ID),
+		Candidates: a.slashMenuCandidates(sess.ID),
+	}
+}
+
+func tuiSessionRevision(sess *session.Session) string {
+	if sess == nil {
+		return ""
+	}
+	data, _ := json.Marshal(struct {
+		Messages []anthropic.Message     `json:"messages"`
+		Identity session.SessionIdentity `json:"identity"`
+	}{Messages: sess.Messages, Identity: sess.Identity})
+	digest := sha256.Sum256(data)
+	return sess.ID + ":" + hex.EncodeToString(digest[:])
+}
+
+func tuiSessionEntries(sess *session.Session) []tui.Entry {
+	if sess == nil {
+		return nil
+	}
+	sessionLabel := "Session " + sess.ID
+	if title := strings.TrimSpace(sess.Identity.Title); title != "" && title != sess.ID {
+		sessionLabel += " · " + title
+	}
+	entries := []tui.Entry{{Role: "system", Text: sessionLabel}}
+	toolEntries := map[string]int{}
+	for _, message := range sess.Messages {
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		if role == "" {
+			role = "system"
+		}
+		text := []string{}
+		flushText := func() {
+			joined := strings.TrimSpace(strings.Join(text, "\n"))
+			if joined != "" {
+				entries = append(entries, tui.Entry{Role: role, Text: joined})
+			}
+			text = text[:0]
+		}
+		for _, block := range message.Content {
+			switch strings.ToLower(strings.TrimSpace(block.Type)) {
+			case "text":
+				if value := strings.TrimSpace(block.Text); value != "" {
+					text = append(text, value)
+				}
+			case "image", "document":
+				label := "Image attachment"
+				if strings.EqualFold(strings.TrimSpace(block.Type), "document") {
+					label = "Document attachment"
+				}
+				if block.Source != nil && strings.TrimSpace(block.Source.MediaType) != "" {
+					label += " (" + strings.TrimSpace(block.Source.MediaType) + ")"
+				}
+				text = append(text, label)
+			case "tool_use":
+				flushText()
+				activity := &tui.ToolActivity{
+					ID:     strings.TrimSpace(block.ID),
+					Name:   strings.TrimSpace(block.Name),
+					Input:  strings.TrimSpace(string(block.Input)),
+					Status: "running",
+				}
+				entries = append(entries, tui.Entry{Role: "tool", Tool: activity})
+				if activity.ID != "" {
+					toolEntries[activity.ID] = len(entries) - 1
+				}
+			case "tool_result":
+				flushText()
+				output := strings.TrimSpace(block.Content)
+				status := "success"
+				if block.IsError {
+					status = "error"
+				}
+				if index, ok := toolEntries[strings.TrimSpace(block.ToolUseID)]; ok && entries[index].Tool != nil {
+					entries[index].Tool.Output = output
+					entries[index].Tool.Status = status
+					entries[index].Tool.IsError = block.IsError
+					continue
+				}
+				entries = append(entries, tui.Entry{Role: "tool", Tool: &tui.ToolActivity{
+					ID:      strings.TrimSpace(block.ToolUseID),
+					Name:    "tool",
+					Output:  output,
+					Status:  status,
+					IsError: block.IsError,
+				}})
+			}
+		}
+		flushText()
+	}
+	return entries
 }
 
 func (a *App) tuiModelOptions() []string {
@@ -40166,9 +40355,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	case "/clear":
 		a.handleClearSlash(ctx, fields[1:], sess)
 	case "/conversation":
-		if err := a.Conversation(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
-			fmt.Fprintln(a.Err, "error:", err)
-		}
+		a.handleConversationSlash(ctx, fields[1:], sess)
 	case "/resume":
 		a.handleResumeSlash(ctx, fields[1:], sess)
 	case "/rewind":
@@ -40268,14 +40455,26 @@ func (a *App) handleClearSlash(ctx context.Context, args []string, sess *session
 	fmt.Fprintf(a.Err, "session cleared: %s\n", sess.ID)
 }
 
+func (a *App) handleConversationSlash(ctx context.Context, args []string, sess *session.Session) {
+	overrides := config.FlagOverrides{SessionID: sess.ID}
+	req, err := parseConversationArgs(args, overrides)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	if req.Action == "clear" && req.Confirm {
+		a.handleClearSlash(ctx, []string{"--confirm"}, sess)
+		return
+	}
+	if err := a.Conversation(args, overrides); err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+	}
+}
+
 func (a *App) handleResumeSlash(ctx context.Context, args []string, sess *session.Session) {
 	id := "latest"
 	if len(args) > 0 {
-		id = args[0]
-	}
-	if len(args) > 1 {
-		fmt.Fprintln(a.Err, "usage: /resume [session-id|latest]")
-		return
+		id = strings.TrimSpace(strings.Join(args, " "))
 	}
 	var next *session.Session
 	var err error
@@ -40286,7 +40485,7 @@ func (a *App) handleResumeSlash(ctx context.Context, args []string, sess *sessio
 			return
 		}
 	} else {
-		next, err = a.Sessions.Open(id)
+		next, err = a.openExistingResumeSession(id)
 	}
 	if err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
@@ -40308,6 +40507,38 @@ func (a *App) handleResumeSlash(ctx context.Context, args []string, sess *sessio
 	a.dynamicSkillPaths = nil
 	a.writeWorkerState("repl", "idle", sess, "")
 	fmt.Fprintf(a.Err, "session resumed: %s\n", sess.ID)
+}
+
+func (a *App) openExistingResumeSession(reference string) (*session.Session, error) {
+	if a.Sessions == nil {
+		return nil, errors.New("session store is not configured")
+	}
+	reference = strings.TrimSpace(reference)
+	if reference == "" {
+		return nil, errors.New("session id is required")
+	}
+	opened, err := a.Sessions.OpenExisting(reference)
+	if err == nil || !errors.Is(err, session.ErrSessionNotFound) {
+		return opened, err
+	}
+	sessions, listErr := a.Sessions.List()
+	if listErr != nil {
+		return nil, listErr
+	}
+	matches := make([]session.Session, 0, 1)
+	for _, candidate := range sessions {
+		if strings.EqualFold(strings.TrimSpace(candidate.Identity.Title), reference) {
+			matches = append(matches, candidate)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return nil, err
+	case 1:
+		return &matches[0], nil
+	default:
+		return nil, fmt.Errorf("found %d sessions matching %q; use /resume to pick a specific session", len(matches), reference)
+	}
 }
 
 func (a *App) handleRewindSlash(args []string, sess *session.Session) {
@@ -48783,7 +49014,7 @@ func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 			fmt.Fprintln(a.Err, "usage: /session switch ID")
 			return
 		}
-		next, err := a.Sessions.Open(args[1])
+		next, err := a.Sessions.OpenExisting(args[1])
 		if err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 			return

@@ -101,9 +101,26 @@ type SubmitWithAttachmentsFunc func(context.Context, string, []string) (string, 
 // attachments and can emit assistant deltas while the turn is still running.
 type StreamSubmitWithAttachmentsFunc func(context.Context, string, []string, func(Entry)) (string, error)
 
-// SlashFunc runs one slash command and returns local command output. handled is
-// true when the command should not be sent to the model.
-type SlashFunc func(context.Context, string) (output string, handled bool, err error)
+// SessionState is a saved conversation loaded by a slash command. Applying it
+// replaces the visible transcript and prompt history atomically.
+type SessionState struct {
+	ID         string
+	Entries    []Entry
+	History    []string
+	Candidates []string
+}
+
+// SlashResult is the structured outcome of one local slash command.
+type SlashResult struct {
+	Output         string
+	Handled        bool
+	Session        *SessionState
+	SessionChoices []SessionChoice
+}
+
+// SlashFunc runs one local slash command. Session and SessionChoices let the
+// shell synchronize conversation changes without parsing display text.
+type SlashFunc func(context.Context, string) (SlashResult, error)
 
 // ExternalEditorFunc edits the current composer value outside the TUI and
 // returns the replacement composer text.
@@ -353,6 +370,7 @@ type model struct {
 	messageActions            bool
 	messageActionTarget       int
 	messageActionSelected     int
+	sessionPicker             *sessionPickerModel
 	queuedPrompts             []queuedPrompt
 	initialPrompt             string
 	attachments               []string
@@ -593,9 +611,9 @@ func PreviewWithBashMode(input string, width int, height int) Preview {
 	ta := newPromptTextarea(input)
 	m := newModel(context.Background(), ta, nil, nil)
 	captured := ""
-	m.slash = func(_ context.Context, line string) (string, bool, error) {
+	m.slash = func(_ context.Context, line string) (SlashResult, error) {
 		captured = line
-		return "bash ok: " + line, true, nil
+		return SlashResult{Output: "bash ok: " + line, Handled: true}, nil
 	}
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -1686,10 +1704,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 		ctx = context.Background()
 	}
 	ta := newPromptTextarea(options.Prefill)
-	entries := make([]transcriptEntry, 0, len(options.Entries))
-	for _, entry := range options.Entries {
-		entries = append(entries, transcriptEntry{Role: entry.Role, Text: entry.Text, Tool: cloneToolActivity(entry.Tool)})
-	}
+	entries := transcriptEntries(options.Entries)
 	m := newModel(ctx, ta, options.Candidates, entries)
 	m.fileCandidates = append([]string(nil), options.FileCandidates...)
 	m.submit = options.Submit
@@ -1746,6 +1761,14 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.prepareInlineTranscript()
 	_, err := tea.NewProgram(m).Run()
 	return err
+}
+
+func transcriptEntries(entries []Entry) []transcriptEntry {
+	out := make([]transcriptEntry, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, transcriptEntry{Role: entry.Role, Text: entry.Text, Tool: cloneToolActivity(entry.Tool)})
+	}
+	return out
 }
 
 func newModel(ctx context.Context, ta textarea.Model, candidates []string, entries []transcriptEntry) model {
@@ -1829,6 +1852,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.turnCancel != nil {
 			m.turnCancel()
 			m.turnCancel = nil
+		}
+		if msg.Err == nil && !msg.Interrupted && len(msg.SessionChoices) > 0 {
+			m.streamingIndex = -1
+			m.openSessionPicker(msg.SessionChoices)
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return m, m.flushInlineTranscript()
+		}
+		if msg.Err == nil && !msg.Interrupted && msg.Session != nil {
+			m.applySessionState(*msg.Session)
 		}
 		if msg.Interrupted || errors.Is(msg.Err, context.Canceled) {
 			m.streamingIndex = -1
@@ -2022,7 +2055,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.layout(msg.Width, msg.Height)
+		if m.sessionPicker != nil {
+			m.sessionPicker.width = msg.Width
+			m.sessionPicker.height = msg.Height
+		}
 	case tea.KeyMsg:
+		if m.sessionPicker != nil {
+			return m.updateSessionPicker(msg)
+		}
 		if msg.Paste {
 			return m.handlePastedInput(msg)
 		}
@@ -2847,7 +2887,9 @@ func (m model) View() string {
 	if m.stashedPrompt != nil {
 		composer += "\n" + renderStashNotice(m.stashedPrompt, styles)
 	}
-	if m.awaitingPermission && m.permissionRequest != nil {
+	if m.sessionPicker != nil {
+		composer = m.sessionPicker.View()
+	} else if m.awaitingPermission && m.permissionRequest != nil {
 		composer = renderPermissionRequest(*m.permissionRequest, m.permissionSelected, m.permissionInput, m.permissionInputAnswer, m.width, styles)
 		if m.permissionInput {
 			composer += "\n" + composerTextarea.View()
@@ -2868,7 +2910,10 @@ func (m model) View() string {
 	if body != "" {
 		parts = append(parts, body)
 	}
-	parts = append(parts, composer, status)
+	parts = append(parts, composer)
+	if m.sessionPicker == nil {
+		parts = append(parts, status)
+	}
 	return strings.Join(parts, "\n")
 }
 
@@ -2951,10 +2996,12 @@ func (m *model) refreshModeLabel() {
 }
 
 type turnDoneMsg struct {
-	Role        string
-	Output      string
-	Err         error
-	Interrupted bool
+	Role           string
+	Output         string
+	Err            error
+	Interrupted    bool
+	Session        *SessionState
+	SessionChoices []SessionChoice
 }
 
 type initialPromptMsg struct {
@@ -4510,14 +4557,21 @@ func waitTurnMessage(messages <-chan tea.Msg) tea.Cmd {
 
 func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd {
 	return func() tea.Msg {
-		output, handled, err := slash(ctx, line)
-		if !handled && err == nil {
+		result, err := slash(ctx, line)
+		if !result.Handled && err == nil {
 			err = fmt.Errorf("unknown slash command: %s", line)
 		}
-		if handled && err == nil && strings.TrimSpace(output) == "" {
-			output = "Done."
+		if result.Handled && err == nil && strings.TrimSpace(result.Output) == "" && result.Session == nil && len(result.SessionChoices) == 0 {
+			result.Output = "Done."
 		}
-		return turnDoneMsg{Role: "system", Output: output, Err: err, Interrupted: errors.Is(err, context.Canceled)}
+		return turnDoneMsg{
+			Role:           "system",
+			Output:         result.Output,
+			Err:            err,
+			Interrupted:    errors.Is(err, context.Canceled),
+			Session:        result.Session,
+			SessionChoices: append([]SessionChoice(nil), result.SessionChoices...),
+		}
 	}
 }
 
@@ -5389,6 +5443,7 @@ func (m *model) clearScreen() {
 	m.todoErr = ""
 	m.modelPicker = false
 	m.modelPickerSelected = 0
+	m.sessionPicker = nil
 	m.messageActions = false
 	m.messageActionTarget = 0
 	m.messageActionSelected = 0
@@ -6568,6 +6623,90 @@ func (m *model) openLatestUserMessageActions() {
 	}
 	m.openMessageActions()
 	m.messageActionTarget = targets[len(targets)-1]
+}
+
+func (m *model) openSessionPicker(choices []SessionChoice) {
+	picker := newSessionPickerModelWithTheme(choices, m.theme)
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	height := m.height
+	if height <= 0 {
+		height = 24
+	}
+	picker.width = max(12, width)
+	picker.height = max(6, height)
+	m.sessionPicker = &picker
+	m.matches = nil
+	m.selected = 0
+	m.commandArgumentHint = ""
+	m.inlineGhostText = ""
+	m.status = "resume"
+}
+
+func (m model) updateSessionPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.sessionPicker == nil {
+		return m, nil
+	}
+	updated, _ := m.sessionPicker.Update(msg)
+	picker, ok := updated.(sessionPickerModel)
+	if !ok {
+		return m, nil
+	}
+	if picker.canceled {
+		m.sessionPicker = nil
+		m.status = "resume cancelled"
+		return m, nil
+	}
+	if picker.selectedID == "" {
+		m.sessionPicker = &picker
+		return m, nil
+	}
+
+	m.sessionPicker = nil
+	if m.slash == nil {
+		m.status = "resume error"
+		m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: "resume is unavailable"})
+		m.refreshViewport()
+		return m, m.flushInlineTranscript()
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.turnCancel = cancel
+	m.busy = true
+	m.status = "resuming"
+	return m, runSlashCommand(ctx, m.slash, "/resume "+picker.selectedID)
+}
+
+func (m *model) applySessionState(state SessionState) {
+	entries := transcriptEntries(state.Entries)
+	if len(entries) == 0 && strings.TrimSpace(state.ID) != "" {
+		entries = []transcriptEntry{{Role: "system", Text: "Session " + strings.TrimSpace(state.ID)}}
+	}
+	if len(entries) == 0 {
+		entries = defaultTranscriptEntries()
+	}
+	m.transcript = entries
+	m.streamingIndex = -1
+	m.messageActions = false
+	m.messageActionTarget = 0
+	m.messageActionSelected = 0
+	m.setHistory(state.History)
+	if state.Candidates != nil {
+		m.candidates = append([]string(nil), state.Candidates...)
+	}
+	m.matches = nil
+	m.selected = 0
+	m.commandArgumentHint = ""
+	m.inlineGhostText = ""
+	m.historyPos = -1
+	if m.inline {
+		m.printedEntries = 0
+		m.initialPrint = ""
+	}
+	m.refreshCompletionMenu()
+	m.refreshViewport()
+	m.viewport.GotoBottom()
 }
 
 func (m *model) closeMessageActions() {
@@ -8571,6 +8710,9 @@ func (m model) mode() string {
 	}
 	if m.todosOpen {
 		return "todos"
+	}
+	if m.sessionPicker != nil {
+		return "resume"
 	}
 	if m.modelPicker {
 		return "model picker"

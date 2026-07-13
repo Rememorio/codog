@@ -345,6 +345,7 @@ func TestRealBinaryBareResumeOpensSearchablePickerWithTTY(t *testing.T) {
 	alphaID := extractSessionID(t, alpha.Stderr)
 	beta := runCodogWithExtraEnv(t, bin, workspace, configHome, extraEnv, nil, "--name", "picker-beta", "--model", "claude-sonnet-4-5", "-p", "beta resume prompt")
 	require.Equal(t, 0, beta.Code, beta.Combined())
+	betaID := extractSessionID(t, beta.Stderr)
 
 	output := runExpectCodog(t, bin, workspace, configHome, extraEnv, `
 set timeout 20
@@ -355,7 +356,16 @@ expect "Filter: picker-alpha"
 expect "picker-alpha"
 send "\r"
 expect "Session `+alphaID+`"
+expect "alpha resume prompt"
+expect "picker seed answer"
 expect "codog"
+send "/resume\r"
+expect "Resume a session"
+send "picker-beta"
+expect "Filter: picker-beta"
+send "\r"
+expect "beta resume prompt"
+expect "session resumed: `+betaID+`"
 send "/exit\r"
 expect eof
 `)
@@ -363,6 +373,9 @@ expect eof
 	require.Contains(t, output, "Resume a session")
 	require.Contains(t, output, "picker-alpha")
 	require.Contains(t, output, alphaID)
+	require.Contains(t, output, "alpha resume prompt")
+	require.Contains(t, output, "beta resume prompt")
+	require.Contains(t, output, betaID)
 	require.NotContains(t, output, "\x1b[?1049h")
 
 	nonTTY := runCodogWithExtraEnv(t, bin, workspace, configHome, extraEnv, []byte{}, "--resume")

@@ -386,6 +386,114 @@ func TestResumeSessionChoicesUseIdentityAndPromptFallback(t *testing.T) {
 	require.Equal(t, updated.Add(-time.Hour), choices[1].UpdatedAt)
 }
 
+func TestTUISessionEntriesRestoreTextAttachmentsAndToolResults(t *testing.T) {
+	sess := &session.Session{
+		ID: "resume-session",
+		Messages: []anthropic.Message{
+			{
+				Role: "user",
+				Content: []anthropic.ContentBlock{
+					{Type: "text", Text: "inspect the image"},
+					{Type: "image", Source: &anthropic.ContentSource{MediaType: "image/png"}},
+				},
+			},
+			{
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "text", Text: "I will inspect it."},
+					{Type: "tool_use", ID: "tool-1", Name: "read_file", Input: json.RawMessage(`{"path":"main.go"}`)},
+				},
+			},
+			anthropic.ToolResultMessage("tool-1", `{"content":"package main"}`, false),
+		},
+	}
+
+	entries := tuiSessionEntries(sess)
+	require.Len(t, entries, 4)
+	require.Equal(t, "Session resume-session", entries[0].Text)
+	require.Contains(t, entries[1].Text, "inspect the image")
+	require.Contains(t, entries[1].Text, "Image attachment (image/png)")
+	require.Equal(t, "I will inspect it.", entries[2].Text)
+	require.NotNil(t, entries[3].Tool)
+	require.Equal(t, "read_file", entries[3].Tool.Name)
+	require.Equal(t, "success", entries[3].Tool.Status)
+	require.Contains(t, entries[3].Tool.Output, "package main")
+}
+
+func TestTUISlashHandlerOffersPickerAndSynchronizesResumedSession(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	current, err := store.Open("current-session")
+	require.NoError(t, err)
+	require.NoError(t, store.Append(current.ID, anthropic.TextMessage("user", "current prompt")))
+	target, err := store.CreateWithIdentity("target-session", session.SessionIdentity{Title: "Target session title", Workspace: workspace})
+	require.NoError(t, err)
+	require.NoError(t, store.Append(target.ID, anthropic.TextMessage("user", "target prompt")))
+	require.NoError(t, store.Append(target.ID, anthropic.TextMessage("assistant", "target answer")))
+	current, err = store.OpenExisting(current.ID)
+	require.NoError(t, err)
+
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+	handler := app.tuiSlashHandler(current)
+
+	picker, err := handler(context.Background(), "/resume")
+	require.NoError(t, err)
+	require.True(t, picker.Handled)
+	require.Len(t, picker.SessionChoices, 1)
+	require.Equal(t, "target-session", picker.SessionChoices[0].ID)
+	require.Equal(t, "Target session title", picker.SessionChoices[0].Title)
+
+	resumed, err := handler(context.Background(), "/resume Target session title")
+	require.NoError(t, err)
+	require.True(t, resumed.Handled)
+	require.NotNil(t, resumed.Session)
+	require.Equal(t, "target-session", resumed.Session.ID)
+	require.Equal(t, "target-session", current.ID)
+	require.Contains(t, resumed.Output, "session resumed: target-session")
+	require.Contains(t, resumed.Session.Entries[1].Text, "target prompt")
+	require.Contains(t, resumed.Session.Candidates, "/resume")
+
+	cleared, err := handler(context.Background(), "/conversation clear --confirm")
+	require.NoError(t, err)
+	require.True(t, cleared.Handled)
+	require.NotNil(t, cleared.Session)
+	require.NotEqual(t, "target-session", cleared.Session.ID)
+	require.Equal(t, cleared.Session.ID, current.ID)
+	require.Len(t, cleared.Session.Entries, 1)
+	require.NotContains(t, cleared.Session.Entries[0].Text, "target prompt")
+}
+
+func TestResumeSlashDoesNotCreateMissingSession(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	current, err := store.Open("current-session")
+	require.NoError(t, err)
+	var out bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: configHome}, Sessions: store, Workspace: workspace, Out: &out, Err: &out}
+
+	app.handleResumeSlash(context.Background(), []string{"missing-session"}, current)
+
+	require.Equal(t, "current-session", current.ID)
+	require.Contains(t, out.String(), "session not found")
+	_, err = store.OpenExisting("missing-session")
+	require.ErrorIs(t, err, session.ErrSessionNotFound)
+
+	out.Reset()
+	app.handleSessionSlash([]string{"switch", "missing-switch"}, current)
+	require.Equal(t, "current-session", current.ID)
+	require.Contains(t, out.String(), "session not found")
+	_, err = store.OpenExisting("missing-switch")
+	require.ErrorIs(t, err, session.ErrSessionNotFound)
+}
+
 func TestEnterpriseAuditListsEvents(t *testing.T) {
 	configHome := t.TempDir()
 	require.NoError(t, audit.NewStore(configHome).Append(audit.Event{
