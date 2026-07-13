@@ -3941,9 +3941,13 @@ func TestToolSearchToolReportsMCPAvailableToolsForPartialDiscovery(t *testing.T)
 
 func TestAskUserQuestionToolReadsChoiceAndDefault(t *testing.T) {
 	var out strings.Builder
+	var requests []UserQuestionRequest
 	tool := AskUserQuestionTool{
 		In:  strings.NewReader("2\n"),
 		Out: &out,
+		OnRequest: func(request UserQuestionRequest) {
+			requests = append(requests, request)
+		},
 	}
 	properties := tool.Definition().InputSchema["properties"].(map[string]any)
 	require.Contains(t, properties, "options")
@@ -3953,6 +3957,11 @@ func TestAskUserQuestionToolReadsChoiceAndDefault(t *testing.T) {
 	require.Contains(t, out.String(), "Pick one")
 	require.Contains(t, out.String(), "2. beta")
 	require.Contains(t, result, `"answer": "beta"`)
+	require.Equal(t, []UserQuestionRequest{{
+		Question: "Pick one",
+		Choices:  []string{"alpha", "beta"},
+		Default:  "alpha",
+	}}, requests)
 
 	out.Reset()
 	tool.In = strings.NewReader("\n")
@@ -3966,6 +3975,79 @@ func TestAskUserQuestionToolReadsChoiceAndDefault(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out.String(), "1. gamma")
 	require.Contains(t, result, `"answer": "gamma"`)
+	require.Equal(t, UserQuestionRequest{
+		Question: "Use options?",
+		Choices:  []string{"gamma", "delta"},
+	}, requests[2])
+}
+
+func TestAskUserQuestionToolSupportsClaudeQuestionsShape(t *testing.T) {
+	input := `{"questions":[` +
+		`{"question":"Pick a lane?","header":"Lane","options":[` +
+		`{"label":"Alpha","description":"Stable","preview":"alpha preview"},` +
+		`{"label":"Beta","description":"Fast"}],"multiSelect":false},` +
+		`{"question":"Enable features?","header":"Features","options":[` +
+		`{"label":"Cache","description":"Reuse results"},` +
+		`{"label":"Trace","description":"Record spans"}],"multiSelect":true}` +
+		`]}`
+	var request UserQuestionRequest
+	tool := AskUserQuestionTool{
+		In: strings.NewReader(`{"Pick a lane?":"Beta","Enable features?":"Cache, Trace"}` + "\n"),
+		OnRequest: func(value UserQuestionRequest) {
+			request = value
+		},
+	}
+
+	result, err := tool.Execute(context.Background(), []byte(input))
+	require.NoError(t, err)
+	require.Len(t, request.Questions, 2)
+	require.Equal(t, "Lane", request.Questions[0].Header)
+	require.Equal(t, "alpha preview", request.Questions[0].Options[0].Preview)
+	require.True(t, request.Questions[1].MultiSelect)
+	require.Contains(t, result, `"Pick a lane?": "Beta"`)
+	require.Contains(t, result, `"Enable features?": "Cache, Trace"`)
+
+	definition := tool.Definition().InputSchema
+	properties := definition["properties"].(map[string]any)
+	require.Contains(t, properties, "questions")
+	require.Contains(t, definition, "anyOf")
+}
+
+func TestAskUserQuestionToolReadsModernQuestionsWithoutTUI(t *testing.T) {
+	input := `{"questions":[` +
+		`{"question":"Pick?","header":"Pick","options":[{"label":"One","description":"First"},{"label":"Two","description":"Second"}]},` +
+		`{"question":"Combine?","header":"Combine","options":[{"label":"Red","description":"R"},{"label":"Blue","description":"B"}],"multiSelect":true}` +
+		`]}`
+	var out strings.Builder
+	tool := AskUserQuestionTool{In: strings.NewReader("2\n1,2\n"), Out: &out}
+
+	result, err := tool.Execute(context.Background(), []byte(input))
+	require.NoError(t, err)
+	require.Contains(t, out.String(), "[1/2] Pick?")
+	require.Contains(t, out.String(), "Select one or more")
+	require.Contains(t, result, `"Pick?": "Two"`)
+	require.Contains(t, result, `"Combine?": "Red, Blue"`)
+}
+
+func TestAskUserQuestionToolRejectsInvalidModernQuestions(t *testing.T) {
+	validOptions := `[{"label":"One","description":"First"},{"label":"Two","description":"Second"}]`
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "mixed legacy", input: `{"question":"legacy","questions":[{"question":"Modern?","header":"Modern","options":` + validOptions + `}]}`, want: "cannot be combined"},
+		{name: "long header", input: `{"questions":[{"question":"Modern?","header":"header-is-too-long","options":` + validOptions + `}]}`, want: "at most 12"},
+		{name: "few options", input: `{"questions":[{"question":"Modern?","header":"Modern","options":[{"label":"One","description":"First"}]}]}`, want: "between 2 and 4"},
+		{name: "duplicate options", input: `{"questions":[{"question":"Modern?","header":"Modern","options":[{"label":"One","description":"First"},{"label":"one","description":"Again"}]}]}`, want: "labels must be unique"},
+		{name: "duplicate questions", input: `{"questions":[{"question":"Modern?","header":"One","options":` + validOptions + `},{"question":"modern?","header":"Two","options":` + validOptions + `}]}`, want: "question texts must be unique"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := (AskUserQuestionTool{}).Execute(context.Background(), []byte(tc.input))
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
 }
 
 func TestBriefToolReturnsAttachmentMetadata(t *testing.T) {

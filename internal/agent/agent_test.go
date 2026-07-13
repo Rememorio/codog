@@ -124,9 +124,9 @@ func TestTUIPermissionEventsWrapOriginalCallbacks(t *testing.T) {
 	prompter.OnDecision = func(decision tools.PermissionDecision) {
 		original = append(original, "decision:"+decision.ToolName)
 	}
-	entries := []string{}
+	entries := []tui.Entry{}
 	wrapTUIPermissionEvents(prompter, func(entry tui.Entry) {
-		entries = append(entries, entry.Text)
+		entries = append(entries, entry)
 	})
 
 	request := tools.PermissionDecision{
@@ -144,10 +144,44 @@ func TestTUIPermissionEventsWrapOriginalCallbacks(t *testing.T) {
 
 	require.Equal(t, []string{"request:bash", "decision:bash"}, original)
 	require.Len(t, entries, 2)
-	require.Contains(t, entries[0], "bash requires danger-full-access")
-	require.Contains(t, entries[0], "writes outside workspace")
-	require.Contains(t, entries[1], "bash approved")
-	require.Contains(t, entries[1], "user_approved")
+	require.Contains(t, entries[0].Text, "bash requires danger-full-access")
+	require.Contains(t, entries[0].Text, "writes outside workspace")
+	require.Equal(t, &tui.PermissionRequest{
+		Tool:        "bash",
+		Required:    "danger-full-access",
+		Message:     "writes outside workspace",
+		AllowAlways: true,
+	}, entries[0].Permission)
+	require.Contains(t, entries[1].Text, "bash approved")
+	require.Contains(t, entries[1].Text, "user_approved")
+	require.Nil(t, entries[1].Permission)
+}
+
+func TestRenderTUIQuestionRequest(t *testing.T) {
+	text := renderTUIQuestionRequest(tools.UserQuestionRequest{
+		Question: "Pick a lane",
+		Choices:  []string{"alpha", "beta"},
+		Default:  "beta",
+	})
+
+	require.Equal(t, "Pick a lane\n  1. alpha\n  2. beta\nDefault: beta", text)
+}
+
+func TestRenderModernTUIQuestionRequest(t *testing.T) {
+	request := tools.UserQuestionRequest{Questions: []tools.UserQuestion{{
+		Question: "Pick a lane?",
+		Header:   "Lane",
+		Options: []tools.UserQuestionOption{
+			{Label: "Alpha", Description: "Stable", Preview: "preview"},
+			{Label: "Beta", Description: "Fast"},
+		},
+	}}}
+
+	text := renderTUIQuestionRequest(request)
+	require.Contains(t, text, "Questions\n1. Pick a lane?")
+	require.Contains(t, text, "1. Alpha - Stable")
+	mapped := tuiQuestions(request.Questions)
+	require.Equal(t, "preview", mapped[0].Options[0].Preview)
 }
 
 func TestPromptEmitsMultipleToolEventsInOneTurn(t *testing.T) {
@@ -1545,6 +1579,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 		require.NotContains(t, report.Commands, internalName)
 	}
 	require.Contains(t, report.Features, "approval_tokens")
+	require.Contains(t, report.Features, "ask_user_question_multi_select")
+	require.Contains(t, report.Features, "ask_user_question_previews")
+	require.Contains(t, report.Features, "ask_user_question_tabs")
 	require.Contains(t, report.Features, "broad_cwd_guard")
 	require.Contains(t, report.Features, "bootstrap_plan")
 	require.Contains(t, report.Features, "config_load_degraded")
@@ -1581,6 +1618,8 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "tui_first_run_theme_onboarding")
 	require.Contains(t, report.Features, "tui_live_theme_picker")
 	require.Contains(t, report.Features, "tui_no_color_theme")
+	require.Contains(t, report.Features, "tui_permission_picker")
+	require.Contains(t, report.Features, "tui_question_picker")
 	require.Contains(t, report.Features, "tool_search_mcp_degraded")
 	require.Contains(t, report.Features, "typed_task_packets")
 	require.Contains(t, report.Features, "worker_startup_no_evidence")

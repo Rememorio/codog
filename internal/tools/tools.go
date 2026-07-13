@@ -10043,24 +10043,75 @@ func taskStore(configHome string, workspace string) background.Store {
 	return background.NewStore(configHome)
 }
 
+// UserQuestionRequest is the normalized question presented by
+// AskUserQuestionTool before it waits for an answer.
+type UserQuestionRequest struct {
+	Question  string
+	Choices   []string
+	Default   string
+	Questions []UserQuestion
+}
+
+// UserQuestion is one question in the Claude-compatible multi-question
+// request shape.
+type UserQuestion struct {
+	Question    string               `json:"question"`
+	Header      string               `json:"header"`
+	Options     []UserQuestionOption `json:"options"`
+	MultiSelect bool                 `json:"multiSelect"`
+}
+
+// UserQuestionOption is one labeled answer with optional supporting preview.
+type UserQuestionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	Preview     string `json:"preview,omitempty"`
+}
+
 type AskUserQuestionTool struct {
-	In  io.Reader
-	Out io.Writer
+	In        io.Reader
+	Out       io.Writer
+	OnRequest func(UserQuestionRequest)
 }
 
 func (AskUserQuestionTool) Definition() anthropic.ToolDefinition {
+	questionOptionSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"label":       map[string]any{"type": "string"},
+			"description": map[string]any{"type": "string"},
+			"preview":     map[string]any{"type": "string"},
+		},
+		"required":             []string{"label", "description"},
+		"additionalProperties": false,
+	}
+	questionSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"question":    map[string]any{"type": "string"},
+			"header":      map[string]any{"type": "string", "maxLength": 12},
+			"options":     map[string]any{"type": "array", "items": questionOptionSchema, "minItems": 2, "maxItems": 4},
+			"multiSelect": map[string]any{"type": "boolean"},
+		},
+		"required":             []string{"question", "header", "options"},
+		"additionalProperties": false,
+	}
 	return anthropic.ToolDefinition{
 		Name:        "ask_user_question",
-		Description: "Ask the user a concise question and return their answer to the model.",
+		Description: "Ask the user one to four concise questions and return their selected or free-text answers.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"question": map[string]any{"type": "string"},
-				"choices":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"default":  map[string]any{"type": "string"},
+				"question":  map[string]any{"type": "string"},
+				"choices":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"options":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"default":   map[string]any{"type": "string"},
+				"questions": map[string]any{"type": "array", "items": questionSchema, "minItems": 1, "maxItems": 4},
 			},
-			"required":             []string{"question"},
+			"anyOf": []any{
+				map[string]any{"required": []string{"question"}},
+				map[string]any{"required": []string{"questions"}},
+			},
 			"additionalProperties": false,
 		},
 	}
@@ -10070,17 +10121,28 @@ func (AskUserQuestionTool) Permission() Permission { return PermissionReadOnly }
 
 func (t AskUserQuestionTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Question string   `json:"question"`
-		Choices  []string `json:"choices"`
-		Options  []string `json:"options"`
-		Default  string   `json:"default"`
+		Question  string         `json:"question"`
+		Choices   []string       `json:"choices"`
+		Options   []string       `json:"options"`
+		Default   string         `json:"default"`
+		Questions []UserQuestion `json:"questions"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
 	payload.Question = strings.TrimSpace(payload.Question)
+	if len(payload.Questions) > 0 {
+		if payload.Question != "" || len(payload.Choices) > 0 || len(payload.Options) > 0 || strings.TrimSpace(payload.Default) != "" {
+			return "", errors.New("questions cannot be combined with legacy question fields")
+		}
+		questions, err := normalizeUserQuestions(payload.Questions)
+		if err != nil {
+			return "", err
+		}
+		return t.executeUserQuestions(ctx, questions)
+	}
 	if payload.Question == "" {
-		return "", errors.New("question is required")
+		return "", errors.New("question or questions is required")
 	}
 	in := t.In
 	if in == nil {
@@ -10090,42 +10152,198 @@ func (t AskUserQuestionTool) Execute(ctx context.Context, input json.RawMessage)
 	if out == nil {
 		out = os.Stderr
 	}
-	fmt.Fprintf(out, "\n%s\n", payload.Question)
 	choices := normalizeQuestionChoices(append(payload.Choices, payload.Options...))
+	defaultAnswer := strings.TrimSpace(payload.Default)
+	if t.OnRequest != nil {
+		t.OnRequest(UserQuestionRequest{
+			Question: payload.Question,
+			Choices:  append([]string(nil), choices...),
+			Default:  defaultAnswer,
+		})
+	}
+	fmt.Fprintf(out, "\n%s\n", payload.Question)
 	for index, choice := range choices {
 		fmt.Fprintf(out, "  %d. %s\n", index+1, choice)
 	}
-	if strings.TrimSpace(payload.Default) != "" {
-		fmt.Fprintf(out, "Default: %s\n", strings.TrimSpace(payload.Default))
+	if defaultAnswer != "" {
+		fmt.Fprintf(out, "Default: %s\n", defaultAnswer)
 	}
 	fmt.Fprint(out, "Answer: ")
 
-	answerCh := make(chan string, 1)
-	errCh := make(chan error, 1)
-	go func() {
-		line, err := bufio.NewReader(in).ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			errCh <- err
-			return
-		}
-		answerCh <- strings.TrimSpace(line)
-	}()
-	var answer string
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case err := <-errCh:
+	answer, err := readUserQuestionAnswer(ctx, in)
+	if err != nil {
 		return "", err
-	case answer = <-answerCh:
 	}
 	if answer == "" {
-		answer = strings.TrimSpace(payload.Default)
+		answer = defaultAnswer
 	}
 	answer = resolveQuestionChoice(answer, choices)
 	return pretty(map[string]any{
 		"question": payload.Question,
 		"answer":   answer,
 	}), nil
+}
+
+func (t AskUserQuestionTool) executeUserQuestions(ctx context.Context, questions []UserQuestion) (string, error) {
+	in := t.In
+	if in == nil {
+		in = os.Stdin
+	}
+	out := t.Out
+	if out == nil {
+		out = os.Stderr
+	}
+	if t.OnRequest != nil {
+		t.OnRequest(UserQuestionRequest{Questions: cloneUserQuestions(questions)})
+		line, err := readUserQuestionAnswer(ctx, in)
+		if err != nil {
+			return "", err
+		}
+		answers := map[string]string{}
+		if strings.TrimSpace(line) != "" {
+			if err := json.Unmarshal([]byte(line), &answers); err != nil {
+				if len(questions) != 1 {
+					return "", errors.New("multi-question answers must be a JSON object")
+				}
+				answers[questions[0].Question] = resolveModernQuestionAnswer(line, questions[0])
+			}
+		}
+		return pretty(map[string]any{"questions": questions, "answers": answers}), nil
+	}
+
+	answers := make(map[string]string, len(questions))
+	reader := bufio.NewReader(in)
+	for index, question := range questions {
+		fmt.Fprintf(out, "\n[%d/%d] %s\n", index+1, len(questions), question.Question)
+		for optionIndex, option := range question.Options {
+			fmt.Fprintf(out, "  %d. %s - %s\n", optionIndex+1, option.Label, option.Description)
+		}
+		if question.MultiSelect {
+			fmt.Fprintln(out, "Select one or more choices separated by commas, or type another answer.")
+		}
+		fmt.Fprint(out, "Answer: ")
+		answer, err := readUserQuestionAnswer(ctx, reader)
+		if err != nil {
+			return "", err
+		}
+		answers[question.Question] = resolveModernQuestionAnswer(answer, question)
+	}
+	return pretty(map[string]any{"questions": questions, "answers": answers}), nil
+}
+
+func readUserQuestionAnswer(ctx context.Context, in io.Reader) (string, error) {
+	answerCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		reader, ok := in.(*bufio.Reader)
+		if !ok {
+			reader = bufio.NewReader(in)
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			errCh <- err
+			return
+		}
+		answerCh <- strings.TrimSpace(line)
+	}()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case err := <-errCh:
+		return "", err
+	case answer := <-answerCh:
+		return answer, nil
+	}
+}
+
+func normalizeUserQuestions(questions []UserQuestion) ([]UserQuestion, error) {
+	if len(questions) < 1 || len(questions) > 4 {
+		return nil, errors.New("questions must contain between 1 and 4 items")
+	}
+	out := make([]UserQuestion, 0, len(questions))
+	seenQuestions := map[string]struct{}{}
+	for index, question := range questions {
+		question.Question = strings.TrimSpace(question.Question)
+		question.Header = strings.TrimSpace(question.Header)
+		if question.Question == "" {
+			return nil, fmt.Errorf("questions[%d].question is required", index)
+		}
+		if question.Header == "" {
+			return nil, fmt.Errorf("questions[%d].header is required", index)
+		}
+		if utf8.RuneCountInString(question.Header) > 12 {
+			return nil, fmt.Errorf("questions[%d].header must be at most 12 characters", index)
+		}
+		questionKey := strings.ToLower(question.Question)
+		if _, ok := seenQuestions[questionKey]; ok {
+			return nil, errors.New("question texts must be unique")
+		}
+		seenQuestions[questionKey] = struct{}{}
+		if len(question.Options) < 2 || len(question.Options) > 4 {
+			return nil, fmt.Errorf("questions[%d].options must contain between 2 and 4 items", index)
+		}
+		seenOptions := map[string]struct{}{}
+		for optionIndex := range question.Options {
+			option := &question.Options[optionIndex]
+			option.Label = strings.TrimSpace(option.Label)
+			option.Description = strings.TrimSpace(option.Description)
+			option.Preview = strings.TrimSpace(option.Preview)
+			if option.Label == "" || option.Description == "" {
+				return nil, fmt.Errorf("questions[%d].options[%d] requires label and description", index, optionIndex)
+			}
+			optionKey := strings.ToLower(option.Label)
+			if _, ok := seenOptions[optionKey]; ok {
+				return nil, fmt.Errorf("questions[%d] option labels must be unique", index)
+			}
+			seenOptions[optionKey] = struct{}{}
+		}
+		out = append(out, question)
+	}
+	return out, nil
+}
+
+func cloneUserQuestions(questions []UserQuestion) []UserQuestion {
+	out := make([]UserQuestion, len(questions))
+	for index, question := range questions {
+		out[index] = question
+		out[index].Options = append([]UserQuestionOption(nil), question.Options...)
+	}
+	return out
+}
+
+func resolveModernQuestionAnswer(answer string, question UserQuestion) string {
+	parts := []string{strings.TrimSpace(answer)}
+	if question.MultiSelect {
+		parts = strings.Split(answer, ",")
+	}
+	resolved := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if index, err := strconv.Atoi(part); err == nil && index >= 1 && index <= len(question.Options) {
+			part = question.Options[index-1].Label
+		} else {
+			for _, option := range question.Options {
+				if strings.EqualFold(part, option.Label) {
+					part = option.Label
+					break
+				}
+			}
+		}
+		key := strings.ToLower(part)
+		if part == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		resolved = append(resolved, part)
+		if !question.MultiSelect {
+			break
+		}
+	}
+	return strings.Join(resolved, ", ")
 }
 
 func normalizeQuestionChoices(choices []string) []string {

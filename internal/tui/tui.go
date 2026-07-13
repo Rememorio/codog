@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -25,8 +26,43 @@ type Result struct {
 
 // Entry is one transcript item rendered by the interactive TUI shell.
 type Entry struct {
-	Role string
-	Text string
+	Role       string
+	Text       string
+	Permission *PermissionRequest
+	Question   *QuestionRequest
+}
+
+// PermissionRequest describes a tool confirmation shown by the interactive
+// shell. Text remains available on Entry as a transcript fallback.
+type PermissionRequest struct {
+	Tool        string
+	Required    string
+	Input       string
+	Message     string
+	AllowAlways bool
+}
+
+// QuestionRequest describes a structured AskUserQuestionTool interaction.
+type QuestionRequest struct {
+	Question  string
+	Choices   []string
+	Default   string
+	Questions []Question
+}
+
+// Question is one tab in a structured user-question interaction.
+type Question struct {
+	Question    string
+	Header      string
+	Options     []QuestionOption
+	MultiSelect bool
+}
+
+// QuestionOption is one selectable answer and its supporting context.
+type QuestionOption struct {
+	Label       string
+	Description string
+	Preview     string
 }
 
 // SubmitFunc runs one user prompt and returns assistant output to append to the
@@ -313,6 +349,16 @@ type model struct {
 	streamingIndex            int
 	awaitingPermission        bool
 	awaitingQuestion          bool
+	permissionRequest         *PermissionRequest
+	permissionSelected        int
+	questionRequest           *QuestionRequest
+	questionSelected          int
+	questionCustom            bool
+	questionIndex             int
+	questionLegacy            bool
+	questionCursors           []int
+	questionSelections        [][]bool
+	questionCustomValues      []string
 }
 
 type transcriptEntry struct {
@@ -1731,6 +1777,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.startInput(msg.Value)
 	case turnDoneMsg:
 		m.busy = false
+		m.clearInteractionPrompts()
 		m.turnMessages = nil
 		if m.turnCancel != nil {
 			m.turnCancel()
@@ -1893,17 +1940,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.flushInlineTranscript()
 	case turnStreamMsg:
 		m.appendStreamDelta(msg.Role, msg.Delta)
-		if strings.EqualFold(msg.Role, "permission") {
+		switch {
+		case msg.Permission != nil:
+			m.openPermissionRequest(*msg.Permission)
+		case msg.Question != nil:
+			m.openQuestionRequest(*msg.Question)
+		case strings.EqualFold(msg.Role, "permission"):
 			m.awaitingPermission = isPermissionRequestDelta(msg.Delta)
 			if m.awaitingPermission {
+				m.openPermissionRequest(PermissionRequest{Input: msg.Delta})
 				m.status = "permission"
 			} else {
+				m.closePermissionRequest()
 				m.status = "permission answered"
 			}
-		} else if strings.EqualFold(msg.Role, "question") {
-			m.awaitingQuestion = true
-			m.status = "question"
-		} else {
+		case strings.EqualFold(msg.Role, "question"):
+			m.openQuestionRequest(QuestionRequest{Question: msg.Delta})
+		default:
 			m.status = "streaming"
 		}
 		m.refreshViewport()
@@ -1919,6 +1972,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.Paste {
 			return m.handlePastedInput(msg)
+		}
+		if m.awaitingPermission {
+			return m.updatePermissionRequest(msg)
+		}
+		if m.awaitingQuestion {
+			return m.updateQuestionRequest(msg)
 		}
 		if m.themePicker {
 			switch msg.String() {
@@ -2565,6 +2624,9 @@ func (m model) insertPasteContent(content PasteContent) (tea.Model, tea.Cmd) {
 }
 
 func (m model) insertPastedText(text string) (tea.Model, tea.Cmd) {
+	if m.awaitingQuestion && !m.questionCustom {
+		m.beginQuestionCustomInput()
+	}
 	if m.helpOpen {
 		m.helpOpen = false
 	}
@@ -2730,6 +2792,14 @@ func (m model) View() string {
 	}
 	if m.stashedPrompt != nil {
 		composer += "\n" + renderStashNotice(m.stashedPrompt, styles)
+	}
+	if m.awaitingPermission && m.permissionRequest != nil {
+		composer = renderPermissionRequest(*m.permissionRequest, m.permissionSelected, m.width, styles)
+	} else if m.awaitingQuestion && m.questionRequest != nil {
+		composer = renderQuestionRequest(*m.questionRequest, m.questionIndex, m.questionSelected, m.questionCustom, m.questionSelections, m.questionCustomValues, m.width, styles)
+		if m.questionCustom {
+			composer += "\n" + composerTextarea.View()
+		}
 	}
 	statusText := fitFooterText(m.promptFooterText(barWidth), barContentWidth)
 	status := styles.status().Width(barWidth).Render(statusText)
@@ -4280,11 +4350,11 @@ func runStreamSubmitCommand(ctx context.Context, submit StreamSubmitFunc, prompt
 			if strings.TrimSpace(entry.Role) == "" {
 				entry.Role = "assistant"
 			}
-			if entry.Text == "" {
+			if entry.Text == "" && entry.Permission == nil && entry.Question == nil {
 				return
 			}
 			select {
-			case messages <- turnStreamMsg{Role: entry.Role, Delta: entry.Text}:
+			case messages <- turnStreamMsg{Role: entry.Role, Delta: entry.Text, Permission: entry.Permission, Question: entry.Question}:
 			case <-ctx.Done():
 			}
 		})
@@ -4299,11 +4369,11 @@ func runStreamSubmitAttachmentsCommand(ctx context.Context, submit StreamSubmitW
 			if strings.TrimSpace(entry.Role) == "" {
 				entry.Role = "assistant"
 			}
-			if entry.Text == "" {
+			if entry.Text == "" && entry.Permission == nil && entry.Question == nil {
 				return
 			}
 			select {
-			case messages <- turnStreamMsg{Role: entry.Role, Delta: entry.Text}:
+			case messages <- turnStreamMsg{Role: entry.Role, Delta: entry.Text, Permission: entry.Permission, Question: entry.Question}:
 			case <-ctx.Done():
 			}
 		})
@@ -4332,8 +4402,10 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 }
 
 type turnStreamMsg struct {
-	Role  string
-	Delta string
+	Role       string
+	Delta      string
+	Permission *PermissionRequest
+	Question   *QuestionRequest
 }
 
 type externalEditorDoneMsg struct {
@@ -4488,27 +4560,499 @@ func (m *model) answerPermission(answer string) {
 		return
 	}
 	m.permissionAnswer(answer)
-	m.awaitingPermission = false
+	m.closePermissionRequest()
 	m.status = "permission answered"
 }
 
 func (m *model) answerQuestion() {
+	answer := strings.TrimSpace(m.textarea.Value())
+	if !m.questionLegacy {
+		if answer == "" {
+			m.status = "answer required"
+			return
+		}
+		m.setQuestionCustomAnswer(answer)
+		m.textarea.SetValue("")
+		m.questionCustom = false
+		m.advanceQuestion()
+		return
+	}
+	m.answerQuestionValue(answer)
+}
+
+func (m *model) answerQuestionValue(answer string) {
 	if m.questionAnswer == nil {
 		return
 	}
-	answer := strings.TrimSpace(m.textarea.Value())
+	answer = strings.TrimSpace(answer)
 	m.questionAnswer(answer)
-	if answer == "" {
-		answer = "(default)"
+	displayAnswer := answer
+	if displayAnswer == "" && m.questionRequest != nil {
+		displayAnswer = strings.TrimSpace(m.questionRequest.Default)
 	}
-	m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: answer})
+	if displayAnswer == "" {
+		displayAnswer = "(no response)"
+	}
+	m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: displayAnswer})
 	m.textarea.SetValue("")
+	m.textarea.Placeholder = "Ask codog..."
 	m.matches = nil
 	m.selected = 0
-	m.awaitingQuestion = false
+	m.closeQuestionRequest()
 	m.status = "question answered"
 	m.refreshViewport()
 	m.viewport.GotoBottom()
+}
+
+func (m *model) openPermissionRequest(request PermissionRequest) {
+	request.Tool = strings.TrimSpace(request.Tool)
+	request.Required = strings.TrimSpace(request.Required)
+	request.Input = strings.TrimSpace(request.Input)
+	request.Message = strings.TrimSpace(request.Message)
+	m.permissionRequest = &request
+	m.permissionSelected = 0
+	m.awaitingPermission = true
+	m.status = "permission"
+}
+
+func (m *model) closePermissionRequest() {
+	m.awaitingPermission = false
+	m.permissionRequest = nil
+	m.permissionSelected = 0
+}
+
+func (m *model) updatePermissionRequest(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "left", "ctrl+p", "k", "shift+tab":
+		m.movePermissionSelection(-1)
+	case "down", "right", "ctrl+n", "j", "tab":
+		m.movePermissionSelection(1)
+	case "home":
+		m.permissionSelected = 0
+	case "end":
+		m.permissionSelected = len(m.permissionAnswers()) - 1
+	case "enter":
+		answers := m.permissionAnswers()
+		if len(answers) > 0 {
+			m.answerPermission(answers[clampIndex(m.permissionSelected, len(answers))])
+		}
+	case "y", "Y":
+		m.answerPermission("y")
+	case "a", "A":
+		if m.permissionRequest != nil && m.permissionRequest.AllowAlways {
+			m.answerPermission("a")
+		}
+	case "n", "N", "esc", "ctrl+c":
+		m.answerPermission("n")
+	}
+	return *m, nil
+}
+
+func (m *model) permissionAnswers() []string {
+	answers := []string{"y"}
+	if m.permissionRequest != nil && m.permissionRequest.AllowAlways {
+		answers = append(answers, "a")
+	}
+	return append(answers, "n")
+}
+
+func (m *model) movePermissionSelection(delta int) {
+	count := len(m.permissionAnswers())
+	if count == 0 {
+		return
+	}
+	m.permissionSelected = (m.permissionSelected + delta + count) % count
+	m.status = "permission"
+}
+
+func (m *model) openQuestionRequest(request QuestionRequest) {
+	request.Question = strings.TrimSpace(request.Question)
+	request.Default = strings.TrimSpace(request.Default)
+	request.Choices = normalizeQuestionRequestChoices(request.Choices)
+	m.questionLegacy = len(request.Questions) == 0
+	if m.questionLegacy {
+		options := make([]QuestionOption, 0, len(request.Choices))
+		for _, choice := range request.Choices {
+			options = append(options, QuestionOption{Label: choice})
+		}
+		request.Questions = []Question{{Question: request.Question, Header: "Question", Options: options}}
+	} else {
+		request.Questions = normalizeTUIQuestions(request.Questions)
+	}
+	m.questionRequest = &request
+	m.questionIndex = 0
+	m.questionCursors = make([]int, len(request.Questions))
+	m.questionSelections = make([][]bool, len(request.Questions))
+	m.questionCustomValues = make([]string, len(request.Questions))
+	for questionIndex, question := range request.Questions {
+		m.questionSelections[questionIndex] = make([]bool, len(question.Options))
+		if m.questionLegacy {
+			for optionIndex, option := range question.Options {
+				if strings.EqualFold(option.Label, request.Default) {
+					m.questionCursors[questionIndex] = optionIndex
+					break
+				}
+			}
+		}
+	}
+	m.questionSelected = m.questionCursors[0]
+	m.questionCustom = len(request.Questions[0].Options) == 0
+	m.awaitingQuestion = true
+	if m.questionCustom {
+		m.textarea.Placeholder = "Type your answer..."
+	}
+	m.status = "question"
+}
+
+func normalizeTUIQuestions(questions []Question) []Question {
+	out := make([]Question, 0, len(questions))
+	for index, question := range questions {
+		question.Question = strings.TrimSpace(question.Question)
+		question.Header = strings.TrimSpace(question.Header)
+		if question.Header == "" {
+			question.Header = fmt.Sprintf("Q%d", index+1)
+		}
+		options := make([]QuestionOption, 0, len(question.Options))
+		seen := map[string]struct{}{}
+		for _, option := range question.Options {
+			option.Label = strings.TrimSpace(option.Label)
+			option.Description = strings.TrimSpace(option.Description)
+			option.Preview = strings.TrimSpace(option.Preview)
+			key := strings.ToLower(option.Label)
+			if option.Label == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			options = append(options, option)
+		}
+		question.Options = options
+		out = append(out, question)
+	}
+	if len(out) == 0 {
+		out = append(out, Question{Question: "Choose an answer", Header: "Question"})
+	}
+	return out
+}
+
+func normalizeQuestionRequestChoices(choices []string) []string {
+	out := make([]string, 0, len(choices))
+	seen := map[string]struct{}{}
+	for _, choice := range choices {
+		choice = strings.TrimSpace(choice)
+		key := strings.ToLower(choice)
+		if choice == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, choice)
+	}
+	return out
+}
+
+func (m *model) closeQuestionRequest() {
+	m.awaitingQuestion = false
+	m.questionRequest = nil
+	m.questionSelected = 0
+	m.questionCustom = false
+	m.questionIndex = 0
+	m.questionLegacy = false
+	m.questionCursors = nil
+	m.questionSelections = nil
+	m.questionCustomValues = nil
+	m.textarea.Placeholder = "Ask codog..."
+}
+
+func (m *model) updateQuestionRequest(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.questionCustom {
+		switch msg.String() {
+		case "esc", "ctrl+c":
+			m.closeQuestionRequest()
+			m.interruptTurn()
+			return *m, nil
+		case "enter":
+			m.answerQuestion()
+			return *m, nil
+		}
+		var cmd tea.Cmd
+		m.textarea, cmd = m.textarea.Update(msg)
+		return *m, cmd
+	}
+
+	if m.questionRequest == nil || len(m.questionRequest.Questions) == 0 {
+		return *m, nil
+	}
+	if m.questionIndex >= len(m.questionRequest.Questions) {
+		return m.updateQuestionReview(msg)
+	}
+	question := m.questionRequest.Questions[m.questionIndex]
+	choiceCount := len(question.Options)
+	optionCount := choiceCount + 1
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.closeQuestionRequest()
+		m.interruptTurn()
+	case "up", "ctrl+p", "k":
+		m.questionSelected = (m.questionSelected - 1 + optionCount) % optionCount
+		m.saveQuestionCursor()
+	case "down", "ctrl+n", "j":
+		m.questionSelected = (m.questionSelected + 1) % optionCount
+		m.saveQuestionCursor()
+	case "left", "shift+tab":
+		if m.questionLegacy {
+			m.questionSelected = (m.questionSelected - 1 + optionCount) % optionCount
+			m.saveQuestionCursor()
+		} else {
+			m.moveQuestionTab(-1)
+		}
+	case "right", "tab":
+		if m.questionLegacy {
+			m.questionSelected = (m.questionSelected + 1) % optionCount
+			m.saveQuestionCursor()
+		} else {
+			m.moveQuestionTab(1)
+		}
+	case "home":
+		m.questionSelected = 0
+		m.saveQuestionCursor()
+	case "end":
+		m.questionSelected = optionCount - 1
+		m.saveQuestionCursor()
+	case " ", "space":
+		if !m.questionLegacy && question.MultiSelect && m.questionSelected < choiceCount {
+			m.toggleQuestionSelection(m.questionSelected)
+		}
+	case "enter":
+		if m.questionSelected >= choiceCount {
+			m.beginQuestionCustomInput()
+		} else if m.questionLegacy {
+			m.answerQuestionValue(question.Options[m.questionSelected].Label)
+		} else if question.MultiSelect {
+			if !m.questionAnswered(m.questionIndex) {
+				m.toggleQuestionSelection(m.questionSelected)
+			}
+			m.advanceQuestion()
+		} else {
+			m.selectSingleQuestionOption(m.questionSelected)
+			m.advanceQuestion()
+		}
+	default:
+		if index, ok := questionNumberShortcut(msg, choiceCount); ok {
+			m.questionSelected = index
+			m.saveQuestionCursor()
+			return *m, nil
+		}
+		if len(msg.Runes) > 0 || msg.Type == tea.KeyBackspace || msg.Type == tea.KeyDelete {
+			m.beginQuestionCustomInput()
+			var cmd tea.Cmd
+			m.textarea, cmd = m.textarea.Update(msg)
+			return *m, cmd
+		}
+	}
+	return *m, nil
+}
+
+func (m *model) beginQuestionCustomInput() {
+	if question := m.currentQuestion(); question != nil {
+		m.questionSelected = len(question.Options)
+		m.saveQuestionCursor()
+		if m.questionIndex < len(m.questionCustomValues) {
+			m.textarea.SetValue(m.questionCustomValues[m.questionIndex])
+			m.textarea.CursorEnd()
+		}
+	}
+	m.questionCustom = true
+	m.textarea.Placeholder = "Type your answer..."
+	m.status = "question"
+}
+
+func (m *model) currentQuestion() *Question {
+	if m.questionRequest == nil || m.questionIndex < 0 || m.questionIndex >= len(m.questionRequest.Questions) {
+		return nil
+	}
+	return &m.questionRequest.Questions[m.questionIndex]
+}
+
+func (m *model) saveQuestionCursor() {
+	if m.questionIndex >= 0 && m.questionIndex < len(m.questionCursors) {
+		m.questionCursors[m.questionIndex] = m.questionSelected
+	}
+}
+
+func (m *model) moveQuestionTab(delta int) {
+	if m.questionRequest == nil {
+		return
+	}
+	count := len(m.questionRequest.Questions) + 1
+	m.saveQuestionCursor()
+	m.questionIndex = (m.questionIndex + delta + count) % count
+	m.questionCustom = false
+	m.textarea.SetValue("")
+	m.textarea.Placeholder = "Ask codog..."
+	if m.questionIndex < len(m.questionCursors) {
+		m.questionSelected = m.questionCursors[m.questionIndex]
+	}
+	m.status = "question"
+}
+
+func (m *model) updateQuestionReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.closeQuestionRequest()
+		m.interruptTurn()
+	case "left", "shift+tab", "up", "k":
+		m.moveQuestionTab(-1)
+	case "home":
+		m.questionIndex = 0
+		m.questionSelected = m.questionCursors[0]
+	case "enter":
+		if index := m.firstUnansweredQuestion(); index >= 0 {
+			m.questionIndex = index
+			m.questionSelected = m.questionCursors[index]
+			m.status = "answer required"
+			return *m, nil
+		}
+		m.submitModernQuestionAnswers()
+	}
+	return *m, nil
+}
+
+func (m *model) selectSingleQuestionOption(optionIndex int) {
+	if m.questionIndex < 0 || m.questionIndex >= len(m.questionSelections) {
+		return
+	}
+	for index := range m.questionSelections[m.questionIndex] {
+		m.questionSelections[m.questionIndex][index] = index == optionIndex
+	}
+	m.questionCustomValues[m.questionIndex] = ""
+}
+
+func (m *model) toggleQuestionSelection(optionIndex int) {
+	if m.questionIndex < 0 || m.questionIndex >= len(m.questionSelections) || optionIndex < 0 || optionIndex >= len(m.questionSelections[m.questionIndex]) {
+		return
+	}
+	m.questionSelections[m.questionIndex][optionIndex] = !m.questionSelections[m.questionIndex][optionIndex]
+}
+
+func (m *model) setQuestionCustomAnswer(answer string) {
+	if m.questionIndex < 0 || m.questionIndex >= len(m.questionCustomValues) {
+		return
+	}
+	question := m.currentQuestion()
+	if question == nil {
+		return
+	}
+	if !question.MultiSelect {
+		for index := range m.questionSelections[m.questionIndex] {
+			m.questionSelections[m.questionIndex][index] = false
+		}
+	}
+	m.questionCustomValues[m.questionIndex] = strings.TrimSpace(answer)
+}
+
+func (m *model) questionAnswered(index int) bool {
+	if index < 0 || index >= len(m.questionSelections) {
+		return false
+	}
+	if index < len(m.questionCustomValues) && strings.TrimSpace(m.questionCustomValues[index]) != "" {
+		return true
+	}
+	for _, selected := range m.questionSelections[index] {
+		if selected {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *model) firstUnansweredQuestion() int {
+	if m.questionRequest == nil {
+		return -1
+	}
+	for index := range m.questionRequest.Questions {
+		if !m.questionAnswered(index) {
+			return index
+		}
+	}
+	return -1
+}
+
+func (m *model) advanceQuestion() {
+	if m.questionLegacy {
+		return
+	}
+	if m.questionRequest == nil {
+		return
+	}
+	if len(m.questionRequest.Questions) == 1 {
+		m.submitModernQuestionAnswers()
+		return
+	}
+	m.saveQuestionCursor()
+	m.questionIndex = min(m.questionIndex+1, len(m.questionRequest.Questions))
+	m.questionCustom = false
+	m.textarea.SetValue("")
+	m.textarea.Placeholder = "Ask codog..."
+	if m.questionIndex < len(m.questionCursors) {
+		m.questionSelected = m.questionCursors[m.questionIndex]
+	}
+	m.status = "question"
+}
+
+func (m *model) submitModernQuestionAnswers() {
+	if m.questionAnswer == nil || m.questionRequest == nil {
+		return
+	}
+	answers := make(map[string]string, len(m.questionRequest.Questions))
+	display := make([]string, 0, len(m.questionRequest.Questions))
+	for questionIndex, question := range m.questionRequest.Questions {
+		parts := []string{}
+		for optionIndex, option := range question.Options {
+			if questionIndex < len(m.questionSelections) && optionIndex < len(m.questionSelections[questionIndex]) && m.questionSelections[questionIndex][optionIndex] {
+				parts = append(parts, option.Label)
+			}
+		}
+		if questionIndex < len(m.questionCustomValues) {
+			if custom := strings.TrimSpace(m.questionCustomValues[questionIndex]); custom != "" {
+				parts = append(parts, custom)
+			}
+		}
+		answer := strings.Join(parts, ", ")
+		answers[question.Question] = answer
+		display = append(display, question.Header+": "+answer)
+	}
+	payload, err := json.Marshal(answers)
+	if err != nil {
+		m.status = "question error"
+		return
+	}
+	m.questionAnswer(string(payload))
+	m.transcript = append(m.transcript, transcriptEntry{Role: "user", Text: strings.Join(display, "\n")})
+	m.textarea.SetValue("")
+	m.matches = nil
+	m.selected = 0
+	m.closeQuestionRequest()
+	m.status = "question answered"
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+}
+
+func questionNumberShortcut(msg tea.KeyMsg, choiceCount int) (int, bool) {
+	if msg.Type != tea.KeyRunes || len(msg.Runes) != 1 || msg.Runes[0] < '1' || msg.Runes[0] > '9' {
+		return 0, false
+	}
+	index := int(msg.Runes[0] - '1')
+	return index, index < choiceCount
+}
+
+func (m *model) clearInteractionPrompts() {
+	m.closePermissionRequest()
+	m.closeQuestionRequest()
 }
 
 func (m *model) armExit(key string, status string) {
@@ -6383,6 +6927,192 @@ func renderAttachmentPanel(attachments []string, selected int, width int, themed
 	return strings.Join(lines, "\n")
 }
 
+func renderPermissionRequest(request PermissionRequest, selected int, width int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
+	tool := strings.TrimSpace(request.Tool)
+	if tool == "" {
+		tool = "tool"
+	}
+	required := strings.TrimSpace(request.Required)
+	if required == "" {
+		required = "additional permission"
+	}
+	limit := 100
+	if width > 0 {
+		limit = max(12, width-8)
+	}
+	lines := []string{
+		styles.role("permission").Render("Permission request"),
+		truncateForComposer(fmt.Sprintf("Allow %s to use %s?", tool, required), limit),
+	}
+	if message := strings.TrimSpace(request.Message); message != "" {
+		lines = append(lines, styles.role("permission").Render("Warning: ")+truncateForComposer(strings.Join(strings.Fields(message), " "), max(12, limit-9)))
+	}
+	if input := strings.TrimSpace(request.Input); input != "" {
+		lines = append(lines, styles.completion().Render("  "+truncateForComposer(strings.Join(strings.Fields(input), " "), max(12, limit-2))))
+	}
+	answers := []string{"Yes"}
+	if request.AllowAlways {
+		answers = append(answers, "Yes, and don't ask again for this tool this session")
+	}
+	answers = append(answers, "No")
+	selected = clampIndex(selected, len(answers))
+	for index, label := range answers {
+		prefix := "  "
+		style := styles.completion()
+		if index == selected {
+			prefix = "> "
+			style = styles.selectedCompletion()
+		}
+		lines = append(lines, style.Render(truncateForComposer(prefix+label, limit)))
+	}
+	lines = append(lines, styles.completion().Render(truncateForComposer("  Enter to select · Up/Down to navigate · Esc to deny", limit)))
+	return strings.Join(lines, "\n")
+}
+
+func renderQuestionRequest(request QuestionRequest, questionIndex int, selected int, custom bool, selections [][]bool, customValues []string, width int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
+	limit := 100
+	if width > 0 {
+		limit = max(12, width-8)
+	}
+	questions := request.Questions
+	if len(questions) == 0 {
+		options := make([]QuestionOption, 0, len(request.Choices))
+		for _, choice := range request.Choices {
+			options = append(options, QuestionOption{Label: choice})
+		}
+		questions = []Question{{Question: request.Question, Header: "Question", Options: options}}
+	}
+	questionIndex = min(max(questionIndex, 0), len(questions))
+	lines := []string{styles.role("question").Render("Questions")}
+	if len(questions) > 1 {
+		tabs := make([]string, 0, len(questions)+1)
+		for index, question := range questions {
+			marker := "[ ]"
+			if renderedQuestionAnswered(index, selections, customValues) {
+				marker = "[x]"
+			}
+			prefix := ""
+			if index == questionIndex {
+				prefix = ">"
+			}
+			tabs = append(tabs, fmt.Sprintf("%s%s %s", prefix, marker, question.Header))
+		}
+		submitPrefix := ""
+		if questionIndex == len(questions) {
+			submitPrefix = ">"
+		}
+		tabs = append(tabs, submitPrefix+"Submit")
+		lines = append(lines, styles.completionTitle().Render(truncateForComposer(strings.Join(tabs, "  "), limit)))
+	}
+	if questionIndex == len(questions) {
+		lines = append(lines, styles.panelTitle().Render("Review answers"))
+		for index, question := range questions {
+			answer := renderedQuestionAnswer(index, question, selections, customValues)
+			if answer == "" {
+				answer = "(not answered)"
+			}
+			lines = append(lines, styles.completion().Render(truncateForComposer(question.Header+": "+answer, limit)))
+		}
+		lines = append(lines, styles.completion().Render(truncateForComposer("  Enter to submit · Left to go back · Esc to cancel", limit)))
+		return strings.Join(lines, "\n")
+	}
+
+	question := questions[questionIndex]
+	questionText := strings.TrimSpace(question.Question)
+	if questionText == "" {
+		questionText = "Choose an answer"
+	}
+	lines = append(lines, truncateForComposer(questionText, limit))
+	if question.MultiSelect {
+		lines = append(lines, styles.completionTitle().Render("Select one or more"))
+	}
+	if len(question.Options) == 0 {
+		lines = append(lines, styles.selectedCompletion().Render("> Type something"))
+	} else {
+		selected = clampIndex(selected, len(question.Options)+1)
+		for index, option := range question.Options {
+			prefix := "  "
+			style := styles.completion()
+			if index == selected && !custom {
+				prefix = "> "
+				style = styles.selectedCompletion()
+			}
+			marker := ""
+			if question.MultiSelect {
+				marker = "[ ] "
+				if questionIndex < len(selections) && index < len(selections[questionIndex]) && selections[questionIndex][index] {
+					marker = "[x] "
+				}
+			}
+			label := fmt.Sprintf("%d. %s%s", index+1, marker, option.Label)
+			if strings.EqualFold(option.Label, request.Default) {
+				label += " (default)"
+			}
+			lines = append(lines, style.Render(truncateForComposer(prefix+label, limit)))
+		}
+		prefix := "  "
+		style := styles.completion()
+		if selected == len(question.Options) || custom {
+			prefix = "> "
+			style = styles.selectedCompletion()
+		}
+		lines = append(lines, style.Render(prefix+"Type something"))
+		if selected < len(question.Options) {
+			option := question.Options[selected]
+			if option.Description != "" {
+				lines = append(lines, styles.completion().Render(truncateForComposer("  "+option.Description, limit)))
+			}
+			if option.Preview != "" {
+				lines = append(lines, styles.completionTitle().Render("Preview"))
+				for _, previewLine := range firstLines(option.Preview, 5) {
+					lines = append(lines, styles.completion().Render(truncateForComposer("  "+previewLine, limit)))
+				}
+			}
+		}
+	}
+	if custom {
+		lines = append(lines, styles.completion().Render(truncateForComposer("  Type your response below, then press Enter", limit)))
+	} else if question.MultiSelect {
+		lines = append(lines, styles.completion().Render(truncateForComposer("  Space to toggle · Enter next · Up/Down navigate · Esc cancel", limit)))
+	} else {
+		lines = append(lines, styles.completion().Render(truncateForComposer("  Enter to select · Up/Down to navigate · Esc to cancel", limit)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderedQuestionAnswered(index int, selections [][]bool, customValues []string) bool {
+	if index >= 0 && index < len(customValues) && strings.TrimSpace(customValues[index]) != "" {
+		return true
+	}
+	if index >= 0 && index < len(selections) {
+		for _, selected := range selections[index] {
+			if selected {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func renderedQuestionAnswer(index int, question Question, selections [][]bool, customValues []string) string {
+	parts := []string{}
+	if index >= 0 && index < len(selections) {
+		for optionIndex, selected := range selections[index] {
+			if selected && optionIndex < len(question.Options) {
+				parts = append(parts, question.Options[optionIndex].Label)
+			}
+		}
+	}
+	if index >= 0 && index < len(customValues) {
+		if custom := strings.TrimSpace(customValues[index]); custom != "" {
+			parts = append(parts, custom)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
 func renderDiffDialog(sources []DiffSource, sourceIndex int, fileIndex int, detail bool, width int, themed ...themeStyles) string {
 	styles := resolveThemeStyles(themed)
 	sources = normalizeDiffSources(sources)
@@ -6503,17 +7233,17 @@ func statusBarText(status string, width int) string {
 	if strings.EqualFold(status, "permission") {
 		switch {
 		case width > 0 && width < 70:
-			return "permission · y yes · n no · a always"
+			return "permission · Up/Down · Enter · Esc deny"
 		default:
-			return "permission · y approve · n deny · a always for session"
+			return "permission · Up/Down choose · Enter select · y/n/a shortcuts · Esc deny"
 		}
 	}
 	if strings.EqualFold(status, "question") {
 		switch {
 		case width > 0 && width < 70:
-			return "question · Enter reply · Esc cancel"
+			return "question · Up/Down · Enter · Esc"
 		default:
-			return "question · type answer · Enter reply · Esc/Ctrl-C cancel current turn"
+			return "question · Up/Down choose · Enter select · type for custom response · Esc cancel"
 		}
 	}
 	if isBusyStatus(status) {
@@ -6623,14 +7353,15 @@ func (m model) promptFooterHints(width int) []string {
 		hints = append(hints, hint)
 	}
 	if m.awaitingPermission {
-		add("y approve")
-		add("n deny")
-		add("a always")
+		add("Up/Down choose")
+		add("Enter select")
+		add("y/n/a shortcuts")
 		return trimFooterHints(hints, width)
 	}
 	if m.awaitingQuestion {
-		add("Enter reply")
-		add("Esc interrupt")
+		add("Up/Down choose")
+		add("Enter select")
+		add("type custom response")
 		return trimFooterHints(hints, width)
 	}
 	if m.busy {

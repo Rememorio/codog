@@ -799,8 +799,10 @@ spawn -noecho $env(CODOG_TEST_BIN) --permission-mode workspace-write --model cla
 expect "codog"
 send "permission tui smoke\r"
 expect "Permission"
-expect "bash requires"
-send "y"
+expect "Allow bash to use danger-full-access?"
+expect "don't ask again"
+send "\033\[B"
+send "\033\[A\r"
 expect "bash approved"
 expect "permission tui approved ok"
 send "/exit\r"
@@ -808,7 +810,8 @@ expect eof
 `)
 
 	require.Contains(t, output, "Permission")
-	require.Contains(t, output, "bash requires")
+	require.Contains(t, output, "Allow bash to use danger-full-access?")
+	require.Contains(t, output, "don't ask again")
 	require.Contains(t, output, "bash approved")
 	require.Contains(t, output, "permission tui approved ok")
 	created, err := os.ReadFile(filepath.Join(workspace, "permission.txt"))
@@ -849,7 +852,8 @@ expect "codog"
 send "question tui smoke\r"
 expect "Pick a TUI lane"
 expect "2. beta"
-send "2\r"
+expect "Type something"
+send "\033\[B\r"
 expect "question tui answered ok"
 send "/exit\r"
 expect eof
@@ -857,11 +861,73 @@ expect eof
 
 	require.Contains(t, output, "Pick a TUI lane")
 	require.Contains(t, output, "2. beta")
+	require.Contains(t, output, "Type something")
 	require.Contains(t, output, "question tui answered ok")
 	mu.Lock()
 	joinedRequests := strings.Join(requestBodies, "\n")
 	mu.Unlock()
 	require.Contains(t, joinedRequests, `\"answer\": \"beta\"`)
+}
+
+func TestRealBinaryTUIModernQuestionsWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	var mu sync.Mutex
+	requestBodies := []string{}
+	server := httptest.NewServer(mockanthropic.Server{
+		Turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:   "tool-modern-questions",
+				Name: "ask_user_question",
+				Input: json.RawMessage(`{"questions":[` +
+					`{"question":"Pick a lane?","header":"Lane","options":[{"label":"Alpha","description":"Stable"},{"label":"Beta","description":"Fast"}]},` +
+					`{"question":"Enable features?","header":"Features","options":[{"label":"Cache","description":"Reuse results"},{"label":"Trace","description":"Record spans"}],"multiSelect":true}` +
+					`]}`),
+			}}},
+			{Text: "modern questions answered ok"},
+		},
+		OnRequest: func(body json.RawMessage) {
+			mu.Lock()
+			requestBodies = append(requestBodies, string(body))
+			mu.Unlock()
+		},
+	}.Handler())
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, `
+set timeout 30
+spawn -noecho $env(CODOG_TEST_BIN) --permission-mode allow --model claude-sonnet-4-5 tui
+expect "codog"
+send "modern questions smoke\r"
+expect "Pick a lane?"
+expect "Stable"
+send "\033\[B\r"
+expect "Enable features?"
+expect "Select one or more"
+send " "
+send "\033\[B"
+send " "
+send "\r"
+expect "Review answers"
+expect "Features: Cache, Trace"
+send "\r"
+expect "modern questions answered ok"
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, output, "Pick a lane?")
+	require.Contains(t, output, "Review answers")
+	require.Contains(t, output, "modern questions answered ok")
+	mu.Lock()
+	joinedRequests := strings.Join(requestBodies, "\n")
+	mu.Unlock()
+	require.Contains(t, joinedRequests, `\"Pick a lane?\": \"Beta\"`)
+	require.Contains(t, joinedRequests, `\"Enable features?\": \"Cache, Trace\"`)
 }
 
 func TestRealBinaryTUIQueuesPromptWhileBusyWithTTY(t *testing.T) {

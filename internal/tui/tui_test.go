@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -2472,10 +2473,12 @@ func TestStreamedTurnDeltasRenderBeforeDone(t *testing.T) {
 
 func TestRunStreamSubmitCommandEmitsDeltasBeforeDone(t *testing.T) {
 	ctx := context.Background()
-	messages := make(chan tea.Msg, 4)
+	messages := make(chan tea.Msg, 5)
+	permission := &PermissionRequest{Tool: "bash", Required: "workspace-write", AllowAlways: true}
 	cmd := runStreamSubmitCommand(ctx, func(_ context.Context, prompt string, emit func(Entry)) (string, error) {
 		emit(Entry{Role: "assistant", Text: "first "})
 		emit(Entry{Role: "assistant", Text: prompt})
+		emit(Entry{Role: "permission", Text: "confirm", Permission: permission})
 		return "", nil
 	}, "chunk", messages)
 
@@ -2483,6 +2486,8 @@ func TestRunStreamSubmitCommandEmitsDeltasBeforeDone(t *testing.T) {
 	require.Equal(t, turnStreamMsg{Role: "assistant", Delta: "first "}, first)
 	second := waitTurnMessage(messages)()
 	require.Equal(t, turnStreamMsg{Role: "assistant", Delta: "chunk"}, second)
+	third := waitTurnMessage(messages)()
+	require.Equal(t, turnStreamMsg{Role: "permission", Delta: "confirm", Permission: permission}, third)
 	done := waitTurnMessage(messages)()
 	require.IsType(t, turnDoneMsg{}, done)
 }
@@ -2511,7 +2516,7 @@ func TestToolStreamEntryDoesNotMergeIntoAssistantText(t *testing.T) {
 	require.Equal(t, "done", m.transcript[4].Text)
 }
 
-func TestPermissionStreamEntryAcceptsKeyboardAnswer(t *testing.T) {
+func TestPermissionStreamEntryNavigatesAndAcceptsSelection(t *testing.T) {
 	ta := newPromptTextarea("")
 	answers := []string{}
 	m := newModel(context.Background(), ta, nil, nil)
@@ -2519,17 +2524,30 @@ func TestPermissionStreamEntryAcceptsKeyboardAnswer(t *testing.T) {
 		answers = append(answers, answer)
 	}
 
-	updated, _ := m.Update(turnStreamMsg{Role: "permission", Delta: "Permission\n- bash requires danger-full-access"})
+	request := &PermissionRequest{
+		Tool:        "bash",
+		Required:    "danger-full-access",
+		Input:       `{"command":"rm -rf build"}`,
+		Message:     "destructive command",
+		AllowAlways: true,
+	}
+	updated, _ := m.Update(turnStreamMsg{Role: "permission", Delta: "Permission\n- bash requires danger-full-access", Permission: request})
 	m = updated.(model)
 	require.True(t, m.awaitingPermission)
 	require.Equal(t, "permission", m.status)
-	require.Contains(t, statusBarText(m.status, 80), "y approve")
+	require.Contains(t, m.View(), "Allow bash to use danger-full-access?")
+	require.Contains(t, m.View(), "destructive command")
+	require.Contains(t, m.View(), "don't ask again")
+	require.Contains(t, statusBarText(m.status, 80), "Up/Down choose")
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	require.Equal(t, 1, m.permissionSelected)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 
 	require.False(t, m.awaitingPermission)
-	require.Equal(t, []string{"y"}, answers)
+	require.Equal(t, []string{"a"}, answers)
 	require.Equal(t, "permission answered", m.status)
 
 	updated, _ = m.Update(turnStreamMsg{Role: "permission", Delta: "Permission\n- bash approved: user_approved"})
@@ -2538,7 +2556,58 @@ func TestPermissionStreamEntryAcceptsKeyboardAnswer(t *testing.T) {
 	require.Equal(t, "permission answered", m.status)
 }
 
-func TestQuestionStreamEntryAcceptsComposerAnswerWhileBusy(t *testing.T) {
+func TestPermissionRequestKeepsShortcutsAndEscapeDenial(t *testing.T) {
+	answers := []string{}
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.permissionAnswer = func(answer string) { answers = append(answers, answer) }
+
+	m.openPermissionRequest(PermissionRequest{Tool: "write_file", Required: "workspace-write"})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = updated.(model)
+	require.Equal(t, []string{"y"}, answers)
+
+	m.openPermissionRequest(PermissionRequest{Tool: "bash", Required: "danger-full-access"})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.Equal(t, []string{"y", "n"}, answers)
+	require.False(t, m.awaitingPermission)
+}
+
+func TestPermissionRequestNavigationWrapsAndSupportsHomeEnd(t *testing.T) {
+	answers := []string{}
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.permissionAnswer = func(answer string) { answers = append(answers, answer) }
+	m.openPermissionRequest(PermissionRequest{Tool: "bash", AllowAlways: true})
+
+	keysAndSelections := []struct {
+		key       tea.KeyMsg
+		selection int
+	}{
+		{key: tea.KeyMsg{Type: tea.KeyEnd}, selection: 2},
+		{key: tea.KeyMsg{Type: tea.KeyHome}, selection: 0},
+		{key: tea.KeyMsg{Type: tea.KeyUp}, selection: 2},
+		{key: tea.KeyMsg{Type: tea.KeyDown}, selection: 0},
+		{key: tea.KeyMsg{Type: tea.KeyTab}, selection: 1},
+		{key: tea.KeyMsg{Type: tea.KeyShiftTab}, selection: 0},
+		{key: tea.KeyMsg{Type: tea.KeyRight}, selection: 1},
+		{key: tea.KeyMsg{Type: tea.KeyLeft}, selection: 0},
+	}
+	for _, tc := range keysAndSelections {
+		updated, _ := m.Update(tc.key)
+		m = updated.(model)
+		require.Equal(t, tc.selection, m.permissionSelected)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = updated.(model)
+	require.Equal(t, []string{"a"}, answers)
+	m.openPermissionRequest(PermissionRequest{Tool: "read_file"})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = updated.(model)
+	require.True(t, m.awaitingPermission)
+	require.Equal(t, []string{"a"}, answers)
+}
+
+func TestQuestionStreamEntryNavigatesAndAcceptsChoice(t *testing.T) {
 	ta := newPromptTextarea("")
 	answers := []string{}
 	m := newModel(context.Background(), ta, nil, nil)
@@ -2547,22 +2616,313 @@ func TestQuestionStreamEntryAcceptsComposerAnswerWhileBusy(t *testing.T) {
 		answers = append(answers, answer)
 	}
 
-	updated, _ := m.Update(turnStreamMsg{Role: "question", Delta: "Pick a TUI lane\n  1. alpha\n  2. beta\nAnswer:"})
+	request := &QuestionRequest{Question: "Pick a TUI lane", Choices: []string{"alpha", "beta"}, Default: "alpha"}
+	updated, _ := m.Update(turnStreamMsg{Role: "question", Delta: "Pick a TUI lane\n  1. alpha\n  2. beta", Question: request})
 	m = updated.(model)
 	require.True(t, m.awaitingQuestion)
 	require.Equal(t, "question", m.status)
-	require.Contains(t, statusBarText(m.status, 80), "Enter reply")
+	require.Contains(t, m.View(), "1. alpha (default)")
+	require.Contains(t, m.View(), "Type something")
+	require.Contains(t, statusBarText(m.status, 80), "Up/Down choose")
 
-	m.textarea.SetValue("2")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 
 	require.False(t, m.awaitingQuestion)
-	require.Equal(t, []string{"2"}, answers)
+	require.Equal(t, []string{"beta"}, answers)
 	require.Equal(t, "question answered", m.status)
 	require.Equal(t, "", m.textarea.Value())
 	require.Equal(t, "user", m.transcript[len(m.transcript)-1].Role)
-	require.Equal(t, "2", m.transcript[len(m.transcript)-1].Text)
+	require.Equal(t, "beta", m.transcript[len(m.transcript)-1].Text)
+}
+
+func TestQuestionRequestSupportsNumberShortcutAndCustomInput(t *testing.T) {
+	answers := []string{}
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.busy = true
+	m.questionAnswer = func(answer string) { answers = append(answers, answer) }
+	m.openQuestionRequest(QuestionRequest{Question: "Pick", Choices: []string{"alpha", "beta"}})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	m = updated.(model)
+	require.Equal(t, 1, m.questionSelected)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Equal(t, []string{"beta"}, answers)
+
+	m.openQuestionRequest(QuestionRequest{Question: "Explain", Choices: []string{"short", "long"}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.True(t, m.questionCustom)
+	require.Contains(t, m.View(), "Type your response below")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("custom answer")})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Equal(t, []string{"beta", "custom answer"}, answers)
+}
+
+func TestQuestionRequestWithoutChoicesUsesDefaultAndCancel(t *testing.T) {
+	answers := []string{}
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.busy = true
+	m.questionAnswer = func(answer string) { answers = append(answers, answer) }
+	m.openQuestionRequest(QuestionRequest{Question: "Continue?", Default: "yes"})
+
+	require.True(t, m.questionCustom)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Equal(t, []string{""}, answers)
+	require.Equal(t, "yes", m.transcript[len(m.transcript)-1].Text)
+
+	m.openQuestionRequest(QuestionRequest{Question: "Cancel me", Choices: []string{"one"}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.False(t, m.awaitingQuestion)
+	require.Equal(t, "interrupting", m.status)
+}
+
+func TestModernQuestionRequestSupportsTabsMultiSelectAndReview(t *testing.T) {
+	answers := []string{}
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.busy = true
+	m.questionAnswer = func(answer string) { answers = append(answers, answer) }
+	m.openQuestionRequest(QuestionRequest{Questions: []Question{
+		{
+			Question: "Pick a lane?",
+			Header:   "Lane",
+			Options: []QuestionOption{
+				{Label: "Alpha", Description: "Stable", Preview: "alpha preview"},
+				{Label: "Beta", Description: "Fast"},
+			},
+		},
+		{
+			Question:    "Enable features?",
+			Header:      "Features",
+			MultiSelect: true,
+			Options: []QuestionOption{
+				{Label: "Cache", Description: "Reuse results"},
+				{Label: "Trace", Description: "Record spans"},
+			},
+		},
+	}})
+
+	require.Contains(t, m.View(), "[ ] Lane")
+	require.Contains(t, m.View(), "Stable")
+	require.Contains(t, m.View(), "alpha preview")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Equal(t, 1, m.questionIndex)
+	require.Contains(t, m.View(), "Select one or more")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Equal(t, 2, m.questionIndex)
+	require.Contains(t, m.View(), "Review answers")
+	require.Contains(t, m.View(), "Lane: Beta")
+	require.Contains(t, m.View(), "Features: Cache, Trace")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.False(t, m.awaitingQuestion)
+	require.Len(t, answers, 1)
+	var decoded map[string]string
+	require.NoError(t, json.Unmarshal([]byte(answers[0]), &decoded))
+	require.Equal(t, map[string]string{"Pick a lane?": "Beta", "Enable features?": "Cache, Trace"}, decoded)
+	require.Contains(t, m.transcript[len(m.transcript)-1].Text, "Lane: Beta")
+}
+
+func TestModernQuestionReviewReturnsToFirstUnansweredTab(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.busy = true
+	m.questionAnswer = func(string) {}
+	m.openQuestionRequest(QuestionRequest{Questions: []Question{
+		{Question: "First?", Header: "First", Options: []QuestionOption{{Label: "A"}, {Label: "B"}}},
+		{Question: "Second?", Header: "Second", Options: []QuestionOption{{Label: "C"}, {Label: "D"}}},
+	}})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	require.Equal(t, 2, m.questionIndex)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Equal(t, 0, m.questionIndex)
+	require.Equal(t, "answer required", m.status)
+}
+
+func TestModernQuestionNavigationAndReviewControls(t *testing.T) {
+	newInteraction := func() model {
+		m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+		m.busy = true
+		m.questionAnswer = func(string) {}
+		m.openQuestionRequest(QuestionRequest{Questions: []Question{
+			{Question: "First?", Header: "First", Options: []QuestionOption{{Label: "A"}, {Label: "B"}}},
+			{Question: "Second?", Header: "Second", Options: []QuestionOption{{Label: "C"}, {Label: "D"}}},
+		}})
+		return m
+	}
+	m := newInteraction()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(model)
+	require.Equal(t, 1, m.questionIndex)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(model)
+	require.Equal(t, 0, m.questionIndex)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = updated.(model)
+	require.Equal(t, 2, m.questionSelected)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	m = updated.(model)
+	require.Equal(t, 0, m.questionSelected)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(model)
+	require.Equal(t, 2, m.questionSelected)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	require.Equal(t, 0, m.questionSelected)
+
+	m.questionIndex = 2
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(model)
+	require.Equal(t, 1, m.questionIndex)
+	m.questionIndex = 2
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	m = updated.(model)
+	require.Equal(t, 0, m.questionIndex)
+
+	m = newInteraction()
+	m.questionIndex = 2
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.False(t, m.awaitingQuestion)
+	require.Equal(t, "interrupting", m.status)
+}
+
+func TestModernMultiQuestionEnterSelectsAtLeastOneOption(t *testing.T) {
+	answers := []string{}
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.busy = true
+	m.questionAnswer = func(answer string) { answers = append(answers, answer) }
+	m.openQuestionRequest(QuestionRequest{Questions: []Question{{
+		Question:    "Features?",
+		Header:      "Features",
+		MultiSelect: true,
+		Options:     []QuestionOption{{Label: "Cache"}, {Label: "Trace"}},
+	}}})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.False(t, m.awaitingQuestion)
+	require.Len(t, answers, 1)
+	require.JSONEq(t, `{"Features?":"Cache"}`, answers[0])
+}
+
+func TestQuestionRequestCoversLegacyNavigationCustomCancelAndEmptyState(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	updated, _ := m.updateQuestionRequest(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.False(t, m.awaitingQuestion)
+
+	m.busy = true
+	m.questionAnswer = func(string) {}
+	m.openQuestionRequest(QuestionRequest{Question: "Legacy?", Choices: []string{"A", "B"}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(model)
+	require.Equal(t, 1, m.questionSelected)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(model)
+	require.Equal(t, 0, m.questionSelected)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("custom")})
+	m = updated.(model)
+	require.True(t, m.questionCustom)
+	require.Equal(t, "custom", m.textarea.Value())
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.False(t, m.awaitingQuestion)
+	require.Equal(t, "interrupting", m.status)
+}
+
+func TestModernSingleQuestionSubmitsCustomAnswer(t *testing.T) {
+	answers := []string{}
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.busy = true
+	m.questionAnswer = func(answer string) { answers = append(answers, answer) }
+	m.openQuestionRequest(QuestionRequest{Questions: []Question{{
+		Question: "Approach?",
+		Header:   "Approach",
+		Options:  []QuestionOption{{Label: "A"}, {Label: "B"}},
+	}}})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Custom")})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	require.False(t, m.awaitingQuestion)
+	require.Len(t, answers, 1)
+	require.JSONEq(t, `{"Approach?":"Custom"}`, answers[0])
+}
+
+func TestPastedQuestionTextBecomesCustomAnswer(t *testing.T) {
+	answers := []string{}
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.busy = true
+	m.questionAnswer = func(answer string) { answers = append(answers, answer) }
+	m.openQuestionRequest(QuestionRequest{Questions: []Question{{
+		Question: "Approach?",
+		Header:   "Approach",
+		Options:  []QuestionOption{{Label: "A"}, {Label: "B"}},
+	}}})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("pasted custom"), Paste: true})
+	m = updated.(model)
+	require.True(t, m.questionCustom)
+	require.Equal(t, "pasted custom", m.textarea.Value())
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.JSONEq(t, `{"Approach?":"pasted custom"}`, answers[0])
+}
+
+func TestInteractionRequestsFitNarrowNoColorTerminal(t *testing.T) {
+	styles := stylesForTheme("no-color")
+	views := []string{
+		renderPermissionRequest(PermissionRequest{
+			Tool:        "bash",
+			Required:    "danger-full-access",
+			Input:       `{"command":"printf a-very-long-command-that-must-be-truncated"}`,
+			AllowAlways: true,
+		}, 1, 32, styles),
+		renderQuestionRequest(QuestionRequest{
+			Question: "Choose a very long option without overflowing the terminal",
+			Choices:  []string{"a very long first choice", "second"},
+		}, 0, 0, false, nil, nil, 32, styles),
+	}
+	for _, view := range views {
+		require.NotContains(t, view, "\x1b[")
+		for _, line := range strings.Split(view, "\n") {
+			require.LessOrEqual(t, lipgloss.Width(line), 24, line)
+		}
+	}
 }
 
 func TestCanceledSlashCommandRendersInterrupted(t *testing.T) {

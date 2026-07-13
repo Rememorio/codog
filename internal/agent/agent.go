@@ -29720,7 +29720,10 @@ func codogCapabilityFeatures() []string {
 		"acp_bridge",
 		"anthropic_streaming",
 		"api_key_management",
+		"ask_user_question_multi_select",
 		"ask_user_question_options_alias",
+		"ask_user_question_previews",
+		"ask_user_question_tabs",
 		"approval_tokens",
 		"auto_compaction",
 		"background_log_offsets",
@@ -29807,6 +29810,8 @@ func codogCapabilityFeatures() []string {
 		"tui_first_run_theme_onboarding",
 		"tui_live_theme_picker",
 		"tui_no_color_theme",
+		"tui_permission_picker",
+		"tui_question_picker",
 		"task_id_alias_schemas",
 		"task_create_prompt_contract",
 		"task_get_list_compat_fields",
@@ -37700,11 +37705,21 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		liveToolEvents := false
 		modeState.Apply(&a.Config)
 		a.Tools.Register(tools.AskUserQuestionTool{
-			In: &lineAnswerReader{answers: questionAnswers, done: ctx.Done()},
-			Out: tuiQuestionWriter{emit: func(entry tui.Entry) {
+			In:  &lineAnswerReader{answers: questionAnswers, done: ctx.Done()},
+			Out: io.Discard,
+			OnRequest: func(request tools.UserQuestionRequest) {
 				liveToolEvents = true
-				emit(entry)
-			}},
+				emit(tui.Entry{
+					Role: "question",
+					Text: renderTUIQuestionRequest(request),
+					Question: &tui.QuestionRequest{
+						Question:  request.Question,
+						Choices:   append([]string(nil), request.Choices...),
+						Default:   request.Default,
+						Questions: tuiQuestions(request.Questions),
+					},
+				})
+			},
 		})
 		defer func() {
 			_ = a.refreshBuiltinToolScope()
@@ -38885,18 +38900,6 @@ func (r *lineAnswerReader) Read(data []byte) (int, error) {
 	return n, nil
 }
 
-type tuiQuestionWriter struct {
-	emit func(tui.Entry)
-}
-
-func (w tuiQuestionWriter) Write(data []byte) (int, error) {
-	text := strings.TrimSpace(string(data))
-	if text != "" && w.emit != nil {
-		w.emit(tui.Entry{Role: "question", Text: text})
-	}
-	return len(data), nil
-}
-
 func wrapTUIPermissionEvents(prompter *tools.Prompter, emit func(tui.Entry)) {
 	if prompter == nil || emit == nil {
 		return
@@ -38907,7 +38910,17 @@ func wrapTUIPermissionEvents(prompter *tools.Prompter, emit func(tui.Entry)) {
 		if baseRequest != nil {
 			baseRequest(decision)
 		}
-		emit(tui.Entry{Role: "permission", Text: renderTUIPermissionRequest(decision)})
+		emit(tui.Entry{
+			Role: "permission",
+			Text: renderTUIPermissionRequest(decision),
+			Permission: &tui.PermissionRequest{
+				Tool:        decision.ToolName,
+				Required:    string(decision.Required),
+				Input:       decision.Input,
+				Message:     decision.Message,
+				AllowAlways: true,
+			},
+		})
 	}
 	prompter.OnDecision = func(decision tools.PermissionDecision) {
 		if baseDecision != nil {
@@ -39020,6 +39033,48 @@ func renderTUIPermissionDecision(decision tools.PermissionDecision) string {
 		return fmt.Sprintf("Permission\n- %s %s", name, status)
 	}
 	return fmt.Sprintf("Permission\n- %s %s: %s", name, status, reason)
+}
+
+func renderTUIQuestionRequest(request tools.UserQuestionRequest) string {
+	if len(request.Questions) > 0 {
+		lines := []string{"Questions"}
+		for questionIndex, question := range request.Questions {
+			lines = append(lines, fmt.Sprintf("%d. %s", questionIndex+1, strings.TrimSpace(question.Question)))
+			for optionIndex, option := range question.Options {
+				lines = append(lines, fmt.Sprintf("  %d. %s - %s", optionIndex+1, option.Label, option.Description))
+			}
+		}
+		return strings.TrimSpace(strings.Join(lines, "\n"))
+	}
+	lines := []string{strings.TrimSpace(request.Question)}
+	for index, choice := range request.Choices {
+		lines = append(lines, fmt.Sprintf("  %d. %s", index+1, choice))
+	}
+	if defaultAnswer := strings.TrimSpace(request.Default); defaultAnswer != "" {
+		lines = append(lines, "Default: "+defaultAnswer)
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func tuiQuestions(questions []tools.UserQuestion) []tui.Question {
+	out := make([]tui.Question, 0, len(questions))
+	for _, question := range questions {
+		options := make([]tui.QuestionOption, 0, len(question.Options))
+		for _, option := range question.Options {
+			options = append(options, tui.QuestionOption{
+				Label:       option.Label,
+				Description: option.Description,
+				Preview:     option.Preview,
+			})
+		}
+		out = append(out, tui.Question{
+			Question:    question.Question,
+			Header:      question.Header,
+			Options:     options,
+			MultiSelect: question.MultiSelect,
+		})
+	}
+	return out
 }
 
 func toolSummaryDetail(output string) string {
