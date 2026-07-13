@@ -29748,6 +29748,7 @@ func codogCapabilityFeatures() []string {
 		"doctor_config_load_degraded",
 		"doctor_config_validation",
 		"doctor_sandbox_runtime_status",
+		"dynamic_tool_loading",
 		"editor_bridge",
 		"g004_conformance",
 		"git_workflows",

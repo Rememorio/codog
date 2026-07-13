@@ -1645,6 +1645,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "deferred_init")
 	require.Contains(t, report.Features, "doctor_config_load_degraded")
 	require.Contains(t, report.Features, "doctor_config_validation")
+	require.Contains(t, report.Features, "dynamic_tool_loading")
 	require.Contains(t, report.Features, "execution_registry_resolve")
 	require.Contains(t, report.Features, "hooks_health")
 	require.Contains(t, report.Features, "interface_language")

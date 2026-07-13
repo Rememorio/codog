@@ -155,6 +155,33 @@ type RegistryOptions struct {
 	PluginDirs       []string
 }
 
+// The initial model surface stays intentionally small. Less common tools are
+// loaded after tool_search returns their schemas, while product-mode output
+// tools remain available only through an explicit --tools selection.
+var eagerModelTools = map[string]struct{}{
+	"agent":       {},
+	"apply_patch": {},
+	"bash":        {},
+	"bash_output": {},
+	"edit_file":   {},
+	"glob":        {},
+	"grep":        {},
+	"kill_bash":   {},
+	"ls":          {},
+	"multi_edit":  {},
+	"read_file":   {},
+	"skill":       {},
+	"todo_read":   {},
+	"tool_search": {},
+	"write_file":  {},
+}
+
+var explicitModelTools = map[string]struct{}{
+	"brief":             {},
+	"send_user_message": {},
+	"structured_output": {},
+}
+
 var claudeToolAliases = map[string]string{
 	"agenttool":                    "agent",
 	"applypatch":                   "apply_patch",
@@ -798,6 +825,68 @@ func (r *Registry) Definitions() []anthropic.ToolDefinition {
 	return defs
 }
 
+// DefinitionsForModel returns the eager tool surface plus deferred tools that
+// tool_search loaded during the current model turn.
+func (r *Registry) DefinitionsForModel(loaded []string) []anthropic.ToolDefinition {
+	return r.modelDefinitions(false, loaded)
+}
+
+// DefinitionsForPlanModeWithLoaded applies model deferral and plan-mode access
+// rules to the advertised tool surface.
+func (r *Registry) DefinitionsForPlanModeWithLoaded(loaded []string) []anthropic.ToolDefinition {
+	return r.modelDefinitions(true, loaded)
+}
+
+func (r *Registry) modelDefinitions(planMode bool, loaded []string) []anthropic.ToolDefinition {
+	loadedSet := make(map[string]struct{}, len(loaded))
+	for _, name := range loaded {
+		loadedSet[CanonicalToolName(name)] = struct{}{}
+	}
+	defs := make([]anthropic.ToolDefinition, 0, len(r.tools))
+	for _, tool := range r.tools {
+		def := tool.Definition()
+		name := CanonicalToolName(def.Name)
+		if !defaultModelToolAvailable(name) {
+			continue
+		}
+		if _, eager := eagerModelTools[name]; !eager {
+			if _, ok := loadedSet[name]; !ok {
+				continue
+			}
+		}
+		if planMode && !ToolVisibleInPlanMode(name, tool.Permission()) {
+			continue
+		}
+		defs = append(defs, def)
+	}
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
+	return defs
+}
+
+// DeferredInfos returns searchable model tools whose schemas are not present
+// in the initial request.
+func (r *Registry) DeferredInfos() []ToolInfo {
+	infos := make([]ToolInfo, 0, len(r.tools))
+	for _, tool := range r.tools {
+		def := tool.Definition()
+		name := CanonicalToolName(def.Name)
+		if !defaultModelToolAvailable(name) {
+			continue
+		}
+		if _, eager := eagerModelTools[name]; eager {
+			continue
+		}
+		infos = append(infos, toolInfo(tool))
+	}
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+	return infos
+}
+
+func defaultModelToolAvailable(name string) bool {
+	_, explicit := explicitModelTools[CanonicalToolName(name)]
+	return !explicit
+}
+
 // DefinitionsForPlanMode returns the subset of tool definitions visible while
 // the model is planning rather than executing workspace changes.
 func (r *Registry) DefinitionsForPlanMode() []anthropic.ToolDefinition {
@@ -853,13 +942,7 @@ func effectiveDefaultShell(value string) string {
 func (r *Registry) Infos() []ToolInfo {
 	infos := make([]ToolInfo, 0, len(r.tools))
 	for _, tool := range r.tools {
-		def := tool.Definition()
-		infos = append(infos, ToolInfo{
-			Name:        def.Name,
-			Description: def.Description,
-			Permission:  tool.Permission(),
-			InputSchema: def.InputSchema,
-		})
+		infos = append(infos, toolInfo(tool))
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
 	return infos
@@ -870,13 +953,25 @@ func (r *Registry) Info(name string) (ToolInfo, bool) {
 	if !ok {
 		return ToolInfo{}, false
 	}
+	return toolInfo(tool), true
+}
+
+func (r *Registry) modelInfo(name string) (ToolInfo, bool) {
+	info, ok := r.Info(name)
+	if !ok || !defaultModelToolAvailable(info.Name) {
+		return ToolInfo{}, false
+	}
+	return info, true
+}
+
+func toolInfo(tool Tool) ToolInfo {
 	def := tool.Definition()
 	return ToolInfo{
 		Name:        def.Name,
 		Description: def.Description,
 		Permission:  tool.Permission(),
 		InputSchema: def.InputSchema,
-	}, true
+	}
 }
 
 func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessage, prompter *Prompter) (string, error) {
@@ -11275,13 +11370,14 @@ type toolSearchMCPFailureError struct {
 func (ToolSearchTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "tool_search",
-		Description: "Search the currently available Codog tools by name, description, or permission.",
+		Description: "Load full schemas for deferred Codog tools by name, description, or permission before calling them.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"query":       map[string]any{"type": "string"},
 				"max_results": map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
 			},
+			"required":             []string{"query"},
 			"additionalProperties": false,
 		},
 	}
@@ -11310,17 +11406,19 @@ func (t ToolSearchTool) Execute(_ context.Context, input json.RawMessage) (strin
 		limit = 50
 	}
 	query := strings.TrimSpace(payload.Query)
-	matches := searchToolInfos(t.Registry.Infos(), query, limit)
+	deferred := t.Registry.DeferredInfos()
+	matches := searchToolInfos(deferred, query, limit)
 	if selected, ok := selectToolInfos(t.Registry, query, limit); ok {
 		matches = selected
 	}
 	pendingMCPServers, mcpDegraded := t.Registry.mcpDiscoveryReport()
 	report := map[string]any{
-		"query":            query,
-		"normalized_query": normalizeToolSearchQuery(query),
-		"matches":          matches,
-		"match_names":      toolInfoNames(matches),
-		"total":            len(matches),
+		"query":                query,
+		"normalized_query":     normalizeToolSearchQuery(query),
+		"matches":              matches,
+		"match_names":          toolInfoNames(matches),
+		"total":                len(matches),
+		"total_deferred_tools": len(deferred),
 	}
 	if len(pendingMCPServers) != 0 {
 		report["pending_mcp_servers"] = pendingMCPServers
@@ -11432,7 +11530,7 @@ func selectToolInfos(registry *Registry, query string, limit int) ([]ToolInfo, b
 		if name == "" {
 			continue
 		}
-		info, ok := registry.Info(name)
+		info, ok := registry.modelInfo(name)
 		if !ok {
 			continue
 		}

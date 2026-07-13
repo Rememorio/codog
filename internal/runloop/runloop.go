@@ -133,6 +133,7 @@ func (r Runner) RunWithUserContent(ctx context.Context, previous []anthropic.Mes
 	messages = appendUserPromptHookFeedback(messages, hooks.MessagesFromReport(promptReport))
 	var toolCalls []ToolCall
 	var messageUsages []MessageUsage
+	loadedTools := loadedToolsFromMessages(previous)
 	for turn := 0; turn < r.Config.MaxTurns; turn++ {
 		compactPayload := ""
 		compactFeedback := []string{}
@@ -167,7 +168,7 @@ func (r Runner) RunWithUserContent(ctx context.Context, previous []anthropic.Mes
 			ExtraBody:       r.Config.ExtraBody,
 			System:          system,
 			Messages:        requestMessages,
-			Tools:           r.toolDefinitions(),
+			Tools:           r.toolDefinitions(loadedTools),
 		}
 		assistant, err := r.Client.Stream(ctx, req, func(delta string) {
 			if r.Out != nil {
@@ -299,6 +300,9 @@ func (r Runner) RunWithUserContent(ctx context.Context, previous []anthropic.Mes
 				call.IsError = true
 			} else {
 				call.Output = output
+				if canonicalTool == "tool_search" {
+					loadToolSearchMatches(loadedTools, output)
+				}
 			}
 			call.Output = mergeHookFeedback(preToolOutput.Messages, call.Output, call.IsError)
 			if oldCWD != "" {
@@ -384,12 +388,18 @@ func (r Runner) RunWithUserContent(ctx context.Context, previous []anthropic.Mes
 	return result, maxTurnsErr
 }
 
-func (r Runner) toolDefinitions() []anthropic.ToolDefinition {
-	definitions := r.allToolDefinitions()
-	if !r.Config.ToolNamesSet {
-		return definitions
+func (r Runner) toolDefinitions(loaded map[string]struct{}) []anthropic.ToolDefinition {
+	if r.Config.ToolNamesSet {
+		return filterToolDefinitions(r.allToolDefinitions(), r.Config.ToolNames)
 	}
-	return filterToolDefinitions(definitions, r.Config.ToolNames)
+	loadedNames := make([]string, 0, len(loaded))
+	for name := range loaded {
+		loadedNames = append(loadedNames, name)
+	}
+	if r.Config.PlanMode {
+		return r.Tools.DefinitionsForPlanModeWithLoaded(loadedNames)
+	}
+	return r.Tools.DefinitionsForModel(loadedNames)
 }
 
 func (r Runner) allToolDefinitions() []anthropic.ToolDefinition {
@@ -397,6 +407,40 @@ func (r Runner) allToolDefinitions() []anthropic.ToolDefinition {
 		return r.Tools.DefinitionsForPlanMode()
 	}
 	return r.Tools.Definitions()
+}
+
+func loadToolSearchMatches(loaded map[string]struct{}, output string) {
+	var result struct {
+		MatchNames []string `json:"match_names"`
+	}
+	if json.Unmarshal([]byte(output), &result) != nil {
+		return
+	}
+	for _, name := range result.MatchNames {
+		if canonical := tools.CanonicalToolName(name); canonical != "" {
+			loaded[canonical] = struct{}{}
+		}
+	}
+}
+
+func loadedToolsFromMessages(messages []anthropic.Message) map[string]struct{} {
+	loaded := map[string]struct{}{}
+	searchIDs := map[string]struct{}{}
+	for _, message := range messages {
+		for _, block := range message.Content {
+			switch {
+			case block.Type == "tool_use" && tools.CanonicalToolName(block.Name) == "tool_search":
+				if block.ID != "" {
+					searchIDs[block.ID] = struct{}{}
+				}
+			case block.Type == "tool_result":
+				if _, ok := searchIDs[block.ToolUseID]; ok && !block.IsError {
+					loadToolSearchMatches(loaded, block.Content)
+				}
+			}
+		}
+	}
+	return loaded
 }
 
 func (r Runner) toolSelectionAllows(name string) bool {

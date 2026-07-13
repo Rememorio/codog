@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/agentdefs"
+	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
@@ -4035,6 +4036,56 @@ func TestToolSearchToolFindsRegisteredTools(t *testing.T) {
 	info, ok := registry.Info("tool_search")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+}
+
+func TestRegistryDefersModelToolsAndHidesProductOutputTools(t *testing.T) {
+	registry := NewRegistry(t.TempDir())
+	names := func(definitions []anthropic.ToolDefinition) []string {
+		out := make([]string, 0, len(definitions))
+		for _, definition := range definitions {
+			out = append(out, definition.Name)
+		}
+		return out
+	}
+
+	initial := names(registry.DefinitionsForModel(nil))
+	require.Contains(t, initial, "bash")
+	require.Contains(t, initial, "read_file")
+	require.Contains(t, initial, "tool_search")
+	require.NotContains(t, initial, "web_fetch")
+	require.NotContains(t, initial, "brief")
+	require.NotContains(t, initial, "send_user_message")
+	require.NotContains(t, initial, "structured_output")
+	require.Len(t, initial, len(eagerModelTools))
+	require.Less(t, len(initial), len(registry.Definitions()))
+
+	loaded := names(registry.DefinitionsForModel([]string{"WebFetch"}))
+	require.Contains(t, loaded, "web_fetch")
+	require.NotContains(t, loaded, "brief")
+
+	deferred := registry.DeferredInfos()
+	deferredNames := make([]string, 0, len(deferred))
+	for _, info := range deferred {
+		deferredNames = append(deferredNames, info.Name)
+	}
+	require.Contains(t, deferredNames, "web_fetch")
+	require.NotContains(t, deferredNames, "read_file")
+	require.NotContains(t, deferredNames, "brief")
+}
+
+func TestToolSearchExcludesProductOutputToolsFromDefaultDiscovery(t *testing.T) {
+	registry := NewRegistry(t.TempDir())
+	out, err := ToolSearchTool{Registry: registry}.Execute(context.Background(), []byte(`{"query":"select:Brief,WebFetch,Read","max_results":5}`))
+	require.NoError(t, err)
+
+	var report struct {
+		MatchNames         []string `json:"match_names"`
+		TotalDeferredTools int      `json:"total_deferred_tools"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, []string{"web_fetch", "read_file"}, report.MatchNames)
+	require.Positive(t, report.TotalDeferredTools)
+	require.NotContains(t, out, `"name": "brief"`)
 }
 
 func TestToolSearchToolReportsMCPDiscoveryDegradation(t *testing.T) {

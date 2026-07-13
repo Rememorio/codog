@@ -215,7 +215,8 @@ func TestRunnerPlanModeFiltersToolsAndEnforcesReadOnly(t *testing.T) {
 	require.Len(t, client.requests, 2)
 	require.True(t, requestHasTool(client.requests[0], "bash"))
 	require.True(t, requestHasTool(client.requests[0], "read_file"))
-	require.True(t, requestHasTool(client.requests[0], "exit_plan_mode"))
+	require.True(t, requestHasTool(client.requests[0], "tool_search"))
+	require.False(t, requestHasTool(client.requests[0], "exit_plan_mode"))
 	require.False(t, requestHasTool(client.requests[0], "write_file"))
 	require.False(t, requestHasTool(client.requests[0], "edit_file"))
 	require.Len(t, result.ToolCalls, 3)
@@ -281,6 +282,91 @@ func TestRunnerToolSelectionFiltersDefinitionsAndExecution(t *testing.T) {
 	require.False(t, result.ToolCalls[1].IsError)
 	require.Contains(t, result.ToolCalls[1].Output, "ok")
 	require.NoFileExists(t, filepath.Join(workspace, "blocked.txt"))
+}
+
+func TestRunnerLoadsDeferredToolDefinitionsAfterSearch(t *testing.T) {
+	workspace := t.TempDir()
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type:  "tool_use",
+					ID:    "tool-search-1",
+					Name:  "tool_search",
+					Input: []byte(`{"query":"select:WebFetch"}`),
+				}},
+			},
+			{Blocks: []anthropic.ContentBlock{{Type: "text", Text: "done"}}},
+		},
+	}
+
+	result, err := Runner{
+		Config: config.Config{Model: "mock", MaxTokens: 128, MaxTurns: 2},
+		Client: client,
+		Tools:  tools.NewRegistry(workspace),
+	}.Run(context.Background(), nil, "fetch a page")
+
+	require.NoError(t, err)
+	require.Len(t, result.ToolCalls, 1)
+	require.False(t, result.ToolCalls[0].IsError)
+	require.Len(t, client.requests, 2)
+	require.True(t, requestHasTool(client.requests[0], "tool_search"))
+	require.True(t, requestHasTool(client.requests[0], "read_file"))
+	require.False(t, requestHasTool(client.requests[0], "web_fetch"))
+	require.False(t, requestHasTool(client.requests[0], "brief"))
+	require.True(t, requestHasTool(client.requests[1], "web_fetch"))
+	require.False(t, requestHasTool(client.requests[1], "brief"))
+}
+
+func TestRunnerRestoresDeferredToolsFromSessionMessages(t *testing.T) {
+	client := &scriptedClient{responses: []anthropic.AssistantMessage{{
+		Blocks: []anthropic.ContentBlock{{Type: "text", Text: "done"}},
+	}}}
+	previous := []anthropic.Message{
+		{
+			Role: "assistant",
+			Content: []anthropic.ContentBlock{{
+				Type: "tool_use",
+				ID:   "tool-search-previous",
+				Name: "ToolSearch",
+			}},
+		},
+		anthropic.ToolResultMessage("tool-search-previous", `{"match_names":["web_fetch"]}`, false),
+	}
+
+	_, err := Runner{
+		Config: config.Config{Model: "mock", MaxTokens: 128, MaxTurns: 1},
+		Client: client,
+		Tools:  tools.NewRegistry(t.TempDir()),
+	}.Run(context.Background(), previous, "fetch another page")
+
+	require.NoError(t, err)
+	require.Len(t, client.requests, 1)
+	require.True(t, requestHasTool(client.requests[0], "web_fetch"))
+	require.False(t, requestHasTool(client.requests[0], "brief"))
+}
+
+func TestRunnerExplicitToolSelectionCanEnableProductOutputTool(t *testing.T) {
+	client := &scriptedClient{responses: []anthropic.AssistantMessage{{
+		Blocks: []anthropic.ContentBlock{{Type: "text", Text: "done"}},
+	}}}
+
+	_, err := Runner{
+		Config: config.Config{
+			Model:        "mock",
+			MaxTokens:    128,
+			MaxTurns:     1,
+			ToolNames:    []string{"Brief"},
+			ToolNamesSet: true,
+		},
+		Client: client,
+		Tools:  tools.NewRegistry(t.TempDir()),
+	}.Run(context.Background(), nil, "brief mode")
+
+	require.NoError(t, err)
+	require.Len(t, client.requests, 1)
+	require.Len(t, client.requests[0].Tools, 1)
+	require.True(t, requestHasTool(client.requests[0], "brief"))
 }
 
 func TestRunnerAppliesPreToolUseHookDecisionAndUpdatedInput(t *testing.T) {
