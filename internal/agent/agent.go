@@ -37807,6 +37807,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 	permissionAnswers := make(chan string, 1)
 	questionAnswers := make(chan string, 1)
 	modeState := newTUIModeState(a.Config)
+	if a.planModeActive() {
+		a.enterTUIPlanMode(modeState)
+	}
 	submit := func(ctx context.Context, prompt string, attachments []string, emit func(tui.Entry)) (string, error) {
 		var out bytes.Buffer
 		streamOut := tuiStreamWriter{buffer: &out, emit: emit}
@@ -37888,6 +37891,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		Entries:                 entries,
 		SubmitStreamAttachments: submit,
 		Slash:                   slashHandler,
+		SubmitTextInput: func(ctx context.Context, action string, value string) (tui.RuntimeControlResult, error) {
+			return a.submitTUITextInput(ctx, action, value)
+		},
 		ExternalEditor: func(ctx context.Context, value string) (string, error) {
 			return a.editTUIComposer(ctx, value)
 		},
@@ -38022,7 +38028,7 @@ func resumeSessionChoices(sessions []session.Session) []tui.SessionChoice {
 
 func (a *App) tuiSlashHandler(sess *session.Session, modeState *tuiModeState) tui.SlashFunc {
 	return func(ctx context.Context, line string) (tui.SlashResult, error) {
-		if result, handled, err := a.tuiInteractiveSlashResult(line, sess, modeState); handled {
+		if result, handled, err := a.tuiInteractiveSlashResult(ctx, line, sess, modeState); handled {
 			return result, err
 		}
 		if isBareTUIResumeCommand(line) {
@@ -38049,8 +38055,14 @@ func (a *App) tuiSlashHandler(sess *session.Session, modeState *tuiModeState) tu
 		}()
 		handled := a.handleSlash(ctx, line, sess)
 		result := tui.SlashResult{Output: strings.TrimSpace(out.String()), Handled: handled}
+		if handled && !strings.HasPrefix(strings.ToLower(result.Output), "error:") {
+			a.syncTUIPlanModeAfterSlash(line, modeState)
+		}
 		if handled && result.Output != "" && !strings.HasPrefix(strings.ToLower(result.Output), "error:") {
-			if selectedTab, ok := tuiRuntimeRefreshTab(line); ok {
+			if view, ok := a.tuiPreferenceRefreshView(line); ok {
+				result.CommandView = view
+				result.Output = ""
+			} else if selectedTab, ok := tuiRuntimeRefreshTab(line); ok {
 				view := a.tuiRuntimeCommandView(sess, selectedTab)
 				result.CommandView = &view
 				result.Output = ""
@@ -38075,7 +38087,10 @@ func (a *App) tuiSlashHandler(sess *session.Session, modeState *tuiModeState) tu
 			}
 		}
 		if handled && result.Output != "" {
-			if title, ok := tuiExtensionInformationTitle(line); ok {
+			if view, ok := tuiSideQuestionInformation(line, result.Output); ok {
+				result.Information = &view
+				result.Output = ""
+			} else if title, ok := tuiExtensionInformationTitle(line); ok {
 				view := tui.InformationView{Title: title, Lines: tuiReportLines(result.Output, title)}
 				result.Information = &view
 				result.Output = ""
@@ -38092,7 +38107,7 @@ func (a *App) tuiSlashHandler(sess *session.Session, modeState *tuiModeState) tu
 	}
 }
 
-func (a *App) tuiInteractiveSlashResult(line string, sess *session.Session, modeState *tuiModeState) (tui.SlashResult, bool, error) {
+func (a *App) tuiInteractiveSlashResult(ctx context.Context, line string, sess *session.Session, modeState *tuiModeState) (tui.SlashResult, bool, error) {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
 		return tui.SlashResult{}, false, nil
@@ -38102,6 +38117,7 @@ func (a *App) tuiInteractiveSlashResult(line string, sess *session.Session, mode
 		command = slashSwitchName(mapped)
 	}
 	args := fields[1:]
+	rawArgs := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), fields[0]))
 	switch command {
 	case "/status", "/config", "/usage":
 		if len(args) == 0 {
@@ -38168,6 +38184,49 @@ func (a *App) tuiInteractiveSlashResult(line string, sess *session.Session, mode
 			dialog := tui.ExportDialog{DefaultFilename: filename}
 			return tui.SlashResult{Handled: true, ExportDialog: &dialog}, true, nil
 		}
+	case "/theme", "/color":
+		if len(args) == 0 {
+			return tui.SlashResult{Handled: true, OpenThemePicker: true}, true, nil
+		}
+	case "/fast":
+		if len(args) == 0 {
+			view := a.tuiFastCommandView()
+			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+		}
+	case "/output-style":
+		if len(args) == 0 {
+			view, err := a.tuiOutputStyleCommandView()
+			return tui.SlashResult{Handled: true, CommandView: view}, true, err
+		}
+	case "/sandbox":
+		if len(args) == 0 {
+			view := a.tuiSandboxCommandView()
+			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+		}
+	case "/stats":
+		if len(args) == 0 {
+			view := a.tuiSettingsCommandView(sess, modeState, 2)
+			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+		}
+	case "/add-dir":
+		if len(args) == 0 {
+			dialog := tui.TextInputDialog{
+				Title:  "Add working directory",
+				Prompt: "Enter an absolute or workspace-relative directory path:",
+				Action: "add-dir",
+			}
+			return tui.SlashResult{Handled: true, TextInputDialog: &dialog}, true, nil
+		}
+	case "/rename":
+		if !tuiSlashHasStructuredFlags(args) {
+			return a.renameTUISession(sess, rawArgs)
+		}
+	case "/branch":
+		if !tuiSlashHasStructuredFlags(args) {
+			return a.branchTUISession(ctx, sess, rawArgs)
+		}
+	case "/plan", "/ultraplan":
+		return a.tuiPlanSlashResult(rawArgs, modeState)
 	case "/compact":
 		if len(args) == 0 {
 			return tui.SlashResult{Handled: true, RuntimeAction: "compact"}, true, nil
@@ -38448,6 +38507,10 @@ func (a *App) tuiSettingsCommandView(sess *session.Session, modeState *tuiModeSt
 	fast := onOff(fastModeEnabled(a.Config.FastMode))
 	thinking := effectiveEffort(a.Config.ReasoningEffort)
 	vim := onOff(editorModeIsVim(a.Config.EditorMode))
+	outputStyle := "default"
+	if report, err := outputstyle.List(a.Config.ConfigHome, a.Workspace); err == nil && strings.TrimSpace(report.Active) != "" {
+		outputStyle = strings.TrimSpace(report.Active)
+	}
 
 	return tui.CommandView{
 		Title:       "Settings",
@@ -38460,6 +38523,7 @@ func (a *App) tuiSettingsCommandView(sess *session.Session, modeState *tuiModeSt
 					{Label: "Model", Value: emptyAsNone(a.Config.Model), Description: "Select the model used for subsequent turns", Action: "model"},
 					{Label: "Permission mode", Value: emptyAsNone(permissionMode), Description: "Choose how tool calls are approved", Command: "/permissions"},
 					{Label: "Theme", Value: theme, Description: "Preview and apply a terminal color theme", Action: "theme"},
+					{Label: "Output style", Value: outputStyle, Description: "Choose how responses are written", Command: "/output-style"},
 					{Label: "Fast mode", Value: fast, Description: "Toggle the fast response preference", Action: "fast"},
 					{Label: "Thinking", Value: thinking, Description: "Cycle the reasoning effort for future turns", Action: "thinking"},
 					{Label: "Vim mode", Value: vim, Description: "Toggle Vim editing in the prompt composer", Action: "vim"},
@@ -38468,6 +38532,128 @@ func (a *App) tuiSettingsCommandView(sess *session.Session, modeState *tuiModeSt
 			{Title: "Usage", Lines: tuiReportLines(usageOut.String(), "usage")},
 		},
 	}
+}
+
+func (a *App) tuiFastCommandView() tui.CommandView {
+	enabled := fastModeEnabled(a.Config.FastMode)
+	selected := 1
+	if enabled {
+		selected = 0
+	}
+	return tui.CommandView{
+		Title:        "Fast mode",
+		SelectedItem: selected,
+		Tabs: []tui.CommandViewTab{{
+			Title: "Preference",
+			Lines: []string{"Choose the response speed preference for subsequent turns."},
+			Items: []tui.CommandViewItem{
+				{Label: "Enabled", Value: currentMarker(enabled), Description: "Prefer the provider's faster response path when available", Command: "/fast on"},
+				{Label: "Disabled", Value: currentMarker(!enabled), Description: "Use the standard response path", Command: "/fast off"},
+			},
+			RefreshCommand: "/fast",
+		}},
+	}
+}
+
+func (a *App) tuiOutputStyleCommandView() (*tui.CommandView, error) {
+	report, err := outputstyle.List(a.Config.ConfigHome, a.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	selected := 0
+	items := []tui.CommandViewItem{{
+		Label:       "Default",
+		Value:       currentMarker(strings.TrimSpace(report.Active) == ""),
+		Description: "Use the standard response style without an additional style prompt",
+		Command:     "/output-style clear",
+	}}
+	for _, style := range report.Styles {
+		value := style.Source
+		if style.Active {
+			value += " · current"
+			selected = len(items)
+		}
+		command := tuiNamedSlashCommand("/output-style set", style.Name)
+		description := trimSingleLine(style.Preview, 96)
+		if !style.Effective {
+			command = ""
+			value = style.Source + " · shadowed"
+			if strings.TrimSpace(style.ShadowedBy) != "" {
+				description = "Shadowed by " + strings.TrimSpace(style.ShadowedBy)
+			}
+		}
+		items = append(items, tui.CommandViewItem{
+			Label:       style.Name,
+			Value:       value,
+			Description: description,
+			Command:     command,
+		})
+	}
+	return &tui.CommandView{
+		Title:        "Output style",
+		SelectedItem: selected,
+		Tabs: []tui.CommandViewTab{{
+			Title:          "Styles",
+			Lines:          []string{fmt.Sprintf("%d styles discovered", len(report.Styles))},
+			Items:          items,
+			RefreshCommand: "/output-style",
+		}},
+	}, nil
+}
+
+func (a *App) tuiSandboxCommandView() tui.CommandView {
+	req := sandboxToggleRequest{Action: "status", Format: "text", Target: "user"}
+	report := buildSandboxToggleReport(req, a.Config.Future.SandboxStrategy)
+	var out bytes.Buffer
+	renderSandboxToggleReport(&out, report)
+	configured := strings.ToLower(strings.TrimSpace(report.ConfiguredStrategy))
+	selected := 0
+	items := []tui.CommandViewItem{
+		{Label: "Automatic", Value: currentMarker(configured == "" || configured == "detect"), Description: "Select the best supported sandbox strategy for this platform", Command: "/sandbox-toggle on"},
+		{Label: "Disabled", Value: currentMarker(configured == "off"), Description: "Run commands without Codog's process sandbox wrapper", Command: "/sandbox-toggle off"},
+	}
+	if configured == "off" {
+		selected = 1
+	}
+	seen := map[string]bool{"detect": true, "off": true}
+	for _, strategy := range report.Strategies {
+		strategy = strings.ToLower(strings.TrimSpace(strategy))
+		if strategy == "" || seen[strategy] {
+			continue
+		}
+		seen[strategy] = true
+		if strategy == configured {
+			selected = len(items)
+		}
+		items = append(items, tui.CommandViewItem{
+			Label:       strategy,
+			Value:       currentMarker(strategy == configured),
+			Description: "Use this sandbox implementation when available",
+			Command:     "/sandbox-toggle " + strategy,
+		})
+	}
+	items = append(items, tui.CommandViewItem{
+		Label:       "Clear override",
+		Description: "Remove the persisted strategy and return to configuration defaults",
+		Command:     "/sandbox-toggle clear",
+	})
+	return tui.CommandView{
+		Title:        "Sandbox",
+		SelectedItem: selected,
+		Tabs: []tui.CommandViewTab{{
+			Title:          "Configuration",
+			Lines:          tuiReportLines(out.String(), "Sandbox Toggle"),
+			Items:          items,
+			RefreshCommand: "/sandbox",
+		}},
+	}
+}
+
+func currentMarker(current bool) string {
+	if current {
+		return "current"
+	}
+	return ""
 }
 
 func tuiExtensionTab(command string) int {
@@ -39602,6 +39788,249 @@ func tuiConversationRefreshTab(line string) (int, bool) {
 	}
 }
 
+func (a *App) tuiPreferenceRefreshView(line string) (*tui.CommandView, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 2 || tuiSlashRequestsJSON(fields[1:]) {
+		return nil, false
+	}
+	command := fields[0]
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
+	}
+	switch command {
+	case "/fast":
+		req, err := parseFastArgs(fields[1:])
+		if err != nil || req.Action == "status" {
+			return nil, false
+		}
+		view := a.tuiFastCommandView()
+		return &view, true
+	case "/output-style":
+		req, err := parseOutputStyleArgs(fields[1:])
+		if err != nil || (req.Action != "set" && req.Action != "clear") {
+			return nil, false
+		}
+		view, err := a.tuiOutputStyleCommandView()
+		return view, err == nil
+	case "/sandbox-toggle":
+		req, err := parseSandboxToggleArgs(fields[1:])
+		if err != nil || req.Action == "status" {
+			return nil, false
+		}
+		view := a.tuiSandboxCommandView()
+		return &view, true
+	default:
+		return nil, false
+	}
+}
+
+func tuiSlashHasStructuredFlags(args []string) bool {
+	for _, arg := range args {
+		if strings.HasPrefix(strings.TrimSpace(arg), "-") {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) tuiPlanSlashResult(rawArgs string, modeState *tuiModeState) (tui.SlashResult, bool, error) {
+	rawArgs = strings.TrimSpace(rawArgs)
+	req, err := parsePlanArgs(strings.Fields(rawArgs))
+	if err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	if req.Action == "exit" || req.Action == "clear" || req.Action == "set" || (req.Action == "show" && rawArgs != "") {
+		return tui.SlashResult{}, false, nil
+	}
+	if req.Action == "open" && a.planModeActive() {
+		return tui.SlashResult{}, false, nil
+	}
+	if !a.planModeActive() {
+		if _, err := planmode.Enter(a.Workspace, ""); err != nil {
+			return tui.SlashResult{Handled: true}, true, err
+		}
+		a.enterTUIPlanMode(modeState)
+		result := tui.SlashResult{Handled: true, Output: "Enabled plan mode."}
+		if rawArgs != "" && !strings.EqualFold(rawArgs, "open") && req.Action == "enter" {
+			result.Query = req.Text
+		}
+		return result, true, nil
+	}
+	state, err := planmode.Load(a.Workspace)
+	if err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	if strings.TrimSpace(state.Plan) == "" {
+		return tui.SlashResult{Handled: true, Output: "Already in plan mode. No plan written yet."}, true, nil
+	}
+	lines := []string{planmode.Path(a.Workspace), ""}
+	lines = append(lines, strings.Split(strings.TrimSpace(state.Plan), "\n")...)
+	view := tui.InformationView{Title: "Current Plan", Lines: lines}
+	return tui.SlashResult{Handled: true, Information: &view}, true, nil
+}
+
+func (a *App) syncTUIPlanModeAfterSlash(line string, modeState *tuiModeState) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return
+	}
+	command := fields[0]
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
+	}
+	if command == "/exit-plan" {
+		a.exitTUIPlanMode(modeState)
+		return
+	}
+	if command != "/plan" && command != "/ultraplan" {
+		return
+	}
+	req, err := parsePlanArgs(fields[1:])
+	if err != nil {
+		return
+	}
+	switch req.Action {
+	case "exit", "clear":
+		a.exitTUIPlanMode(modeState)
+	case "enter", "set":
+		a.enterTUIPlanMode(modeState)
+	}
+}
+
+func tuiSideQuestionInformation(line string, output string) (tui.InformationView, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 2 || tuiSlashRequestsJSON(fields[1:]) {
+		return tui.InformationView{}, false
+	}
+	command := fields[0]
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
+	}
+	if command != "/btw" {
+		return tui.InformationView{}, false
+	}
+	question := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), fields[0]))
+	lines := []string{question, ""}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "btw session:") || strings.HasPrefix(trimmed, "source session:") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return tui.InformationView{Title: "/btw", Lines: lines, DismissOnConfirm: true}, true
+}
+
+func (a *App) renameTUISession(sess *session.Session, name string) (tui.SlashResult, bool, error) {
+	if sess == nil || strings.TrimSpace(sess.ID) == "" {
+		return tui.SlashResult{Handled: true}, true, errors.New("session is required")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = generatedTUISessionTitle(sess)
+		if name == "" {
+			return tui.SlashResult{Handled: true}, true, errors.New("could not generate a name: no conversation context yet; usage: /rename <name>")
+		}
+	}
+	identity, err := a.Sessions.UpdateIdentity(sess.ID, session.SessionIdentity{Title: name})
+	if err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	sess.Identity = identity
+	state := a.tuiSessionState(sess)
+	return tui.SlashResult{
+		Handled: true,
+		Output:  "Session renamed to: " + name,
+		Session: &state,
+	}, true, nil
+}
+
+func (a *App) branchTUISession(ctx context.Context, sess *session.Session, name string) (tui.SlashResult, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	if sess == nil || strings.TrimSpace(sess.ID) == "" {
+		return tui.SlashResult{Handled: true}, true, errors.New("session is required")
+	}
+	current, err := a.Sessions.Open(sess.ID)
+	if err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	if len(current.Messages) == 0 {
+		return tui.SlashResult{Handled: true}, true, errors.New("no conversation to branch")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		base := strings.TrimSpace(current.Identity.Title)
+		if base == "" || base == current.ID {
+			base = generatedTUISessionTitle(current)
+		}
+		if base == "" {
+			base = "Branched conversation"
+		}
+		name, err = a.uniqueTUIBranchTitle(base)
+		if err != nil {
+			return tui.SlashResult{Handled: true}, true, err
+		}
+	}
+	forked, err := a.Sessions.Fork(current.ID, name)
+	if err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	identity, err := a.Sessions.UpdateIdentity(forked.ID, session.SessionIdentity{Title: name})
+	if err != nil {
+		_ = a.Sessions.Delete(forked.ID)
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	forked.Identity = identity
+	*sess = *forked
+	state := a.tuiSessionState(sess)
+	return tui.SlashResult{
+		Handled: true,
+		Output:  fmt.Sprintf("Conversation branched as %s (%s).", name, forked.ID),
+		Session: &state,
+	}, true, nil
+}
+
+func generatedTUISessionTitle(sess *session.Session) string {
+	if sess == nil {
+		return ""
+	}
+	for _, message := range sess.Messages {
+		if !strings.EqualFold(strings.TrimSpace(message.Role), "user") {
+			continue
+		}
+		if text := trimSingleLine(firstMessageText(message), 80); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func (a *App) uniqueTUIBranchTitle(base string) (string, error) {
+	sessions, err := a.Sessions.List()
+	if err != nil {
+		return "", err
+	}
+	used := make(map[string]bool, len(sessions))
+	for _, candidate := range sessions {
+		used[strings.ToLower(strings.TrimSpace(candidate.Identity.Title))] = true
+	}
+	name := strings.TrimSpace(base) + " (Branch)"
+	if !used[strings.ToLower(name)] {
+		return name, nil
+	}
+	for index := 2; ; index++ {
+		name = fmt.Sprintf("%s (Branch %d)", strings.TrimSpace(base), index)
+		if !used[strings.ToLower(name)] {
+			return name, nil
+		}
+	}
+}
+
 func (a *App) tuiDoctorInformation() (*tui.InformationView, error) {
 	var out bytes.Buffer
 	previous := a.Out
@@ -39956,6 +40385,31 @@ func (a *App) selectTUITheme(ctx context.Context, selected string) (tui.RuntimeC
 		Lines:  []string{"Theme: " + selected, "Previous: " + previous},
 		Badges: []string{"theme: " + selected},
 	}, nil
+}
+
+func (a *App) submitTUITextInput(ctx context.Context, action string, value string) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "add-dir":
+		report, err := pathscope.Add(a.Workspace, []string{value})
+		if err != nil {
+			return tui.RuntimeControlResult{}, err
+		}
+		if err := a.refreshBuiltinToolScope(); err != nil {
+			return tui.RuntimeControlResult{}, err
+		}
+		var out bytes.Buffer
+		pathscope.RenderText(&out, report)
+		return tui.RuntimeControlResult{
+			Title:  "Working Directory Added",
+			Status: "directory added",
+			Lines:  tuiReportLines(out.String(), "Additional Directories"),
+		}, nil
+	default:
+		return tui.RuntimeControlResult{}, fmt.Errorf("unknown input action %q", action)
+	}
 }
 
 func (a *App) toggleTUIFast(ctx context.Context) (tui.RuntimeControlResult, error) {
@@ -40846,8 +41300,9 @@ type tuiModeOption struct {
 }
 
 type tuiModeState struct {
-	options []tuiModeOption
-	index   int
+	options                []tuiModeOption
+	index                  int
+	previousPermissionMode string
 }
 
 func newTUIModeState(cfg config.Config) *tuiModeState {
@@ -40919,6 +41374,31 @@ func (s *tuiModeState) Apply(cfg *config.Config) {
 	option := s.options[s.index]
 	cfg.PermissionMode = option.PermissionMode
 	cfg.PlanMode = option.PlanMode
+}
+
+func (a *App) enterTUIPlanMode(state *tuiModeState) {
+	if state == nil {
+		return
+	}
+	if !a.Config.PlanMode {
+		state.previousPermissionMode = strings.TrimSpace(a.Config.PermissionMode)
+	}
+	a.Config.PermissionMode = "read-only"
+	a.Config.PlanMode = true
+	state.Sync(a.Config)
+}
+
+func (a *App) exitTUIPlanMode(state *tuiModeState) {
+	a.Config.PlanMode = false
+	mode := "prompt"
+	if state != nil && strings.TrimSpace(state.previousPermissionMode) != "" {
+		mode = strings.TrimSpace(state.previousPermissionMode)
+	}
+	a.Config.PermissionMode = mode
+	if state != nil {
+		state.previousPermissionMode = ""
+		state.Sync(a.Config)
+	}
 }
 
 func (a *App) selectTUIPermissionMode(ctx context.Context, selected string, modeState *tuiModeState) (tui.RuntimeControlResult, error) {

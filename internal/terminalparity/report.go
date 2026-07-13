@@ -23,6 +23,15 @@ var requiredInteractiveCommands = []string{
 	"/hooks",
 	"/vim",
 	"/theme",
+	"/fast",
+	"/output-style",
+	"/sandbox",
+	"/add-dir",
+	"/rename",
+	"/branch",
+	"/btw",
+	"/plan",
+	"/stats",
 	"/cost",
 	"/context",
 	"/exit",
@@ -52,6 +61,9 @@ type Report struct {
 	TUIConversationTabs       bool     `json:"tui_conversation_tabs"`
 	TUIMemorySelector         bool     `json:"tui_memory_selector"`
 	TUIExportDialog           bool     `json:"tui_export_dialog"`
+	TUITextInputDialog        bool     `json:"tui_text_input_dialog"`
+	TUIPreferencePanels       bool     `json:"tui_preference_panels"`
+	TUISideQuestionPanel      bool     `json:"tui_side_question_panel"`
 	TUIStatusBar              bool     `json:"tui_status_bar"`
 	TUIPreviewWidth           int      `json:"tui_preview_width"`
 	TUIPreviewHeight          int      `json:"tui_preview_height"`
@@ -128,6 +140,24 @@ func Build() Report {
 		}},
 	}, nil, 80, 24)
 	exportPreview := tui.PreviewWithExportDialog(tui.ExportDialog{DefaultFilename: "session.md"}, []string{"down", "enter"}, 80, 24)
+	inputPreview := tui.PreviewWithTextInputDialog(tui.TextInputDialog{
+		Title:  "Add working directory",
+		Prompt: "Enter a directory path:",
+		Action: "add-dir",
+	}, nil, 80, 24)
+	preferencePreview := tui.PreviewWithCommandView(tui.CommandView{
+		Title:        "Fast mode",
+		SelectedItem: 1,
+		Tabs: []tui.CommandViewTab{{Title: "Preference", Items: []tui.CommandViewItem{
+			{Label: "Enabled"},
+			{Label: "Disabled", Value: "current"},
+		}}},
+	}, nil, 80, 24)
+	sideQuestionPreview := tui.PreviewWithInformation(tui.InformationView{
+		Title:            "/btw",
+		Lines:            []string{"Why did this test fail?", "", "The fixture used the wrong path."},
+		DismissOnConfirm: true,
+	}, nil, 80, 24)
 	report := Report{
 		Status:                    "ready",
 		SlashCommandCount:         len(specs),
@@ -150,6 +180,9 @@ func Build() Report {
 		TUIConversationTabs:       conversationPreview.CommandView && strings.Contains(conversationPreview.View, "History") && strings.Contains(conversationPreview.View, "Sessions") && strings.Contains(conversationPreview.View, "Bookmarks") && strings.Contains(conversationPreview.View, "before-review") && strings.Contains(conversationPreview.View, "R refresh"),
 		TUIMemorySelector:         memoryPreview.CommandView && strings.Contains(memoryPreview.View, "AGENTS.md") && strings.Contains(memoryPreview.View, "V view") && strings.Contains(memoryPreview.View, "R refresh"),
 		TUIExportDialog:           exportPreview.ExportDialog && strings.Contains(exportPreview.View, "Enter filename") && exportPreview.Value == "session.md",
+		TUITextInputDialog:        inputPreview.TextInputDialog && strings.Contains(inputPreview.View, "Enter a directory path") && strings.Contains(inputPreview.View, "Enter confirm"),
+		TUIPreferencePanels:       preferencePreview.CommandView && strings.Contains(preferencePreview.View, "fast mode") && strings.Contains(preferencePreview.View, "> Disabled  current"),
+		TUISideQuestionPanel:      sideQuestionPreview.InformationView && strings.Contains(sideQuestionPreview.View, "The fixture used the wrong path") && strings.Contains(sideQuestionPreview.View, "Enter/Space/Esc close"),
 		TUIStatusBar:              strings.Contains(submitPreview.View, "Enter send") && strings.Contains(submitPreview.View, "Tab") && strings.Contains(submitPreview.View, "Esc"),
 		TUIPreviewWidth:           80,
 		TUIPreviewHeight:          24,
@@ -174,6 +207,9 @@ func Build() Report {
 		!report.TUIConversationTabs ||
 		!report.TUIMemorySelector ||
 		!report.TUIExportDialog ||
+		!report.TUITextInputDialog ||
+		!report.TUIPreferencePanels ||
+		!report.TUISideQuestionPanel ||
 		!report.TUIStatusBar ||
 		!report.PermissionCommandsPresent ||
 		!report.StatusCommandsPresent ||

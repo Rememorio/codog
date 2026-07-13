@@ -135,8 +135,9 @@ type PermissionSettings struct {
 
 // InformationView is a scrollable read-only panel opened by a slash command.
 type InformationView struct {
-	Title string
-	Lines []string
+	Title            string
+	Lines            []string
+	DismissOnConfirm bool
 }
 
 // ExportDialog describes the initial state of the conversation export dialog.
@@ -144,11 +145,20 @@ type ExportDialog struct {
 	DefaultFilename string
 }
 
+// TextInputDialog describes a local workflow that needs one line of user input.
+type TextInputDialog struct {
+	Title        string
+	Prompt       string
+	InitialValue string
+	Action       string
+}
+
 // CommandView is a tabbed local-command panel with optional actions.
 type CommandView struct {
-	Title       string
-	Tabs        []CommandViewTab
-	SelectedTab int
+	Title        string
+	Tabs         []CommandViewTab
+	SelectedTab  int
+	SelectedItem int
 }
 
 // CommandViewTab is one tab in a CommandView.
@@ -175,10 +185,12 @@ type CommandViewItem struct {
 // SlashResult is the structured outcome of one local slash command.
 type SlashResult struct {
 	Output             string
+	Query              string
 	Handled            bool
 	Session            *SessionState
 	SessionChoices     []SessionChoice
 	OpenModelPicker    bool
+	OpenThemePicker    bool
 	OpenTodos          bool
 	OpenMessageActions bool
 	RuntimeAction      string
@@ -187,6 +199,7 @@ type SlashResult struct {
 	Information        *InformationView
 	CommandView        *CommandView
 	ExportDialog       *ExportDialog
+	TextInputDialog    *TextInputDialog
 }
 
 // SlashFunc runs one local slash command. Structured result fields let the
@@ -229,6 +242,7 @@ type PermissionModeSelectFunc func(context.Context, string) (RuntimeControlResul
 
 // ThemeSelectFunc persists a theme selected from the live TUI picker.
 type ThemeSelectFunc func(context.Context, string) (RuntimeControlResult, error)
+type TextInputSubmitFunc func(context.Context, string, string) (RuntimeControlResult, error)
 type ConversationRestoreFunc func(context.Context, int) (RuntimeControlResult, error)
 type ConversationForkFunc func(context.Context, int) (RuntimeControlResult, error)
 type ConversationSummarizeFunc func(context.Context, int) (RuntimeControlResult, error)
@@ -268,6 +282,7 @@ type ShellOptions struct {
 	SubmitAttachments         SubmitWithAttachmentsFunc
 	SubmitStreamAttachments   StreamSubmitWithAttachmentsFunc
 	Slash                     SlashFunc
+	SubmitTextInput           TextInputSubmitFunc
 	PermissionAnswer          func(string)
 	PermissionRespond         func(PermissionResponse)
 	QuestionAnswer            func(string)
@@ -329,8 +344,10 @@ type Preview struct {
 	MessageMenu     bool
 	AttachmentsOpen bool
 	DiffDialog      bool
+	InformationView bool
 	CommandView     bool
 	ExportDialog    bool
+	TextInputDialog bool
 	CommandHint     string
 	InlineHint      string
 	Quit            bool
@@ -448,6 +465,9 @@ type model struct {
 	exportDialogSelected      int
 	exportFilenameInput       bool
 	exportComposerDraft       string
+	textInputDialog           *TextInputDialog
+	textInputComposerDraft    string
+	submitTextInput           TextInputSubmitFunc
 	theme                     string
 	themePicker               bool
 	themePickerSelected       int
@@ -1075,6 +1095,30 @@ func PreviewWithCommandView(view CommandView, keys []string, width int, height i
 	}
 }
 
+// PreviewWithInformation renders a deterministic read-only information panel.
+func PreviewWithInformation(view InformationView, keys []string, width int, height int) Preview {
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	m.openInformation(view)
+	for _, key := range keys {
+		updated, _ := m.Update(diffPreviewKey(key))
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:            m.View(),
+		Value:           m.textarea.Value(),
+		Mode:            m.mode(),
+		InformationView: m.information != nil,
+	}
+}
+
 // PreviewWithExportDialog renders a deterministic conversation export dialog
 // after applying the provided navigation keys.
 func PreviewWithExportDialog(dialog ExportDialog, keys []string, width int, height int) Preview {
@@ -1097,6 +1141,30 @@ func PreviewWithExportDialog(dialog ExportDialog, keys []string, width int, heig
 		Value:        m.textarea.Value(),
 		Mode:         m.mode(),
 		ExportDialog: m.exportDialog != nil,
+	}
+}
+
+// PreviewWithTextInputDialog renders a deterministic local text-input workflow.
+func PreviewWithTextInputDialog(dialog TextInputDialog, keys []string, width int, height int) Preview {
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	m.openTextInputDialog(dialog)
+	for _, key := range keys {
+		updated, _ := m.Update(diffPreviewKey(key))
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:            m.View(),
+		Value:           m.textarea.Value(),
+		Mode:            m.mode(),
+		TextInputDialog: m.textInputDialog != nil,
 	}
 }
 
@@ -1864,6 +1932,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.submitAttachments = options.SubmitAttachments
 	m.submitStreamAttachments = options.SubmitStreamAttachments
 	m.slash = options.Slash
+	m.submitTextInput = options.SubmitTextInput
 	m.permissionAnswer = options.PermissionAnswer
 	m.permissionRespond = options.PermissionRespond
 	m.questionAnswer = options.QuestionAnswer
@@ -2019,10 +2088,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err == nil && !msg.Interrupted && msg.Session != nil {
 			m.applySessionState(*msg.Session)
 		}
+		if msg.Err == nil && !msg.Interrupted && strings.TrimSpace(msg.Query) != "" {
+			m.streamingIndex = -1
+			m.discardLatestSlashInput()
+			if output := strings.TrimSpace(msg.Output); output != "" {
+				m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: output})
+			}
+			return m.startInput(strings.TrimSpace(msg.Query))
+		}
 		if msg.Err == nil && !msg.Interrupted && msg.OpenModelPicker {
 			m.streamingIndex = -1
 			m.discardLatestSlashInput()
 			m.openModelPicker()
+			return m, m.flushInlineTranscript()
+		}
+		if msg.Err == nil && !msg.Interrupted && msg.OpenThemePicker {
+			m.streamingIndex = -1
+			m.discardLatestSlashInput()
+			m.openThemePicker()
 			return m, m.flushInlineTranscript()
 		}
 		if msg.Err == nil && !msg.Interrupted && msg.OpenTodos {
@@ -2048,6 +2131,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamingIndex = -1
 			m.discardLatestSlashInput()
 			m.openExportDialog(*msg.ExportDialog)
+			return m, m.flushInlineTranscript()
+		}
+		if msg.Err == nil && !msg.Interrupted && msg.TextInputDialog != nil {
+			m.streamingIndex = -1
+			m.discardLatestSlashInput()
+			m.openTextInputDialog(*msg.TextInputDialog)
 			return m, m.flushInlineTranscript()
 		}
 		if msg.Err == nil && !msg.Interrupted && strings.TrimSpace(msg.RuntimeAction) != "" {
@@ -2294,6 +2383,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.exportDialog != nil {
 			return m.updateExportDialog(msg)
 		}
+		if m.textInputDialog != nil {
+			return m.updateTextInputDialog(msg)
+		}
 		if msg.Paste {
 			return m.handlePastedInput(msg)
 		}
@@ -2334,6 +2426,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c", "esc", "left":
 				m.closeInformation()
 				return m, nil
+			case "enter", " ", "space":
+				if m.information.DismissOnConfirm {
+					m.closeInformation()
+					return m, nil
+				}
+				if msg.String() == " " || msg.String() == "space" {
+					m.moveInformation(informationVisibleLines(m.height))
+				}
+				return m, nil
 			case "up", "ctrl+p", "k":
 				m.moveInformation(-1)
 				return m, nil
@@ -2343,7 +2444,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "pgup":
 				m.moveInformation(-informationVisibleLines(m.height))
 				return m, nil
-			case "pgdown", "space":
+			case "pgdown":
 				m.moveInformation(informationVisibleLines(m.height))
 				return m, nil
 			case "home":
@@ -3183,6 +3284,9 @@ func (m model) View() string {
 	if m.exportDialog != nil {
 		composer = renderExportDialog(*m.exportDialog, m.exportDialogSelected, m.exportFilenameInput, composerTextarea.View(), m.width, styles)
 	}
+	if m.textInputDialog != nil {
+		composer = renderTextInputDialog(*m.textInputDialog, composerTextarea.View(), m.width, styles)
+	}
 	if m.sessionPicker != nil {
 		composer = m.sessionPicker.View()
 	} else if m.awaitingPermission && m.permissionRequest != nil {
@@ -3294,11 +3398,13 @@ func (m *model) refreshModeLabel() {
 type turnDoneMsg struct {
 	Role               string
 	Output             string
+	Query              string
 	Err                error
 	Interrupted        bool
 	Session            *SessionState
 	SessionChoices     []SessionChoice
 	OpenModelPicker    bool
+	OpenThemePicker    bool
 	OpenTodos          bool
 	OpenMessageActions bool
 	RuntimeAction      string
@@ -3307,6 +3413,7 @@ type turnDoneMsg struct {
 	Information        *InformationView
 	CommandView        *CommandView
 	ExportDialog       *ExportDialog
+	TextInputDialog    *TextInputDialog
 }
 
 type initialPromptMsg struct {
@@ -4872,11 +4979,13 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 		return turnDoneMsg{
 			Role:               "system",
 			Output:             result.Output,
+			Query:              result.Query,
 			Err:                err,
 			Interrupted:        errors.Is(err, context.Canceled),
 			Session:            result.Session,
 			SessionChoices:     append([]SessionChoice(nil), result.SessionChoices...),
 			OpenModelPicker:    result.OpenModelPicker,
+			OpenThemePicker:    result.OpenThemePicker,
 			OpenTodos:          result.OpenTodos,
 			OpenMessageActions: result.OpenMessageActions,
 			RuntimeAction:      result.RuntimeAction,
@@ -4885,12 +4994,13 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 			Information:        result.Information,
 			CommandView:        result.CommandView,
 			ExportDialog:       result.ExportDialog,
+			TextInputDialog:    result.TextInputDialog,
 		}
 	}
 }
 
 func slashResultHasInteractiveView(result SlashResult) bool {
-	return result.Session != nil || len(result.SessionChoices) > 0 || result.OpenModelPicker || result.OpenTodos || result.OpenMessageActions || strings.TrimSpace(result.RuntimeAction) != "" || result.Diff != nil || result.PermissionSettings != nil || result.Information != nil || result.CommandView != nil || result.ExportDialog != nil
+	return strings.TrimSpace(result.Query) != "" || result.Session != nil || len(result.SessionChoices) > 0 || result.OpenModelPicker || result.OpenThemePicker || result.OpenTodos || result.OpenMessageActions || strings.TrimSpace(result.RuntimeAction) != "" || result.Diff != nil || result.PermissionSettings != nil || result.Information != nil || result.CommandView != nil || result.ExportDialog != nil || result.TextInputDialog != nil
 }
 
 type turnStreamMsg struct {
@@ -4974,6 +5084,13 @@ func runTodoListCommand(ctx context.Context, todos TodoListFunc) tea.Cmd {
 func runRuntimeControlCommand(ctx context.Context, control RuntimeControlFunc) tea.Cmd {
 	return func() tea.Msg {
 		result, err := control(ctx)
+		return runtimeControlDoneMsg{Result: result, Err: err}
+	}
+}
+
+func runTextInputSubmitCommand(ctx context.Context, submit TextInputSubmitFunc, action string, value string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := submit(ctx, action, value)
 		return runtimeControlDoneMsg{Result: result, Err: err}
 	}
 }
@@ -7085,6 +7202,9 @@ func (m *model) openCommandView(view CommandView) {
 	m.commandView = &view
 	m.commandViewTab = clampIndex(view.SelectedTab, len(view.Tabs))
 	m.commandViewItem = 0
+	if len(view.Tabs) > 0 {
+		m.commandViewItem = clampIndex(view.SelectedItem, len(view.Tabs[m.commandViewTab].Items))
+	}
 	m.commandViewOffset = 0
 	m.status = strings.ToLower(view.Title)
 	if m.status == "" {
@@ -7323,6 +7443,62 @@ func (m *model) closeExportDialog() {
 	m.status = m.mode()
 }
 
+func (m *model) openTextInputDialog(dialog TextInputDialog) {
+	dialog.Title = strings.TrimSpace(dialog.Title)
+	dialog.Prompt = strings.TrimSpace(dialog.Prompt)
+	dialog.Action = strings.TrimSpace(dialog.Action)
+	m.closeInteractivePanels()
+	m.textInputComposerDraft = m.textarea.Value()
+	m.textarea.SetValue(dialog.InitialValue)
+	m.textarea.CursorEnd()
+	m.textarea.Focus()
+	m.textInputDialog = &dialog
+	m.status = strings.ToLower(dialog.Title)
+	if m.status == "" {
+		m.status = "input"
+	}
+}
+
+func (m *model) closeTextInputDialog() {
+	draft := m.textInputComposerDraft
+	m.textInputDialog = nil
+	m.textInputComposerDraft = ""
+	m.textarea.SetValue(draft)
+	m.textarea.CursorEnd()
+	m.textarea.Focus()
+	m.status = m.mode()
+}
+
+func (m model) updateTextInputDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.textInputDialog == nil {
+		return m, nil
+	}
+	switch msg.String() {
+	case "ctrl+c", "esc":
+		m.closeTextInputDialog()
+		return m, nil
+	case "enter":
+		value := strings.TrimSpace(m.textarea.Value())
+		if value == "" {
+			m.status = "value required"
+			return m, nil
+		}
+		if m.submitTextInput == nil {
+			m.closeTextInputDialog()
+			m.status = "input action unavailable"
+			return m, nil
+		}
+		action := m.textInputDialog.Action
+		m.closeTextInputDialog()
+		m.status = "updating"
+		return m, runTextInputSubmitCommand(m.ctx, m.submitTextInput, action, value)
+	default:
+		var cmd tea.Cmd
+		m.textarea, cmd = m.textarea.Update(msg)
+		return m, cmd
+	}
+}
+
 func (m model) updateExportDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.exportDialog == nil {
 		return m, nil
@@ -7423,6 +7599,10 @@ func (m *model) closeInteractivePanels() {
 		m.textarea.SetValue(m.exportComposerDraft)
 		m.textarea.CursorEnd()
 	}
+	if m.textInputDialog != nil {
+		m.textarea.SetValue(m.textInputComposerDraft)
+		m.textarea.CursorEnd()
+	}
 	m.helpOpen = false
 	m.searchOpen = false
 	m.quickOpen = false
@@ -7450,6 +7630,8 @@ func (m *model) closeInteractivePanels() {
 	m.exportDialogSelected = 0
 	m.exportFilenameInput = false
 	m.exportComposerDraft = ""
+	m.textInputDialog = nil
+	m.textInputComposerDraft = ""
 	m.matches = nil
 	m.selected = 0
 }
@@ -8559,8 +8741,15 @@ func renderInformation(view InformationView, offset int, width int, height int, 
 		lines = append(lines, styles.completion().Render("  no information"))
 	}
 	position := "Esc close"
+	if view.DismissOnConfirm {
+		position = "Enter/Space/Esc close"
+	}
 	if len(view.Lines) > visible {
-		position = fmt.Sprintf("%d-%d/%d · Up/Down scroll · Esc close", offset+1, end, len(view.Lines))
+		if view.DismissOnConfirm {
+			position = fmt.Sprintf("%d-%d/%d · Up/Down scroll · Enter/Space/Esc close", offset+1, end, len(view.Lines))
+		} else {
+			position = fmt.Sprintf("%d-%d/%d · Up/Down scroll · Esc close", offset+1, end, len(view.Lines))
+		}
 	}
 	lines = append(lines, styles.completion().Render("  "+position))
 	return strings.Join(lines, "\n")
@@ -8740,6 +8929,28 @@ func renderExportDialog(dialog ExportDialog, selected int, filenameInput bool, i
 	}
 	lines = append(lines, styles.completion().Render("  ↑/↓ select · Enter continue · Esc cancel"))
 	return strings.Join(lines, "\n")
+}
+
+func renderTextInputDialog(dialog TextInputDialog, input string, width int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
+	limit := 100
+	if width > 0 {
+		limit = max(12, width-8)
+	}
+	title := strings.TrimSpace(dialog.Title)
+	if title == "" {
+		title = "input"
+	}
+	prompt := strings.TrimSpace(dialog.Prompt)
+	if prompt == "" {
+		prompt = "Enter a value:"
+	}
+	return strings.Join([]string{
+		styles.completionTitle().Render(" " + strings.ToLower(title) + " "),
+		styles.completion().Render(truncateForComposer("  "+prompt, limit)),
+		truncateForComposer(input, limit),
+		styles.completion().Render("  Enter confirm · Esc cancel"),
+	}, "\n")
 }
 
 func renderDiffDialog(sources []DiffSource, sourceIndex int, fileIndex int, detail bool, width int, themed ...themeStyles) string {

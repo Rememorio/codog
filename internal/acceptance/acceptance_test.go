@@ -245,6 +245,40 @@ send "\033"
 after 100
 send "\033"
 after 300
+send "/fast\r"
+expect " fast mode "
+expect "Enabled"
+expect "Disabled"
+send "\033"
+after 300
+send "/output-style\r"
+expect " output style "
+expect "concise"
+expect "explanatory"
+send "\033"
+after 300
+send "/sandbox\r"
+expect " sandbox "
+expect "Automatic"
+expect "Disabled"
+send "\033"
+after 300
+send "/stats\r"
+expect " settings "
+expect "Total tokens"
+send "\033"
+after 300
+send "/add-dir\r"
+expect " add working directory "
+expect "Enter an absolute or workspace-relative directory path"
+send "\033"
+after 300
+send "/plan\r"
+expect "Enabled plan mode."
+expect "plan mode on"
+send "/exit-plan\r"
+expect "inactive"
+expect "default mode"
 send "/diff\r"
 expect "tracked.txt"
 expect "untracked.txt"
@@ -307,6 +341,14 @@ expect eof
 	require.Contains(t, plain, "No IDE connected")
 	require.Contains(t, plain, "Copy to clipboard")
 	require.Contains(t, plain, "Enter filename")
+	require.Contains(t, plain, " fast mode ")
+	require.Contains(t, plain, " output style ")
+	require.Contains(t, plain, "explanatory")
+	require.Contains(t, plain, " sandbox ")
+	require.Contains(t, plain, "Automatic")
+	require.Contains(t, plain, " add working directory ")
+	require.Contains(t, plain, "Enabled plan mode.")
+	require.Contains(t, plain, "plan mode on")
 	require.Contains(t, plain, "tracked.txt")
 	require.Contains(t, plain, "staged.txt")
 	require.Contains(t, plain, "untracked.txt")
@@ -321,6 +363,38 @@ expect eof
 	require.Contains(t, plain, "/agents run acceptance-agent ")
 	require.NotContains(t, plain, "UNTRACKED .codog")
 	require.NotContains(t, plain, "· model=glm52")
+}
+
+func TestRealBinaryTUISideQuestionUsesDismissiblePanelWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	server := httptest.NewServer(mockanthropic.Server{Text: "The fixture used the wrong path."}.Handler())
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --permission-mode allow --model claude-sonnet-4-5 tui
+expect "codog"
+send "/btw why did this test fail?\r"
+expect " /btw "
+expect "why did this test fail?"
+expect "The fixture used the wrong path."
+expect "Enter/Space/Esc close"
+send "\r"
+after 300
+send "/exit\r"
+expect eof
+`)
+
+	plain := ansi.Strip(output)
+	require.Contains(t, plain, "The fixture used the wrong path.")
+	require.Contains(t, plain, "Enter/Space/Esc close")
+	require.NotContains(t, plain, "btw session:")
+	require.NotContains(t, plain, "source session:")
 }
 
 func TestRealBinaryInteractiveStartupPersistsWorkspaceTrustWithTTY(t *testing.T) {

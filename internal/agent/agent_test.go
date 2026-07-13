@@ -539,6 +539,7 @@ func TestTUISlashHandlerOpensInteractiveControlViews(t *testing.T) {
 	require.NotNil(t, configResult.CommandView)
 	require.Equal(t, 1, configResult.CommandView.SelectedTab)
 	require.Contains(t, commandViewItemLabels(configResult.CommandView.Tabs[1].Items), "Model")
+	require.Contains(t, commandViewItemLabels(configResult.CommandView.Tabs[1].Items), "Output style")
 	require.Contains(t, commandViewItemLabels(configResult.CommandView.Tabs[1].Items), "Vim mode")
 
 	usageResult, err := handler(context.Background(), "/usage")
@@ -546,6 +547,53 @@ func TestTUISlashHandlerOpensInteractiveControlViews(t *testing.T) {
 	require.NotNil(t, usageResult.CommandView)
 	require.Equal(t, 2, usageResult.CommandView.SelectedTab)
 	require.Contains(t, strings.Join(usageResult.CommandView.Tabs[2].Lines, "\n"), "Total tokens")
+
+	themeResult, err := handler(context.Background(), "/theme")
+	require.NoError(t, err)
+	require.True(t, themeResult.OpenThemePicker)
+
+	fastResult, err := handler(context.Background(), "/fast")
+	require.NoError(t, err)
+	require.NotNil(t, fastResult.CommandView)
+	require.Equal(t, "Fast mode", fastResult.CommandView.Title)
+	require.Contains(t, commandViewItemLabels(fastResult.CommandView.Tabs[0].Items), "Enabled")
+
+	outputStyleResult, err := handler(context.Background(), "/output-style")
+	require.NoError(t, err)
+	require.NotNil(t, outputStyleResult.CommandView)
+	require.Equal(t, "Output style", outputStyleResult.CommandView.Title)
+	require.Contains(t, commandViewItemLabels(outputStyleResult.CommandView.Tabs[0].Items), "concise")
+
+	sandboxResult, err := handler(context.Background(), "/sandbox")
+	require.NoError(t, err)
+	require.NotNil(t, sandboxResult.CommandView)
+	require.Equal(t, "Sandbox", sandboxResult.CommandView.Title)
+	require.Contains(t, commandViewItemLabels(sandboxResult.CommandView.Tabs[0].Items), "Automatic")
+	require.Contains(t, commandViewItemLabels(sandboxResult.CommandView.Tabs[0].Items), "Disabled")
+
+	statsResult, err := handler(context.Background(), "/stats")
+	require.NoError(t, err)
+	require.NotNil(t, statsResult.CommandView)
+	require.Equal(t, 2, statsResult.CommandView.SelectedTab)
+
+	addDirResult, err := handler(context.Background(), "/add-dir")
+	require.NoError(t, err)
+	require.NotNil(t, addDirResult.TextInputDialog)
+	require.Equal(t, "add-dir", addDirResult.TextInputDialog.Action)
+
+	planResult, err := handler(context.Background(), "/plan inspect the release")
+	require.NoError(t, err)
+	require.Equal(t, "inspect the release", planResult.Query)
+	require.True(t, app.Config.PlanMode)
+	require.Equal(t, "read-only", app.Config.PermissionMode)
+	require.Equal(t, "plan", modeState.Label())
+
+	exitPlanResult, err := handler(context.Background(), "/exit-plan")
+	require.NoError(t, err)
+	require.Contains(t, exitPlanResult.Output, "inactive")
+	require.False(t, app.Config.PlanMode)
+	require.Equal(t, "prompt", app.Config.PermissionMode)
+	require.Equal(t, "default", modeState.Label())
 
 	statusJSONResult, err := handler(context.Background(), "/status --json")
 	require.NoError(t, err)
@@ -936,6 +984,93 @@ func TestTUISlashHandlerOpensWorkspaceWorkflowViews(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, jsonIDE.CommandView)
 	require.Contains(t, jsonIDE.Output, `"kind": "ide"`)
+}
+
+func TestTUISlashHandlerRenamesAndBranchesConversations(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	current, err := store.Open("conversation-source")
+	require.NoError(t, err)
+	require.NoError(t, store.Append(current.ID, anthropic.TextMessage("user", "Investigate scheduler timeout")))
+	current, err = store.OpenExisting(current.ID)
+	require.NoError(t, err)
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome, Model: "glm52"},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+	handler := app.tuiSlashHandler(current, newTUIModeState(app.Config))
+
+	renamed, err := handler(context.Background(), "/rename Scheduler investigation")
+	require.NoError(t, err)
+	require.NotNil(t, renamed.Session)
+	require.Equal(t, "conversation-source", renamed.Session.ID)
+	require.Contains(t, renamed.Session.Entries[0].Text, "Scheduler investigation")
+	require.Equal(t, "Scheduler investigation", current.Identity.Title)
+
+	autoRenamed, err := handler(context.Background(), "/rename")
+	require.NoError(t, err)
+	require.Equal(t, "conversation-source", autoRenamed.Session.ID)
+	require.Equal(t, "Investigate scheduler timeout", current.Identity.Title)
+
+	branched, err := handler(context.Background(), "/branch Follow-up analysis")
+	require.NoError(t, err)
+	require.NotNil(t, branched.Session)
+	require.NotEqual(t, "conversation-source", branched.Session.ID)
+	require.Equal(t, branched.Session.ID, current.ID)
+	require.Equal(t, "Follow-up analysis", current.Identity.Title)
+	require.Equal(t, "conversation-source", current.Metadata.ParentSessionID)
+	require.Equal(t, "Follow-up analysis", current.Metadata.BranchName)
+	require.Contains(t, branched.Output, "Conversation branched")
+
+	source, err := store.OpenExisting("conversation-source")
+	require.NoError(t, err)
+	require.Equal(t, "Investigate scheduler timeout", source.Identity.Title)
+	require.Len(t, source.Messages, 1)
+}
+
+func TestTUISideQuestionUsesDismissibleInformationPanel(t *testing.T) {
+	view, ok := tuiSideQuestionInformation(
+		"/btw why did this test fail?",
+		"The fixture used the wrong path.\n\nbtw session: side-session\nsource session: main-session",
+	)
+	require.True(t, ok)
+	require.Equal(t, "/btw", view.Title)
+	require.True(t, view.DismissOnConfirm)
+	require.Equal(t, "why did this test fail?", view.Lines[0])
+	require.Contains(t, strings.Join(view.Lines, "\n"), "The fixture used the wrong path.")
+	require.NotContains(t, strings.Join(view.Lines, "\n"), "side-session")
+
+	_, ok = tuiSideQuestionInformation("/btw question --json", `{}`)
+	require.False(t, ok)
+}
+
+func TestSubmitTUITextInputPreservesDirectoryWithSpaces(t *testing.T) {
+	workspace := t.TempDir()
+	external := filepath.Join(t.TempDir(), "shared workspace")
+	require.NoError(t, os.MkdirAll(external, 0o755))
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Sessions:  session.NewWorkspaceStore(t.TempDir(), workspace),
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+
+	result, err := app.submitTUITextInput(context.Background(), "add-dir", external)
+	require.NoError(t, err)
+	require.Equal(t, "directory added", result.Status)
+	require.Contains(t, strings.Join(result.Lines, "\n"), external)
+
+	report, err := pathscope.BuildReport(workspace, nil, "list")
+	require.NoError(t, err)
+	require.Len(t, report.Entries, 1)
+	canonicalExternal, err := filepath.EvalSymlinks(external)
+	require.NoError(t, err)
+	require.Equal(t, canonicalExternal, report.Entries[0].Path)
 }
 
 func diffFilePaths(files []tui.DiffFile) []string {

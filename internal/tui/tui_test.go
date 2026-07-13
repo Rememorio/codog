@@ -2186,6 +2186,31 @@ func TestSlashCommandWithEmptyOutputShowsDone(t *testing.T) {
 	require.NoError(t, msg.Err)
 }
 
+func TestSlashQueryStartsARegularModelTurn(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("/plan inspect the release"), nil, nil)
+	m.slash = func(context.Context, string) (SlashResult, error) {
+		return SlashResult{Handled: true, Output: "Enabled plan mode.", Query: "inspect the release"}, nil
+	}
+	var submitted string
+	m.submit = func(_ context.Context, prompt string) (string, error) {
+		submitted = prompt
+		return "plan ready", nil
+	}
+
+	updated, slashCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	updated, submitCmd := m.Update(slashCmd())
+	m = updated.(model)
+	require.NotNil(t, submitCmd)
+	require.Equal(t, "inspect the release", strings.TrimSpace(m.transcript[len(m.transcript)-1].Text))
+	for _, entry := range m.transcript {
+		require.NotEqual(t, "/plan inspect the release", strings.TrimSpace(entry.Text))
+	}
+
+	_ = submitCmd()
+	require.Equal(t, "inspect the release", submitted)
+}
+
 func TestSlashSessionStateReplacesTranscriptHistoryAndCandidates(t *testing.T) {
 	m := newModel(context.Background(), newPromptTextarea("/resume target"), []string{"/resume old"}, []transcriptEntry{{Role: "assistant", Text: "old answer"}})
 	m.setHistory([]string{"old prompt"})
@@ -2310,6 +2335,19 @@ func TestSlashInteractiveViewsOpenWithoutTranscriptNoise(t *testing.T) {
 				require.Contains(t, m.View(), "Save to file")
 			},
 		},
+		{
+			name:  "text input",
+			input: "/add-dir",
+			result: SlashResult{Handled: true, TextInputDialog: &TextInputDialog{
+				Title:  "Add working directory",
+				Prompt: "Enter a directory path:",
+				Action: "add-dir",
+			}},
+			assert: func(t *testing.T, m model) {
+				require.NotNil(t, m.textInputDialog)
+				require.Contains(t, m.View(), "Enter a directory path")
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -2333,6 +2371,59 @@ func TestSlashInteractiveViewsOpenWithoutTranscriptNoise(t *testing.T) {
 			require.NotContains(t, m.View(), test.input)
 		})
 	}
+}
+
+func TestTextInputDialogSubmitsExactValue(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("/add-dir"), nil, nil)
+	m.slash = func(context.Context, string) (SlashResult, error) {
+		return SlashResult{Handled: true, TextInputDialog: &TextInputDialog{
+			Title:  "Add working directory",
+			Prompt: "Enter a directory path:",
+			Action: "add-dir",
+		}}, nil
+	}
+	action := ""
+	value := ""
+	m.submitTextInput = func(_ context.Context, submittedAction string, submittedValue string) (RuntimeControlResult, error) {
+		action = submittedAction
+		value = submittedValue
+		return RuntimeControlResult{Title: "Working Directory Added", Status: "directory added", Lines: []string{submittedValue}}, nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.NotNil(t, m.textInputDialog)
+
+	path := "../shared workspace"
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(path)})
+	m = updated.(model)
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Nil(t, m.textInputDialog)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.Equal(t, "add-dir", action)
+	require.Equal(t, path, value)
+	require.Contains(t, m.View(), "Working Directory Added")
+}
+
+func TestCommandViewHonorsInitialItemSelection(t *testing.T) {
+	preview := PreviewWithCommandView(CommandView{
+		Title:        "Fast mode",
+		SelectedItem: 1,
+		Tabs: []CommandViewTab{{Title: "Preference", Items: []CommandViewItem{
+			{Label: "Enabled"},
+			{Label: "Disabled", Value: "current"},
+		}}},
+	}, nil, 80, 24)
+
+	require.True(t, preview.CommandView)
+	require.Contains(t, preview.View, "> Disabled  current")
 }
 
 func TestExportDialogSavesEnteredFilename(t *testing.T) {
@@ -2702,6 +2793,18 @@ func TestInformationViewScrollsAndCloses(t *testing.T) {
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(model)
 	require.Nil(t, m.information)
+}
+
+func TestInformationViewCanDismissOnConfirm(t *testing.T) {
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyEnter}, {Type: tea.KeySpace}} {
+		m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+		m.openInformation(InformationView{Title: "/btw", Lines: []string{"Question", "Answer"}, DismissOnConfirm: true})
+		require.Contains(t, m.View(), "Enter/Space/Esc close")
+
+		updated, _ := m.Update(key)
+		m = updated.(model)
+		require.Nil(t, m.information)
+	}
 }
 
 func TestHistoryNavigationFromEmptyComposer(t *testing.T) {
