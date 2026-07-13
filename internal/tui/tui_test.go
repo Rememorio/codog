@@ -2323,6 +2323,75 @@ func TestSlashInteractiveViewsOpenWithoutTranscriptNoise(t *testing.T) {
 	}
 }
 
+func TestSlashCommandViewOpensTabsAndActionsWithoutTranscriptNoise(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("/config"), nil, nil)
+	m.modelOptions = []string{"glm52", "sonnet"}
+	m.selectModel = func(context.Context, string) (RuntimeControlResult, error) {
+		return RuntimeControlResult{}, nil
+	}
+	m.slash = func(context.Context, string) (SlashResult, error) {
+		view := CommandView{
+			Title:       "Settings",
+			SelectedTab: 1,
+			Tabs: []CommandViewTab{
+				{Title: "Status", Lines: []string{"Workspace ready"}},
+				{Title: "Config", Items: []CommandViewItem{{Label: "Model", Value: "glm52", Action: "model"}}},
+				{Title: "Usage", Lines: []string{"Total tokens 42"}},
+			},
+		}
+		return SlashResult{Handled: true, CommandView: &view}, nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+	require.NotNil(t, m.commandView)
+	require.Contains(t, m.View(), "Config")
+	require.Contains(t, m.View(), "Model")
+	require.Contains(t, m.View(), "glm52")
+	require.NotContains(t, m.View(), "/config")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(model)
+	require.Contains(t, m.View(), "Total tokens 42")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Nil(t, m.commandView)
+	require.True(t, m.modelPicker)
+}
+
+func TestCommandViewRuntimeActionUpdatesVimMode(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.toggleVim = func(context.Context) (RuntimeControlResult, error) {
+		enabled := true
+		return RuntimeControlResult{Title: "Vim Mode", Status: "vim on", Lines: []string{"Vim mode: on"}, Setting: "vim", Value: "on", VimEnabled: &enabled}, nil
+	}
+	m.openCommandView(CommandView{
+		Title: "Settings",
+		Tabs: []CommandViewTab{{
+			Title: "Config",
+			Items: []CommandViewItem{{Label: "Vim mode", Value: "off", Action: "vim"}},
+		}},
+	})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.True(t, m.vimEnabled)
+	require.NotNil(t, m.commandView)
+	require.Contains(t, m.View(), "Vim mode  on")
+	for _, entry := range m.transcript {
+		require.NotContains(t, entry.Text, "Vim mode: on")
+	}
+}
+
 func TestSlashPermissionsSelectsSessionMode(t *testing.T) {
 	m := newModel(context.Background(), newPromptTextarea("/permissions"), nil, nil)
 	selected := ""

@@ -528,6 +528,30 @@ func TestTUISlashHandlerOpensInteractiveControlViews(t *testing.T) {
 	require.Equal(t, "Context", contextResult.Information.Title)
 	require.Contains(t, strings.Join(contextResult.Information.Lines, "\n"), "glm52")
 
+	statusResult, err := handler(context.Background(), "/status")
+	require.NoError(t, err)
+	require.NotNil(t, statusResult.CommandView)
+	require.Equal(t, 0, statusResult.CommandView.SelectedTab)
+	require.Equal(t, []string{"Status", "Config", "Usage"}, commandViewTabTitles(statusResult.CommandView.Tabs))
+
+	configResult, err := handler(context.Background(), "/settings")
+	require.NoError(t, err)
+	require.NotNil(t, configResult.CommandView)
+	require.Equal(t, 1, configResult.CommandView.SelectedTab)
+	require.Contains(t, commandViewItemLabels(configResult.CommandView.Tabs[1].Items), "Model")
+	require.Contains(t, commandViewItemLabels(configResult.CommandView.Tabs[1].Items), "Vim mode")
+
+	usageResult, err := handler(context.Background(), "/usage")
+	require.NoError(t, err)
+	require.NotNil(t, usageResult.CommandView)
+	require.Equal(t, 2, usageResult.CommandView.SelectedTab)
+	require.Contains(t, strings.Join(usageResult.CommandView.Tabs[2].Lines, "\n"), "Total tokens")
+
+	statusJSONResult, err := handler(context.Background(), "/status --json")
+	require.NoError(t, err)
+	require.Nil(t, statusJSONResult.CommandView)
+	require.Contains(t, statusJSONResult.Output, `"kind": "status"`)
+
 	diffResult, err := handler(context.Background(), "/diff")
 	require.NoError(t, err)
 	require.NotNil(t, diffResult.Diff)
@@ -545,6 +569,22 @@ func TestTUISlashHandlerOpensInteractiveControlViews(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, jsonResult.Diff)
 	require.Contains(t, jsonResult.Output, `"kind": "diff"`)
+}
+
+func commandViewTabTitles(tabs []tui.CommandViewTab) []string {
+	titles := make([]string, 0, len(tabs))
+	for _, tab := range tabs {
+		titles = append(titles, tab.Title)
+	}
+	return titles
+}
+
+func commandViewItemLabels(items []tui.CommandViewItem) []string {
+	labels := make([]string, 0, len(items))
+	for _, item := range items {
+		labels = append(labels, item.Label)
+	}
+	return labels
 }
 
 func diffFilePaths(files []tui.DiffFile) []string {
@@ -577,6 +617,25 @@ func TestSelectTUIPermissionModeUpdatesCurrentSessionOnly(t *testing.T) {
 	require.False(t, app.Config.PlanMode)
 	require.Equal(t, "accept edits", state.Label())
 	require.Contains(t, result.Lines, "Mode: accept edits")
+}
+
+func TestToggleTUIVimUpdatesRuntimeAndPersistedPreference(t *testing.T) {
+	configHome := t.TempDir()
+	app := &App{
+		Config: config.Config{ConfigHome: configHome, EditorMode: "default"},
+		Out:    io.Discard,
+		Err:    io.Discard,
+	}
+
+	result, err := app.toggleTUIVim(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, "vim", app.Config.EditorMode)
+	require.NotNil(t, result.VimEnabled)
+	require.True(t, *result.VimEnabled)
+	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"editorMode": "vim"`)
 }
 
 func TestTUIUntrackedPreviewDoesNotFollowSymlinks(t *testing.T) {

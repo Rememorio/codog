@@ -46,6 +46,7 @@ type Report struct {
 	TUIWorkspaceTrustPrompt   bool     `json:"tui_workspace_trust_prompt"`
 	TUITranscriptViewport     bool     `json:"tui_transcript_viewport"`
 	TUILocalHelpPanel         bool     `json:"tui_local_help_panel"`
+	TUISettingsTabs           bool     `json:"tui_settings_tabs"`
 	TUIStatusBar              bool     `json:"tui_status_bar"`
 	TUIPreviewWidth           int      `json:"tui_preview_width"`
 	TUIPreviewHeight          int      `json:"tui_preview_height"`
@@ -71,6 +72,14 @@ func Build() Report {
 		{ID: "resume-beta", Title: "Beta session"},
 	}, "beta", 80, 24, true)
 	trustPreview := tui.PreviewWorkspaceTrust("/workspace/codog", 80)
+	settingsPreview := tui.PreviewWithCommandView(tui.CommandView{
+		Title: "Settings",
+		Tabs: []tui.CommandViewTab{
+			{Title: "Status", Lines: []string{"Workspace ready"}},
+			{Title: "Config", Items: []tui.CommandViewItem{{Label: "Model", Value: "glm52", Action: "model"}}},
+			{Title: "Usage", Lines: []string{"Tokens 42"}},
+		},
+	}, []string{"right"}, 80, 24)
 	report := Report{
 		Status:                    "ready",
 		SlashCommandCount:         len(specs),
@@ -87,6 +96,7 @@ func Build() Report {
 		TUIWorkspaceTrustPrompt:   trustPreview.SelectedChoice == 0 && strings.Contains(trustPreview.View, "Accessing workspace:") && strings.Contains(trustPreview.View, "Yes, I trust this folder") && strings.Contains(trustPreview.View, "No, exit"),
 		TUITranscriptViewport:     strings.Contains(submitPreview.View, "Interactive coding agent ready"),
 		TUILocalHelpPanel:         helpPreview.HelpOpen && strings.Contains(helpPreview.View, "Core commands"),
+		TUISettingsTabs:           settingsPreview.CommandView && strings.Contains(settingsPreview.View, "Status") && strings.Contains(settingsPreview.View, "Config") && strings.Contains(settingsPreview.View, "Usage") && strings.Contains(settingsPreview.View, "Model") && strings.Contains(settingsPreview.View, "glm52"),
 		TUIStatusBar:              strings.Contains(submitPreview.View, "Enter send") && strings.Contains(submitPreview.View, "Tab") && strings.Contains(submitPreview.View, "Esc"),
 		TUIPreviewWidth:           80,
 		TUIPreviewHeight:          24,
@@ -105,6 +115,7 @@ func Build() Report {
 		!report.TUIWorkspaceTrustPrompt ||
 		!report.TUITranscriptViewport ||
 		!report.TUILocalHelpPanel ||
+		!report.TUISettingsTabs ||
 		!report.TUIStatusBar ||
 		!report.PermissionCommandsPresent ||
 		!report.StatusCommandsPresent ||

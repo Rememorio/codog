@@ -139,6 +139,29 @@ type InformationView struct {
 	Lines []string
 }
 
+// CommandView is a tabbed local-command panel with optional actions.
+type CommandView struct {
+	Title       string
+	Tabs        []CommandViewTab
+	SelectedTab int
+}
+
+// CommandViewTab is one tab in a CommandView.
+type CommandViewTab struct {
+	Title string
+	Lines []string
+	Items []CommandViewItem
+}
+
+// CommandViewItem is one selectable action in a CommandView tab.
+type CommandViewItem struct {
+	Label       string
+	Value       string
+	Description string
+	Action      string
+	Command     string
+}
+
 // SlashResult is the structured outcome of one local slash command.
 type SlashResult struct {
 	Output             string
@@ -150,6 +173,7 @@ type SlashResult struct {
 	Diff               *DiffView
 	PermissionSettings *PermissionSettings
 	Information        *InformationView
+	CommandView        *CommandView
 }
 
 // SlashFunc runs one local slash command. Structured result fields let the
@@ -205,10 +229,13 @@ type TodoItem struct {
 
 // RuntimeControlResult describes a runtime TUI setting change.
 type RuntimeControlResult struct {
-	Title  string
-	Status string
-	Lines  []string
-	Badges []string
+	Title      string
+	Status     string
+	Lines      []string
+	Badges     []string
+	Setting    string
+	Value      string
+	VimEnabled *bool
 }
 
 // ShellOptions configures the interactive TUI shell.
@@ -241,6 +268,7 @@ type ShellOptions struct {
 	SelectTheme               ThemeSelectFunc
 	ToggleFast                RuntimeControlFunc
 	ToggleThinking            RuntimeControlFunc
+	ToggleVim                 RuntimeControlFunc
 	StopBackground            RuntimeControlFunc
 	CompactSession            RuntimeControlFunc
 	UndoLast                  RuntimeControlFunc
@@ -284,6 +312,7 @@ type Preview struct {
 	MessageMenu     bool
 	AttachmentsOpen bool
 	DiffDialog      bool
+	CommandView     bool
 	CommandHint     string
 	InlineHint      string
 	Quit            bool
@@ -393,6 +422,10 @@ type model struct {
 	permissionModeSelected    int
 	information               *InformationView
 	informationOffset         int
+	commandView               *CommandView
+	commandViewTab            int
+	commandViewItem           int
+	commandViewOffset         int
 	theme                     string
 	themePicker               bool
 	themePickerSelected       int
@@ -400,6 +433,7 @@ type model struct {
 	selectTheme               ThemeSelectFunc
 	toggleFast                RuntimeControlFunc
 	toggleThinking            RuntimeControlFunc
+	toggleVim                 RuntimeControlFunc
 	stopBackground            RuntimeControlFunc
 	compactSession            RuntimeControlFunc
 	undoLast                  RuntimeControlFunc
@@ -989,6 +1023,32 @@ func PreviewWithDiffDialog(sources []DiffSource, keys []string, width int, heigh
 		MessageMenu:     m.messageActions,
 		AttachmentsOpen: m.attachmentsOpen,
 		DiffDialog:      m.diffDialog,
+		CommandView:     m.commandView != nil,
+	}
+}
+
+// PreviewWithCommandView renders a deterministic tabbed command panel after
+// applying the provided navigation keys.
+func PreviewWithCommandView(view CommandView, keys []string, width int, height int) Preview {
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	m.openCommandView(view)
+	for _, key := range keys {
+		updated, _ := m.Update(diffPreviewKey(key))
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:        m.View(),
+		Value:       m.textarea.Value(),
+		Mode:        m.mode(),
+		CommandView: m.commandView != nil,
 	}
 }
 
@@ -1426,6 +1486,7 @@ func PreviewWithContextKeybindings(target string, bindings map[string]map[string
 		MessageMenu:     m.messageActions,
 		AttachmentsOpen: m.attachmentsOpen,
 		DiffDialog:      m.diffDialog,
+		CommandView:     m.commandView != nil,
 	}
 }
 
@@ -1775,6 +1836,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.applyTheme()
 	m.toggleFast = options.ToggleFast
 	m.toggleThinking = options.ToggleThinking
+	m.toggleVim = options.ToggleVim
 	m.stopBackground = options.StopBackground
 	m.compactSession = options.CompactSession
 	m.undoLast = options.UndoLast
@@ -1942,6 +2004,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamingIndex = -1
 			m.discardLatestSlashInput()
 			m.openInformation(*msg.Information)
+			return m, m.flushInlineTranscript()
+		}
+		if msg.Err == nil && !msg.Interrupted && msg.CommandView != nil {
+			m.streamingIndex = -1
+			m.discardLatestSlashInput()
+			m.openCommandView(*msg.CommandView)
 			return m, m.flushInlineTranscript()
 		}
 		if msg.Interrupted || errors.Is(msg.Err, context.Canceled) {
@@ -2186,6 +2254,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			default:
 				return m, nil
 			}
+		}
+		if m.commandView != nil {
+			return m.updateCommandView(msg)
 		}
 		if m.information != nil {
 			switch msg.String() {
@@ -3014,6 +3085,9 @@ func (m model) View() string {
 	if m.permissionSettings != nil {
 		composer += "\n" + renderPermissionSettings(*m.permissionSettings, m.permissionModeSelected, m.width, styles)
 	}
+	if m.commandView != nil {
+		composer += "\n" + renderCommandView(*m.commandView, m.commandViewTab, m.commandViewItem, m.commandViewOffset, m.width, m.height, styles)
+	}
 	if m.information != nil {
 		composer += "\n" + renderInformation(*m.information, m.informationOffset, m.width, m.height, styles)
 	}
@@ -3155,6 +3229,7 @@ type turnDoneMsg struct {
 	Diff               *DiffView
 	PermissionSettings *PermissionSettings
 	Information        *InformationView
+	CommandView        *CommandView
 }
 
 type initialPromptMsg struct {
@@ -4729,12 +4804,13 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 			Diff:               result.Diff,
 			PermissionSettings: result.PermissionSettings,
 			Information:        result.Information,
+			CommandView:        result.CommandView,
 		}
 	}
 }
 
 func slashResultHasInteractiveView(result SlashResult) bool {
-	return result.Session != nil || len(result.SessionChoices) > 0 || result.OpenModelPicker || result.OpenTodos || result.Diff != nil || result.PermissionSettings != nil || result.Information != nil
+	return result.Session != nil || len(result.SessionChoices) > 0 || result.OpenModelPicker || result.OpenTodos || result.Diff != nil || result.PermissionSettings != nil || result.Information != nil || result.CommandView != nil
 }
 
 type turnStreamMsg struct {
@@ -5622,6 +5698,10 @@ func (m *model) clearScreen() {
 	m.permissionModeSelected = 0
 	m.information = nil
 	m.informationOffset = 0
+	m.commandView = nil
+	m.commandViewTab = 0
+	m.commandViewItem = 0
+	m.commandViewOffset = 0
 	m.messageActions = false
 	m.messageActionTarget = 0
 	m.messageActionSelected = 0
@@ -6563,11 +6643,40 @@ func (m *model) applyRuntimeControlResult(result RuntimeControlResult) {
 			break
 		}
 	}
+	if result.VimEnabled != nil {
+		m.vimEnabled = *result.VimEnabled
+		m.vimNormal = false
+		m.vimOperator = ""
+	}
 	m.runtimeBadges = mergeRuntimeBadges(m.runtimeBadges, runtimeBadgesFromResult(result))
 	m.status = status
+	if m.updateCommandViewValue(result.Setting, result.Value) {
+		return
+	}
 	m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: strings.Join(lines, "\n")})
 	m.refreshViewport()
 	m.viewport.GotoBottom()
+}
+
+func (m *model) updateCommandViewValue(setting string, value string) bool {
+	if m.commandView == nil {
+		return false
+	}
+	setting = strings.ToLower(strings.TrimSpace(setting))
+	if setting == "" {
+		return false
+	}
+	tabIndex := clampIndex(m.commandViewTab, len(m.commandView.Tabs))
+	if tabIndex < 0 || tabIndex >= len(m.commandView.Tabs) {
+		return false
+	}
+	items := m.commandView.Tabs[tabIndex].Items
+	itemIndex := clampIndex(m.commandViewItem, len(items))
+	if itemIndex < 0 || itemIndex >= len(items) || !strings.EqualFold(strings.TrimSpace(items[itemIndex].Action), setting) {
+		return false
+	}
+	m.commandView.Tabs[tabIndex].Items[itemIndex].Value = strings.TrimSpace(value)
+	return true
 }
 
 func (m model) runtimeStatusBadges() []string {
@@ -6882,6 +6991,156 @@ func (m *model) moveInformation(delta int) {
 	m.informationOffset = min(max(0, m.informationOffset+delta), maximum)
 }
 
+func (m *model) openCommandView(view CommandView) {
+	view.Title = strings.TrimSpace(view.Title)
+	view.Tabs = cloneCommandViewTabs(view.Tabs)
+	m.closeInteractivePanels()
+	m.commandView = &view
+	m.commandViewTab = clampIndex(view.SelectedTab, len(view.Tabs))
+	m.commandViewItem = 0
+	m.commandViewOffset = 0
+	m.status = strings.ToLower(view.Title)
+	if m.status == "" {
+		m.status = "settings"
+	}
+}
+
+func cloneCommandViewTabs(tabs []CommandViewTab) []CommandViewTab {
+	cloned := make([]CommandViewTab, len(tabs))
+	for index, tab := range tabs {
+		cloned[index] = CommandViewTab{
+			Title: strings.TrimSpace(tab.Title),
+			Lines: append([]string(nil), tab.Lines...),
+			Items: append([]CommandViewItem(nil), tab.Items...),
+		}
+	}
+	return cloned
+}
+
+func (m *model) closeCommandView() {
+	m.commandView = nil
+	m.commandViewTab = 0
+	m.commandViewItem = 0
+	m.commandViewOffset = 0
+	m.status = m.mode()
+}
+
+func (m *model) moveCommandViewTab(delta int) {
+	if m.commandView == nil || len(m.commandView.Tabs) == 0 {
+		return
+	}
+	m.commandViewTab = (m.commandViewTab + delta + len(m.commandView.Tabs)) % len(m.commandView.Tabs)
+	m.commandViewItem = 0
+	m.commandViewOffset = 0
+}
+
+func (m *model) moveCommandViewSelection(delta int) {
+	tab, ok := m.currentCommandViewTab()
+	if !ok {
+		return
+	}
+	if len(tab.Items) > 0 {
+		m.commandViewItem = (m.commandViewItem + delta + len(tab.Items)) % len(tab.Items)
+		return
+	}
+	visible := commandViewVisibleLines(m.height)
+	maximum := max(0, len(tab.Lines)-visible)
+	m.commandViewOffset = min(max(0, m.commandViewOffset+delta), maximum)
+}
+
+func (m *model) currentCommandViewTab() (CommandViewTab, bool) {
+	if m.commandView == nil || len(m.commandView.Tabs) == 0 {
+		return CommandViewTab{}, false
+	}
+	return m.commandView.Tabs[clampIndex(m.commandViewTab, len(m.commandView.Tabs))], true
+}
+
+func (m model) updateCommandView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "esc":
+		m.closeCommandView()
+		return m, nil
+	case "left", "shift+tab":
+		m.moveCommandViewTab(-1)
+		return m, nil
+	case "right", "tab":
+		m.moveCommandViewTab(1)
+		return m, nil
+	case "up", "ctrl+p", "k":
+		m.moveCommandViewSelection(-1)
+		return m, nil
+	case "down", "ctrl+n", "j":
+		m.moveCommandViewSelection(1)
+		return m, nil
+	case "pgup":
+		m.moveCommandViewSelection(-commandViewVisibleLines(m.height))
+		return m, nil
+	case "pgdown", "space":
+		m.moveCommandViewSelection(commandViewVisibleLines(m.height))
+		return m, nil
+	case "home":
+		m.commandViewItem = 0
+		m.commandViewOffset = 0
+		return m, nil
+	case "end":
+		tab, ok := m.currentCommandViewTab()
+		if ok && len(tab.Items) > 0 {
+			m.commandViewItem = len(tab.Items) - 1
+		} else if ok {
+			m.commandViewOffset = max(0, len(tab.Lines)-commandViewVisibleLines(m.height))
+		}
+		return m, nil
+	case "enter":
+		return m.acceptCommandViewItem()
+	default:
+		return m, nil
+	}
+}
+
+func (m model) acceptCommandViewItem() (tea.Model, tea.Cmd) {
+	tab, ok := m.currentCommandViewTab()
+	if !ok || len(tab.Items) == 0 {
+		return m, nil
+	}
+	item := tab.Items[clampIndex(m.commandViewItem, len(tab.Items))]
+	action := strings.ToLower(strings.TrimSpace(item.Action))
+	command := strings.TrimSpace(item.Command)
+	switch action {
+	case "model":
+		m.closeCommandView()
+		m.openModelPicker()
+		return m, nil
+	case "theme":
+		m.closeCommandView()
+		m.openThemePicker()
+		return m, nil
+	case "fast":
+		if m.toggleFast == nil {
+			return m, nil
+		}
+		m.status = "updating fast mode"
+		return m, runRuntimeControlCommand(m.ctx, m.toggleFast)
+	case "thinking":
+		if m.toggleThinking == nil {
+			return m, nil
+		}
+		m.status = "updating thinking"
+		return m, runRuntimeControlCommand(m.ctx, m.toggleThinking)
+	case "vim":
+		if m.toggleVim == nil {
+			return m, nil
+		}
+		m.status = "updating vim mode"
+		return m, runRuntimeControlCommand(m.ctx, m.toggleVim)
+	}
+	if command == "" {
+		return m, nil
+	}
+	m.closeCommandView()
+	m.textarea.SetValue(command)
+	return m.startInput(command)
+}
+
 func (m *model) closeInteractivePanels() {
 	m.helpOpen = false
 	m.searchOpen = false
@@ -6902,6 +7161,10 @@ func (m *model) closeInteractivePanels() {
 	m.permissionModeSelected = 0
 	m.information = nil
 	m.informationOffset = 0
+	m.commandView = nil
+	m.commandViewTab = 0
+	m.commandViewItem = 0
+	m.commandViewOffset = 0
 	m.matches = nil
 	m.selected = 0
 }
@@ -8018,6 +8281,91 @@ func renderInformation(view InformationView, offset int, width int, height int, 
 	return strings.Join(lines, "\n")
 }
 
+func commandViewVisibleLines(height int) int {
+	if height <= 0 {
+		return 10
+	}
+	return max(4, height-10)
+}
+
+func renderCommandView(view CommandView, tabIndex int, itemIndex int, offset int, width int, height int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
+	title := strings.TrimSpace(view.Title)
+	if title == "" {
+		title = "Settings"
+	}
+	limit := 100
+	if width > 0 {
+		limit = max(12, width-8)
+	}
+	lines := []string{styles.completionTitle().Render(" " + strings.ToLower(title) + " ")}
+	if len(view.Tabs) == 0 {
+		lines = append(lines, styles.completion().Render("  no settings"), styles.completion().Render("  Esc close"))
+		return strings.Join(lines, "\n")
+	}
+	tabIndex = clampIndex(tabIndex, len(view.Tabs))
+	tabLabels := make([]string, 0, len(view.Tabs))
+	for index, tab := range view.Tabs {
+		label := strings.TrimSpace(tab.Title)
+		if label == "" {
+			label = fmt.Sprintf("Tab %d", index+1)
+		}
+		style := styles.completion()
+		if index == tabIndex {
+			style = styles.selectedCompletion()
+		}
+		tabLabels = append(tabLabels, style.Render(" "+label+" "))
+	}
+	lines = append(lines, "  "+strings.Join(tabLabels, " "))
+	tab := view.Tabs[tabIndex]
+	visible := commandViewVisibleLines(height)
+	if len(tab.Items) > 0 {
+		itemIndex = clampIndex(itemIndex, len(tab.Items))
+		for _, line := range tab.Lines {
+			if trimmed := strings.TrimSpace(line); trimmed != "" {
+				lines = append(lines, styles.completion().Render(truncateForComposer("  "+trimmed, limit)))
+			}
+		}
+		for index, item := range tab.Items {
+			prefix := "  "
+			style := styles.completion()
+			if index == itemIndex {
+				prefix = "> "
+				style = styles.selectedCompletion()
+			}
+			label := strings.TrimSpace(item.Label)
+			if label == "" {
+				label = strings.TrimSpace(item.Action)
+			}
+			row := prefix + label
+			if value := strings.TrimSpace(item.Value); value != "" {
+				row += "  " + value
+			}
+			lines = append(lines, style.Render(truncateForComposer(row, limit)))
+			if index == itemIndex && strings.TrimSpace(item.Description) != "" {
+				lines = append(lines, styles.completion().Render(truncateForComposer("    "+strings.TrimSpace(item.Description), limit)))
+			}
+		}
+		lines = append(lines, styles.completion().Render("  Left/Right tab · Up/Down choose · Enter open · Esc close"))
+		return strings.Join(lines, "\n")
+	}
+	maximum := max(0, len(tab.Lines)-visible)
+	offset = min(max(0, offset), maximum)
+	end := min(len(tab.Lines), offset+visible)
+	for _, line := range tab.Lines[offset:end] {
+		lines = append(lines, styles.completion().Render(truncateForComposer("  "+line, limit)))
+	}
+	if len(tab.Lines) == 0 {
+		lines = append(lines, styles.completion().Render("  no information"))
+	}
+	footer := "Left/Right tab · Esc close"
+	if len(tab.Lines) > visible {
+		footer = fmt.Sprintf("%d-%d/%d · Up/Down scroll · Left/Right tab · Esc close", offset+1, end, len(tab.Lines))
+	}
+	lines = append(lines, styles.completion().Render("  "+footer))
+	return strings.Join(lines, "\n")
+}
+
 func renderDiffDialog(sources []DiffSource, sourceIndex int, fileIndex int, detail bool, width int, themed ...themeStyles) string {
 	styles := resolveThemeStyles(themed)
 	sources = normalizeDiffSources(sources)
@@ -9086,6 +9434,12 @@ func (m model) mode() string {
 	}
 	if m.permissionSettings != nil {
 		return "permissions"
+	}
+	if m.commandView != nil {
+		if title := strings.ToLower(strings.TrimSpace(m.commandView.Title)); title != "" {
+			return title
+		}
+		return "settings"
 	}
 	if m.information != nil {
 		if title := strings.ToLower(strings.TrimSpace(m.information.Title)); title != "" {

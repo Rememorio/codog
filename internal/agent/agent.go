@@ -37816,6 +37816,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		ToggleThinking: func(ctx context.Context) (tui.RuntimeControlResult, error) {
 			return a.toggleTUIThinking(ctx)
 		},
+		ToggleVim: func(ctx context.Context) (tui.RuntimeControlResult, error) {
+			return a.toggleTUIVim(ctx)
+		},
 		StopBackground: func(ctx context.Context) (tui.RuntimeControlResult, error) {
 			return a.stopTUIBackground(ctx)
 		},
@@ -37960,6 +37963,18 @@ func (a *App) tuiInteractiveSlashResult(line string, sess *session.Session, mode
 	}
 	args := fields[1:]
 	switch command {
+	case "/status", "/config", "/usage":
+		if len(args) == 0 {
+			selectedTab := 0
+			switch command {
+			case "/config":
+				selectedTab = 1
+			case "/usage":
+				selectedTab = 2
+			}
+			view := a.tuiSettingsCommandView(sess, modeState, selectedTab)
+			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+		}
 	case "/model":
 		if len(args) == 0 {
 			return tui.SlashResult{Handled: true, OpenModelPicker: true}, true, nil
@@ -38207,6 +38222,59 @@ func (a *App) tuiContextInformation(sess *session.Session) tui.InformationView {
 		lines = lines[1:]
 	}
 	return tui.InformationView{Title: "Context", Lines: lines}
+}
+
+func (a *App) tuiSettingsCommandView(sess *session.Session, modeState *tuiModeState, selectedTab int) tui.CommandView {
+	var statusOut bytes.Buffer
+	localstatus.RenderText(&statusOut, a.statusSnapshot(sess))
+
+	sessionID := ""
+	messages := []anthropic.Message(nil)
+	if sess != nil {
+		sessionID = sess.ID
+		messages = sess.Messages
+	}
+	actual, _ := a.sessionUsageValues(sessionID)
+	usageReport := usage.BuildReportWithUsage(sessionID, a.Config.Model, messages, actual)
+	var usageOut bytes.Buffer
+	usage.RenderText(&usageOut, usageReport)
+
+	permissionMode := a.Config.PermissionMode
+	if modeState != nil {
+		permissionMode = modeState.Label()
+	}
+	theme := effectiveTUITheme(a.Config.Theme)
+	fast := onOff(fastModeEnabled(a.Config.FastMode))
+	thinking := effectiveEffort(a.Config.ReasoningEffort)
+	vim := onOff(editorModeIsVim(a.Config.EditorMode))
+
+	return tui.CommandView{
+		Title:       "Settings",
+		SelectedTab: selectedTab,
+		Tabs: []tui.CommandViewTab{
+			{Title: "Status", Lines: tuiReportLines(statusOut.String(), "status")},
+			{
+				Title: "Config",
+				Items: []tui.CommandViewItem{
+					{Label: "Model", Value: emptyAsNone(a.Config.Model), Description: "Select the model used for subsequent turns", Action: "model"},
+					{Label: "Permission mode", Value: emptyAsNone(permissionMode), Description: "Choose how tool calls are approved", Command: "/permissions"},
+					{Label: "Theme", Value: theme, Description: "Preview and apply a terminal color theme", Action: "theme"},
+					{Label: "Fast mode", Value: fast, Description: "Toggle the fast response preference", Action: "fast"},
+					{Label: "Thinking", Value: thinking, Description: "Cycle the reasoning effort for future turns", Action: "thinking"},
+					{Label: "Vim mode", Value: vim, Description: "Toggle Vim editing in the prompt composer", Action: "vim"},
+				},
+			},
+			{Title: "Usage", Lines: tuiReportLines(usageOut.String(), "usage")},
+		},
+	}
+}
+
+func tuiReportLines(text string, heading string) []string {
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	if len(lines) > 0 && strings.EqualFold(strings.TrimSpace(lines[0]), strings.TrimSpace(heading)) {
+		lines = lines[1:]
+	}
+	return lines
 }
 
 func (a *App) tuiDiffView(req diffRequest) (tui.DiffView, error) {
@@ -38479,7 +38547,7 @@ func (a *App) toggleTUIFast(ctx context.Context) (tui.RuntimeControlResult, erro
 	if previous != enabled {
 		lines = append(lines, fmt.Sprintf("Previous: %s", onOff(previous)))
 	}
-	return tui.RuntimeControlResult{Title: "Fast Mode", Status: "fast " + onOff(enabled), Lines: lines, Badges: []string{"fast: " + onOff(enabled)}}, nil
+	return tui.RuntimeControlResult{Title: "Fast Mode", Status: "fast " + onOff(enabled), Lines: lines, Badges: []string{"fast: " + onOff(enabled)}, Setting: "fast", Value: onOff(enabled)}, nil
 }
 
 func (a *App) toggleTUIThinking(ctx context.Context) (tui.RuntimeControlResult, error) {
@@ -38498,10 +38566,36 @@ func (a *App) toggleTUIThinking(ctx context.Context) (tui.RuntimeControlResult, 
 	}
 	current := effectiveEffort(a.Config.ReasoningEffort)
 	return tui.RuntimeControlResult{
-		Title:  "Thinking",
-		Status: "thinking " + current,
-		Lines:  []string{"Reasoning: " + current, "Previous: " + previous},
-		Badges: []string{"thinking: " + current},
+		Title:   "Thinking",
+		Status:  "thinking " + current,
+		Lines:   []string{"Reasoning: " + current, "Previous: " + previous},
+		Badges:  []string{"thinking: " + current},
+		Setting: "thinking",
+		Value:   current,
+	}, nil
+}
+
+func (a *App) toggleTUIVim(ctx context.Context) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	previous := editorModeIsVim(a.Config.EditorMode)
+	var out bytes.Buffer
+	oldOut, oldErr := a.Out, a.Err
+	a.Out, a.Err = &out, &out
+	err := a.Vim([]string{"toggle"})
+	a.Out, a.Err = oldOut, oldErr
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	enabled := editorModeIsVim(a.Config.EditorMode)
+	return tui.RuntimeControlResult{
+		Title:      "Vim Mode",
+		Status:     "vim " + onOff(enabled),
+		Lines:      []string{"Vim mode: " + onOff(enabled), "Previous: " + onOff(previous)},
+		Setting:    "vim",
+		Value:      onOff(enabled),
+		VimEnabled: &enabled,
 	}, nil
 }
 
@@ -39960,7 +40054,9 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	case "/help":
 		a.renderSlashHelp(a.Err)
 	case "/status":
-		a.renderStatus("text", sess, "", "default", "", false, "")
+		if err := a.Status(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/statusline":
 		if err := a.Statusline(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -40020,7 +40116,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/context":
-		if err := a.Context(nil, config.FlagOverrides{SessionID: sess.ID}); err != nil {
+		if err := a.Context(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/ctx_viz":

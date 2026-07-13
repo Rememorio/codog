@@ -79,15 +79,19 @@ expect "codog"
 send "/help\r"
 expect "Common workflows"
 send "\033"
-expect "ready"
+after 300
 send "/status\r"
-expect "Tools"
+expect " settings "
+expect "Workspace"
+send "\033"
+after 300
 send "/exit\r"
 expect eof
 `)
 
 	require.Contains(t, output, "Common workflows")
-	require.Contains(t, output, "Tools")
+	require.Contains(t, output, " settings ")
+	require.Contains(t, output, "Workspace")
 	require.NotContains(t, output, "\x1b[?1049h")
 }
 
@@ -138,11 +142,10 @@ spawn -noecho $env(CODOG_TEST_BIN) --model glm52 --permission-mode workspace-wri
 expect "accept edits on"
 send "\033\[Z"
 expect "plan mode on"
-send "/status\r"
-expect "Permission"
+send "/status --json\r"
 expect "read-only"
-expect "Plan"
 expect "active"
+expect "true"
 send "/exit\r"
 expect eof
 `)
@@ -150,9 +153,9 @@ expect eof
 	plain := ansi.Strip(output)
 	require.Contains(t, plain, "accept edits on")
 	require.Contains(t, plain, "plan mode on")
-	require.Contains(t, plain, "Permission")
+	require.Contains(t, plain, `"permission_mode": "read-only"`)
 	require.Contains(t, plain, "read-only")
-	require.Contains(t, plain, "Plan")
+	require.Contains(t, plain, `"plan"`)
 	require.Contains(t, plain, "active")
 	require.NotContains(t, plain, "Mode: plan")
 }
@@ -177,6 +180,18 @@ set timeout 10
 spawn -noecho $env(CODOG_TEST_BIN) --model glm52 --permission-mode prompt
 expect "codog"
 send "/model\r"
+expect "model picker"
+send "\033"
+after 300
+send "/config\r"
+expect " settings "
+expect "Config"
+expect "Model"
+expect "glm52"
+send "\033\[C"
+expect "Total tokens"
+send "\033\[D"
+send "\r"
 expect "model picker"
 send "\033"
 after 300
@@ -209,6 +224,8 @@ expect eof
 
 	plain := ansi.Strip(output)
 	require.Contains(t, plain, "model picker")
+	require.Contains(t, plain, " settings ")
+	require.Contains(t, plain, "Total tokens")
 	require.Contains(t, plain, "Mode: accept edits")
 	require.Contains(t, plain, "tracked.txt")
 	require.Contains(t, plain, "staged.txt")
@@ -493,13 +510,17 @@ expect "running"
 send "\033"
 expect "Interrupted by user."
 send "/status\r"
-expect "Tools"
+expect " settings "
+expect "Workspace"
+send "\033"
+after 300
 send "/exit\r"
 expect eof
 `)
 
 	require.Contains(t, output, "Interrupted by user.")
-	require.Contains(t, output, "Tools")
+	require.Contains(t, output, " settings ")
+	require.Contains(t, output, "Workspace")
 }
 
 func TestRealBinaryTUIDoubleEscapeClearsAndOpensMessageActionsWithTTY(t *testing.T) {
