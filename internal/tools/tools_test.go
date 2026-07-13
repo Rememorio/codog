@@ -3733,6 +3733,10 @@ func TestAgentToolLaunchesBackgroundAgent(t *testing.T) {
 		logs, err := store.Logs(payload.Task.ID, 4096)
 		return err == nil && strings.Contains(logs, "agent-model") && strings.Contains(logs, "Base review instructions") && strings.Contains(logs, "check auth flow")
 	}, 20*time.Second, 50*time.Millisecond)
+	require.Eventually(t, func() bool {
+		completed, err := store.Status(payload.Task.ID)
+		return err == nil && !background.IsActiveStatus(completed.Status)
+	}, 20*time.Second, 50*time.Millisecond)
 }
 
 func TestBuildAgentToolCommandPreservesDefinitionScope(t *testing.T) {

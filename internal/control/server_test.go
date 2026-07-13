@@ -612,9 +612,14 @@ func TestControlSessionPromptStartsBackgroundRun(t *testing.T) {
 	require.NotEmpty(t, task.ID)
 	require.Equal(t, "prompt", task.Kind)
 	require.Equal(t, "session-remote", task.SessionID)
+	store := background.NewStore(filepath.Join(root, "home"))
 	require.Eventually(t, func() bool {
-		logs, err := background.NewStore(filepath.Join(root, "home")).Logs(task.ID, 4096)
+		logs, err := store.Logs(task.ID, 4096)
 		return err == nil && strings.Contains(logs, "remote-prompt:--resume session-remote prompt summarize remote state")
+	}, 10*time.Second, 50*time.Millisecond)
+	require.Eventually(t, func() bool {
+		completed, err := store.Status(task.ID)
+		return err == nil && !background.IsActiveStatus(completed.Status)
 	}, 10*time.Second, 50*time.Millisecond)
 }
 

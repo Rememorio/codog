@@ -11088,10 +11088,23 @@ func TestParseFlagsSupportsInteractiveBareResume(t *testing.T) {
 	require.Equal(t, "tui", command)
 	require.Empty(t, rest)
 
+	overrides, command, rest, err = parseFlags([]string{"--model", "glm52", "--resume", "tui"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, interactiveResumeValue, overrides.Resume)
+	require.Equal(t, "glm52", overrides.Model)
+	require.Equal(t, "tui", command)
+	require.Empty(t, rest)
+
 	overrides, command, rest, err = parseFlags([]string{"--resume", "/status"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, interactiveResumeValue, overrides.Resume)
 	require.Equal(t, "/status", command)
+	require.Empty(t, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--resume", "/plugin/command"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, interactiveResumeValue, overrides.Resume)
+	require.Equal(t, "/plugin/command", command)
 	require.Empty(t, rest)
 
 	overrides, command, rest, err = parseFlags([]string{"--resume=session-id", "tui"}, config.FlagOverrides{})
@@ -11099,6 +11112,19 @@ func TestParseFlagsSupportsInteractiveBareResume(t *testing.T) {
 	require.Equal(t, "session-id", overrides.Resume)
 	require.Equal(t, "tui", command)
 	require.Empty(t, rest)
+
+	sessionPath := filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(sessionPath, []byte(""), 0o600))
+	overrides, command, rest, err = parseFlags([]string{"--resume", sessionPath, "/status"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, sessionPath, overrides.Resume)
+	require.Equal(t, "/status", command)
+	require.Empty(t, rest)
+
+	_, command, rest, err = parseFlags([]string{"compact", "--resume"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "compact", command)
+	require.Equal(t, []string{"--resume"}, rest)
 }
 
 func TestTerminalInputRejectsNonTTYCharacterDevice(t *testing.T) {
@@ -11108,6 +11134,45 @@ func TestTerminalInputRejectsNonTTYCharacterDevice(t *testing.T) {
 
 	_, ok := terminalInput(input)
 	require.False(t, ok)
+}
+
+func TestInteractiveWorkspaceCommand(t *testing.T) {
+	for _, command := range []string{"", "tui", "TUI", "repl", " REPL "} {
+		require.True(t, interactiveWorkspaceCommand(command), command)
+	}
+	for _, command := range []string{"prompt", "status", "mcp"} {
+		require.False(t, interactiveWorkspaceCommand(command), command)
+	}
+}
+
+func TestWorkspaceMatchesTrustedRoots(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "trusted")
+	child := filepath.Join(root, "nested", "project")
+	require.NoError(t, os.MkdirAll(child, 0o755))
+
+	require.True(t, workspaceMatchesTrustedRoots(root, []string{root}))
+	require.True(t, workspaceMatchesTrustedRoots(child, []string{root}))
+	require.False(t, workspaceMatchesTrustedRoots(root+"-other", []string{root}))
+	require.False(t, workspaceMatchesTrustedRoots(child, []string{"", "  "}))
+
+	alias := filepath.Join(parent, "trusted-alias")
+	if err := os.Symlink(root, alias); err == nil {
+		require.True(t, workspaceMatchesTrustedRoots(child, []string{alias}))
+		require.True(t, workspaceMatchesTrustedRoots(filepath.Join(alias, "nested", "project"), []string{root}))
+	}
+}
+
+func TestAppendUniqueTrustRootCanonicalizesAndDeduplicates(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "trusted")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+
+	roots := appendUniqueTrustRoot([]string{"", root + string(os.PathSeparator), "  "}, root)
+	require.Equal(t, []string{root + string(os.PathSeparator)}, roots)
+
+	other := filepath.Join(t.TempDir(), "other")
+	roots = appendUniqueTrustRoot(roots, other)
+	require.Equal(t, []string{root + string(os.PathSeparator), other}, roots)
 }
 
 func TestParseFlagsSupportsDebugAndVerbose(t *testing.T) {

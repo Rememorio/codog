@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/stretchr/testify/require"
 )
@@ -87,6 +88,76 @@ expect eof
 	require.Contains(t, output, "Common workflows")
 	require.Contains(t, output, "Tools")
 	require.NotContains(t, output, "\x1b[?1049h")
+}
+
+func TestRealBinaryInteractiveStartupPersistsWorkspaceTrustWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+
+	first := runExpectCodogUntrusted(t, bin, workspace, configHome, nil, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model glm52
+expect "Accessing workspace:"
+expect "No, exit"
+send "\r"
+expect "codog"
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, first, "Accessing workspace:")
+	require.NotContains(t, first, "\x1b[?1049h")
+	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	var persisted struct {
+		TrustedRoots []string `json:"trustedRoots"`
+	}
+	require.NoError(t, json.Unmarshal(data, &persisted))
+	trustedWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	require.Contains(t, persisted.TrustedRoots, trustedWorkspace)
+
+	second := runExpectCodogUntrusted(t, bin, workspace, configHome, nil, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model glm52
+expect {
+  "Accessing workspace:" { exit 1 }
+  "codog" {}
+  timeout { exit 1 }
+}
+send "/exit\r"
+expect eof
+`)
+	require.NotContains(t, second, "Accessing workspace:")
+}
+
+func TestRealBinaryWorkspaceTrustRejectsProjectHelperBeforeConfigLoad(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	sentinel := filepath.Join(workspace, "project-helper-ran")
+	helper := filepath.Join(workspace, "project-helper.sh")
+	require.NoError(t, os.WriteFile(helper, []byte("#!/bin/sh\nprintf touched > \""+sentinel+"\"\nprintf 'project-api-key\\n'\n"), 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude"), 0o755))
+	projectSettings, err := json.Marshal(map[string]any{"apiKeyHelper": helper})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.json"), projectSettings, 0o600))
+
+	output := runExpectCodogUntrusted(t, bin, workspace, configHome, nil, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model glm52
+expect "Accessing workspace:"
+expect "Yes, I trust this folder"
+send "n"
+expect eof
+`)
+
+	require.Contains(t, output, "Accessing workspace:")
+	_, err = os.Stat(sentinel)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(filepath.Join(configHome, "config.json"))
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestRealBinaryTUIShowsSlashSuggestionsWithTTY(t *testing.T) {
@@ -212,15 +283,15 @@ set timeout 20
 spawn -noecho $env(CODOG_TEST_BIN) --model glm52 tui
 expect "codog"
 send "trigger provider error\r"
-expect "provider returned an empty"
-expect "error body"
+expect "provider returned an"
+expect "empty error body"
 send "/exit\r"
 expect eof
 `)
 
 	require.Contains(t, output, "openai-compatible request failed")
-	require.Contains(t, output, "provider returned an empty")
-	require.Contains(t, output, "error body")
+	require.Contains(t, output, "provider returned an")
+	require.Contains(t, output, "empty error body")
 }
 
 func TestRealBinaryTUIEscInterruptsRunningTurnWithTTY(t *testing.T) {
@@ -467,6 +538,7 @@ func TestRealBinaryCapabilitiesExposeTerminalContract(t *testing.T) {
 	require.Contains(t, result.Stdout, `"terminal"`)
 	require.Contains(t, result.Stdout, `"slash_command_count"`)
 	require.Contains(t, result.Stdout, `"tui_submit_supported"`)
+	require.Contains(t, result.Stdout, `"tui_workspace_trust_prompt"`)
 }
 
 func TestRealBinaryOpenAICompatibleErrorIncludesActionableBodyFallback(t *testing.T) {
@@ -841,7 +913,7 @@ func TestRealBinaryTUICyclesModeBeforeTurnWithTTY(t *testing.T) {
 		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
 		"ANTHROPIC_BASE_URL=" + server.URL,
 	}, `
-set timeout 10
+set timeout 20
 spawn -noecho $env(CODOG_TEST_BIN) --permission-mode read-only --model claude-sonnet-4-5 tui
 expect {
   "codog" {}
@@ -1007,6 +1079,13 @@ func runCodogWithExtraEnv(t *testing.T, bin string, workspace string, configHome
 }
 
 func runExpectCodog(t *testing.T, bin string, workspace string, configHome string, extraEnv []string, script string) string {
+	t.Helper()
+	_, err := config.SetFileValue(filepath.Join(configHome, "config.json"), "trustedRoots", []string{workspace})
+	require.NoError(t, err)
+	return runExpectCodogUntrusted(t, bin, workspace, configHome, extraEnv, script)
+}
+
+func runExpectCodogUntrusted(t *testing.T, bin string, workspace string, configHome string, extraEnv []string, script string) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("expect-based TTY acceptance is not supported on windows")

@@ -98,8 +98,12 @@ func (m sessionPickerModel) Init() tea.Cmd {
 func (m sessionPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = max(12, msg.Width)
-		m.height = max(6, msg.Height)
+		if msg.Width > 0 {
+			m.width = max(12, msg.Width)
+		}
+		if msg.Height > 0 {
+			m.height = max(6, msg.Height)
+		}
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {

@@ -207,6 +207,12 @@ supported by the current binary. The main public sections are:
 
 Codog separates assistant intent from host execution.
 
+Interactive sessions ask for workspace trust before reading project-local
+settings or discovering project hooks, plugins, and MCP servers. The decision
+is stored in the user config as a trusted root and applies to that directory
+and its descendants. One-shot and piped runs do not show an interactive trust
+dialog, so restrict `--setting-sources` when automating work in untrusted input.
+
 Permission modes include `read-only`, `workspace-write`, `prompt`,
 `danger-full-access`, and `allow`. The default mode should match how much trust
 you want to give a run: inspect-only work belongs in `read-only`; edits inside a

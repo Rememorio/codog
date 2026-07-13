@@ -43,6 +43,7 @@ type Report struct {
 	TUIInlineLayout           bool     `json:"tui_inline_layout"`
 	TUIDefaultInline          bool     `json:"tui_default_inline"`
 	TUIResumePicker           bool     `json:"tui_resume_picker"`
+	TUIWorkspaceTrustPrompt   bool     `json:"tui_workspace_trust_prompt"`
 	TUITranscriptViewport     bool     `json:"tui_transcript_viewport"`
 	TUILocalHelpPanel         bool     `json:"tui_local_help_panel"`
 	TUIStatusBar              bool     `json:"tui_status_bar"`
@@ -69,6 +70,7 @@ func Build() Report {
 		{ID: "resume-alpha", Title: "Alpha session"},
 		{ID: "resume-beta", Title: "Beta session"},
 	}, "beta", 80, 24, true)
+	trustPreview := tui.PreviewWorkspaceTrust("/workspace/codog", 80)
 	report := Report{
 		Status:                    "ready",
 		SlashCommandCount:         len(specs),
@@ -82,6 +84,7 @@ func Build() Report {
 		TUIInlineLayout:           strings.Contains(inlinePreview.View, "codog") && strings.Contains(inlinePreview.View, "❯") && !strings.Contains(inlinePreview.View, "composer"),
 		TUIDefaultInline:          true,
 		TUIResumePicker:           resumePreview.MatchCount == 1 && resumePreview.SelectedID == "resume-beta" && strings.Contains(resumePreview.View, "Beta session") && !strings.Contains(resumePreview.View, "Alpha session"),
+		TUIWorkspaceTrustPrompt:   trustPreview.SelectedChoice == 0 && strings.Contains(trustPreview.View, "Accessing workspace:") && strings.Contains(trustPreview.View, "Yes, I trust this folder") && strings.Contains(trustPreview.View, "No, exit"),
 		TUITranscriptViewport:     strings.Contains(submitPreview.View, "Interactive coding agent ready"),
 		TUILocalHelpPanel:         helpPreview.HelpOpen && strings.Contains(helpPreview.View, "Core commands"),
 		TUIStatusBar:              strings.Contains(submitPreview.View, "Enter send") && strings.Contains(submitPreview.View, "Tab") && strings.Contains(submitPreview.View, "Esc"),
@@ -99,6 +102,7 @@ func Build() Report {
 		!report.TUIInlineLayout ||
 		!report.TUIDefaultInline ||
 		!report.TUIResumePicker ||
+		!report.TUIWorkspaceTrustPrompt ||
 		!report.TUITranscriptViewport ||
 		!report.TUILocalHelpPanel ||
 		!report.TUIStatusBar ||

@@ -460,6 +460,22 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	}
+	if interactiveWorkspaceCommand(command) {
+		workspace, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		if err := renderBroadCWDGuard(os.Stdout, command, rest, workspace, overrides.AllowBroadCWD, requestedOutputFormat(originalArgs)); err != nil {
+			return err
+		}
+		proceed, err := confirmInteractiveWorkspaceTrust(ctx, workspace, overrides)
+		if err != nil {
+			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+		}
+		if !proceed {
+			return nil
+		}
+	}
 
 	cfg, err := config.Load(overrides)
 	if err != nil {
@@ -1323,6 +1339,91 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return app.REPL(ctx, overrides)
 	}
+}
+
+func interactiveWorkspaceCommand(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "", "tui", "repl":
+		return true
+	default:
+		return false
+	}
+}
+
+func confirmInteractiveWorkspaceTrust(ctx context.Context, workspace string, overrides config.FlagOverrides) (bool, error) {
+	if _, ok := terminalInput(os.Stdin); !ok {
+		return true, nil
+	}
+	trustOverrides := overrides
+	trustOverrides.SettingSources = []string{"user"}
+	trustOverrides.SettingSourcesSet = true
+	cfg, _, err := config.LoadForInspection(trustOverrides)
+	if err != nil {
+		return false, err
+	}
+	if workspaceMatchesTrustedRoots(workspace, cfg.TrustedRoots) {
+		return true, nil
+	}
+	trusted, err := tui.ConfirmWorkspaceTrust(ctx, workspace)
+	if err != nil || !trusted {
+		return false, err
+	}
+	workspace = canonicalTrustRoot(workspace)
+	roots := appendUniqueTrustRoot(cfg.TrustedRoots, workspace)
+	_, err = config.SetFileValue(filepath.Join(cfg.ConfigHome, "config.json"), "trustedRoots", roots)
+	if err != nil {
+		return false, fmt.Errorf("persist workspace trust: %w", err)
+	}
+	return true, nil
+}
+
+func workspaceMatchesTrustedRoots(workspace string, roots []string) bool {
+	workspace = canonicalTrustRoot(workspace)
+	entries := make([]trustresolver.AllowlistEntry, 0, len(roots))
+	for _, root := range roots {
+		if root = strings.TrimSpace(root); root != "" {
+			if filepath.IsAbs(root) && !strings.ContainsAny(root, "*?") {
+				root = canonicalTrustRoot(root)
+			}
+			entries = append(entries, trustresolver.AllowlistEntry{Pattern: root})
+		}
+	}
+	worktree := ""
+	if strings.TrimSpace(workspace) != "" {
+		worktree = filepath.Join(workspace, ".git")
+	}
+	return trustresolver.New(trustresolver.Config{Allowlisted: entries}).Trusts(workspace, worktree)
+}
+
+func canonicalTrustRoot(workspace string) string {
+	workspace = strings.TrimSpace(workspace)
+	if resolved, err := filepath.EvalSymlinks(workspace); err == nil {
+		workspace = resolved
+	}
+	if absolute, err := filepath.Abs(workspace); err == nil {
+		workspace = absolute
+	}
+	return filepath.Clean(workspace)
+}
+
+func appendUniqueTrustRoot(roots []string, workspace string) []string {
+	workspace = canonicalTrustRoot(workspace)
+	out := make([]string, 0, len(roots)+1)
+	found := false
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		out = append(out, root)
+		if canonicalTrustRoot(root) == workspace {
+			found = true
+		}
+	}
+	if !found {
+		out = append(out, workspace)
+	}
+	return out
 }
 
 type ExitError struct {
@@ -60631,14 +60732,23 @@ const interactiveResumeValue = "__codog_interactive_resume__"
 
 func normalizeOptionalResumeFlag(args []string) []string {
 	normalized := make([]string, 0, len(args)+1)
-	for index, arg := range args {
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
 		trimmed := strings.TrimSpace(arg)
+		if trimmed == "--" || !strings.HasPrefix(trimmed, "-") {
+			normalized = append(normalized, args[index:]...)
+			break
+		}
 		if trimmed == "--resume=" || trimmed == "-r=" {
 			normalized = append(normalized, strings.TrimSuffix(arg, "=")+"="+interactiveResumeValue)
 			continue
 		}
 		if trimmed != "--resume" && trimmed != "-r" {
 			normalized = append(normalized, arg)
+			if globalFlagConsumesNext(trimmed) && !strings.Contains(trimmed, "=") && index+1 < len(args) {
+				normalized = append(normalized, args[index+1])
+				index++
+			}
 			continue
 		}
 		if index+1 >= len(args) {
@@ -60646,13 +60756,28 @@ func normalizeOptionalResumeFlag(args []string) []string {
 			continue
 		}
 		next := strings.TrimSpace(args[index+1])
-		if next == "" || strings.HasPrefix(next, "-") || strings.HasPrefix(next, "/") || looksLikeCommandName(next) {
+		if next == "" || strings.HasPrefix(next, "-") || optionalResumeFollowedByCommand(next) {
 			normalized = append(normalized, arg, interactiveResumeValue)
 			continue
 		}
-		normalized = append(normalized, arg)
+		normalized = append(normalized, arg, args[index+1])
+		index++
 	}
 	return normalized
+}
+
+func optionalResumeFollowedByCommand(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if !strings.HasPrefix(value, "/") {
+		return looksLikeCommandName(value)
+	}
+	if _, err := os.Stat(value); err == nil {
+		return false
+	}
+	return true
 }
 
 func normalizeOptionalFromPRFlag(args []string) []string {

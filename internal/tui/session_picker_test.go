@@ -77,6 +77,16 @@ func TestSessionPickerNavigationAndNarrowLayout(t *testing.T) {
 	}
 }
 
+func TestSessionPickerIgnoresUnknownTerminalSize(t *testing.T) {
+	m := newSessionPickerModel([]SessionChoice{{ID: "session-1", Title: "Session one"}})
+	updated, _ := m.Update(tea.WindowSizeMsg{})
+	m = updated.(sessionPickerModel)
+
+	require.Equal(t, 80, m.width)
+	require.Equal(t, 24, m.height)
+	require.Contains(t, m.View(), "Resume a session")
+}
+
 func TestRelativeSessionTime(t *testing.T) {
 	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
 	require.Equal(t, "now", relativeSessionTime(now.Add(-30*time.Second), now))
