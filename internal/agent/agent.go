@@ -16779,7 +16779,7 @@ func normalizeOutputStyleAction(action string) string {
 	}
 }
 
-var availableThemes = tui.ThemeNames()
+var availableThemes = append([]string{"default"}, tui.ThemeNames()...)
 
 type themeRequest struct {
 	Action string
@@ -17011,7 +17011,11 @@ func renderThemeReport(out io.Writer, report themeReport) {
 }
 
 func effectiveTheme(theme string) string {
-	return effectiveTUITheme(theme)
+	theme = strings.TrimSpace(theme)
+	if theme == "" {
+		return "default"
+	}
+	return theme
 }
 
 func effectiveTUITheme(theme string) string {

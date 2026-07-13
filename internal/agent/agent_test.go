@@ -20876,7 +20876,7 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	}
 
 	require.NoError(t, app.Theme([]string{"list", "--json"}))
-	require.Contains(t, out.String(), `"theme": "auto"`)
+	require.Contains(t, out.String(), `"theme": "default"`)
 	out.Reset()
 
 	require.NoError(t, app.Theme([]string{"dark", "--json"}))
