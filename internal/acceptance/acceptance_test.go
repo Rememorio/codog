@@ -174,6 +174,9 @@ func TestRealBinaryTUIOpensInteractiveSlashControlViews(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "staged.txt"), []byte("staged\n"), 0o644))
 	runAcceptanceGit(t, workspace, "add", "staged.txt")
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "untracked.txt"), []byte("untracked\n"), 0o644))
+	skillDir := filepath.Join(configHome, "skills", "acceptance-review")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: acceptance-review\ndescription: Review acceptance changes\n---\n\n# Acceptance Review\n\nInspect acceptance changes.\n"), 0o644))
 
 	output := runExpectCodog(t, bin, workspace, configHome, nil, `
 set timeout 10
@@ -218,6 +221,16 @@ send "/todos\r"
 expect "todos"
 send "\033"
 after 300
+send "/skills\r"
+expect " extensions "
+expect "acceptance-review"
+send "\033\[C"
+expect "No MCP servers configured."
+send "\033\[D"
+send "\r"
+expect "Inspect acceptance changes."
+send "\033"
+after 300
 send "/exit\r"
 expect eof
 `)
@@ -230,6 +243,9 @@ expect eof
 	require.Contains(t, plain, "tracked.txt")
 	require.Contains(t, plain, "staged.txt")
 	require.Contains(t, plain, "untracked.txt")
+	require.Contains(t, plain, " extensions ")
+	require.Contains(t, plain, "acceptance-review")
+	require.Contains(t, plain, "Inspect acceptance changes.")
 	require.NotContains(t, plain, "UNTRACKED .codog")
 	require.NotContains(t, plain, "· model=glm52")
 }

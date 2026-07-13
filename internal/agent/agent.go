@@ -37941,6 +37941,13 @@ func (a *App) tuiSlashHandler(sess *session.Session, modeState *tuiModeState) tu
 		}()
 		handled := a.handleSlash(ctx, line, sess)
 		result := tui.SlashResult{Output: strings.TrimSpace(out.String()), Handled: handled}
+		if handled && result.Output != "" {
+			if title, ok := tuiExtensionInformationTitle(line); ok {
+				view := tui.InformationView{Title: title, Lines: tuiReportLines(result.Output, title)}
+				result.Information = &view
+				result.Output = ""
+			}
+		}
 		if handled && trackSession && before != tuiSessionRevision(sess) {
 			state := a.tuiSessionState(sess)
 			result.Session = &state
@@ -37973,6 +37980,12 @@ func (a *App) tuiInteractiveSlashResult(line string, sess *session.Session, mode
 				selectedTab = 2
 			}
 			view := a.tuiSettingsCommandView(sess, modeState, selectedTab)
+			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+		}
+	case "/skill", "/skills", "/mcp", "/hooks", "/plugin", "/plugins", "/marketplace", "/agents":
+		if len(args) == 0 {
+			selectedTab := tuiExtensionTab(command)
+			view := a.tuiExtensionsCommandView(selectedTab)
 			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
 		}
 	case "/model":
@@ -38269,12 +38282,262 @@ func (a *App) tuiSettingsCommandView(sess *session.Session, modeState *tuiModeSt
 	}
 }
 
+func tuiExtensionTab(command string) int {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "/mcp":
+		return 1
+	case "/hooks":
+		return 2
+	case "/plugin", "/plugins", "/marketplace":
+		return 3
+	case "/agents":
+		return 4
+	default:
+		return 0
+	}
+}
+
+func (a *App) tuiExtensionsCommandView(selectedTab int) tui.CommandView {
+	return tui.CommandView{
+		Title:       "Extensions",
+		SelectedTab: selectedTab,
+		Tabs: []tui.CommandViewTab{
+			a.tuiSkillsCommandTab(),
+			a.tuiMCPCommandTab(),
+			a.tuiHooksCommandTab(),
+			a.tuiPluginsCommandTab(),
+			a.tuiAgentsCommandTab(),
+		},
+	}
+}
+
+func (a *App) tuiSkillsCommandTab() tui.CommandViewTab {
+	tab := tui.CommandViewTab{Title: "Skills"}
+	all, err := a.runtimeSkills()
+	if err != nil {
+		tab.Lines = []string{"Skills unavailable: " + err.Error()}
+		return tab
+	}
+	tab.Lines = []string{fmt.Sprintf("%d discovered", len(all))}
+	for _, skill := range all {
+		state := "available"
+		description := firstNonEmpty(trimSingleLine(skill.Description, 96), skill.Source)
+		command := tuiNamedSlashCommand("/skills show", skill.Name)
+		if containsFold(a.Config.EnabledSkills, skill.Name) {
+			state = "enabled"
+		}
+		secondaryLabel := "enable"
+		secondaryCommand := tuiNamedSlashCommand("/skills enable", skill.Name)
+		if state == "enabled" {
+			secondaryLabel = "disable"
+			secondaryCommand = tuiNamedSlashCommand("/skills disable", skill.Name)
+		}
+		if !skill.Active {
+			state = "shadowed"
+			command = ""
+			secondaryLabel = ""
+			secondaryCommand = ""
+			if strings.TrimSpace(skill.ShadowedBy) != "" {
+				description = "Shadowed by " + strings.TrimSpace(skill.ShadowedBy)
+			}
+		}
+		tab.Items = append(tab.Items, tui.CommandViewItem{
+			Label:            skill.Name,
+			Value:            state,
+			Description:      description,
+			Command:          command,
+			SecondaryLabel:   secondaryLabel,
+			SecondaryCommand: secondaryCommand,
+		})
+	}
+	if len(tab.Items) == 0 {
+		tab.Lines = []string{"No skills found."}
+	}
+	return tab
+}
+
+func (a *App) tuiMCPCommandTab() tui.CommandViewTab {
+	tab := tui.CommandViewTab{Title: "MCP"}
+	names := sortedMCPServerNames(a.Config.MCPServers)
+	tab.Lines = []string{fmt.Sprintf("%d configured", len(names))}
+	for _, name := range names {
+		server := a.Config.MCPServers[name]
+		transport := "stdio"
+		if strings.TrimSpace(server.URL) != "" {
+			transport = "http"
+		}
+		if server.Required {
+			transport += " · required"
+		}
+		tab.Items = append(tab.Items, tui.CommandViewItem{
+			Label:       name,
+			Value:       transport,
+			Description: tuiMCPServerDescription(server),
+			Command:     tuiNamedSlashCommand("/mcp show", name),
+		})
+	}
+	if len(tab.Items) == 0 {
+		tab.Lines = []string{"No MCP servers configured."}
+	}
+	return tab
+}
+
+func tuiMCPServerDescription(server config.MCPServerConfig) string {
+	if rawURL := strings.TrimSpace(server.URL); rawURL != "" {
+		parsed, err := url.Parse(rawURL)
+		if err == nil {
+			parsed.User = nil
+			parsed.RawQuery = ""
+			parsed.Fragment = ""
+			return trimSingleLine(parsed.String(), 96)
+		}
+		return "Configured HTTP endpoint"
+	}
+	command := filepath.Base(strings.TrimSpace(server.Command))
+	if command == "." || command == "" {
+		return "Configured stdio command"
+	}
+	if len(server.Args) > 0 {
+		return fmt.Sprintf("%s · %d args", command, len(server.Args))
+	}
+	return command
+}
+
+func (a *App) tuiHooksCommandTab() tui.CommandViewTab {
+	tab := tui.CommandViewTab{Title: "Hooks"}
+	configured := 0
+	for _, event := range allHookEvents() {
+		count := hookConfiguredCount(a.Config.Hooks, event)
+		configured += count
+		value := "not configured"
+		if count > 0 {
+			value = fmt.Sprintf("%d configured", count)
+		}
+		tab.Items = append(tab.Items, tui.CommandViewItem{
+			Label:       event,
+			Value:       value,
+			Description: "Inspect matcher and command health for this event",
+			Command:     "/hooks health " + event,
+		})
+	}
+	tab.Lines = []string{fmt.Sprintf("%d configured across %d events", configured, len(tab.Items))}
+	return tab
+}
+
+func (a *App) tuiPluginsCommandTab() tui.CommandViewTab {
+	tab := tui.CommandViewTab{Title: "Plugins"}
+	manifests, err := a.runtimePluginManifests()
+	if err != nil {
+		tab.Lines = []string{"Plugins unavailable: " + err.Error()}
+		return tab
+	}
+	sort.Slice(manifests, func(i, j int) bool { return strings.ToLower(manifests[i].ID) < strings.ToLower(manifests[j].ID) })
+	tab.Lines = []string{fmt.Sprintf("%d installed", len(manifests))}
+	for _, manifest := range manifests {
+		state := "disabled"
+		secondaryLabel := "enable"
+		secondaryCommand := tuiNamedSlashCommand("/plugins enable", manifest.ID)
+		if manifest.Enabled {
+			state = "enabled"
+			secondaryLabel = "disable"
+			secondaryCommand = tuiNamedSlashCommand("/plugins disable", manifest.ID)
+		}
+		value := state
+		if strings.TrimSpace(manifest.Version) != "" {
+			value += " · " + strings.TrimSpace(manifest.Version)
+		}
+		tab.Items = append(tab.Items, tui.CommandViewItem{
+			Label:            firstNonEmpty(manifest.Name, manifest.ID),
+			Value:            value,
+			Description:      firstNonEmpty(trimSingleLine(manifest.Description, 96), manifest.ID),
+			Command:          tuiNamedSlashCommand("/plugins show", manifest.ID),
+			SecondaryLabel:   secondaryLabel,
+			SecondaryCommand: secondaryCommand,
+		})
+	}
+	if len(tab.Items) == 0 {
+		tab.Lines = []string{"No plugins installed."}
+	}
+	return tab
+}
+
+func (a *App) tuiAgentsCommandTab() tui.CommandViewTab {
+	tab := tui.CommandViewTab{Title: "Agents"}
+	definitions, err := a.runtimeAgentDefinitions()
+	if err != nil {
+		tab.Lines = []string{"Agents unavailable: " + err.Error()}
+		return tab
+	}
+	sort.Slice(definitions, func(i, j int) bool {
+		return strings.ToLower(definitions[i].Name) < strings.ToLower(definitions[j].Name)
+	})
+	tab.Lines = []string{fmt.Sprintf("%d available", len(definitions))}
+	for _, definition := range definitions {
+		value := firstNonEmpty(definition.Model, definition.Source, "default model")
+		tab.Items = append(tab.Items, tui.CommandViewItem{
+			Label:       definition.Name,
+			Value:       value,
+			Description: trimSingleLine(definition.Description, 96),
+			Command:     tuiNamedSlashCommand("/agents show", definition.Name),
+		})
+	}
+	if len(tab.Items) == 0 {
+		tab.Lines = []string{"No agent definitions found."}
+	}
+	return tab
+}
+
+func tuiNamedSlashCommand(prefix string, name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.ContainsAny(name, " \t\r\n") {
+		return ""
+	}
+	return strings.TrimSpace(prefix) + " " + name
+}
+
 func tuiReportLines(text string, heading string) []string {
 	lines := strings.Split(strings.TrimSpace(text), "\n")
 	if len(lines) > 0 && strings.EqualFold(strings.TrimSpace(lines[0]), strings.TrimSpace(heading)) {
 		lines = lines[1:]
 	}
 	return lines
+}
+
+func tuiExtensionInformationTitle(line string) (string, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 2 || tuiSlashRequestsJSON(fields[1:]) {
+		return "", false
+	}
+	command := fields[0]
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
+	}
+	switch command {
+	case "/skill", "/skills":
+		return "Skills", true
+	case "/mcp":
+		return "MCP", true
+	case "/hooks":
+		return "Hooks", true
+	case "/plugin", "/plugins", "/marketplace":
+		return "Plugins", true
+	case "/agents":
+		return "Agents", true
+	default:
+		return "", false
+	}
+}
+
+func tuiSlashRequestsJSON(args []string) bool {
+	for index, arg := range args {
+		switch {
+		case arg == "--json", strings.EqualFold(arg, "--output-format=json"):
+			return true
+		case (arg == "--output-format" || arg == "-o") && index+1 < len(args):
+			return strings.EqualFold(strings.TrimSpace(args[index+1]), "json")
+		}
+	}
+	return false
 }
 
 func (a *App) tuiDiffView(req diffRequest) (tui.DiffView, error) {

@@ -47,6 +47,7 @@ type Report struct {
 	TUITranscriptViewport     bool     `json:"tui_transcript_viewport"`
 	TUILocalHelpPanel         bool     `json:"tui_local_help_panel"`
 	TUISettingsTabs           bool     `json:"tui_settings_tabs"`
+	TUIExtensionTabs          bool     `json:"tui_extension_tabs"`
 	TUIStatusBar              bool     `json:"tui_status_bar"`
 	TUIPreviewWidth           int      `json:"tui_preview_width"`
 	TUIPreviewHeight          int      `json:"tui_preview_height"`
@@ -80,6 +81,16 @@ func Build() Report {
 			{Title: "Usage", Lines: []string{"Tokens 42"}},
 		},
 	}, []string{"right"}, 80, 24)
+	extensionsPreview := tui.PreviewWithCommandView(tui.CommandView{
+		Title: "Extensions",
+		Tabs: []tui.CommandViewTab{
+			{Title: "Skills", Items: []tui.CommandViewItem{{Label: "review", Value: "enabled"}}},
+			{Title: "MCP", Items: []tui.CommandViewItem{{Label: "local", Value: "stdio"}}},
+			{Title: "Hooks", Lines: []string{"No hooks configured"}},
+			{Title: "Plugins", Lines: []string{"No plugins installed"}},
+			{Title: "Agents", Lines: []string{"No agents found"}},
+		},
+	}, []string{"right"}, 80, 24)
 	report := Report{
 		Status:                    "ready",
 		SlashCommandCount:         len(specs),
@@ -97,6 +108,7 @@ func Build() Report {
 		TUITranscriptViewport:     strings.Contains(submitPreview.View, "Interactive coding agent ready"),
 		TUILocalHelpPanel:         helpPreview.HelpOpen && strings.Contains(helpPreview.View, "Core commands"),
 		TUISettingsTabs:           settingsPreview.CommandView && strings.Contains(settingsPreview.View, "Status") && strings.Contains(settingsPreview.View, "Config") && strings.Contains(settingsPreview.View, "Usage") && strings.Contains(settingsPreview.View, "Model") && strings.Contains(settingsPreview.View, "glm52"),
+		TUIExtensionTabs:          extensionsPreview.CommandView && strings.Contains(extensionsPreview.View, "Skills") && strings.Contains(extensionsPreview.View, "MCP") && strings.Contains(extensionsPreview.View, "Hooks") && strings.Contains(extensionsPreview.View, "Plugins") && strings.Contains(extensionsPreview.View, "Agents") && strings.Contains(extensionsPreview.View, "local"),
 		TUIStatusBar:              strings.Contains(submitPreview.View, "Enter send") && strings.Contains(submitPreview.View, "Tab") && strings.Contains(submitPreview.View, "Esc"),
 		TUIPreviewWidth:           80,
 		TUIPreviewHeight:          24,
@@ -116,6 +128,7 @@ func Build() Report {
 		!report.TUITranscriptViewport ||
 		!report.TUILocalHelpPanel ||
 		!report.TUISettingsTabs ||
+		!report.TUIExtensionTabs ||
 		!report.TUIStatusBar ||
 		!report.PermissionCommandsPresent ||
 		!report.StatusCommandsPresent ||

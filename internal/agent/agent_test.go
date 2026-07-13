@@ -587,6 +587,80 @@ func commandViewItemLabels(items []tui.CommandViewItem) []string {
 	return labels
 }
 
+func commandViewItemByLabel(t *testing.T, items []tui.CommandViewItem, label string) tui.CommandViewItem {
+	t.Helper()
+	for _, item := range items {
+		if item.Label == label {
+			return item
+		}
+	}
+	t.Fatalf("missing command view item %q", label)
+	return tui.CommandViewItem{}
+}
+
+func TestTUISlashHandlerOpensExtensionManagementViews(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	skillDir := filepath.Join(configHome, "skills", "demo")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: demo\ndescription: Demo skill\n---\n\n# Demo\n\nInspect the workspace.\n"), 0o644))
+	store := session.NewWorkspaceStore(configHome, workspace)
+	current, err := store.Open("extensions-session")
+	require.NoError(t, err)
+	app := &App{
+		Config: config.Config{
+			ConfigHome:    configHome,
+			EnabledSkills: []string{"demo"},
+			MCPServers: map[string]config.MCPServerConfig{
+				"local": {Command: "codog-test-mcp", Required: true},
+			},
+			Hooks: config.HookConfig{PreToolUse: []string{"printf hook"}},
+		},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+		PluginManifests: []plugins.Manifest{{
+			ID: "demo-plugin", Name: "Demo Plugin", Version: "1.0.0", Description: "Plugin details", Enabled: true,
+		}},
+		AgentDefinitions: []agentdefs.Definition{{Name: "reviewer", Description: "Review changes", Model: "glm52"}},
+	}
+	handler := app.tuiSlashHandler(current, newTUIModeState(app.Config))
+
+	for _, test := range []struct {
+		command string
+		tab     int
+		item    string
+	}{
+		{command: "/skills", tab: 0, item: "demo"},
+		{command: "/mcp", tab: 1, item: "local"},
+		{command: "/hooks", tab: 2, item: "pre_tool_use"},
+		{command: "/plugins", tab: 3, item: "Demo Plugin"},
+		{command: "/agents", tab: 4, item: "reviewer"},
+	} {
+		result, err := handler(context.Background(), test.command)
+		require.NoError(t, err, test.command)
+		require.NotNil(t, result.CommandView, test.command)
+		require.Equal(t, test.tab, result.CommandView.SelectedTab, test.command)
+		require.Contains(t, commandViewItemLabels(result.CommandView.Tabs[test.tab].Items), test.item, test.command)
+	}
+
+	skillsView, err := handler(context.Background(), "/skills")
+	require.NoError(t, err)
+	require.Equal(t, "/skills disable demo", commandViewItemByLabel(t, skillsView.CommandView.Tabs[0].Items, "demo").SecondaryCommand)
+
+	detail, err := handler(context.Background(), "/skills show demo")
+	require.NoError(t, err)
+	require.NotNil(t, detail.Information)
+	require.Contains(t, strings.Join(detail.Information.Lines, "\n"), "Inspect the workspace")
+
+	jsonList, err := handler(context.Background(), "/skills list --json")
+	require.NoError(t, err)
+	require.Nil(t, jsonList.CommandView)
+	require.Nil(t, jsonList.Information)
+	require.Contains(t, jsonList.Output, `"kind": "skills"`)
+}
+
 func diffFilePaths(files []tui.DiffFile) []string {
 	paths := make([]string, 0, len(files))
 	for _, file := range files {

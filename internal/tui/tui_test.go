@@ -2392,6 +2392,52 @@ func TestCommandViewRuntimeActionUpdatesVimMode(t *testing.T) {
 	}
 }
 
+func TestCommandViewScrollsAndRunsSecondaryAction(t *testing.T) {
+	items := make([]CommandViewItem, 20)
+	for index := range items {
+		name := fmt.Sprintf("skill-%02d", index)
+		items[index] = CommandViewItem{
+			Label:            name,
+			Value:            "available",
+			Command:          "/skills show " + name,
+			SecondaryLabel:   "enable",
+			SecondaryCommand: "/skills enable " + name,
+		}
+	}
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.height = 14
+	called := ""
+	m.slash = func(_ context.Context, line string) (SlashResult, error) {
+		called = line
+		view := InformationView{Title: "Skills", Lines: []string{"Enabled skill-00"}}
+		return SlashResult{Handled: true, Information: &view}, nil
+	}
+	m.openCommandView(CommandView{Title: "Extensions", Tabs: []CommandViewTab{{Title: "Skills", Items: items}}})
+	require.Contains(t, m.View(), "skill-00")
+	require.NotContains(t, m.View(), "skill-19")
+
+	for range 12 {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(model)
+	}
+	require.Greater(t, m.commandViewOffset, 0)
+	require.Contains(t, m.View(), "skill-12")
+	require.Contains(t, m.View(), "/20")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	m = updated.(model)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(model)
+	require.NotNil(t, cmd)
+	require.Nil(t, m.commandView)
+	updated, _ = m.Update(cmd())
+	m = updated.(model)
+
+	require.Equal(t, "/skills enable skill-00", called)
+	require.NotNil(t, m.information)
+	require.Contains(t, m.View(), "Enabled skill-00")
+}
+
 func TestSlashPermissionsSelectsSessionMode(t *testing.T) {
 	m := newModel(context.Background(), newPromptTextarea("/permissions"), nil, nil)
 	selected := ""
