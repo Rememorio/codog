@@ -1440,7 +1440,13 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, report.Orchestration.PluginDiscoveryReady)
 	require.True(t, report.Orchestration.MCPLifecycleReady)
 	require.NotEmpty(t, report.Release.Platform)
-	require.Equal(t, "ready", report.Release.Status)
+	if sandbox.Detect().Available {
+		require.Equal(t, "ready", report.Release.Status)
+		require.NotContains(t, report.Release.MissingProductionSurfaces, "sandbox_available")
+	} else {
+		require.Equal(t, "degraded", report.Release.Status)
+		require.Contains(t, report.Release.MissingProductionSurfaces, "sandbox_available")
+	}
 	require.NotContains(t, report.Release.MissingProductionSurfaces, "updater_manifest")
 	require.NotContains(t, report.Release.MissingProductionSurfaces, "managed_policy")
 	require.Contains(t, report.Release.ExcludedProductionSurfaces, "updater_manifest")
