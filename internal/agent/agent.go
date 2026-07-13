@@ -38941,10 +38941,12 @@ func wrapTUIPermissionEvents(prompter *tools.Prompter, emit func(tui.Entry)) {
 	}
 	baseRequest := prompter.OnRequest
 	baseDecision := prompter.OnDecision
+	pendingRequest := false
 	prompter.OnRequest = func(decision tools.PermissionDecision) {
 		if baseRequest != nil {
 			baseRequest(decision)
 		}
+		pendingRequest = true
 		suggestedRule := tools.SuggestedPermissionRule(decision.ToolName, decision.Input)
 		emit(tui.Entry{
 			Role: "permission",
@@ -38963,8 +38965,9 @@ func wrapTUIPermissionEvents(prompter *tools.Prompter, emit func(tui.Entry)) {
 		if baseDecision != nil {
 			baseDecision(decision)
 		}
-		if text := renderTUIPermissionDecision(decision); text != "" {
-			emit(tui.Entry{Role: "permission", Text: text})
+		if pendingRequest {
+			pendingRequest = false
+			emit(tui.Entry{Role: "permission"})
 		}
 	}
 }
@@ -39063,28 +39066,6 @@ func renderTUIPermissionRequest(decision tools.PermissionDecision) string {
 	line := fmt.Sprintf("Permission\n- %s requires %s", name, required)
 	if message := strings.TrimSpace(decision.Message); message != "" {
 		line += ": " + truncateForReport(message, 180)
-	}
-	return line
-}
-
-func renderTUIPermissionDecision(decision tools.PermissionDecision) string {
-	name := strings.TrimSpace(decision.ToolName)
-	if name == "" {
-		name = "tool"
-	}
-	status := "denied"
-	if decision.Allowed {
-		status = "approved"
-	}
-	line := fmt.Sprintf("Permission\n- %s %s", name, status)
-	if reason := strings.TrimSpace(decision.Reason); reason != "" {
-		line += ": " + reason
-	}
-	if rule := strings.TrimSpace(decision.Rule); rule != "" {
-		line += "\n  session rule: " + truncateForReport(rule, 180)
-	}
-	if feedback := strings.TrimSpace(decision.Feedback); feedback != "" {
-		line += "\n  feedback: " + truncateForReport(feedback, 180)
 	}
 	return line
 }

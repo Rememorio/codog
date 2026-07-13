@@ -5324,6 +5324,9 @@ func (m *model) appendStreamEntry(msg turnStreamMsg) {
 		m.upsertToolActivity(msg.Role, msg.Delta, *msg.Tool)
 		return
 	}
+	if msg.Permission != nil {
+		return
+	}
 	m.appendStreamDelta(msg.Role, msg.Delta)
 }
 
@@ -8715,6 +8718,9 @@ func toolActivityOutputLines(activity ToolActivity, expanded bool) []string {
 	lines := []string{}
 	var payload map[string]any
 	if json.Unmarshal([]byte(output), &payload) == nil {
+		if summarized := specializedToolActivityOutput(activity.Name, payload); len(summarized) > 0 {
+			return summarized
+		}
 		appendField := func(label string, keys ...string) {
 			for _, key := range keys {
 				value, ok := payload[key].(string)
@@ -8762,6 +8768,43 @@ func toolActivityOutputLines(activity ToolActivity, expanded bool) []string {
 		lines = append(append([]string(nil), lines[:4]...), fmt.Sprintf("... %d more %s", hidden, plural("line", hidden)))
 	}
 	return lines
+}
+
+func specializedToolActivityOutput(name string, payload map[string]any) []string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "tool_search":
+		names := jsonStringList(payload["match_names"])
+		if len(names) == 0 {
+			return []string{"No matching tools"}
+		}
+		return []string{"Loaded " + strings.Join(names, ", ")}
+	case "web_fetch":
+		if title, ok := payload["title"].(string); ok && strings.TrimSpace(title) != "" {
+			return []string{"Title: " + strings.TrimSpace(title)}
+		}
+		for _, key := range []string{"summary", "result"} {
+			if value, ok := payload[key].(string); ok && strings.TrimSpace(value) != "" {
+				return strings.Split(strings.TrimSpace(value), "\n")
+			}
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
+func jsonStringList(value any) []string {
+	values, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+			out = append(out, strings.TrimSpace(text))
+		}
+	}
+	return out
 }
 
 func toolActivityTranscriptText(activity ToolActivity) string {

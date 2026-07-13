@@ -903,7 +903,6 @@ expect "Allow bash to use danger-full-access?"
 expect "don't ask again"
 send "\033\[B"
 send "\033\[A\r"
-expect "bash approved"
 expect "Exit code 0"
 expect "permission tui approved ok"
 send "/exit\r"
@@ -914,7 +913,7 @@ expect eof
 	require.Contains(t, output, "Bash(printf permission-tui > permission.txt)")
 	require.Contains(t, output, "Allow bash to use danger-full-access?")
 	require.Contains(t, output, "don't ask again")
-	require.Contains(t, output, "bash approved")
+	require.NotContains(t, output, "bash approved")
 	require.Contains(t, output, "Exit code 0")
 	require.Contains(t, output, "permission tui approved ok")
 	created, err := os.ReadFile(filepath.Join(workspace, "permission.txt"))

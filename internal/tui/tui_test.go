@@ -2738,6 +2738,9 @@ func TestToolActivityOutputLinesSummarizeStructuredResults(t *testing.T) {
 		{name: "path bytes", activity: ToolActivity{Output: `{"path":"out.txt","bytes":12}`}, want: []string{"out.txt · 12 bytes"}},
 		{name: "exit status", activity: ToolActivity{Output: `{"exit_code":0,"duration_ms":4}`}, want: []string{"Exit code 0 · 4 ms"}},
 		{name: "message", activity: ToolActivity{Output: `{"message":"updated"}`}, want: []string{"updated"}},
+		{name: "tool search", activity: ToolActivity{Name: "tool_search", Output: `{"match_names":["web_fetch","web_search"],"matches":[{}]}`}, want: []string{"Loaded web_fetch, web_search"}},
+		{name: "tool search empty", activity: ToolActivity{Name: "tool_search", Output: `{"match_names":[]}`}, want: []string{"No matching tools"}},
+		{name: "web fetch", activity: ToolActivity{Name: "web_fetch", Output: `{"status_code":200,"title":"Example","summary":"summarized body","text":"body"}`}, want: []string{"Title: Example"}},
 		{name: "expanded raw json", activity: ToolActivity{Output: "{\n  \"stdout\": \"ok\"\n}"}, expanded: true, want: []string{"{", `  "stdout": "ok"`, "}"}},
 	}
 	for _, tc := range tests {
@@ -2762,9 +2765,11 @@ func TestPermissionStreamEntryNavigatesAndAcceptsSelection(t *testing.T) {
 		Message:     "destructive command",
 		AllowAlways: true,
 	}
+	transcriptCount := len(m.transcript)
 	updated, _ := m.Update(turnStreamMsg{Role: "permission", Delta: "Permission\n- bash requires danger-full-access", Permission: request})
 	m = updated.(model)
 	require.True(t, m.awaitingPermission)
+	require.Len(t, m.transcript, transcriptCount)
 	require.Equal(t, "permission", m.status)
 	require.Contains(t, m.View(), "Allow bash to use danger-full-access?")
 	require.Contains(t, m.View(), "destructive command")
@@ -2781,10 +2786,11 @@ func TestPermissionStreamEntryNavigatesAndAcceptsSelection(t *testing.T) {
 	require.Equal(t, []string{"a"}, answers)
 	require.Equal(t, "permission answered", m.status)
 
-	updated, _ = m.Update(turnStreamMsg{Role: "permission", Delta: "Permission\n- bash approved: user_approved"})
+	updated, _ = m.Update(turnStreamMsg{Role: "permission"})
 	m = updated.(model)
 	require.False(t, m.awaitingPermission)
 	require.Equal(t, "permission answered", m.status)
+	require.Len(t, m.transcript, transcriptCount)
 }
 
 func TestPermissionRequestKeepsShortcutsAndEscapeDenial(t *testing.T) {

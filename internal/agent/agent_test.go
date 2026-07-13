@@ -157,11 +157,24 @@ func TestTUIPermissionEventsWrapOriginalCallbacks(t *testing.T) {
 		SuggestedRule: "bash(go test)",
 		AllowAlways:   true,
 	}, entries[0].Permission)
-	require.Contains(t, entries[1].Text, "bash approved")
-	require.Contains(t, entries[1].Text, "user_approved")
-	require.Contains(t, entries[1].Text, "session rule: bash(go test:*)")
-	require.Contains(t, entries[1].Text, "feedback: run the focused package next")
+	require.Empty(t, entries[1].Text)
+	require.Equal(t, "permission", entries[1].Role)
 	require.Nil(t, entries[1].Permission)
+}
+
+func TestTUIPermissionEventsDoNotRenderAutomaticDecisions(t *testing.T) {
+	prompter := &tools.Prompter{}
+	entries := []tui.Entry{}
+	wrapTUIPermissionEvents(prompter, func(entry tui.Entry) { entries = append(entries, entry) })
+
+	prompter.OnDecision(tools.PermissionDecision{
+		ToolName: "read_file",
+		Required: tools.PermissionReadOnly,
+		Allowed:  true,
+		Reason:   "permission_mode",
+	})
+
+	require.Empty(t, entries)
 }
 
 func TestTUIPermissionResponseEncodingAndBroadRuleSuppression(t *testing.T) {
