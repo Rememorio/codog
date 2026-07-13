@@ -2473,12 +2473,14 @@ func TestStreamedTurnDeltasRenderBeforeDone(t *testing.T) {
 
 func TestRunStreamSubmitCommandEmitsDeltasBeforeDone(t *testing.T) {
 	ctx := context.Background()
-	messages := make(chan tea.Msg, 5)
+	messages := make(chan tea.Msg, 6)
 	permission := &PermissionRequest{Tool: "bash", Required: "workspace-write", AllowAlways: true}
+	tool := &ToolActivity{ID: "tool-1", Name: "bash", Status: "running"}
 	cmd := runStreamSubmitCommand(ctx, func(_ context.Context, prompt string, emit func(Entry)) (string, error) {
 		emit(Entry{Role: "assistant", Text: "first "})
 		emit(Entry{Role: "assistant", Text: prompt})
 		emit(Entry{Role: "permission", Text: "confirm", Permission: permission})
+		emit(Entry{Role: "tool", Text: "running", Tool: tool})
 		return "", nil
 	}, "chunk", messages)
 
@@ -2488,6 +2490,8 @@ func TestRunStreamSubmitCommandEmitsDeltasBeforeDone(t *testing.T) {
 	require.Equal(t, turnStreamMsg{Role: "assistant", Delta: "chunk"}, second)
 	third := waitTurnMessage(messages)()
 	require.Equal(t, turnStreamMsg{Role: "permission", Delta: "confirm", Permission: permission}, third)
+	fourth := waitTurnMessage(messages)()
+	require.Equal(t, turnStreamMsg{Role: "tool", Delta: "running", Tool: tool}, fourth)
 	done := waitTurnMessage(messages)()
 	require.IsType(t, turnDoneMsg{}, done)
 }
@@ -2514,6 +2518,164 @@ func TestToolStreamEntryDoesNotMergeIntoAssistantText(t *testing.T) {
 	require.Contains(t, m.transcript[3].Text, "grep ok")
 	require.Equal(t, "assistant", m.transcript[4].Role)
 	require.Equal(t, "done", m.transcript[4].Text)
+}
+
+func TestStructuredToolActivityUpdatesInPlace(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	start := &ToolActivity{
+		ID:     "tool-bash",
+		Name:   "bash",
+		Input:  `{"command":"printf ok"}`,
+		Status: "running",
+	}
+	updated, _ := m.Update(turnStreamMsg{Role: "tool", Delta: "legacy start", Tool: start})
+	m = updated.(model)
+
+	require.Len(t, m.transcript, 2)
+	require.NotSame(t, start, m.transcript[1].Tool)
+	require.Equal(t, "running bash", m.status)
+	require.Contains(t, m.View(), "Bash(printf ok)")
+	require.Contains(t, m.View(), "running")
+
+	finish := &ToolActivity{
+		ID:     "tool-bash",
+		Name:   "bash",
+		Input:  `{"command":"printf ok"}`,
+		Output: `{"stdout":"ok","exit_code":0,"duration_ms":3}`,
+		Status: "success",
+	}
+	updated, _ = m.Update(turnStreamMsg{Role: "tool", Delta: "legacy finish", Tool: finish})
+	m = updated.(model)
+
+	require.Len(t, m.transcript, 2)
+	require.Equal(t, "success", m.transcript[1].Tool.Status)
+	require.Equal(t, "streaming", m.status)
+	require.Contains(t, m.View(), "Bash(printf ok)")
+	require.Contains(t, m.View(), "ok")
+	require.NotContains(t, m.View(), "legacy start")
+
+	m.transcriptMode = true
+	m.refreshViewport()
+	require.Contains(t, m.View(), `"duration_ms":3`)
+}
+
+func TestStructuredToolActivitiesKeepDistinctIDsAndAppendMissingStart(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	activities := []*ToolActivity{
+		{ID: "read-1", Name: "read_file", Input: `{"path":"README.md"}`, Status: "running"},
+		{ID: "grep-1", Name: "grep", Input: `{"pattern":"TODO","path":"internal"}`, Output: "match", Status: "success"},
+		{ID: "read-1", Name: "read_file", Input: `{"path":"README.md"}`, Output: "line one\nline two", Status: "success"},
+	}
+	for _, activity := range activities {
+		updated, _ := m.Update(turnStreamMsg{Role: "tool", Tool: activity})
+		m = updated.(model)
+	}
+
+	require.Len(t, m.transcript, 3)
+	require.Equal(t, "read-1", m.transcript[1].Tool.ID)
+	require.Equal(t, "success", m.transcript[1].Tool.Status)
+	require.Equal(t, "grep-1", m.transcript[2].Tool.ID)
+	require.Contains(t, m.View(), "Read(README.md)")
+	require.Contains(t, m.View(), "Grep(TODO in internal)")
+}
+
+func TestStructuredToolActivityRendersErrorsAndTruncatesCompactOutput(t *testing.T) {
+	activity := ToolActivity{
+		ID:      "tool-error",
+		Name:    "write_file",
+		Input:   `{"path":"nested/output.txt"}`,
+		Output:  "one\ntwo\nthree\nfour\nfive\nsix",
+		Status:  "success",
+		IsError: true,
+	}
+	compact := renderToolActivity(activity, 48, false, stylesForTheme("no-color"))
+	expanded := renderToolActivity(activity, 48, true, stylesForTheme("no-color"))
+
+	require.Contains(t, compact, "! Write(nested/output.txt) failed")
+	require.Contains(t, compact, "... 2 more lines")
+	require.NotContains(t, compact, "six")
+	require.Contains(t, expanded, "six")
+	require.NotContains(t, compact, "\x1b[")
+}
+
+func TestStructuredToolActivityHeaderFitsNarrowViewport(t *testing.T) {
+	rendered := renderToolActivity(ToolActivity{
+		Name:   "write_file",
+		Input:  `{"path":"a/very/long/output/path.txt"}`,
+		Status: "running",
+	}, 12, false, stylesForTheme("no-color"))
+
+	header := strings.SplitN(rendered, "\n", 2)[0]
+	require.LessOrEqual(t, lipgloss.Width(header), 12)
+	require.Contains(t, header, "running")
+}
+
+func TestToolActivityInputSummaryCoversKnownAndFallbackTools(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "bash", input: `{"command":"go test ./..."}`, want: "go test ./..."},
+		{name: "read_file", input: `{"file_path":"main.go"}`, want: "main.go"},
+		{name: "multi_edit", input: `{"edits":[{"file_path":"first.go"}]}`, want: "first.go"},
+		{name: "apply_patch", input: `{"patch":"ignored"}`, want: "patch"},
+		{name: "notebook_edit", input: `{"notebook_path":"analysis.ipynb"}`, want: "analysis.ipynb"},
+		{name: "glob", input: `{"pattern":"*.go","path":"internal"}`, want: "*.go in internal"},
+		{name: "web_search", input: `{"query":"Go release"}`, want: "Go release"},
+		{name: "ask_user_question", input: `{"questions":[{},{}]}`, want: "2 questions"},
+		{name: "custom_tool", input: `{"prompt":"inspect"}`, want: "inspect"},
+		{name: "custom_tool", input: "raw input", want: "raw input"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name+tc.want, func(t *testing.T) {
+			require.Equal(t, tc.want, toolActivityInputSummary(tc.name, tc.input))
+		})
+	}
+}
+
+func TestToolActivityDisplayNameCoversBuiltinFamilies(t *testing.T) {
+	tests := map[string]string{
+		"bash":              "Bash",
+		"powershell":        "PowerShell",
+		"read_file":         "Read",
+		"write_file":        "Write",
+		"edit_file":         "Edit",
+		"grep":              "Grep",
+		"glob":              "Glob",
+		"web_search":        "Web Search",
+		"web_fetch":         "Web Fetch",
+		"ask_user_question": "Ask User",
+		"task_create":       "Task Create",
+		"":                  "Tool",
+	}
+	for input, want := range tests {
+		t.Run(want+input, func(t *testing.T) {
+			require.Equal(t, want, toolActivityDisplayName(input))
+		})
+	}
+}
+
+func TestToolActivityOutputLinesSummarizeStructuredResults(t *testing.T) {
+	tests := []struct {
+		name     string
+		activity ToolActivity
+		expanded bool
+		want     []string
+	}{
+		{name: "empty", activity: ToolActivity{}, want: nil},
+		{name: "stdout and error", activity: ToolActivity{Output: `{"stdout":"ok","error":"exit status 7"}`}, want: []string{"ok", "error: exit status 7"}},
+		{name: "stdout and stderr", activity: ToolActivity{Output: `{"stdout":"ok","stderr":"warning"}`}, want: []string{"ok", "stderr: warning"}},
+		{name: "path bytes", activity: ToolActivity{Output: `{"path":"out.txt","bytes":12}`}, want: []string{"out.txt · 12 bytes"}},
+		{name: "exit status", activity: ToolActivity{Output: `{"exit_code":0,"duration_ms":4}`}, want: []string{"Exit code 0 · 4 ms"}},
+		{name: "message", activity: ToolActivity{Output: `{"message":"updated"}`}, want: []string{"updated"}},
+		{name: "expanded raw json", activity: ToolActivity{Output: "{\n  \"stdout\": \"ok\"\n}"}, expanded: true, want: []string{"{", `  "stdout": "ok"`, "}"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, toolActivityOutputLines(tc.activity, tc.expanded))
+		})
+	}
 }
 
 func TestPermissionStreamEntryNavigatesAndAcceptsSelection(t *testing.T) {

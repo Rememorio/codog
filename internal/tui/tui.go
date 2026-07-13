@@ -30,6 +30,18 @@ type Entry struct {
 	Text       string
 	Permission *PermissionRequest
 	Question   *QuestionRequest
+	Tool       *ToolActivity
+}
+
+// ToolActivity is one model-requested tool call as it moves from running to a
+// terminal success or error state.
+type ToolActivity struct {
+	ID      string
+	Name    string
+	Input   string
+	Output  string
+	Status  string
+	IsError bool
 }
 
 // PermissionRequest describes a tool confirmation shown by the interactive
@@ -364,6 +376,7 @@ type model struct {
 type transcriptEntry struct {
 	Role string
 	Text string
+	Tool *ToolActivity
 }
 
 func Prompt() (Result, error) {
@@ -663,7 +676,7 @@ func PreviewWithTranscript(entries []Entry, width int, height int) Preview {
 	ta := newPromptTextarea("")
 	modelEntries := make([]transcriptEntry, 0, len(entries))
 	for _, entry := range entries {
-		modelEntries = append(modelEntries, transcriptEntry{Role: entry.Role, Text: entry.Text})
+		modelEntries = append(modelEntries, transcriptEntry{Role: entry.Role, Text: entry.Text, Tool: cloneToolActivity(entry.Tool)})
 	}
 	m := newModel(context.Background(), ta, nil, modelEntries)
 	if width > 0 || height > 0 {
@@ -1500,7 +1513,7 @@ func previewWithMessageActions(entries []Entry, width int, height int, action in
 	ta := newPromptTextarea("")
 	modelEntries := make([]transcriptEntry, 0, len(entries))
 	for _, entry := range entries {
-		modelEntries = append(modelEntries, transcriptEntry{Role: entry.Role, Text: entry.Text})
+		modelEntries = append(modelEntries, transcriptEntry{Role: entry.Role, Text: entry.Text, Tool: cloneToolActivity(entry.Tool)})
 	}
 	m := newModel(context.Background(), ta, nil, modelEntries)
 	m.restoreConversation = func(_ context.Context, keepMessages int) (RuntimeControlResult, error) {
@@ -1650,7 +1663,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	ta := newPromptTextarea(options.Prefill)
 	entries := make([]transcriptEntry, 0, len(options.Entries))
 	for _, entry := range options.Entries {
-		entries = append(entries, transcriptEntry{Role: entry.Role, Text: entry.Text})
+		entries = append(entries, transcriptEntry{Role: entry.Role, Text: entry.Text, Tool: cloneToolActivity(entry.Tool)})
 	}
 	m := newModel(ctx, ta, options.Candidates, entries)
 	m.fileCandidates = append([]string(nil), options.FileCandidates...)
@@ -1939,12 +1952,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyRuntimeControlResult(msg.Result)
 		return m, m.flushInlineTranscript()
 	case turnStreamMsg:
-		m.appendStreamDelta(msg.Role, msg.Delta)
+		m.appendStreamEntry(msg)
 		switch {
 		case msg.Permission != nil:
 			m.openPermissionRequest(*msg.Permission)
 		case msg.Question != nil:
 			m.openQuestionRequest(*msg.Question)
+		case msg.Tool != nil:
+			if strings.EqualFold(msg.Tool.Status, "running") {
+				m.status = "running " + strings.ToLower(toolActivityDisplayName(msg.Tool.Name))
+			} else {
+				m.status = "streaming"
+			}
 		case strings.EqualFold(msg.Role, "permission"):
 			m.awaitingPermission = isPermissionRequestDelta(msg.Delta)
 			if m.awaitingPermission {
@@ -4350,11 +4369,11 @@ func runStreamSubmitCommand(ctx context.Context, submit StreamSubmitFunc, prompt
 			if strings.TrimSpace(entry.Role) == "" {
 				entry.Role = "assistant"
 			}
-			if entry.Text == "" && entry.Permission == nil && entry.Question == nil {
+			if entry.Text == "" && entry.Permission == nil && entry.Question == nil && entry.Tool == nil {
 				return
 			}
 			select {
-			case messages <- turnStreamMsg{Role: entry.Role, Delta: entry.Text, Permission: entry.Permission, Question: entry.Question}:
+			case messages <- turnStreamMsg{Role: entry.Role, Delta: entry.Text, Permission: entry.Permission, Question: entry.Question, Tool: entry.Tool}:
 			case <-ctx.Done():
 			}
 		})
@@ -4369,11 +4388,11 @@ func runStreamSubmitAttachmentsCommand(ctx context.Context, submit StreamSubmitW
 			if strings.TrimSpace(entry.Role) == "" {
 				entry.Role = "assistant"
 			}
-			if entry.Text == "" && entry.Permission == nil && entry.Question == nil {
+			if entry.Text == "" && entry.Permission == nil && entry.Question == nil && entry.Tool == nil {
 				return
 			}
 			select {
-			case messages <- turnStreamMsg{Role: entry.Role, Delta: entry.Text, Permission: entry.Permission, Question: entry.Question}:
+			case messages <- turnStreamMsg{Role: entry.Role, Delta: entry.Text, Permission: entry.Permission, Question: entry.Question, Tool: entry.Tool}:
 			case <-ctx.Done():
 			}
 		})
@@ -4406,6 +4425,7 @@ type turnStreamMsg struct {
 	Delta      string
 	Permission *PermissionRequest
 	Question   *QuestionRequest
+	Tool       *ToolActivity
 }
 
 type externalEditorDoneMsg struct {
@@ -5114,6 +5134,56 @@ func (m *model) clearScreen() {
 func isPermissionRequestDelta(delta string) bool {
 	normalized := strings.ToLower(delta)
 	return strings.Contains(normalized, " requires ")
+}
+
+func cloneToolActivity(activity *ToolActivity) *ToolActivity {
+	if activity == nil {
+		return nil
+	}
+	cloned := *activity
+	return &cloned
+}
+
+func (m *model) appendStreamEntry(msg turnStreamMsg) {
+	if msg.Tool != nil {
+		m.upsertToolActivity(msg.Role, msg.Delta, *msg.Tool)
+		return
+	}
+	m.appendStreamDelta(msg.Role, msg.Delta)
+}
+
+func (m *model) upsertToolActivity(role string, text string, activity ToolActivity) {
+	role = strings.TrimSpace(role)
+	if role == "" {
+		role = "tool"
+	}
+	activity.ID = strings.TrimSpace(activity.ID)
+	activity.Name = strings.TrimSpace(activity.Name)
+	activity.Input = strings.TrimSpace(activity.Input)
+	activity.Output = strings.TrimSpace(activity.Output)
+	activity.Status = strings.ToLower(strings.TrimSpace(activity.Status))
+	if activity.IsError {
+		activity.Status = "error"
+	}
+	switch activity.Status {
+	case "running", "success", "error":
+	default:
+		activity.Status = "running"
+	}
+	entry := transcriptEntry{Role: role, Text: text, Tool: cloneToolActivity(&activity)}
+	if activity.ID != "" {
+		for index := len(m.transcript) - 1; index >= 0; index-- {
+			existing := m.transcript[index].Tool
+			if existing == nil || existing.ID != activity.ID {
+				continue
+			}
+			m.transcript[index] = entry
+			m.streamingIndex = index
+			return
+		}
+	}
+	m.transcript = append(m.transcript, entry)
+	m.streamingIndex = len(m.transcript) - 1
 }
 
 func (m *model) appendStreamDelta(role string, delta string) {
@@ -8196,6 +8266,14 @@ func renderTranscriptEntry(entry transcriptEntry, width int, index int, total in
 	if role == "" {
 		role = "message"
 	}
+	if entry.Tool != nil {
+		if !transcriptMode {
+			return renderToolActivity(*entry.Tool, width, false, styles)
+		}
+		text := toolActivityTranscriptText(*entry.Tool)
+		header := fmt.Sprintf("%03d/%03d tool · %d %s · %d %s", index+1, max(1, total), transcriptLineCount(text), plural("line", transcriptLineCount(text)), len([]rune(text)), plural("char", len([]rune(text))))
+		return styles.role("tool").Render(header) + "\n" + renderToolActivity(*entry.Tool, width, true, styles)
+	}
 	if !transcriptMode {
 		text := strings.TrimSpace(entry.Text)
 		if text == "" {
@@ -8213,6 +8291,227 @@ func renderTranscriptEntry(entry transcriptEntry, width int, index int, total in
 	}
 	header := fmt.Sprintf("%03d/%03d %s · %d %s · %d %s", index+1, max(1, total), role, transcriptLineCount(text), plural("line", transcriptLineCount(text)), len([]rune(text)), plural("char", len([]rune(text))))
 	return styles.role(role).Render(header) + "\n" + wrapTranscriptText(text, width)
+}
+
+func renderToolActivity(activity ToolActivity, width int, expanded bool, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
+	width = max(12, width)
+	status := strings.ToLower(strings.TrimSpace(activity.Status))
+	if activity.IsError {
+		status = "error"
+	}
+	marker := "●"
+	markerStyle := styles.role("tool")
+	suffix := ""
+	switch status {
+	case "running":
+		marker = "◐"
+		suffix = " running"
+	case "success":
+		markerStyle = styles.role("success")
+	case "error":
+		marker = "!"
+		markerStyle = styles.role("error")
+		suffix = " failed"
+	}
+	name := toolActivityDisplayName(activity.Name)
+	if summary := toolActivityInputSummary(activity.Name, activity.Input); summary != "" {
+		name += "(" + summary + ")"
+	}
+	headerLimit := max(1, width-lipgloss.Width(marker)-1-lipgloss.Width(suffix))
+	header := markerStyle.Render(marker) + " " + styles.panelTitle().Render(truncateForComposer(name, headerLimit))
+	if suffix != "" {
+		header += styles.completion().Render(suffix)
+	}
+	lines := []string{header}
+	outputLines := toolActivityOutputLines(activity, expanded)
+	if len(outputLines) == 0 {
+		switch status {
+		case "running":
+			outputLines = []string{"Running..."}
+		case "success":
+			outputLines = []string{"Done"}
+		}
+	}
+	contentWidth := max(8, width-2)
+	for _, line := range outputLines {
+		wrapped := wrapTranscriptText(line, contentWidth)
+		for _, part := range strings.Split(wrapped, "\n") {
+			lines = append(lines, styles.completion().Render("  "+part))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func toolActivityDisplayName(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "bash", "bashtool":
+		return "Bash"
+	case "powershell", "powershelltool":
+		return "PowerShell"
+	case "read", "read_file", "readfiletool":
+		return "Read"
+	case "write", "write_file", "writefiletool":
+		return "Write"
+	case "edit", "edit_file", "multiedit", "multi_edit", "apply_patch", "editfiletool":
+		return "Edit"
+	case "grep", "greptool":
+		return "Grep"
+	case "glob", "globtool":
+		return "Glob"
+	case "web_search", "websearchtool":
+		return "Web Search"
+	case "web_fetch", "webfetchtool":
+		return "Web Fetch"
+	case "ask_user_question", "askuserquestiontool":
+		return "Ask User"
+	}
+	name = strings.NewReplacer("_", " ", "-", " ").Replace(strings.TrimSpace(name))
+	words := strings.Fields(name)
+	for index, word := range words {
+		runes := []rune(strings.ToLower(word))
+		if len(runes) > 0 {
+			runes[0] = unicode.ToUpper(runes[0])
+		}
+		words[index] = string(runes)
+	}
+	if len(words) == 0 {
+		return "Tool"
+	}
+	return strings.Join(words, " ")
+}
+
+func toolActivityInputSummary(name string, input string) string {
+	var payload map[string]any
+	if json.Unmarshal([]byte(strings.TrimSpace(input)), &payload) != nil {
+		return truncateForComposer(strings.Join(strings.Fields(input), " "), 100)
+	}
+	value := func(keys ...string) string {
+		for _, key := range keys {
+			if text, ok := payload[key].(string); ok && strings.TrimSpace(text) != "" {
+				return strings.TrimSpace(text)
+			}
+		}
+		return ""
+	}
+	canonical := strings.ToLower(strings.TrimSpace(name))
+	summary := ""
+	switch canonical {
+	case "bash", "bashtool", "powershell", "powershelltool":
+		summary = value("command", "code")
+	case "read", "read_file", "readfiletool", "write", "write_file", "writefiletool", "edit", "edit_file", "editfiletool":
+		summary = value("path", "file_path")
+	case "multi_edit", "multiedit":
+		summary = value("path", "file_path")
+		if summary == "" {
+			if edits, ok := payload["edits"].([]any); ok && len(edits) > 0 {
+				if edit, editOK := edits[0].(map[string]any); editOK {
+					summary, _ = edit["path"].(string)
+					if summary == "" {
+						summary, _ = edit["file_path"].(string)
+					}
+				}
+			}
+		}
+	case "apply_patch":
+		summary = "patch"
+	case "notebook_edit", "notebookedittool":
+		summary = value("notebook_path")
+	case "grep", "greptool":
+		summary = value("pattern", "query")
+		if path := value("path"); path != "" {
+			summary += " in " + path
+		}
+	case "glob", "globtool":
+		summary = value("pattern")
+		if path := value("path"); path != "" {
+			summary += " in " + path
+		}
+	case "web_search", "websearchtool":
+		summary = value("query")
+	case "web_fetch", "webfetchtool":
+		summary = value("url")
+	case "ask_user_question", "askuserquestiontool":
+		if questions, ok := payload["questions"].([]any); ok {
+			summary = fmt.Sprintf("%d %s", len(questions), plural("question", len(questions)))
+		} else {
+			summary = value("question")
+		}
+	default:
+		summary = value("prompt", "query", "name", "id", "path")
+	}
+	return truncateForComposer(strings.Join(strings.Fields(summary), " "), 100)
+}
+
+func toolActivityOutputLines(activity ToolActivity, expanded bool) []string {
+	output := strings.TrimSpace(activity.Output)
+	if output == "" {
+		return nil
+	}
+	if expanded {
+		return strings.Split(output, "\n")
+	}
+	lines := []string{}
+	var payload map[string]any
+	if json.Unmarshal([]byte(output), &payload) == nil {
+		appendField := func(label string, keys ...string) {
+			for _, key := range keys {
+				value, ok := payload[key].(string)
+				value = strings.TrimSpace(value)
+				if !ok || value == "" {
+					continue
+				}
+				if label != "" {
+					value = label + ": " + value
+				}
+				lines = append(lines, strings.Split(value, "\n")...)
+				return
+			}
+		}
+		appendField("", "stdout")
+		appendField("stderr", "stderr")
+		appendField("error", "error")
+		appendField("", "output", "message", "content")
+		if len(lines) == 0 {
+			path, _ := payload["path"].(string)
+			if path == "" {
+				path, _ = payload["file_path"].(string)
+			}
+			if path != "" {
+				line := path
+				if count, ok := payload["bytes"].(float64); ok {
+					line += fmt.Sprintf(" · %.0f bytes", count)
+				}
+				lines = append(lines, line)
+			}
+			if exitCode, ok := payload["exit_code"].(float64); ok {
+				line := fmt.Sprintf("Exit code %.0f", exitCode)
+				if duration, durationOK := payload["duration_ms"].(float64); durationOK {
+					line += fmt.Sprintf(" · %.0f ms", duration)
+				}
+				lines = append(lines, line)
+			}
+		}
+	}
+	if len(lines) == 0 {
+		lines = strings.Split(output, "\n")
+	}
+	if !expanded && len(lines) > 4 {
+		hidden := len(lines) - 4
+		lines = append(append([]string(nil), lines[:4]...), fmt.Sprintf("... %d more %s", hidden, plural("line", hidden)))
+	}
+	return lines
+}
+
+func toolActivityTranscriptText(activity ToolActivity) string {
+	parts := []string{toolActivityDisplayName(activity.Name)}
+	if input := strings.TrimSpace(activity.Input); input != "" {
+		parts = append(parts, input)
+	}
+	if output := strings.TrimSpace(activity.Output); output != "" {
+		parts = append(parts, output)
+	}
+	return strings.Join(parts, "\n")
 }
 
 func transcriptRoleMarker(role string) string {

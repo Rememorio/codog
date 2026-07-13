@@ -456,18 +456,16 @@ set timeout 30
 spawn -noecho $env(CODOG_TEST_BIN) --permission-mode allow --model claude-sonnet-4-5 tui
 expect "codog"
 send "exercise visible tui tools\r"
-expect "Tools"
-expect "bash running"
-expect "bash ok"
+expect "Write(tui-tool.txt)"
+expect "Bash(printf tui-tool-visible)"
 expect "tui-tool-visible"
 expect "tui tool final ok"
 send "/exit\r"
 expect eof
 `)
 
-	require.Contains(t, output, "Tools")
-	require.Contains(t, output, "bash running")
-	require.Contains(t, output, "bash ok")
+	require.Contains(t, output, "Write(tui-tool.txt)")
+	require.Contains(t, output, "Bash(printf tui-tool-visible)")
 	require.Contains(t, output, "tui-tool-visible")
 	require.Contains(t, output, "tui tool final ok")
 	created, err := os.ReadFile(filepath.Join(workspace, "tui-tool.txt"))
@@ -799,20 +797,24 @@ spawn -noecho $env(CODOG_TEST_BIN) --permission-mode workspace-write --model cla
 expect "codog"
 send "permission tui smoke\r"
 expect "Permission"
+expect "Bash(printf permission-tui > permission.txt)"
 expect "Allow bash to use danger-full-access?"
 expect "don't ask again"
 send "\033\[B"
 send "\033\[A\r"
 expect "bash approved"
+expect "Exit code 0"
 expect "permission tui approved ok"
 send "/exit\r"
 expect eof
 `)
 
 	require.Contains(t, output, "Permission")
+	require.Contains(t, output, "Bash(printf permission-tui > permission.txt)")
 	require.Contains(t, output, "Allow bash to use danger-full-access?")
 	require.Contains(t, output, "don't ask again")
 	require.Contains(t, output, "bash approved")
+	require.Contains(t, output, "Exit code 0")
 	require.Contains(t, output, "permission tui approved ok")
 	created, err := os.ReadFile(filepath.Join(workspace, "permission.txt"))
 	require.NoError(t, err)

@@ -67,7 +67,7 @@ func TestThemePickerFitsNarrowTerminal(t *testing.T) {
 }
 
 func TestThemePalettesRenderEverySupportedMode(t *testing.T) {
-	roles := []string{"assistant", "tool", "permission", "question", "user", "system"}
+	roles := []string{"assistant", "tool", "permission", "question", "user", "success", "error", "system"}
 	for _, name := range ThemeNames() {
 		styles := stylesForTheme(name)
 		require.NotEmpty(t, styles.header().Render("header"), name)

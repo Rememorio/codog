@@ -29812,6 +29812,9 @@ func codogCapabilityFeatures() []string {
 		"tui_no_color_theme",
 		"tui_permission_picker",
 		"tui_question_picker",
+		"tui_structured_tool_activity",
+		"tui_tool_activity_in_place",
+		"tui_tool_output_expand",
 		"task_id_alias_schemas",
 		"task_create_prompt_contract",
 		"task_get_list_compat_fields",
@@ -37738,14 +37741,18 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 			OnToolStart: func(call runloop.ToolCall) {
 				if summary := renderTUIToolStart(call); summary != "" {
 					liveToolEvents = true
-					emit(tui.Entry{Role: "tool", Text: summary})
+					emit(tui.Entry{Role: "tool", Text: summary, Tool: tuiToolActivity(call, "running")})
 				}
 			},
 			OnToolUse: func(call runloop.ToolCall) {
 				toolCalls = append(toolCalls, call)
 				if summary := renderTUIToolSummary([]runloop.ToolCall{call}); summary != "" {
 					liveToolEvents = true
-					emit(tui.Entry{Role: "tool", Text: summary})
+					status := "success"
+					if call.IsError {
+						status = "error"
+					}
+					emit(tui.Entry{Role: "tool", Text: summary, Tool: tuiToolActivity(call, status)})
 				}
 			},
 		})
@@ -39001,6 +39008,17 @@ func renderTUIToolStart(call runloop.ToolCall) string {
 		name = "tool"
 	}
 	return "Tools\n- " + name + " running"
+}
+
+func tuiToolActivity(call runloop.ToolCall, status string) *tui.ToolActivity {
+	return &tui.ToolActivity{
+		ID:      call.ID,
+		Name:    call.Name,
+		Input:   call.Input,
+		Output:  call.Output,
+		Status:  status,
+		IsError: call.IsError,
+	}
 }
 
 func renderTUIPermissionRequest(decision tools.PermissionDecision) string {

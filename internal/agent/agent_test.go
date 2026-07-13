@@ -184,6 +184,25 @@ func TestRenderModernTUIQuestionRequest(t *testing.T) {
 	require.Equal(t, "preview", mapped[0].Options[0].Preview)
 }
 
+func TestTUIToolActivityMapsRunloopCall(t *testing.T) {
+	activity := tuiToolActivity(runloop.ToolCall{
+		ID:      "tool-1",
+		Name:    "bash",
+		Input:   `{"command":"printf ok"}`,
+		Output:  `{"stdout":"ok"}`,
+		IsError: true,
+	}, "error")
+
+	require.Equal(t, &tui.ToolActivity{
+		ID:      "tool-1",
+		Name:    "bash",
+		Input:   `{"command":"printf ok"}`,
+		Output:  `{"stdout":"ok"}`,
+		Status:  "error",
+		IsError: true,
+	}, activity)
+}
+
 func TestPromptEmitsMultipleToolEventsInOneTurn(t *testing.T) {
 	server := httptest.NewServer(mockanthropic.Server{Turns: []mockanthropic.Turn{
 		{ToolUses: []mockanthropic.ToolUse{
@@ -1620,6 +1639,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "tui_no_color_theme")
 	require.Contains(t, report.Features, "tui_permission_picker")
 	require.Contains(t, report.Features, "tui_question_picker")
+	require.Contains(t, report.Features, "tui_structured_tool_activity")
+	require.Contains(t, report.Features, "tui_tool_activity_in_place")
+	require.Contains(t, report.Features, "tui_tool_output_expand")
 	require.Contains(t, report.Features, "tool_search_mcp_degraded")
 	require.Contains(t, report.Features, "typed_task_packets")
 	require.Contains(t, report.Features, "worker_startup_no_evidence")

@@ -78,6 +78,8 @@ type themePalette struct {
 	permission          string
 	question            string
 	user                string
+	success             string
+	error               string
 	fallback            string
 	noColor             bool
 }
@@ -104,31 +106,31 @@ func stylesForTheme(name string) themeStyles {
 		palette = themePalette{
 			headerForeground: "0", headerBackground: "153", statusForeground: "238", statusBackground: "254", accent: "25", muted: "242", subtle: "240",
 			selectionForeground: "15", selectionBackground: "25", assistant: "25", tool: "130",
-			permission: "136", question: "30", user: "127", fallback: "242",
+			permission: "136", question: "30", user: "127", success: "28", error: "160", fallback: "242",
 		}
 	case "dark-daltonized":
 		palette = themePalette{
 			headerForeground: "15", headerBackground: "24", statusForeground: "250", statusBackground: "238", accent: "45", muted: "244", subtle: "247",
 			selectionForeground: "0", selectionBackground: "220", assistant: "45", tool: "214",
-			permission: "220", question: "81", user: "208", fallback: "250",
+			permission: "220", question: "81", user: "208", success: "45", error: "208", fallback: "250",
 		}
 	case "light-daltonized":
 		palette = themePalette{
 			headerForeground: "15", headerBackground: "24", statusForeground: "238", statusBackground: "254", accent: "24", muted: "242", subtle: "240",
 			selectionForeground: "0", selectionBackground: "220", assistant: "24", tool: "166",
-			permission: "136", question: "31", user: "166", fallback: "242",
+			permission: "136", question: "31", user: "166", success: "24", error: "166", fallback: "242",
 		}
 	case "dark-ansi":
 		palette = themePalette{
 			headerForeground: "15", headerBackground: "4", statusForeground: "7", statusBackground: "8", accent: "6", muted: "8", subtle: "7",
 			selectionForeground: "15", selectionBackground: "4", assistant: "6", tool: "3",
-			permission: "3", question: "6", user: "5", fallback: "8",
+			permission: "3", question: "6", user: "5", success: "2", error: "1", fallback: "8",
 		}
 	case "light-ansi":
 		palette = themePalette{
 			headerForeground: "15", headerBackground: "4", statusForeground: "0", statusBackground: "7", accent: "4", muted: "8", subtle: "8",
 			selectionForeground: "15", selectionBackground: "4", assistant: "4", tool: "3",
-			permission: "3", question: "6", user: "5", fallback: "8",
+			permission: "3", question: "6", user: "5", success: "2", error: "1", fallback: "8",
 		}
 	case "no-color":
 		palette = themePalette{noColor: true}
@@ -136,7 +138,7 @@ func stylesForTheme(name string) themeStyles {
 		palette = themePalette{
 			headerForeground: "15", headerBackground: "62", statusForeground: "250", statusBackground: "238", accent: "39", muted: "244", subtle: "247",
 			selectionForeground: "15", selectionBackground: "31", assistant: "39", tool: "214",
-			permission: "220", question: "45", user: "205", fallback: "241",
+			permission: "220", question: "45", user: "205", success: "42", error: "203", fallback: "241",
 		}
 	}
 	return themeStyles{palette: palette}
@@ -218,6 +220,10 @@ func (s themeStyles) role(role string) lipgloss.Style {
 		color = s.palette.question
 	case "user":
 		color = s.palette.user
+	case "success":
+		color = s.palette.success
+	case "error":
+		color = s.palette.error
 	}
 	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(color))
 }
