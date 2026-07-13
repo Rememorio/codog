@@ -27,6 +27,7 @@ func TestBuildReportsReadyInteractiveSurface(t *testing.T) {
 	require.True(t, report.TUISettingsTabs)
 	require.True(t, report.TUIExtensionTabs)
 	require.True(t, report.TUIRuntimeTabs)
+	require.True(t, report.TUIConversationTabs)
 	require.True(t, report.TUIStatusBar)
 	require.True(t, report.PermissionCommandsPresent)
 	require.True(t, report.StatusCommandsPresent)

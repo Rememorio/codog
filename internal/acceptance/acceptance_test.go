@@ -248,6 +248,15 @@ send "\r"
 expect "Inspect acceptance changes"
 send "\033"
 after 300
+send "/history\r"
+expect " conversation "
+expect "No prompt history for this conversation."
+send "\033\[C"
+expect "Sessions"
+send "\033\[C"
+expect "Add bookmark"
+send "\033"
+after 300
 send "/agents\r"
 expect " extensions "
 expect "Create new agent"
@@ -272,6 +281,8 @@ expect eof
 	require.Contains(t, plain, "Inspect acceptance changes.")
 	require.Contains(t, plain, " runtime ")
 	require.Contains(t, plain, "Acceptance schedule")
+	require.Contains(t, plain, " conversation ")
+	require.Contains(t, plain, "Add bookmark")
 	require.Contains(t, plain, "acceptance-agent")
 	require.Contains(t, plain, "/agents run acceptance-agent ")
 	require.NotContains(t, plain, "UNTRACKED .codog")

@@ -175,6 +175,7 @@ type SlashResult struct {
 	SessionChoices     []SessionChoice
 	OpenModelPicker    bool
 	OpenTodos          bool
+	OpenMessageActions bool
 	Diff               *DiffView
 	PermissionSettings *PermissionSettings
 	Information        *InformationView
@@ -1993,6 +1994,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			next, cmd := m.toggleTodos()
 			return next, sequenceCommands(m.flushInlineTranscript(), cmd)
 		}
+		if msg.Err == nil && !msg.Interrupted && msg.OpenMessageActions {
+			m.streamingIndex = -1
+			m.discardLatestSlashInput()
+			m.openLatestUserMessageActions()
+			m.refreshViewport()
+			return m, m.flushInlineTranscript()
+		}
 		if msg.Err == nil && !msg.Interrupted && msg.Diff != nil {
 			m.streamingIndex = -1
 			m.discardLatestSlashInput()
@@ -3231,6 +3239,7 @@ type turnDoneMsg struct {
 	SessionChoices     []SessionChoice
 	OpenModelPicker    bool
 	OpenTodos          bool
+	OpenMessageActions bool
 	Diff               *DiffView
 	PermissionSettings *PermissionSettings
 	Information        *InformationView
@@ -4806,6 +4815,7 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 			SessionChoices:     append([]SessionChoice(nil), result.SessionChoices...),
 			OpenModelPicker:    result.OpenModelPicker,
 			OpenTodos:          result.OpenTodos,
+			OpenMessageActions: result.OpenMessageActions,
 			Diff:               result.Diff,
 			PermissionSettings: result.PermissionSettings,
 			Information:        result.Information,
@@ -4815,7 +4825,7 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 }
 
 func slashResultHasInteractiveView(result SlashResult) bool {
-	return result.Session != nil || len(result.SessionChoices) > 0 || result.OpenModelPicker || result.OpenTodos || result.Diff != nil || result.PermissionSettings != nil || result.Information != nil || result.CommandView != nil
+	return result.Session != nil || len(result.SessionChoices) > 0 || result.OpenModelPicker || result.OpenTodos || result.OpenMessageActions || result.Diff != nil || result.PermissionSettings != nil || result.Information != nil || result.CommandView != nil
 }
 
 type turnStreamMsg struct {

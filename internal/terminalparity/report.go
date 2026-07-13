@@ -49,6 +49,7 @@ type Report struct {
 	TUISettingsTabs           bool     `json:"tui_settings_tabs"`
 	TUIExtensionTabs          bool     `json:"tui_extension_tabs"`
 	TUIRuntimeTabs            bool     `json:"tui_runtime_tabs"`
+	TUIConversationTabs       bool     `json:"tui_conversation_tabs"`
 	TUIStatusBar              bool     `json:"tui_status_bar"`
 	TUIPreviewWidth           int      `json:"tui_preview_width"`
 	TUIPreviewHeight          int      `json:"tui_preview_height"`
@@ -101,6 +102,14 @@ func Build() Report {
 			{Title: "Agent runs", Items: []tui.CommandViewItem{{Label: "@reviewer · inspect changes", Value: "running · healthy"}}, RefreshCommand: "/agents runs"},
 		},
 	}, []string{"right", "right", "right"}, 80, 24)
+	conversationPreview := tui.PreviewWithCommandView(tui.CommandView{
+		Title: "Conversation",
+		Tabs: []tui.CommandViewTab{
+			{Title: "History", Items: []tui.CommandViewItem{{Label: "inspect changes", Value: "user", Action: "prefill", Command: "inspect changes"}}, RefreshCommand: "/history"},
+			{Title: "Sessions", Items: []tui.CommandViewItem{{Label: "Current review", Value: "current · 4 messages"}}, RefreshCommand: "/sessions"},
+			{Title: "Bookmarks", Items: []tui.CommandViewItem{{Label: "before-review", Value: "session-1"}}, RefreshCommand: "/bookmarks"},
+		},
+	}, []string{"right", "right"}, 80, 24)
 	report := Report{
 		Status:                    "ready",
 		SlashCommandCount:         len(specs),
@@ -120,6 +129,7 @@ func Build() Report {
 		TUISettingsTabs:           settingsPreview.CommandView && strings.Contains(settingsPreview.View, "Status") && strings.Contains(settingsPreview.View, "Config") && strings.Contains(settingsPreview.View, "Usage") && strings.Contains(settingsPreview.View, "Model") && strings.Contains(settingsPreview.View, "glm52"),
 		TUIExtensionTabs:          extensionsPreview.CommandView && strings.Contains(extensionsPreview.View, "Skills") && strings.Contains(extensionsPreview.View, "MCP") && strings.Contains(extensionsPreview.View, "Hooks") && strings.Contains(extensionsPreview.View, "Plugins") && strings.Contains(extensionsPreview.View, "Agents") && strings.Contains(extensionsPreview.View, "local"),
 		TUIRuntimeTabs:            runtimePreview.CommandView && strings.Contains(runtimePreview.View, "Tasks") && strings.Contains(runtimePreview.View, "Teams") && strings.Contains(runtimePreview.View, "Schedules") && strings.Contains(runtimePreview.View, "Agent runs") && strings.Contains(runtimePreview.View, "@reviewer") && strings.Contains(runtimePreview.View, "R refresh"),
+		TUIConversationTabs:       conversationPreview.CommandView && strings.Contains(conversationPreview.View, "History") && strings.Contains(conversationPreview.View, "Sessions") && strings.Contains(conversationPreview.View, "Bookmarks") && strings.Contains(conversationPreview.View, "before-review") && strings.Contains(conversationPreview.View, "R refresh"),
 		TUIStatusBar:              strings.Contains(submitPreview.View, "Enter send") && strings.Contains(submitPreview.View, "Tab") && strings.Contains(submitPreview.View, "Esc"),
 		TUIPreviewWidth:           80,
 		TUIPreviewHeight:          24,
@@ -141,6 +151,7 @@ func Build() Report {
 		!report.TUISettingsTabs ||
 		!report.TUIExtensionTabs ||
 		!report.TUIRuntimeTabs ||
+		!report.TUIConversationTabs ||
 		!report.TUIStatusBar ||
 		!report.PermissionCommandsPresent ||
 		!report.StatusCommandsPresent ||

@@ -38055,6 +38055,10 @@ func (a *App) tuiSlashHandler(sess *session.Session, modeState *tuiModeState) tu
 				view := a.tuiExtensionsCommandView(selectedTab)
 				result.CommandView = &view
 				result.Output = ""
+			} else if selectedTab, ok := tuiConversationRefreshTab(line); ok {
+				view := a.tuiConversationCommandView(sess, selectedTab)
+				result.CommandView = &view
+				result.Output = ""
 			}
 		}
 		if handled && result.Output != "" {
@@ -38114,6 +38118,22 @@ func (a *App) tuiInteractiveSlashResult(line string, sess *session.Session, mode
 		return a.tuiTeamSlashResult(args, sess)
 	case "/cron":
 		return a.tuiCronSlashResult(args, sess)
+	case "/history":
+		if len(args) == 0 {
+			view := a.tuiConversationCommandView(sess, 0)
+			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+		}
+	case "/sessions":
+		if len(args) == 0 || (len(args) == 1 && normalizeSessionAction(args[0]) == "list") {
+			view := a.tuiConversationCommandView(sess, 1)
+			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+		}
+	case "/bookmarks":
+		return a.tuiBookmarksSlashResult(args, sess)
+	case "/rewind":
+		if len(args) == 0 {
+			return tui.SlashResult{Handled: true, OpenMessageActions: true}, true, nil
+		}
 	case "/model":
 		if len(args) == 0 {
 			return tui.SlashResult{Handled: true, OpenModelPicker: true}, true, nil
@@ -38738,6 +38758,172 @@ func (a *App) tuiSubagentSlashResult(args []string, sess *session.Session) (tui.
 	return a.tuiAgentsSlashResult(mapped, sess)
 }
 
+func (a *App) tuiBookmarksSlashResult(args []string, sess *session.Session) (tui.SlashResult, bool, error) {
+	overrides := config.FlagOverrides{}
+	if sess != nil {
+		overrides.SessionID = sess.ID
+	}
+	req, err := parseBookmarksArgs(args, overrides)
+	if err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	if req.Format == "json" {
+		return tui.SlashResult{}, false, nil
+	}
+	switch req.Action {
+	case "list":
+		if req.All {
+			return tui.SlashResult{}, false, nil
+		}
+		view := a.tuiConversationCommandView(sess, 2)
+		return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+	case "show":
+		view, err := a.tuiBookmarkInformation(req.Ref)
+		return tui.SlashResult{Handled: true, Information: &view}, true, err
+	default:
+		return tui.SlashResult{}, false, nil
+	}
+}
+
+func (a *App) tuiConversationCommandView(sess *session.Session, selectedTab int) tui.CommandView {
+	return tui.CommandView{
+		Title:       "Conversation",
+		SelectedTab: selectedTab,
+		Tabs: []tui.CommandViewTab{
+			a.tuiHistoryCommandTab(sess),
+			a.tuiSessionsCommandTab(sess),
+			a.tuiBookmarksCommandTab(),
+		},
+	}
+}
+
+func (a *App) tuiHistoryCommandTab(sess *session.Session) tui.CommandViewTab {
+	tab := tui.CommandViewTab{Title: "History", RefreshCommand: "/history"}
+	if a.Sessions == nil || sess == nil {
+		tab.Lines = []string{"Prompt history is unavailable."}
+		return tab
+	}
+	entries, err := a.Sessions.PromptHistory(sess.ID)
+	if err != nil {
+		tab.Lines = []string{"Prompt history unavailable: " + err.Error()}
+		return tab
+	}
+	for index := len(entries) - 1; index >= 0; index-- {
+		entry := entries[index]
+		description := fmt.Sprintf("message %d", entry.Index+1)
+		if !entry.Time.IsZero() {
+			description += " · " + entry.Time.Local().Format("2006-01-02 15:04:05")
+		}
+		tab.Items = append(tab.Items, tui.CommandViewItem{
+			Label:       trimSingleLine(entry.Text, 80),
+			Value:       firstNonEmpty(entry.Role, "user"),
+			Description: description,
+			Action:      "prefill",
+			Command:     entry.Text,
+		})
+	}
+	tab.Lines = []string{fmt.Sprintf("%d prompts · newest first", len(entries))}
+	if len(tab.Items) == 0 {
+		tab.Lines = []string{"No prompt history for this conversation."}
+	}
+	return tab
+}
+
+func (a *App) tuiSessionsCommandTab(active *session.Session) tui.CommandViewTab {
+	tab := tui.CommandViewTab{Title: "Sessions", RefreshCommand: "/sessions"}
+	if a.Sessions == nil {
+		tab.Lines = []string{"Session store is unavailable."}
+		return tab
+	}
+	sessions, err := a.Sessions.List()
+	if err != nil {
+		tab.Lines = []string{"Sessions unavailable: " + err.Error()}
+		return tab
+	}
+	activeID := ""
+	if active != nil {
+		activeID = active.ID
+	}
+	for _, choice := range resumeSessionChoices(sessions) {
+		value := fmt.Sprintf("%d messages", choice.MessageCount)
+		if choice.ID == activeID {
+			value = "current · " + value
+		}
+		description := choice.ID
+		if !choice.UpdatedAt.IsZero() {
+			description += " · " + choice.UpdatedAt.Local().Format("2006-01-02 15:04:05")
+		}
+		tab.Items = append(tab.Items, tui.CommandViewItem{
+			Label:       choice.Title,
+			Value:       value,
+			Description: description,
+			Command:     tuiNamedSlashCommand("/resume", choice.ID),
+		})
+	}
+	tab.Lines = []string{fmt.Sprintf("%d conversations", len(sessions))}
+	if len(tab.Items) == 0 {
+		tab.Lines = []string{"No saved conversations."}
+	}
+	return tab
+}
+
+func (a *App) tuiBookmarksCommandTab() tui.CommandViewTab {
+	tab := tui.CommandViewTab{Title: "Bookmarks", RefreshCommand: "/bookmarks"}
+	tab.Items = append(tab.Items, tui.CommandViewItem{
+		Label:       "Add bookmark",
+		Value:       "current message",
+		Description: "Save a named pointer to the current conversation",
+		Action:      "prefill",
+		Command:     "/bookmarks add ",
+	})
+	items, err := bookmarks.NewStore(a.Config.ConfigHome).List(bookmarks.ListOptions{Workspace: a.Workspace})
+	if err != nil {
+		tab.Lines = []string{"Bookmarks unavailable: " + err.Error()}
+		return tab
+	}
+	for _, item := range items {
+		value := firstNonEmpty(item.SessionID, "workspace")
+		if item.PRNumber > 0 {
+			value = fmt.Sprintf("PR #%d", item.PRNumber)
+		}
+		tab.Items = append(tab.Items, tui.CommandViewItem{
+			Label:       item.Name,
+			Value:       value,
+			Description: firstNonEmpty(trimSingleLine(item.Note, 96), item.ID),
+			Command:     tuiNamedSlashCommand("/bookmarks show", item.ID),
+		})
+	}
+	tab.Lines = []string{fmt.Sprintf("%d saved", len(items))}
+	return tab
+}
+
+func (a *App) tuiBookmarkInformation(ref string) (tui.InformationView, error) {
+	item, err := bookmarks.NewStore(a.Config.ConfigHome).Get(ref)
+	if err != nil {
+		return tui.InformationView{}, err
+	}
+	lines := []string{
+		tuiInformationLine("ID", item.ID),
+		tuiInformationLine("Name", item.Name),
+	}
+	if item.SessionID != "" {
+		lines = append(lines, tuiInformationLine("Session", item.SessionID))
+	}
+	if item.MessageIndex != nil {
+		lines = append(lines, tuiInformationLine("Message", strconv.Itoa(*item.MessageIndex+1)))
+	}
+	if item.PRURL != "" {
+		lines = append(lines, tuiInformationLine("Pull request", item.PRURL))
+	}
+	if item.Note != "" {
+		lines = append(lines, tuiInformationLine("Note", item.Note))
+	}
+	if command := bookmarkResumeCommand(item); command != "" {
+		lines = append(lines, "", command)
+	}
+	return tui.InformationView{Title: "Bookmark", Lines: lines}, nil
+}
+
 func (a *App) tuiBackgroundSlashResult(args []string, sess *session.Session) (tui.SlashResult, bool, error) {
 	if tuiSlashRequestsJSON(args) {
 		return tui.SlashResult{}, false, nil
@@ -39245,6 +39431,26 @@ func tuiExtensionsRefreshTab(line string) (int, bool) {
 		return 4, true
 	}
 	return 0, false
+}
+
+func tuiConversationRefreshTab(line string) (int, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 2 || tuiSlashRequestsJSON(fields[1:]) {
+		return 0, false
+	}
+	command := fields[0]
+	if mapped := slashCommandName(command); mapped != "" {
+		command = slashSwitchName(mapped)
+	}
+	if command != "/bookmarks" {
+		return 0, false
+	}
+	switch normalizeBookmarksAction(fields[1]) {
+	case "add", "delete", "clear":
+		return 2, true
+	default:
+		return 0, false
+	}
 }
 
 func (a *App) tuiDiffView(req diffRequest) (tui.DiffView, error) {

@@ -2512,6 +2512,24 @@ func TestCommandViewPrefillsComposerForPrimaryAndSecondaryActions(t *testing.T) 
 	require.Equal(t, "/agents run reviewer ", m.textarea.Value())
 }
 
+func TestSlashResultOpensMessageActionsForLatestUserTurn(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea(""), nil, []transcriptEntry{
+		{Role: "user", Text: "first prompt"},
+		{Role: "assistant", Text: "first response"},
+		{Role: "user", Text: "/rewind"},
+	})
+
+	updated, _ := m.Update(turnDoneMsg{OpenMessageActions: true})
+	m = updated.(model)
+
+	require.True(t, m.messageActions)
+	require.Equal(t, "first prompt", m.transcript[m.messageActionTarget].Text)
+	for _, entry := range m.transcript {
+		require.NotEqual(t, "/rewind", entry.Text)
+	}
+	require.Contains(t, m.View(), "restore before turn")
+}
+
 func TestSlashPermissionsSelectsSessionMode(t *testing.T) {
 	m := newModel(context.Background(), newPromptTextarea("/permissions"), nil, nil)
 	selected := ""

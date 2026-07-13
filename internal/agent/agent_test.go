@@ -792,6 +792,74 @@ func TestTUISlashHandlerOpensRuntimeManagementViews(t *testing.T) {
 	require.Contains(t, commandViewItemByLabel(t, stoppedRun.CommandView.Tabs[3].Items, "@reviewer · Review runtime changes").Value, "stopped")
 }
 
+func TestTUISlashHandlerOpensConversationManagementViews(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	current, err := store.Open("conversation-current")
+	require.NoError(t, err)
+	require.NoError(t, store.AppendInput(current.ID, "inspect the current changes"))
+	other, err := store.Open("conversation-other")
+	require.NoError(t, err)
+	require.NoError(t, store.AppendInput(other.ID, "review another branch"))
+
+	bookmark, err := bookmarks.NewStore(configHome).Add(bookmarks.Bookmark{
+		Name: "review-point", Workspace: workspace, SessionID: current.ID, Note: "Before review",
+	})
+	require.NoError(t, err)
+
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+	handler := app.tuiSlashHandler(current, newTUIModeState(app.Config))
+
+	for _, test := range []struct {
+		command string
+		tab     int
+		item    string
+	}{
+		{command: "/history", tab: 0, item: "inspect the current changes"},
+		{command: "/sessions", tab: 1, item: "inspect the current changes"},
+		{command: "/bookmarks", tab: 2, item: "review-point"},
+	} {
+		result, err := handler(context.Background(), test.command)
+		require.NoError(t, err, test.command)
+		require.NotNil(t, result.CommandView, test.command)
+		require.Equal(t, test.tab, result.CommandView.SelectedTab, test.command)
+		require.Contains(t, commandViewItemLabels(result.CommandView.Tabs[test.tab].Items), test.item, test.command)
+	}
+
+	history, err := handler(context.Background(), "/history")
+	require.NoError(t, err)
+	historyItem := commandViewItemByLabel(t, history.CommandView.Tabs[0].Items, "inspect the current changes")
+	require.Equal(t, "prefill", historyItem.Action)
+	require.Equal(t, "inspect the current changes", historyItem.Command)
+
+	bookmarkDetail, err := handler(context.Background(), "/bookmarks show "+bookmark.ID)
+	require.NoError(t, err)
+	require.NotNil(t, bookmarkDetail.Information)
+	require.Contains(t, strings.Join(bookmarkDetail.Information.Lines, "\n"), "Before review")
+
+	rewind, err := handler(context.Background(), "/rewind")
+	require.NoError(t, err)
+	require.True(t, rewind.OpenMessageActions)
+
+	jsonHistory, err := handler(context.Background(), "/history --json")
+	require.NoError(t, err)
+	require.Nil(t, jsonHistory.CommandView)
+	require.Contains(t, jsonHistory.Output, `"kind": "prompt_history"`)
+
+	added, err := handler(context.Background(), "/bookmarks add checkpoint")
+	require.NoError(t, err)
+	require.NotNil(t, added.CommandView)
+	require.Equal(t, 2, added.CommandView.SelectedTab)
+	require.Contains(t, commandViewItemLabels(added.CommandView.Tabs[2].Items), "checkpoint")
+}
+
 func diffFilePaths(files []tui.DiffFile) []string {
 	paths := make([]string, 0, len(files))
 	for _, file := range files {
