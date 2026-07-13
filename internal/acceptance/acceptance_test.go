@@ -16,9 +16,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/cron"
 	"github.com/Rememorio/codog/internal/mockanthropic"
+	"github.com/Rememorio/codog/internal/session"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
@@ -94,6 +96,48 @@ expect eof
 	require.Contains(t, output, " settings ")
 	require.Contains(t, output, "Workspace")
 	require.NotContains(t, output, "\x1b[?1049h")
+}
+
+func TestRealBinaryTUITagsAndSearchesSavedSessionWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("tagged-session", anthropic.TextMessage("user", "investigate auth flow")))
+	_, err := store.SetTag("tagged-session", "security")
+	require.NoError(t, err)
+	require.NoError(t, store.Append("other-session", anthropic.TextMessage("user", "prepare release notes")))
+
+	output := runExpectCodog(t, bin, workspace, configHome, nil, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model glm52 tui
+expect "codog"
+send "/resume\r"
+expect "Resume a session"
+expect "#security"
+send "security"
+expect "Filter: security"
+expect "#security"
+send "\r"
+expect "Session tagged-session"
+expect "#security"
+send "/tag security\r"
+expect "Remove tag?"
+expect "Yes, remove tag"
+expect "No, keep tag"
+send "\033\[B\r"
+expect "Kept tag #security"
+send "/exit\r"
+expect eof
+`)
+
+	plain := ansi.Strip(output)
+	require.Contains(t, plain, "Filter: security")
+	require.Contains(t, plain, "Session tagged-session")
+	require.Contains(t, plain, "#security")
+	reopened, err := store.OpenExisting("tagged-session")
+	require.NoError(t, err)
+	require.Equal(t, "security", reopened.Identity.Tag)
 }
 
 func TestRealBinaryTUISlashMenuFiltersAndScrollsWithTTY(t *testing.T) {

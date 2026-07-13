@@ -31,6 +31,26 @@ func TestSessionPickerFiltersAndSelects(t *testing.T) {
 	require.Empty(t, m.View())
 }
 
+func TestSessionPickerShowsAndSearchesTagAndBranch(t *testing.T) {
+	m := newSessionPickerModel([]SessionChoice{
+		{ID: "session-release", Title: "Ship release", Tag: "release candidate", BranchName: "release/next", MessageCount: 6},
+		{ID: "session-auth", Title: "Review auth", Tag: "security", BranchName: "feature/auth", MessageCount: 3},
+	})
+
+	m.query = "security"
+	m.applyFilter()
+	require.Len(t, m.filtered, 1)
+	require.Contains(t, m.View(), "Review auth")
+	require.Contains(t, m.View(), "feature/auth")
+	require.Contains(t, m.View(), "#security")
+
+	m.query = "release/next"
+	m.applyFilter()
+	require.Len(t, m.filtered, 1)
+	require.Contains(t, m.View(), "Ship release")
+	require.Contains(t, m.View(), "#release candidate")
+}
+
 func TestSessionPickerEscapeClearsFilterBeforeCanceling(t *testing.T) {
 	m := newSessionPickerModel([]SessionChoice{{ID: "session-alpha", Title: "Alpha"}})
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("missing")})

@@ -32172,7 +32172,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 	case "/trust":
 		return a.Trust(resumeSlashArgs("trust", args, format))
 	case "/tag":
-		return a.runResumedTagSlash(resumeSlashArgs("tag", args, format), format)
+		return a.runResumedTagSlash(resumeSlashArgs("tag", args, format), resumed, format)
 	case "/stash":
 		return a.runResumedStashSlash(resumeSlashArgs("stash", args, format), format)
 	case "/clear":
@@ -33013,8 +33013,8 @@ func (a *App) runResumedBranchSlash(args []string, format string) error {
 	return a.Branch(args)
 }
 
-func (a *App) runResumedTagSlash(args []string, format string) error {
-	return a.Tag(args)
+func (a *App) runResumedTagSlash(args []string, resumed config.FlagOverrides, format string) error {
+	return a.SessionTag(args, resumed)
 }
 
 func (a *App) runResumedStashSlash(args []string, format string) error {
@@ -38018,6 +38018,8 @@ func resumeSessionChoices(sessions []session.Session) []tui.SessionChoice {
 		choices = append(choices, tui.SessionChoice{
 			ID:           sess.ID,
 			Title:        title,
+			Tag:          sess.Identity.Tag,
+			BranchName:   sess.Metadata.BranchName,
 			Workspace:    sess.Identity.Workspace,
 			MessageCount: len(sess.Messages),
 			UpdatedAt:    updatedAt,
@@ -38225,6 +38227,10 @@ func (a *App) tuiInteractiveSlashResult(ctx context.Context, line string, sess *
 		if !tuiSlashHasStructuredFlags(args) {
 			return a.branchTUISession(ctx, sess, rawArgs)
 		}
+	case "/tag":
+		return a.tagTUISession(sess, rawArgs)
+	case "/conversation-tag":
+		return a.completeTUISessionTag(sess, args)
 	case "/plan", "/ultraplan":
 		return a.tuiPlanSlashResult(rawArgs, modeState)
 	case "/compact":
@@ -38364,6 +38370,12 @@ func tuiSessionEntries(sess *session.Session) []tui.Entry {
 	sessionLabel := "Session " + sess.ID
 	if title := strings.TrimSpace(sess.Identity.Title); title != "" && title != sess.ID {
 		sessionLabel += " · " + title
+	}
+	if branch := strings.TrimSpace(sess.Metadata.BranchName); branch != "" {
+		sessionLabel += " · " + branch
+	}
+	if tag := strings.TrimSpace(sess.Identity.Tag); tag != "" {
+		sessionLabel += " · #" + tag
 	}
 	entries := []tui.Entry{{Role: "system", Text: sessionLabel}}
 	toolEntries := map[string]int{}
@@ -39073,7 +39085,15 @@ func (a *App) tuiSessionsCommandTab(active *session.Session) tui.CommandViewTab 
 		activeID = active.ID
 	}
 	for _, choice := range resumeSessionChoices(sessions) {
-		value := fmt.Sprintf("%d messages", choice.MessageCount)
+		valueParts := []string{}
+		if branch := strings.TrimSpace(choice.BranchName); branch != "" {
+			valueParts = append(valueParts, branch)
+		}
+		if tag := strings.TrimSpace(choice.Tag); tag != "" {
+			valueParts = append(valueParts, "#"+tag)
+		}
+		valueParts = append(valueParts, fmt.Sprintf("%d messages", choice.MessageCount))
+		value := strings.Join(valueParts, " · ")
 		if choice.ID == activeID {
 			value = "current · " + value
 		}
@@ -39922,6 +39942,96 @@ func tuiSideQuestionInformation(line string, output string) (tui.InformationView
 		lines = lines[:len(lines)-1]
 	}
 	return tui.InformationView{Title: "/btw", Lines: lines, DismissOnConfirm: true}, true
+}
+
+const sessionTagHelp = `Usage: /tag <tag-name>
+
+Toggle a searchable tag on the current session.
+Run the same command again to remove the tag.
+Tags are shown in /resume and can be searched there.
+
+Examples:
+  /tag bugfix
+  /tag feature-auth
+  /tag wip`
+
+func (a *App) tagTUISession(sess *session.Session, tag string) (tui.SlashResult, bool, error) {
+	if sess == nil || strings.TrimSpace(sess.ID) == "" {
+		return tui.SlashResult{Handled: true}, true, errors.New("session is required")
+	}
+	if a.Sessions == nil {
+		return tui.SlashResult{Handled: true}, true, errors.New("session store is not configured")
+	}
+	tag = strings.TrimSpace(tag)
+	if tag == "" || tag == "-h" || tag == "--help" || tag == "help" {
+		return tui.SlashResult{Handled: true, Output: sessionTagHelp}, true, nil
+	}
+	tag = session.NormalizeSessionTag(tag)
+	if tag == "" {
+		return tui.SlashResult{Handled: true}, true, errors.New("tag name cannot be empty")
+	}
+	if tag == session.NormalizeSessionTag(sess.Identity.Tag) {
+		view := tui.CommandView{
+			Title: "Remove tag?",
+			Tabs: []tui.CommandViewTab{{
+				Title: "Confirm",
+				Lines: []string{
+					"Current tag: #" + tag,
+					"This will remove the tag from the current session.",
+				},
+				Items: []tui.CommandViewItem{
+					{Label: "Yes, remove tag", Command: "/conversation-tag remove"},
+					{Label: "No, keep tag", Command: "/conversation-tag keep"},
+				},
+			}},
+		}
+		return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+	}
+	identity, err := a.Sessions.SetTag(sess.ID, tag)
+	if err != nil {
+		return tui.SlashResult{Handled: true}, true, err
+	}
+	sess.Identity.Tag = identity.Tag
+	state := a.tuiSessionState(sess)
+	return tui.SlashResult{
+		Handled: true,
+		Output:  "Tagged session with #" + identity.Tag,
+		Session: &state,
+	}, true, nil
+}
+
+func (a *App) completeTUISessionTag(sess *session.Session, args []string) (tui.SlashResult, bool, error) {
+	if sess == nil || strings.TrimSpace(sess.ID) == "" {
+		return tui.SlashResult{Handled: true}, true, errors.New("session is required")
+	}
+	if a.Sessions == nil {
+		return tui.SlashResult{Handled: true}, true, errors.New("session store is not configured")
+	}
+	if len(args) != 1 {
+		return tui.SlashResult{Handled: true}, true, errors.New("invalid session tag confirmation")
+	}
+	current := session.NormalizeSessionTag(sess.Identity.Tag)
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "keep":
+		if current == "" {
+			return tui.SlashResult{Handled: true, Output: "No session tag is set."}, true, nil
+		}
+		state := a.tuiSessionState(sess)
+		return tui.SlashResult{Handled: true, Output: "Kept tag #" + current, Session: &state}, true, nil
+	case "remove":
+		if current == "" {
+			return tui.SlashResult{Handled: true, Output: "No session tag is set."}, true, nil
+		}
+		identity, err := a.Sessions.SetTag(sess.ID, "")
+		if err != nil {
+			return tui.SlashResult{Handled: true}, true, err
+		}
+		sess.Identity.Tag = identity.Tag
+		state := a.tuiSessionState(sess)
+		return tui.SlashResult{Handled: true, Output: "Removed tag #" + current, Session: &state}, true, nil
+	default:
+		return tui.SlashResult{Handled: true}, true, errors.New("invalid session tag confirmation")
+	}
 }
 
 func (a *App) renameTUISession(sess *session.Session, name string) (tui.SlashResult, bool, error) {
@@ -42406,7 +42516,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/tag":
-		if err := a.Tag(fields[1:]); err != nil {
+		if err := a.sessionTagCommand(fields[1:], config.FlagOverrides{Resume: sess.ID}, sess); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/log":
@@ -48965,6 +49075,161 @@ func renderTrustReport(out io.Writer, report trustReport) {
 			fmt.Fprintln(out)
 		}
 	}
+}
+
+type sessionTagRequest struct {
+	Format    string
+	SessionID string
+	Tag       string
+	Confirm   bool
+	Help      bool
+}
+
+type sessionTagReport struct {
+	Kind        string `json:"kind"`
+	Action      string `json:"action"`
+	Status      string `json:"status"`
+	SessionID   string `json:"session_id"`
+	Tag         string `json:"tag,omitempty"`
+	PreviousTag string `json:"previous_tag,omitempty"`
+	Message     string `json:"message"`
+}
+
+// SessionTag toggles a searchable tag on a resumed conversation. Git tags
+// remain available through the direct `codog tag` command.
+func (a *App) SessionTag(args []string, overrides config.FlagOverrides) error {
+	return a.sessionTagCommand(args, overrides, nil)
+}
+
+func (a *App) sessionTagCommand(args []string, overrides config.FlagOverrides, current *session.Session) error {
+	req, err := parseSessionTagArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	if req.Help {
+		if req.Format == "json" {
+			report := sessionTagReport{Kind: "session_tag", Action: "help", Status: "ok", SessionID: req.SessionID, Message: sessionTagHelp}
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprintln(a.Out, sessionTagHelp)
+		return nil
+	}
+	if a.Sessions == nil {
+		return errors.New("session store is not configured")
+	}
+	if current == nil || (req.SessionID != "latest" && current.ID != req.SessionID) {
+		current, err = a.Sessions.OpenExisting(req.SessionID)
+		if err != nil {
+			return err
+		}
+	}
+	tag := session.NormalizeSessionTag(req.Tag)
+	if tag == "" {
+		return errors.New("tag name cannot be empty")
+	}
+	previous := session.NormalizeSessionTag(current.Identity.Tag)
+	report := sessionTagReport{
+		Kind:        "session_tag",
+		Action:      "set",
+		Status:      "ok",
+		SessionID:   current.ID,
+		Tag:         tag,
+		PreviousTag: previous,
+		Message:     "Tagged session with #" + tag,
+	}
+	if previous == tag {
+		report.Action = "remove"
+		if !req.Confirm {
+			report.Status = "confirmation_required"
+			report.Message = "Tag #" + tag + " is already set. Run the command again with --confirm to remove it."
+			return renderSessionTagReport(a.Out, req.Format, report)
+		}
+		identity, setErr := a.Sessions.SetTag(current.ID, "")
+		if setErr != nil {
+			return setErr
+		}
+		current.Identity.Tag = identity.Tag
+		report.Tag = ""
+		report.Message = "Removed tag #" + tag
+		return renderSessionTagReport(a.Out, req.Format, report)
+	}
+	identity, err := a.Sessions.SetTag(current.ID, tag)
+	if err != nil {
+		return err
+	}
+	current.Identity.Tag = identity.Tag
+	return renderSessionTagReport(a.Out, req.Format, report)
+}
+
+func parseSessionTagArgs(args []string, overrides config.FlagOverrides) (sessionTagRequest, error) {
+	const usage = "/tag <tag-name> [--confirm] [--json|--output-format text|json]"
+	req := sessionTagRequest{Format: "text", SessionID: "latest"}
+	if strings.TrimSpace(overrides.Resume) != "" {
+		req.SessionID = strings.TrimSpace(overrides.Resume)
+	} else if strings.TrimSpace(overrides.SessionID) != "" {
+		req.SessionID = strings.TrimSpace(overrides.SessionID)
+	}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "tag", Flag: arg, Usage: usage}
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "tag", Flag: arg, Usage: usage}
+			}
+			req.SessionID = strings.TrimSpace(args[index])
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimSpace(strings.TrimPrefix(arg, "--session="))
+		case arg == "--confirm":
+			req.Confirm = true
+		case arg == "--help" || arg == "-h":
+			req.Help = true
+		case arg == "--":
+			positionals = append(positionals, args[index+1:]...)
+			index = len(args)
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: "tag", Option: arg, Usage: usage}
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	format, err := normalizeOutputFormat("tag", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
+	}
+	req.Format = format
+	if len(positionals) == 1 && strings.EqualFold(strings.TrimSpace(positionals[0]), "help") {
+		req.Help = true
+		positionals = nil
+	}
+	req.Tag = strings.Join(positionals, " ")
+	if strings.TrimSpace(req.Tag) == "" {
+		req.Help = true
+	}
+	return req, nil
+}
+
+func renderSessionTagReport(out io.Writer, format string, report sessionTagReport) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, report.Message)
+	return nil
 }
 
 type tagRequest struct {

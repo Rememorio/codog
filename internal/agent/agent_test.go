@@ -366,8 +366,8 @@ func TestResumeSessionChoicesUseIdentityAndPromptFallback(t *testing.T) {
 	choices := resumeSessionChoices([]session.Session{
 		{
 			ID:       "named-session",
-			Identity: session.SessionIdentity{Title: "Review auth flow", Workspace: "/workspace/auth"},
-			Metadata: session.SessionMetadata{UpdatedAt: updated},
+			Identity: session.SessionIdentity{Title: "Review auth flow", Tag: "security", Workspace: "/workspace/auth"},
+			Metadata: session.SessionMetadata{UpdatedAt: updated, BranchName: "feature/auth"},
 			Messages: []anthropic.Message{anthropic.TextMessage("user", "ignored fallback")},
 		},
 		{
@@ -380,6 +380,8 @@ func TestResumeSessionChoicesUseIdentityAndPromptFallback(t *testing.T) {
 
 	require.Len(t, choices, 2)
 	require.Equal(t, "Review auth flow", choices[0].Title)
+	require.Equal(t, "security", choices[0].Tag)
+	require.Equal(t, "feature/auth", choices[0].BranchName)
 	require.Equal(t, "/workspace/auth", choices[0].Workspace)
 	require.Equal(t, updated, choices[0].UpdatedAt)
 	require.Equal(t, "Investigate the scheduler race in the worker pool", choices[1].Title)
@@ -1030,6 +1032,68 @@ func TestTUISlashHandlerRenamesAndBranchesConversations(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "Investigate scheduler timeout", source.Identity.Title)
 	require.Len(t, source.Messages, 1)
+}
+
+func TestTUISlashHandlerTogglesSearchableSessionTag(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	current, err := store.CreateWithIdentity("tag-source", session.SessionIdentity{Title: "Tag workflow"})
+	require.NoError(t, err)
+	require.NoError(t, store.Append(current.ID, anthropic.TextMessage("user", "inspect tagged session")))
+	current, err = store.OpenExisting(current.ID)
+	require.NoError(t, err)
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome, Model: "glm52"},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+	handler := app.tuiSlashHandler(current, newTUIModeState(app.Config))
+
+	set, err := handler(context.Background(), "/tag release candidate")
+	require.NoError(t, err)
+	require.NotNil(t, set.Session)
+	require.Equal(t, "release candidate", current.Identity.Tag)
+	require.Contains(t, set.Output, "#release candidate")
+	require.Contains(t, set.Session.Entries[0].Text, "#release candidate")
+
+	confirm, err := handler(context.Background(), "/tag release candidate")
+	require.NoError(t, err)
+	require.NotNil(t, confirm.CommandView)
+	require.Equal(t, "Remove tag?", confirm.CommandView.Title)
+	require.Equal(t, []string{"Yes, remove tag", "No, keep tag"}, commandViewItemLabels(confirm.CommandView.Tabs[0].Items))
+
+	kept, err := handler(context.Background(), "/conversation-tag keep")
+	require.NoError(t, err)
+	require.Contains(t, kept.Output, "Kept tag #release candidate")
+	require.Equal(t, "release candidate", current.Identity.Tag)
+
+	removed, err := handler(context.Background(), "/conversation-tag remove")
+	require.NoError(t, err)
+	require.Contains(t, removed.Output, "Removed tag #release candidate")
+	require.Empty(t, current.Identity.Tag)
+	require.NotContains(t, removed.Session.Entries[0].Text, "#release candidate")
+
+	sanitized, err := handler(context.Background(), "/tag sec\u200burity")
+	require.NoError(t, err)
+	require.Equal(t, "security", current.Identity.Tag)
+	require.Contains(t, sanitized.Output, "#security")
+
+	reopened, err := store.OpenExisting(current.ID)
+	require.NoError(t, err)
+	require.Equal(t, "security", reopened.Identity.Tag)
+	choices, err := app.tuiResumeSessionChoices("")
+	require.NoError(t, err)
+	require.Len(t, choices, 1)
+	preview := tui.PreviewSessionPicker(choices, "security", 80, 24, true)
+	require.Equal(t, current.ID, preview.SelectedID)
+	require.Contains(t, preview.View, "#security")
+
+	help, err := handler(context.Background(), "/tag")
+	require.NoError(t, err)
+	require.Contains(t, help.Output, "Usage: /tag <tag-name>")
 }
 
 func TestTUISideQuestionUsesDismissibleInformationPanel(t *testing.T) {
@@ -10125,21 +10189,27 @@ func risky(value any) {
 		}
 		require.True(t, createdBranchFound)
 
-		out, err = runResumedJSON("/tag", "show", "v0.1.0")
+		out, err = runResumedJSON("/tag", "release candidate")
 		require.NoError(t, err)
-		var resumedTag tagReport
+		var resumedTag sessionTagReport
 		require.NoError(t, json.Unmarshal([]byte(out), &resumedTag))
-		require.Equal(t, "tag", resumedTag.Kind)
-		require.Equal(t, "show", resumedTag.Action)
+		require.Equal(t, "session_tag", resumedTag.Kind)
+		require.Equal(t, "set", resumedTag.Action)
+		require.Equal(t, "release candidate", resumedTag.Tag)
 
-		out, err = runResumedJSON("/tag", "create", "v9.9.9")
+		out, err = runResumedJSON("/tag", "release candidate")
 		require.NoError(t, err)
-		var resumedTagCreate tagReport
-		require.NoError(t, json.Unmarshal([]byte(out), &resumedTagCreate))
-		require.Equal(t, "tag", resumedTagCreate.Kind)
-		require.Equal(t, "create", resumedTagCreate.Action)
-		require.Len(t, resumedTagCreate.Tags, 1)
-		require.Equal(t, "v9.9.9", resumedTagCreate.Tags[0].Name)
+		var resumedTagConfirm sessionTagReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedTagConfirm))
+		require.Equal(t, "confirmation_required", resumedTagConfirm.Status)
+		require.Equal(t, "remove", resumedTagConfirm.Action)
+
+		out, err = runResumedJSON("/tag", "release candidate", "--confirm")
+		require.NoError(t, err)
+		var resumedTagRemove sessionTagReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedTagRemove))
+		require.Equal(t, "remove", resumedTagRemove.Action)
+		require.Empty(t, resumedTagRemove.Tag)
 
 		out, err = runResumedJSON("/stash", "list")
 		require.NoError(t, err)
@@ -17159,30 +17229,42 @@ func TestG004ConformanceCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
-func TestTagCommandAndSlash(t *testing.T) {
+func TestGitTagCommandAndSessionTagSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello tag\n"), 0o644))
 	runGit(t, workspace, "add", ".")
 	runGit(t, workspace, "commit", "-m", "add tag notes")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
-	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
-	sess := &session.Session{ID: "session"}
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	sess, err := store.Open("session")
+	require.NoError(t, err)
+	app := &App{Workspace: workspace, Sessions: store, Out: &out, Err: &errOut}
 
 	require.NoError(t, app.Tag([]string{"create", "v0.1.0", "--message", "release v0.1.0", "--json"}))
 	require.Contains(t, out.String(), `"kind": "tag"`)
 	require.Contains(t, out.String(), `"name": "v0.1.0"`)
 	out.Reset()
 
-	require.True(t, app.handleSlash(context.Background(), "/tag list v0.*", sess))
-	require.Contains(t, out.String(), "v0.1.0")
+	require.True(t, app.handleSlash(context.Background(), "/tag release", sess))
+	require.Contains(t, out.String(), "Tagged session with #release")
+	require.Equal(t, "release", sess.Identity.Tag)
 	out.Reset()
 
 	require.NoError(t, app.Git([]string{"tag", "show", "v0.1.0"}))
 	require.Contains(t, out.String(), "release v0.1.0")
 	out.Reset()
 
-	require.True(t, app.handleSlash(context.Background(), "/tag delete v0.1.0", sess))
+	require.True(t, app.handleSlash(context.Background(), "/tag release", sess))
+	require.Contains(t, out.String(), "--confirm")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/tag release --confirm", sess))
+	require.Contains(t, out.String(), "Removed tag #release")
+	require.Empty(t, sess.Identity.Tag)
+	out.Reset()
+
+	require.NoError(t, app.Tag([]string{"delete", "v0.1.0"}))
 	require.Contains(t, out.String(), "Deleted tag")
 	require.Empty(t, errOut.String())
 }

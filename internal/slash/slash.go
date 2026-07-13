@@ -123,7 +123,7 @@ func Specs() []Spec {
 		{Name: "/g004", Usage: "/g004 [validate]", Description: "Alias for /g004-conformance."},
 		{Name: "/report-schema", Usage: "/report-schema [registry|canonicalize|project|conformance|conformance-fixtures]", Description: "Inspect report schemas and validate reporting consumer conformance."},
 		{Name: "/trust", Usage: "/trust [resolve] [SCREEN_TEXT]", Description: "Resolve a workspace trust prompt against allow and deny rules."},
-		{Name: "/tag", Usage: "/tag [list|create|show|delete]", Description: "Manage local git tags."},
+		{Name: "/tag", Usage: "/tag <tag-name>", Description: "Toggle a searchable tag on the current conversation."},
 		{Name: "/git", Usage: "/git status|diff|log|blame", Description: "Run a supported git workflow."},
 		{Name: "/log", Usage: "/log [count]", Description: "Show recent git commits."},
 		{Name: "/changelog", Usage: "/changelog [count]", Description: "Show recent git changes with stats."},

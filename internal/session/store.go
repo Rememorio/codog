@@ -13,8 +13,10 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Rememorio/codog/internal/anthropic"
+	"golang.org/x/text/unicode/norm"
 )
 
 type Record struct {
@@ -50,6 +52,7 @@ type SessionMetadata struct {
 
 type SessionIdentity struct {
 	Title        string                `json:"title,omitempty"`
+	Tag          string                `json:"tag,omitempty"`
 	Workspace    string                `json:"workspace,omitempty"`
 	Worktree     string                `json:"worktree,omitempty"`
 	Purpose      string                `json:"purpose,omitempty"`
@@ -217,6 +220,8 @@ const MaxSessionJSONLBytes int64 = 5 * 1024 * 1024
 // MaxRotatedSessionLogs is the number of oversized transcript snapshots kept
 // next to the active session JSONL.
 const MaxRotatedSessionLogs = 3
+
+var strippedSessionTagRunes = []*unicode.RangeTable{unicode.Cc, unicode.Cf, unicode.Cn, unicode.Co, unicode.Cs}
 
 var sessionFileExtensions = []string{primarySessionExtension, legacySessionExtension}
 var sessionReferenceAliases = map[string]struct{}{
@@ -1261,23 +1266,68 @@ func (s *Store) UpdateIdentity(id string, update SessionIdentity) (SessionIdenti
 	if reflect.DeepEqual(current, next) {
 		return current, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return SessionIdentity{}, err
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return SessionIdentity{}, err
-	}
-	defer file.Close()
-	if err := writeRecord(file, Record{
-		Type:      "session_identity",
-		Time:      time.Now().UTC(),
-		SessionID: id,
-		Identity:  &next,
-	}); err != nil {
+	if err := appendSessionIdentity(path, id, next); err != nil {
 		return SessionIdentity{}, err
 	}
 	return next, nil
+}
+
+// SetTag replaces or clears the searchable tag attached to a saved session.
+func (s *Store) SetTag(id string, tag string) (SessionIdentity, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return SessionIdentity{}, errors.New("session id is required")
+	}
+	tag = NormalizeSessionTag(tag)
+	if s.PersistenceDisabled {
+		if IsSessionReferenceAlias(id) {
+			return SessionIdentity{}, ErrNoSessions
+		}
+		if err := validateSessionID(id); err != nil {
+			return SessionIdentity{}, err
+		}
+		return normalizeSessionIdentity(id, s.Workspace, SessionIdentity{Tag: tag}), nil
+	}
+	if IsSessionReferenceAlias(id) {
+		latest, err := s.LatestID()
+		if err != nil {
+			return SessionIdentity{}, err
+		}
+		id = latest
+	}
+	path := s.pathFor(id)
+	records, err := s.readRecords(path)
+	if err != nil {
+		return SessionIdentity{}, err
+	}
+	current := identityFromRecords(id, s.Workspace, records)
+	next := current
+	next.Tag = tag
+	next = normalizeSessionIdentity(id, s.Workspace, next)
+	if reflect.DeepEqual(current, next) {
+		return current, nil
+	}
+	if err := appendSessionIdentity(path, id, next); err != nil {
+		return SessionIdentity{}, err
+	}
+	return next, nil
+}
+
+func appendSessionIdentity(path string, id string, identity SessionIdentity) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return writeRecord(file, Record{
+		Type:      "session_identity",
+		Time:      time.Now().UTC(),
+		SessionID: id,
+		Identity:  &identity,
+	})
 }
 
 func (s *Store) Usage(id string) ([]UsageEntry, error) {
@@ -2016,6 +2066,9 @@ func mergeSessionIdentity(base SessionIdentity, update SessionIdentity) SessionI
 	if strings.TrimSpace(update.Title) != "" {
 		base.Title = strings.TrimSpace(update.Title)
 	}
+	if tag := NormalizeSessionTag(update.Tag); tag != "" {
+		base.Tag = tag
+	}
 	if strings.TrimSpace(update.Workspace) != "" {
 		base.Workspace = strings.TrimSpace(update.Workspace)
 	}
@@ -2033,11 +2086,25 @@ func normalizeSessionIdentity(id string, workspace string, identity SessionIdent
 	if identity.Title == "" {
 		identity.Title = strings.TrimSpace(id)
 	}
+	identity.Tag = NormalizeSessionTag(identity.Tag)
 	identity.Workspace = canonicalWorkspace(firstSessionIdentityValue(identity.Workspace, workspace))
 	identity.Worktree = canonicalWorkspace(firstSessionIdentityValue(identity.Worktree, identity.Workspace))
 	identity.Purpose = strings.TrimSpace(identity.Purpose)
 	identity.Placeholders = sessionIdentityPlaceholders(identity)
 	return identity
+}
+
+// NormalizeSessionTag removes invisible Unicode controls and surrounding
+// whitespace before a tag is persisted or rendered in a terminal.
+func NormalizeSessionTag(tag string) string {
+	tag = norm.NFKC.String(tag)
+	tag = strings.Map(func(r rune) rune {
+		if unicode.IsOneOf(strippedSessionTagRunes, r) {
+			return -1
+		}
+		return r
+	}, tag)
+	return strings.TrimSpace(tag)
 }
 
 func firstSessionIdentityValue(values ...string) string {

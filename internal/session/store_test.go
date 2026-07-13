@@ -375,6 +375,50 @@ func TestStoreUpdateIdentityRespectsPersistenceDisabled(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoSessions)
 }
 
+func TestStoreSetTagPersistsReplacesSanitizesAndClears(t *testing.T) {
+	store := NewWorkspaceStore(t.TempDir(), t.TempDir())
+	created, err := store.CreateWithIdentity("tagged-session", SessionIdentity{Title: "Review release"})
+	require.NoError(t, err)
+
+	identity, err := store.SetTag(created.ID, "  \uFF57\uFF49\uFF50\u200b\ue000  ")
+	require.NoError(t, err)
+	require.Equal(t, "wip", identity.Tag)
+	require.Equal(t, "Review release", identity.Title)
+
+	identity, err = store.SetTag(created.ID, "release candidate")
+	require.NoError(t, err)
+	require.Equal(t, "release candidate", identity.Tag)
+
+	reopened, err := store.OpenExisting(created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "release candidate", reopened.Identity.Tag)
+
+	identity, err = store.SetTag(created.ID, "")
+	require.NoError(t, err)
+	require.Empty(t, identity.Tag)
+	reopened, err = store.OpenExisting(created.ID)
+	require.NoError(t, err)
+	require.Empty(t, reopened.Identity.Tag)
+	require.Equal(t, "Review release", reopened.Identity.Title)
+
+	data, err := os.ReadFile(created.Path)
+	require.NoError(t, err)
+	require.Equal(t, 4, strings.Count(string(data), `"type":"session_identity"`))
+}
+
+func TestStoreSetTagRespectsPersistenceDisabled(t *testing.T) {
+	store := NewWorkspaceStore(t.TempDir(), t.TempDir())
+	store.PersistenceDisabled = true
+
+	identity, err := store.SetTag("ephemeral-session", "ephemeral")
+	require.NoError(t, err)
+	require.Equal(t, "ephemeral", identity.Tag)
+	require.NoFileExists(t, filepath.Join(store.Dir, "ephemeral-session.jsonl"))
+
+	_, err = store.SetTag("latest", "ephemeral")
+	require.ErrorIs(t, err, ErrNoSessions)
+}
+
 func TestStorePruneDryRunAndConfirmEmptySessions(t *testing.T) {
 	store := NewStore(t.TempDir())
 	_, err := store.Create("empty-session")

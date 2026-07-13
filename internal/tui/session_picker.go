@@ -13,6 +13,8 @@ import (
 type SessionChoice struct {
 	ID           string
 	Title        string
+	Tag          string
+	BranchName   string
 	Workspace    string
 	MessageCount int
 	UpdatedAt    time.Time
@@ -208,7 +210,7 @@ func (m *sessionPickerModel) applyFilter() {
 	query := strings.ToLower(strings.TrimSpace(m.query))
 	m.filtered = m.filtered[:0]
 	for index, choice := range m.choices {
-		haystack := strings.ToLower(strings.Join([]string{choice.ID, choice.Title, choice.Workspace}, " "))
+		haystack := strings.ToLower(strings.Join([]string{choice.ID, choice.Title, choice.Tag, choice.BranchName, choice.Workspace}, " "))
 		if query == "" || strings.Contains(haystack, query) {
 			m.filtered = append(m.filtered, index)
 		}
@@ -246,13 +248,21 @@ func renderSessionChoice(choice SessionChoice, selected bool, width int, themed 
 	if title == "" {
 		title = choice.ID
 	}
-	meta := fmt.Sprintf("%d %s", choice.MessageCount, plural("message", choice.MessageCount))
+	metaParts := make([]string, 0, 5)
+	if branch := strings.TrimSpace(choice.BranchName); branch != "" {
+		metaParts = append(metaParts, branch)
+	}
+	if tag := strings.TrimSpace(choice.Tag); tag != "" {
+		metaParts = append(metaParts, "#"+tag)
+	}
+	metaParts = append(metaParts, fmt.Sprintf("%d %s", choice.MessageCount, plural("message", choice.MessageCount)))
 	if !choice.UpdatedAt.IsZero() {
-		meta += " · " + relativeSessionTime(choice.UpdatedAt, time.Now())
+		metaParts = append(metaParts, relativeSessionTime(choice.UpdatedAt, time.Now()))
 	}
 	if id := abbreviatedSessionID(choice.ID); id != "" && id != title {
-		meta += " · " + id
+		metaParts = append(metaParts, id)
 	}
+	meta := strings.Join(metaParts, " · ")
 	line := truncateFooterLine(marker+title+"  "+meta, max(1, width))
 	if selected {
 		return styles.selectedCompletion().Render(line)
