@@ -10,7 +10,7 @@ import (
 
 func TestStoreAppendAndList(t *testing.T) {
 	store := &Store{Path: filepath.Join(t.TempDir(), "events.jsonl")}
-	require.NoError(t, store.Append(Event{Type: "permission", Time: time.Unix(1, 0).UTC(), ToolName: "bash", Allowed: Bool(false)}))
+	require.NoError(t, store.Append(Event{Type: "permission", Time: time.Unix(1, 0).UTC(), ToolName: "bash", Allowed: Bool(false), Feedback: "use read instead", PermissionRule: "bash(go test:*)"}))
 	require.NoError(t, store.Append(Event{Type: "tool_use", Time: time.Unix(2, 0).UTC(), ToolName: "grep"}))
 
 	events, err := store.List(2)
@@ -20,6 +20,8 @@ func TestStoreAppendAndList(t *testing.T) {
 	require.Equal(t, "grep", events[0].ToolName)
 	require.NotNil(t, events[1].Allowed)
 	require.False(t, *events[1].Allowed)
+	require.Equal(t, "use read instead", events[1].Feedback)
+	require.Equal(t, "bash(go test:*)", events[1].PermissionRule)
 }
 
 func TestStoreListMissingFileReturnsEmptySlice(t *testing.T) {

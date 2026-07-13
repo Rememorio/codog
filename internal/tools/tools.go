@@ -609,6 +609,15 @@ type Prompter struct {
 	OnDecision     func(PermissionDecision)
 }
 
+// PermissionResponse is an interactive answer to a permission request.
+// Decision accepts allow_once, allow_always, or deny. Feedback is passed back
+// to the model, and Rule narrows an allow_always answer to the current tool.
+type PermissionResponse struct {
+	Decision string `json:"decision"`
+	Feedback string `json:"feedback,omitempty"`
+	Rule     string `json:"rule,omitempty"`
+}
+
 // PermissionDecision captures the resolved permission outcome for one proposed
 // tool invocation.
 type PermissionDecision struct {
@@ -620,6 +629,8 @@ type PermissionDecision struct {
 	WouldPrompt bool
 	Reason      string
 	Message     string
+	Feedback    string
+	Rule        string
 }
 
 // NewRegistry constructs the default tool registry for a workspace.
@@ -876,12 +887,26 @@ func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessa
 	if strings.EqualFold(canonical, "permission_check") {
 		return r.executePermissionCheck(input, prompter)
 	}
+	decision := PermissionDecision{}
 	if prompter != nil {
-		if err := prompter.Authorize(canonical, tool.Permission(), input); err != nil {
+		var err error
+		decision, err = prompter.AuthorizeDecision(canonical, tool.Permission(), input)
+		if err != nil {
 			return "", err
 		}
 	}
-	return tool.Execute(ctx, input)
+	output, err := tool.Execute(ctx, input)
+	feedback := strings.TrimSpace(decision.Feedback)
+	if err != nil {
+		if feedback != "" {
+			return output, fmt.Errorf("%w; permission feedback: %s", err, feedback)
+		}
+		return output, err
+	}
+	if feedback == "" {
+		return output, err
+	}
+	return appendPermissionFeedback(output, feedback), nil
 }
 
 func (r *Registry) unknownToolError(name string) error {
@@ -921,14 +946,21 @@ func (r *Registry) resolve(name string) (string, Tool, bool) {
 }
 
 func (p *Prompter) Authorize(name string, required Permission, input json.RawMessage) error {
+	_, err := p.AuthorizeDecision(name, required, input)
+	return err
+}
+
+// AuthorizeDecision authorizes one invocation and returns the resolved
+// decision so callers can preserve user feedback in the model-visible result.
+func (p *Prompter) AuthorizeDecision(name string, required Permission, input json.RawMessage) (PermissionDecision, error) {
 	decision := p.Decide(name, required, input)
 	if decision.Allowed {
 		p.emitDecision(decision)
-		return nil
+		return decision, nil
 	}
 	if !decision.WouldPrompt {
 		p.emitDecision(decision)
-		return permissionDecisionError(decision)
+		return decision, permissionDecisionError(decision)
 	}
 	if p.In == nil {
 		p.In = os.Stdin
@@ -943,20 +975,25 @@ func (p *Prompter) Authorize(name string, required Permission, input json.RawMes
 	fmt.Fprintf(p.Err, "\nTool %s requires %s permission.\nInput: %s\nAllow? [y/N/a=always for session] ", name, required, string(input))
 	reader := bufio.NewReader(p.In)
 	answer, _ := reader.ReadString('\n')
-	answer = strings.TrimSpace(strings.ToLower(answer))
-	if answer == "y" || answer == "yes" {
-		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: decision.Mode, Input: decision.Input, Allowed: true, Reason: "user_approved"})
-		return nil
+	response := parsePermissionResponse(answer)
+	feedback := strings.TrimSpace(response.Feedback)
+	if response.Decision == "allow_once" {
+		resolved := PermissionDecision{ToolName: name, Required: required, Mode: decision.Mode, Input: decision.Input, Allowed: true, Reason: "user_approved", Feedback: feedback}
+		p.emitDecision(resolved)
+		return resolved, nil
 	}
-	if answer == "a" || answer == "always" {
-		if !ruleMatchesTool(p.AllowRules, name) {
-			p.AllowRules = append(p.AllowRules, name)
+	if response.Decision == "allow_always" {
+		rule := sessionAllowRule(name, decision.Input, response.Rule)
+		if !permissionRulesContain(p.AllowRules, rule) {
+			p.AllowRules = append(p.AllowRules, rule)
 		}
-		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: decision.Mode, Input: decision.Input, Allowed: true, Reason: "user_approved_always"})
-		return nil
+		resolved := PermissionDecision{ToolName: name, Required: required, Mode: decision.Mode, Input: decision.Input, Allowed: true, Reason: "user_approved_always", Feedback: feedback, Rule: rule}
+		p.emitDecision(resolved)
+		return resolved, nil
 	}
-	p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: decision.Mode, Input: decision.Input, Allowed: false, Reason: "user_denied"})
-	return fmt.Errorf("permission denied for tool %s", name)
+	resolved := PermissionDecision{ToolName: name, Required: required, Mode: decision.Mode, Input: decision.Input, Allowed: false, Reason: "user_denied", Feedback: feedback}
+	p.emitDecision(resolved)
+	return resolved, permissionDecisionError(resolved)
 }
 
 func (p *Prompter) Decide(name string, required Permission, input json.RawMessage) PermissionDecision {
@@ -1079,20 +1116,175 @@ func (p *Prompter) Decide(name string, required Permission, input json.RawMessag
 	return decision
 }
 
+func parsePermissionResponse(answer string) PermissionResponse {
+	answer = strings.TrimSpace(answer)
+	response := PermissionResponse{}
+	if strings.HasPrefix(answer, "{") && json.Unmarshal([]byte(answer), &response) == nil {
+		response.Decision = normalizePermissionResponseDecision(response.Decision)
+		response.Feedback = strings.TrimSpace(response.Feedback)
+		response.Rule = strings.TrimSpace(response.Rule)
+		return response
+	}
+	response.Decision = normalizePermissionResponseDecision(answer)
+	return response
+}
+
+func normalizePermissionResponseDecision(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "y", "yes", "allow", "allow_once":
+		return "allow_once"
+	case "a", "always", "allow_always":
+		return "allow_always"
+	default:
+		return "deny"
+	}
+}
+
+// SuggestedPermissionRule returns a session-scoped allow rule narrowed to the
+// current invocation when its input exposes a stable command, path, or query.
+func SuggestedPermissionRule(name string, input string) string {
+	name = strings.TrimSpace(CanonicalToolName(name))
+	if name == "" {
+		name = "tool"
+	}
+	needle := permissionRuleInputNeedle(name, input)
+	if needle == "" {
+		return name
+	}
+	return fmt.Sprintf("%s(%s)", name, needle)
+}
+
+func permissionRuleInputNeedle(name string, input string) string {
+	var payload map[string]any
+	if json.Unmarshal([]byte(strings.TrimSpace(input)), &payload) != nil {
+		return truncatePermissionRuleNeedle(input)
+	}
+	value := func(keys ...string) string {
+		for _, key := range keys {
+			if text, ok := payload[key].(string); ok && strings.TrimSpace(text) != "" {
+				return strings.TrimSpace(text)
+			}
+		}
+		return ""
+	}
+	var needle string
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "bash", "powershell":
+		needle = shellPermissionPrefix(value("command", "code"))
+	case "read_file", "write_file", "edit_file", "notebook_edit":
+		needle = value("path", "file_path", "notebook_path")
+	case "multi_edit":
+		needle = value("path", "file_path")
+		if needle == "" {
+			if edits, ok := payload["edits"].([]any); ok && len(edits) > 0 {
+				if edit, editOK := edits[0].(map[string]any); editOK {
+					if path, pathOK := edit["path"].(string); pathOK {
+						needle = path
+					} else if path, pathOK := edit["file_path"].(string); pathOK {
+						needle = path
+					}
+				}
+			}
+		}
+	case "grep", "glob":
+		needle = value("pattern", "query")
+	case "web_fetch":
+		needle = value("url")
+	case "web_search":
+		needle = value("query")
+	default:
+		needle = value("path", "file_path", "command", "query", "url", "name", "id")
+	}
+	return truncatePermissionRuleNeedle(needle)
+}
+
+func shellPermissionPrefix(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) > 2 {
+		fields = fields[:2]
+	}
+	for index, field := range fields {
+		if strings.ContainsAny(field, "|;&<>") {
+			fields = fields[:index]
+			break
+		}
+	}
+	return strings.Join(fields, " ")
+}
+
+func truncatePermissionRuleNeedle(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	runes := []rune(value)
+	if len(runes) > 240 {
+		value = string(runes[:240])
+	}
+	return strings.TrimSpace(value)
+}
+
+func sessionAllowRule(name string, input string, requested string) string {
+	fallback := SuggestedPermissionRule(name, input)
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return fallback
+	}
+	if open := strings.Index(requested, "("); open > 0 && strings.HasSuffix(requested, ")") {
+		tool, _ := parsePermissionRule(requested)
+		if tool == "*" || !permissionToolMatches(tool, name) {
+			return fallback
+		}
+		return requested
+	}
+	return fmt.Sprintf("%s(%s)", strings.TrimSpace(CanonicalToolName(name)), truncatePermissionRuleNeedle(requested))
+}
+
+func permissionRulesContain(rules []string, target string) bool {
+	for _, rule := range rules {
+		if strings.EqualFold(strings.TrimSpace(rule), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
+}
+
 func permissionDecisionError(decision PermissionDecision) error {
+	var err error
 	switch decision.Reason {
 	case "denied_tools":
-		return fmt.Errorf("permission denied for tool %s by denied_tools", decision.ToolName)
+		err = fmt.Errorf("permission denied for tool %s by denied_tools", decision.ToolName)
 	case "deny_rule":
-		return fmt.Errorf("permission denied for tool %s by deny rule", decision.ToolName)
+		err = fmt.Errorf("permission denied for tool %s by deny rule", decision.ToolName)
 	case "bash_validation", "powershell_validation", "task_create_validation", "repl_validation":
 		if decision.Message != "" {
-			return fmt.Errorf("permission denied for tool %s by tool validation: %s", decision.ToolName, decision.Message)
+			err = fmt.Errorf("permission denied for tool %s by tool validation: %s", decision.ToolName, decision.Message)
+			break
 		}
-		return fmt.Errorf("permission denied for tool %s by tool validation", decision.ToolName)
+		err = fmt.Errorf("permission denied for tool %s by tool validation", decision.ToolName)
 	default:
-		return fmt.Errorf("permission denied for tool %s", decision.ToolName)
+		err = fmt.Errorf("permission denied for tool %s", decision.ToolName)
 	}
+	if feedback := strings.TrimSpace(decision.Feedback); feedback != "" {
+		return fmt.Errorf("%w; user feedback: %s", err, feedback)
+	}
+	return err
+}
+
+func appendPermissionFeedback(output string, feedback string) string {
+	feedback = strings.TrimSpace(feedback)
+	if feedback == "" {
+		return output
+	}
+	var payload map[string]any
+	if json.Unmarshal([]byte(strings.TrimSpace(output)), &payload) == nil && payload != nil {
+		payload["permission_feedback"] = feedback
+		if encoded, err := json.Marshal(payload); err == nil {
+			return string(encoded)
+		}
+	}
+	if strings.TrimSpace(output) == "" {
+		encoded, _ := json.Marshal(map[string]string{"permission_feedback": feedback})
+		return string(encoded)
+	}
+	return strings.TrimSpace(output) + "\n\nPermission feedback: " + feedback
 }
 
 func (p *Prompter) emitDecision(decision PermissionDecision) {

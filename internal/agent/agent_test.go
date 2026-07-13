@@ -132,12 +132,15 @@ func TestTUIPermissionEventsWrapOriginalCallbacks(t *testing.T) {
 	request := tools.PermissionDecision{
 		ToolName:    "bash",
 		Required:    tools.PermissionDanger,
+		Input:       `{"command":"go test ./..."}`,
 		WouldPrompt: true,
 		Message:     "writes outside workspace",
 	}
 	approved := request
 	approved.Allowed = true
 	approved.Reason = "user_approved"
+	approved.Feedback = "run the focused package next"
+	approved.Rule = "bash(go test:*)"
 
 	prompter.OnRequest(request)
 	prompter.OnDecision(approved)
@@ -147,14 +150,36 @@ func TestTUIPermissionEventsWrapOriginalCallbacks(t *testing.T) {
 	require.Contains(t, entries[0].Text, "bash requires danger-full-access")
 	require.Contains(t, entries[0].Text, "writes outside workspace")
 	require.Equal(t, &tui.PermissionRequest{
-		Tool:        "bash",
-		Required:    "danger-full-access",
-		Message:     "writes outside workspace",
-		AllowAlways: true,
+		Tool:          "bash",
+		Required:      "danger-full-access",
+		Input:         `{"command":"go test ./..."}`,
+		Message:       "writes outside workspace",
+		SuggestedRule: "bash(go test)",
+		AllowAlways:   true,
 	}, entries[0].Permission)
 	require.Contains(t, entries[1].Text, "bash approved")
 	require.Contains(t, entries[1].Text, "user_approved")
+	require.Contains(t, entries[1].Text, "session rule: bash(go test:*)")
+	require.Contains(t, entries[1].Text, "feedback: run the focused package next")
 	require.Nil(t, entries[1].Permission)
+}
+
+func TestTUIPermissionResponseEncodingAndBroadRuleSuppression(t *testing.T) {
+	line := encodeTUIPermissionResponse(tui.PermissionResponse{
+		Decision: "allow_always",
+		Feedback: "continue with focused tests",
+		Rule:     "go test:*",
+	})
+	require.True(t, strings.HasSuffix(line, "\n"))
+	require.JSONEq(t, `{"decision":"allow_always","feedback":"continue with focused tests","rule":"go test:*"}`, strings.TrimSpace(line))
+
+	prompter := &tools.Prompter{}
+	entries := []tui.Entry{}
+	wrapTUIPermissionEvents(prompter, func(entry tui.Entry) { entries = append(entries, entry) })
+	prompter.OnRequest(tools.PermissionDecision{ToolName: "custom_tool", Required: tools.PermissionWorkspace, Input: `{}`})
+	require.Len(t, entries, 1)
+	require.Equal(t, "custom_tool", entries[0].Permission.SuggestedRule)
+	require.False(t, entries[0].Permission.AllowAlways)
 }
 
 func TestRenderTUIQuestionRequest(t *testing.T) {
@@ -1640,8 +1665,11 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "tui_permission_picker")
 	require.Contains(t, report.Features, "tui_question_picker")
 	require.Contains(t, report.Features, "tui_structured_tool_activity")
+	require.Contains(t, report.Features, "tui_permission_feedback")
+	require.Contains(t, report.Features, "tui_permission_rule_edit")
 	require.Contains(t, report.Features, "tui_tool_activity_in_place")
 	require.Contains(t, report.Features, "tui_tool_output_expand")
+	require.Contains(t, report.Features, "permission_feedback_model_bridge")
 	require.Contains(t, report.Features, "tool_search_mcp_degraded")
 	require.Contains(t, report.Features, "typed_task_packets")
 	require.Contains(t, report.Features, "worker_startup_no_evidence")

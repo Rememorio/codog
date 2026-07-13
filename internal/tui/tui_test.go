@@ -2749,17 +2749,33 @@ func TestPermissionRequestNavigationWrapsAndSupportsHomeEnd(t *testing.T) {
 		{key: tea.KeyMsg{Type: tea.KeyHome}, selection: 0},
 		{key: tea.KeyMsg{Type: tea.KeyUp}, selection: 2},
 		{key: tea.KeyMsg{Type: tea.KeyDown}, selection: 0},
-		{key: tea.KeyMsg{Type: tea.KeyTab}, selection: 1},
-		{key: tea.KeyMsg{Type: tea.KeyShiftTab}, selection: 0},
-		{key: tea.KeyMsg{Type: tea.KeyRight}, selection: 1},
-		{key: tea.KeyMsg{Type: tea.KeyLeft}, selection: 0},
 	}
 	for _, tc := range keysAndSelections {
 		updated, _ := m.Update(tc.key)
 		m = updated.(model)
 		require.Equal(t, tc.selection, m.permissionSelected)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	require.True(t, m.permissionInput)
+	require.Equal(t, 0, m.permissionSelected)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	require.False(t, m.permissionInput)
+
+	for _, tc := range []struct {
+		key       tea.KeyMsg
+		selection int
+	}{
+		{key: tea.KeyMsg{Type: tea.KeyShiftTab}, selection: 2},
+		{key: tea.KeyMsg{Type: tea.KeyRight}, selection: 0},
+		{key: tea.KeyMsg{Type: tea.KeyLeft}, selection: 2},
+	} {
+		updated, _ = m.Update(tc.key)
+		m = updated.(model)
+		require.Equal(t, tc.selection, m.permissionSelected)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 	m = updated.(model)
 	require.Equal(t, []string{"a"}, answers)
 	m.openPermissionRequest(PermissionRequest{Tool: "read_file"})
@@ -2767,6 +2783,99 @@ func TestPermissionRequestNavigationWrapsAndSupportsHomeEnd(t *testing.T) {
 	m = updated.(model)
 	require.True(t, m.awaitingPermission)
 	require.Equal(t, []string{"a"}, answers)
+}
+
+func TestPermissionFeedbackInputRespondsAndRestoresComposerDraft(t *testing.T) {
+	responses := []PermissionResponse{}
+	m := newModel(context.Background(), newPromptTextarea("queued draft"), nil, nil)
+	m.permissionRespond = func(response PermissionResponse) { responses = append(responses, response) }
+	m.openPermissionRequest(PermissionRequest{
+		Tool:          "bash",
+		Required:      "danger-full-access",
+		SuggestedRule: "bash(go test)",
+		AllowAlways:   true,
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	require.True(t, m.permissionInput)
+	require.Empty(t, m.textarea.Value())
+	require.Contains(t, m.View(), "Add next-step guidance")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("run focused tests next")})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	require.Equal(t, []PermissionResponse{{Decision: "allow_once", Feedback: "run focused tests next"}}, responses)
+	require.False(t, m.awaitingPermission)
+	require.Equal(t, "queued draft", m.textarea.Value())
+	require.Equal(t, "Ask codog...", m.textarea.Placeholder)
+}
+
+func TestPermissionRejectFeedbackAndEditableAlwaysRule(t *testing.T) {
+	responses := []PermissionResponse{}
+	m := newModel(context.Background(), newPromptTextarea(""), nil, nil)
+	m.permissionRespond = func(response PermissionResponse) { responses = append(responses, response) }
+	m.openPermissionRequest(PermissionRequest{Tool: "bash", SuggestedRule: "bash(go test)", AllowAlways: true})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	require.Equal(t, "n", m.permissionInputAnswer)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("use the read tool instead")})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Equal(t, PermissionResponse{Decision: "deny", Feedback: "use the read tool instead"}, responses[0])
+
+	m.openPermissionRequest(PermissionRequest{Tool: "bash", SuggestedRule: "bash(go test)", AllowAlways: true})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	require.Equal(t, "a", m.permissionInputAnswer)
+	require.Equal(t, "bash(go test)", m.textarea.Value())
+	m.textarea.SetValue("go test:*")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.Equal(t, PermissionResponse{Decision: "allow_always", Rule: "go test:*"}, responses[1])
+}
+
+func TestPermissionInputCanCollapseWithoutAnswer(t *testing.T) {
+	responses := []PermissionResponse{}
+	m := newModel(context.Background(), newPromptTextarea("draft"), nil, nil)
+	m.permissionRespond = func(response PermissionResponse) { responses = append(responses, response) }
+	m.openPermissionRequest(PermissionRequest{Tool: "write_file"})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	require.True(t, m.awaitingPermission)
+	require.False(t, m.permissionInput)
+	require.Empty(t, responses)
+	require.Equal(t, "draft", m.textarea.Value())
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	require.Equal(t, []PermissionResponse{{Decision: "deny"}}, responses)
+}
+
+func TestPastedPermissionFeedbackOnlyEntersActiveInput(t *testing.T) {
+	m := newModel(context.Background(), newPromptTextarea("draft"), nil, nil)
+	m.permissionRespond = func(PermissionResponse) {}
+	m.openPermissionRequest(PermissionRequest{Tool: "bash"})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ignored"), Paste: true})
+	m = updated.(model)
+	require.Equal(t, "draft", m.textarea.Value())
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("pasted guidance"), Paste: true})
+	m = updated.(model)
+	require.Equal(t, "pasted guidance", m.textarea.Value())
 }
 
 func TestQuestionStreamEntryNavigatesAndAcceptsChoice(t *testing.T) {
@@ -3073,7 +3182,7 @@ func TestInteractionRequestsFitNarrowNoColorTerminal(t *testing.T) {
 			Required:    "danger-full-access",
 			Input:       `{"command":"printf a-very-long-command-that-must-be-truncated"}`,
 			AllowAlways: true,
-		}, 1, 32, styles),
+		}, 1, false, "", 32, styles),
 		renderQuestionRequest(QuestionRequest{
 			Question: "Choose a very long option without overflowing the terminal",
 			Choices:  []string{"a very long first choice", "second"},
@@ -3817,7 +3926,7 @@ func TestPastedPermissionAnswerDoesNotApprove(t *testing.T) {
 
 	require.True(t, next.awaitingPermission)
 	require.Empty(t, answers)
-	require.Equal(t, "y", next.textarea.Value())
+	require.Empty(t, next.textarea.Value())
 	require.Equal(t, "permission", next.status)
 }
 

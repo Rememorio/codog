@@ -821,6 +821,56 @@ expect eof
 	require.Equal(t, "permission-tui", string(created))
 }
 
+func TestRealBinaryTUIPermissionFeedbackReachesModelWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	var mu sync.Mutex
+	requestBodies := []string{}
+	server := httptest.NewServer(mockanthropic.Server{
+		Turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-feedback",
+				Name:  "bash",
+				Input: json.RawMessage(`{"command":"printf permission-feedback-visible","timeout":1000}`),
+			}}},
+			{Text: "permission feedback tui ok"},
+		},
+		OnRequest: func(body json.RawMessage) {
+			mu.Lock()
+			requestBodies = append(requestBodies, string(body))
+			mu.Unlock()
+		},
+	}.Handler())
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, `
+set timeout 30
+spawn -noecho $env(CODOG_TEST_BIN) --permission-mode workspace-write --model claude-sonnet-4-5 tui
+expect "codog"
+send "permission feedback smoke\r"
+expect "Allow bash to use danger-full-access?"
+send "\t"
+expect "Add next-step guidance"
+send "run focused tests next\r"
+expect "permission feedback tui ok"
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, output, "Add next-step guidance")
+	require.Contains(t, output, "permission feedback tui ok")
+	mu.Lock()
+	bodies := append([]string(nil), requestBodies...)
+	mu.Unlock()
+	require.GreaterOrEqual(t, len(bodies), 2)
+	require.Contains(t, bodies[len(bodies)-1], "permission_feedback")
+	require.Contains(t, bodies[len(bodies)-1], "run focused tests next")
+}
+
 func TestRealBinaryTUIAskUserQuestionWithTTY(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()

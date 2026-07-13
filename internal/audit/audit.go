@@ -25,6 +25,8 @@ type Event struct {
 	RequiredPermission string    `json:"required_permission,omitempty"`
 	Allowed            *bool     `json:"allowed,omitempty"`
 	Reason             string    `json:"reason,omitempty"`
+	Feedback           string    `json:"feedback,omitempty"`
+	PermissionRule     string    `json:"permission_rule,omitempty"`
 }
 
 type Store struct {

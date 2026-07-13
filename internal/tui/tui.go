@@ -47,11 +47,19 @@ type ToolActivity struct {
 // PermissionRequest describes a tool confirmation shown by the interactive
 // shell. Text remains available on Entry as a transcript fallback.
 type PermissionRequest struct {
-	Tool        string
-	Required    string
-	Input       string
-	Message     string
-	AllowAlways bool
+	Tool          string
+	Required      string
+	Input         string
+	Message       string
+	SuggestedRule string
+	AllowAlways   bool
+}
+
+// PermissionResponse is the user's structured answer to a permission request.
+type PermissionResponse struct {
+	Decision string
+	Feedback string
+	Rule     string
 }
 
 // QuestionRequest describes a structured AskUserQuestionTool interaction.
@@ -163,6 +171,7 @@ type ShellOptions struct {
 	SubmitStreamAttachments   StreamSubmitWithAttachmentsFunc
 	Slash                     SlashFunc
 	PermissionAnswer          func(string)
+	PermissionRespond         func(PermissionResponse)
 	QuestionAnswer            func(string)
 	ExternalEditor            ExternalEditorFunc
 	Paste                     PasteFunc
@@ -274,6 +283,7 @@ type model struct {
 	submitStreamAttachments   StreamSubmitWithAttachmentsFunc
 	slash                     SlashFunc
 	permissionAnswer          func(string)
+	permissionRespond         func(PermissionResponse)
 	questionAnswer            func(string)
 	externalEditor            ExternalEditorFunc
 	paste                     PasteFunc
@@ -363,6 +373,13 @@ type model struct {
 	awaitingQuestion          bool
 	permissionRequest         *PermissionRequest
 	permissionSelected        int
+	permissionInput           bool
+	permissionInputAnswer     string
+	permissionAcceptFeedback  string
+	permissionRejectFeedback  string
+	permissionRule            string
+	permissionComposerDraft   string
+	permissionDraftCaptured   bool
 	questionRequest           *QuestionRequest
 	questionSelected          int
 	questionCustom            bool
@@ -1673,6 +1690,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.submitStreamAttachments = options.SubmitStreamAttachments
 	m.slash = options.Slash
 	m.permissionAnswer = options.PermissionAnswer
+	m.permissionRespond = options.PermissionRespond
 	m.questionAnswer = options.QuestionAnswer
 	m.externalEditor = options.ExternalEditor
 	m.paste = options.Paste
@@ -2643,6 +2661,15 @@ func (m model) insertPasteContent(content PasteContent) (tea.Model, tea.Cmd) {
 }
 
 func (m model) insertPastedText(text string) (tea.Model, tea.Cmd) {
+	if m.awaitingPermission {
+		if !m.permissionInput {
+			m.status = "permission"
+			return m, nil
+		}
+		m.textarea.InsertString(text)
+		m.status = "permission"
+		return m, nil
+	}
 	if m.awaitingQuestion && !m.questionCustom {
 		m.beginQuestionCustomInput()
 	}
@@ -2813,7 +2840,10 @@ func (m model) View() string {
 		composer += "\n" + renderStashNotice(m.stashedPrompt, styles)
 	}
 	if m.awaitingPermission && m.permissionRequest != nil {
-		composer = renderPermissionRequest(*m.permissionRequest, m.permissionSelected, m.width, styles)
+		composer = renderPermissionRequest(*m.permissionRequest, m.permissionSelected, m.permissionInput, m.permissionInputAnswer, m.width, styles)
+		if m.permissionInput {
+			composer += "\n" + composerTextarea.View()
+		}
 	} else if m.awaitingQuestion && m.questionRequest != nil {
 		composer = renderQuestionRequest(*m.questionRequest, m.questionIndex, m.questionSelected, m.questionCustom, m.questionSelections, m.questionCustomValues, m.width, styles)
 		if m.questionCustom {
@@ -4571,15 +4601,40 @@ func (m *model) interruptBackground() {
 
 func (m *model) answerPermission(answer string) {
 	answer = strings.TrimSpace(strings.ToLower(answer))
-	if answer == "" || m.permissionAnswer == nil {
+	if answer == "" || (m.permissionRespond == nil && m.permissionAnswer == nil) {
 		return
 	}
 	switch answer {
-	case "y", "yes", "a", "always", "n", "no":
+	case "y", "yes":
+		answer = "y"
+	case "a", "always":
+		answer = "a"
+	case "n", "no":
+		answer = "n"
 	default:
 		return
 	}
-	m.permissionAnswer(answer)
+	if m.permissionInput {
+		m.savePermissionInputValue()
+	}
+	response := PermissionResponse{}
+	switch answer {
+	case "y":
+		response.Decision = "allow_once"
+		response.Feedback = strings.TrimSpace(m.permissionAcceptFeedback)
+	case "a":
+		response.Decision = "allow_always"
+		response.Feedback = strings.TrimSpace(m.permissionAcceptFeedback)
+		response.Rule = strings.TrimSpace(m.permissionRule)
+	case "n":
+		response.Decision = "deny"
+		response.Feedback = strings.TrimSpace(m.permissionRejectFeedback)
+	}
+	if m.permissionRespond != nil {
+		m.permissionRespond(response)
+	} else {
+		m.permissionAnswer(answer)
+	}
 	m.closePermissionRequest()
 	m.status = "permission answered"
 }
@@ -4629,24 +4684,68 @@ func (m *model) openPermissionRequest(request PermissionRequest) {
 	request.Required = strings.TrimSpace(request.Required)
 	request.Input = strings.TrimSpace(request.Input)
 	request.Message = strings.TrimSpace(request.Message)
+	request.SuggestedRule = strings.TrimSpace(request.SuggestedRule)
 	m.permissionRequest = &request
 	m.permissionSelected = 0
+	m.permissionInput = false
+	m.permissionInputAnswer = ""
+	m.permissionAcceptFeedback = ""
+	m.permissionRejectFeedback = ""
+	m.permissionRule = request.SuggestedRule
+	m.permissionComposerDraft = ""
+	m.permissionDraftCaptured = false
 	m.awaitingPermission = true
 	m.status = "permission"
 }
 
 func (m *model) closePermissionRequest() {
+	if m.permissionInput {
+		m.savePermissionInputValue()
+	}
+	m.restorePermissionComposer()
 	m.awaitingPermission = false
 	m.permissionRequest = nil
 	m.permissionSelected = 0
+	m.permissionInput = false
+	m.permissionInputAnswer = ""
+	m.permissionAcceptFeedback = ""
+	m.permissionRejectFeedback = ""
+	m.permissionRule = ""
+	m.permissionComposerDraft = ""
+	m.permissionDraftCaptured = false
 }
 
 func (m *model) updatePermissionRequest(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.permissionInput {
+		switch msg.String() {
+		case "tab", "esc":
+			m.collapsePermissionInput()
+			return *m, nil
+		case "ctrl+c":
+			m.answerPermission("n")
+			return *m, nil
+		case "enter":
+			if strings.TrimSpace(m.textarea.Value()) == "" {
+				m.collapsePermissionInput()
+				return *m, nil
+			}
+			m.answerPermission(m.permissionInputAnswer)
+			return *m, nil
+		}
+		var cmd tea.Cmd
+		m.textarea, cmd = m.textarea.Update(msg)
+		return *m, cmd
+	}
 	switch msg.String() {
 	case "up", "left", "ctrl+p", "k", "shift+tab":
 		m.movePermissionSelection(-1)
-	case "down", "right", "ctrl+n", "j", "tab":
+	case "down", "right", "ctrl+n", "j":
 		m.movePermissionSelection(1)
+	case "tab":
+		answers := m.permissionAnswers()
+		if len(answers) > 0 {
+			m.beginPermissionInput(answers[clampIndex(m.permissionSelected, len(answers))])
+		}
 	case "home":
 		m.permissionSelected = 0
 	case "end":
@@ -4666,6 +4765,71 @@ func (m *model) updatePermissionRequest(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.answerPermission("n")
 	}
 	return *m, nil
+}
+
+func (m *model) beginPermissionInput(answer string) {
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer != "y" && answer != "a" && answer != "n" {
+		return
+	}
+	if answer == "a" && (m.permissionRequest == nil || !m.permissionRequest.AllowAlways) {
+		return
+	}
+	if !m.permissionDraftCaptured {
+		m.permissionComposerDraft = m.textarea.Value()
+		m.permissionDraftCaptured = true
+	}
+	m.permissionInput = true
+	m.permissionInputAnswer = answer
+	value := ""
+	switch answer {
+	case "y":
+		value = m.permissionAcceptFeedback
+		m.textarea.Placeholder = "Tell codog what to do next..."
+	case "a":
+		value = m.permissionRule
+		m.textarea.Placeholder = "Command, path, or rule to allow this session..."
+	case "n":
+		value = m.permissionRejectFeedback
+		m.textarea.Placeholder = "Tell codog what to do differently..."
+	}
+	m.textarea.SetValue(value)
+	m.textarea.CursorEnd()
+	m.status = "permission"
+}
+
+func (m *model) savePermissionInputValue() {
+	value := strings.TrimSpace(m.textarea.Value())
+	switch m.permissionInputAnswer {
+	case "y":
+		m.permissionAcceptFeedback = value
+	case "a":
+		m.permissionRule = value
+		if m.permissionRequest != nil {
+			m.permissionRequest.SuggestedRule = value
+		}
+	case "n":
+		m.permissionRejectFeedback = value
+	}
+}
+
+func (m *model) collapsePermissionInput() {
+	if !m.permissionInput {
+		return
+	}
+	m.savePermissionInputValue()
+	m.permissionInput = false
+	m.permissionInputAnswer = ""
+	m.restorePermissionComposer()
+	m.status = "permission"
+}
+
+func (m *model) restorePermissionComposer() {
+	if m.permissionDraftCaptured {
+		m.textarea.SetValue(m.permissionComposerDraft)
+		m.textarea.CursorEnd()
+	}
+	m.textarea.Placeholder = "Ask codog..."
 }
 
 func (m *model) permissionAnswers() []string {
@@ -6997,7 +7161,7 @@ func renderAttachmentPanel(attachments []string, selected int, width int, themed
 	return strings.Join(lines, "\n")
 }
 
-func renderPermissionRequest(request PermissionRequest, selected int, width int, themed ...themeStyles) string {
+func renderPermissionRequest(request PermissionRequest, selected int, inputMode bool, inputAnswer string, width int, themed ...themeStyles) string {
 	styles := resolveThemeStyles(themed)
 	tool := strings.TrimSpace(request.Tool)
 	if tool == "" {
@@ -7023,9 +7187,18 @@ func renderPermissionRequest(request PermissionRequest, selected int, width int,
 	}
 	answers := []string{"Yes"}
 	if request.AllowAlways {
-		answers = append(answers, "Yes, and don't ask again for this tool this session")
+		label := "Yes, and don't ask again this session"
+		if rule := strings.TrimSpace(request.SuggestedRule); rule != "" {
+			label = "Yes, and don't ask again for: " + rule
+		}
+		answers = append(answers, label)
 	}
 	answers = append(answers, "No")
+	answerValues := []string{"y"}
+	if request.AllowAlways {
+		answerValues = append(answerValues, "a")
+	}
+	answerValues = append(answerValues, "n")
 	selected = clampIndex(selected, len(answers))
 	for index, label := range answers {
 		prefix := "  "
@@ -7034,9 +7207,23 @@ func renderPermissionRequest(request PermissionRequest, selected int, width int,
 			prefix = "> "
 			style = styles.selectedCompletion()
 		}
+		if inputMode && index < len(answerValues) && answerValues[index] == inputAnswer {
+			label += ":"
+		}
 		lines = append(lines, style.Render(truncateForComposer(prefix+label, limit)))
 	}
-	lines = append(lines, styles.completion().Render(truncateForComposer("  Enter to select · Up/Down to navigate · Esc to deny", limit)))
+	hint := "  Enter select · Up/Down navigate · Tab amend · Esc deny"
+	if inputMode {
+		switch inputAnswer {
+		case "a":
+			hint = "  Edit the session rule · Enter allow · Tab/Esc collapse"
+		case "n":
+			hint = "  Add guidance for a safer approach · Enter deny · Tab/Esc collapse"
+		default:
+			hint = "  Add next-step guidance · Enter allow · Tab/Esc collapse"
+		}
+	}
+	lines = append(lines, styles.completion().Render(truncateForComposer(hint, limit)))
 	return strings.Join(lines, "\n")
 }
 
@@ -7303,9 +7490,9 @@ func statusBarText(status string, width int) string {
 	if strings.EqualFold(status, "permission") {
 		switch {
 		case width > 0 && width < 70:
-			return "permission · Up/Down · Enter · Esc deny"
+			return "permission · Up/Down · Enter · Tab amend · Esc deny"
 		default:
-			return "permission · Up/Down choose · Enter select · y/n/a shortcuts · Esc deny"
+			return "permission · Up/Down choose · Enter select · Tab amend · y/n/a shortcuts · Esc deny"
 		}
 	}
 	if strings.EqualFold(status, "question") {
@@ -7423,9 +7610,15 @@ func (m model) promptFooterHints(width int) []string {
 		hints = append(hints, hint)
 	}
 	if m.awaitingPermission {
-		add("Up/Down choose")
-		add("Enter select")
-		add("y/n/a shortcuts")
+		if m.permissionInput {
+			add("Enter submit")
+			add("Tab/Esc collapse")
+		} else {
+			add("Up/Down choose")
+			add("Enter select")
+			add("Tab amend")
+			add("y/n/a shortcuts")
+		}
 		return trimFooterHints(hints, width)
 	}
 	if m.awaitingQuestion {

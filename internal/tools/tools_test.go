@@ -1490,13 +1490,146 @@ func TestPrompterAlwaysAllowAddsSessionRule(t *testing.T) {
 
 	require.NoError(t, p.Authorize("write_file", PermissionWorkspace, []byte(`{"path":"a.txt"}`)))
 	require.Contains(t, prompt.String(), "always for session")
-	require.ElementsMatch(t, []string{"write_file"}, p.AllowRules)
+	require.ElementsMatch(t, []string{"write_file(a.txt)"}, p.AllowRules)
 	require.Len(t, decisions, 1)
 	require.Equal(t, "user_approved_always", decisions[0].Reason)
+	require.Equal(t, "write_file(a.txt)", decisions[0].Rule)
 
-	require.NoError(t, p.Authorize("write_file", PermissionWorkspace, []byte(`{"path":"b.txt"}`)))
+	require.NoError(t, p.Authorize("write_file", PermissionWorkspace, []byte(`{"path":"a.txt"}`)))
 	require.Len(t, decisions, 2)
 	require.Equal(t, "allow_rule", decisions[1].Reason)
+
+	p.In = strings.NewReader("n\n")
+	require.Error(t, p.Authorize("write_file", PermissionWorkspace, []byte(`{"path":"b.txt"}`)))
+	require.Len(t, decisions, 3)
+	require.Equal(t, "user_denied", decisions[2].Reason)
+}
+
+func TestPrompterAcceptsStructuredPermissionResponses(t *testing.T) {
+	t.Run("allow once with feedback", func(t *testing.T) {
+		p := &Prompter{
+			Mode: PermissionPrompt,
+			In:   strings.NewReader(`{"decision":"allow_once","feedback":"run focused tests next"}` + "\n"),
+			Err:  io.Discard,
+		}
+
+		decision, err := p.AuthorizeDecision("bash", PermissionDanger, []byte(`{"command":"go test ./internal/tui"}`))
+		require.NoError(t, err)
+		require.True(t, decision.Allowed)
+		require.Equal(t, "run focused tests next", decision.Feedback)
+	})
+
+	t.Run("deny with feedback", func(t *testing.T) {
+		p := &Prompter{
+			Mode: PermissionPrompt,
+			In:   strings.NewReader(`{"decision":"deny","feedback":"use the read tool instead"}` + "\n"),
+			Err:  io.Discard,
+		}
+
+		decision, err := p.AuthorizeDecision("bash", PermissionDanger, []byte(`{"command":"cat secret"}`))
+		require.Error(t, err)
+		require.False(t, decision.Allowed)
+		require.Equal(t, "use the read tool instead", decision.Feedback)
+		require.Contains(t, err.Error(), "user feedback: use the read tool instead")
+	})
+
+	t.Run("always wraps edited shell prefix", func(t *testing.T) {
+		p := &Prompter{
+			Mode: PermissionPrompt,
+			In:   strings.NewReader(`{"decision":"allow_always","rule":"go test:*"}` + "\n"),
+			Err:  io.Discard,
+		}
+
+		decision, err := p.AuthorizeDecision("bash", PermissionDanger, []byte(`{"command":"go test ./..."}`))
+		require.NoError(t, err)
+		require.Equal(t, "bash(go test:*)", decision.Rule)
+		require.Equal(t, []string{"bash(go test:*)"}, p.AllowRules)
+		require.True(t, p.Decide("bash", PermissionDanger, []byte(`{"command":"go test ./internal/tui"}`)).Allowed)
+	})
+
+	t.Run("always rejects another tool rule", func(t *testing.T) {
+		p := &Prompter{
+			Mode: PermissionPrompt,
+			In:   strings.NewReader(`{"decision":"allow_always","rule":"write_file(anywhere)"}` + "\n"),
+			Err:  io.Discard,
+		}
+
+		decision, err := p.AuthorizeDecision("bash", PermissionDanger, []byte(`{"command":"go test ./..."}`))
+		require.NoError(t, err)
+		require.Equal(t, "bash(go test)", decision.Rule)
+		require.Equal(t, []string{"bash(go test)"}, p.AllowRules)
+	})
+}
+
+func TestSuggestedPermissionRuleNarrowsKnownInputs(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "bash", input: `{"command":"go test ./... && git status"}`, want: "bash(go test)"},
+		{name: "powershell", input: `{"command":"Get-ChildItem -Force | Select-Object Name"}`, want: "powershell(Get-ChildItem -Force)"},
+		{name: "write_file", input: `{"path":"nested/out.txt"}`, want: "write_file(nested/out.txt)"},
+		{name: "multi_edit", input: `{"edits":[{"file_path":"first.go"}]}`, want: "multi_edit(first.go)"},
+		{name: "grep", input: `{"pattern":"TODO","path":"internal"}`, want: "grep(TODO)"},
+		{name: "web_fetch", input: `{"url":"https://example.com/page"}`, want: "web_fetch(https://example.com/page)"},
+		{name: "web_search", input: `{"query":"Go releases"}`, want: "web_search(Go releases)"},
+		{name: "custom_tool", input: `{"id":"item-1"}`, want: "custom_tool(item-1)"},
+		{name: "custom_tool", input: "raw scope", want: "custom_tool(raw scope)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, SuggestedPermissionRule(tc.name, tc.input))
+		})
+	}
+	require.Equal(t, "go", shellPermissionPrefix("go | tee output"))
+}
+
+func TestPermissionResponseParsingDefaultsUnknownAndMalformedAnswersToDeny(t *testing.T) {
+	require.Equal(t, PermissionResponse{Decision: "allow_once"}, parsePermissionResponse("yes\n"))
+	require.Equal(t, PermissionResponse{Decision: "allow_always"}, parsePermissionResponse("always\n"))
+	require.Equal(t, PermissionResponse{Decision: "deny"}, parsePermissionResponse("unexpected\n"))
+	require.Equal(t, PermissionResponse{Decision: "deny"}, parsePermissionResponse(`{"decision":`))
+	require.Equal(t, "bash(go test:*)", sessionAllowRule("bash", `{"command":"go test ./..."}`, "bash(go test:*)"))
+	require.Equal(t, "tool", SuggestedPermissionRule("", `{}`))
+	require.Equal(t, "custom_tool", SuggestedPermissionRule("custom_tool", `{}`))
+	require.Len(t, []rune(truncatePermissionRuleNeedle(strings.Repeat("x", 300))), 240)
+	require.True(t, permissionRulesContain([]string{" Bash(go test:*) "}, "bash(go test:*)"))
+	require.False(t, permissionRulesContain([]string{"bash(go test:*)"}, "bash(git status)"))
+}
+
+func TestRegistryAddsApprovalFeedbackToModelVisibleToolResult(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "note.txt"), []byte("hello\n"), 0o644))
+	registry := NewRegistry(workspace)
+	prompter := &Prompter{
+		Mode: PermissionPrompt,
+		In:   strings.NewReader(`{"decision":"allow_once","feedback":"summarize this after reading"}` + "\n"),
+		Err:  io.Discard,
+	}
+
+	output, err := registry.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"note.txt"}`), prompter)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(output), &payload))
+	require.Equal(t, "summarize this after reading", payload["permission_feedback"])
+	require.Contains(t, output, "hello")
+
+	prompter.In = strings.NewReader(`{"decision":"allow_once","feedback":"recover with glob"}` + "\n")
+	_, err = registry.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"missing.txt"}`), prompter)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "permission feedback: recover with glob")
+}
+
+func TestAppendPermissionFeedbackPreservesTextAndEmptyResults(t *testing.T) {
+	require.Equal(t,
+		"plain output\n\nPermission feedback: continue carefully",
+		appendPermissionFeedback("plain output", "continue carefully"),
+	)
+	require.JSONEq(t,
+		`{"permission_feedback":"continue carefully"}`,
+		appendPermissionFeedback("", "continue carefully"),
+	)
 }
 
 func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {

@@ -29772,6 +29772,7 @@ func codogCapabilityFeatures() []string {
 		"openai_extra_body",
 		"openai_compatible_streaming",
 		"permission_confirmation",
+		"permission_feedback_model_bridge",
 		"policy_engine",
 		"prefetch_preflight",
 		"execution_registry_resolve",
@@ -29811,6 +29812,8 @@ func codogCapabilityFeatures() []string {
 		"tui_live_theme_picker",
 		"tui_no_color_theme",
 		"tui_permission_picker",
+		"tui_permission_feedback",
+		"tui_permission_rule_edit",
 		"tui_question_picker",
 		"tui_structured_tool_activity",
 		"tui_tool_activity_in_place",
@@ -37859,9 +37862,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		CycleMode: func() string {
 			return modeState.Cycle()
 		},
-		PermissionAnswer: func(answer string) {
+		PermissionRespond: func(response tui.PermissionResponse) {
 			select {
-			case permissionAnswers <- answer + "\n":
+			case permissionAnswers <- encodeTUIPermissionResponse(response):
 			case <-ctx.Done():
 			}
 		},
@@ -38887,6 +38890,15 @@ type lineAnswerReader struct {
 	buffer  string
 }
 
+func encodeTUIPermissionResponse(response tui.PermissionResponse) string {
+	payload, _ := json.Marshal(tools.PermissionResponse{
+		Decision: response.Decision,
+		Feedback: response.Feedback,
+		Rule:     response.Rule,
+	})
+	return string(payload) + "\n"
+}
+
 func (r *lineAnswerReader) Read(data []byte) (int, error) {
 	if len(data) == 0 {
 		return 0, nil
@@ -38917,15 +38929,17 @@ func wrapTUIPermissionEvents(prompter *tools.Prompter, emit func(tui.Entry)) {
 		if baseRequest != nil {
 			baseRequest(decision)
 		}
+		suggestedRule := tools.SuggestedPermissionRule(decision.ToolName, decision.Input)
 		emit(tui.Entry{
 			Role: "permission",
 			Text: renderTUIPermissionRequest(decision),
 			Permission: &tui.PermissionRequest{
-				Tool:        decision.ToolName,
-				Required:    string(decision.Required),
-				Input:       decision.Input,
-				Message:     decision.Message,
-				AllowAlways: true,
+				Tool:          decision.ToolName,
+				Required:      string(decision.Required),
+				Input:         decision.Input,
+				Message:       decision.Message,
+				SuggestedRule: suggestedRule,
+				AllowAlways:   strings.Contains(suggestedRule, "("),
 			},
 		})
 	}
@@ -39046,11 +39060,17 @@ func renderTUIPermissionDecision(decision tools.PermissionDecision) string {
 	if decision.Allowed {
 		status = "approved"
 	}
-	reason := strings.TrimSpace(decision.Reason)
-	if reason == "" {
-		return fmt.Sprintf("Permission\n- %s %s", name, status)
+	line := fmt.Sprintf("Permission\n- %s %s", name, status)
+	if reason := strings.TrimSpace(decision.Reason); reason != "" {
+		line += ": " + reason
 	}
-	return fmt.Sprintf("Permission\n- %s %s: %s", name, status, reason)
+	if rule := strings.TrimSpace(decision.Rule); rule != "" {
+		line += "\n  session rule: " + truncateForReport(rule, 180)
+	}
+	if feedback := strings.TrimSpace(decision.Feedback); feedback != "" {
+		line += "\n  feedback: " + truncateForReport(feedback, 180)
+	}
+	return line
 }
 
 func renderTUIQuestionRequest(request tools.UserQuestionRequest) string {
@@ -59845,6 +59865,8 @@ func (a *App) auditPermissionDecision(sessionID string) func(tools.PermissionDec
 			RequiredPermission: string(decision.Required),
 			Allowed:            audit.Bool(decision.Allowed),
 			Reason:             decision.Reason,
+			Feedback:           audit.Clip(decision.Feedback, 4*1024),
+			PermissionRule:     audit.Clip(decision.Rule, 4*1024),
 		}); err != nil && a.Err != nil {
 			fmt.Fprintln(a.Err, "audit:", err)
 		}
