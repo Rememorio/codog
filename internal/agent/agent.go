@@ -770,12 +770,6 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
-	case "audit", "reference-audit", "parity-audit":
-		args := append([]string{"audit"}, rest...)
-		if err := app.Capabilities(args); err != nil {
-			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
-		}
-		return nil
 	case "cost", "tokens":
 		if err := app.UsageOverview(command, rest, overrides); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -939,10 +933,6 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.ReleaseNotes(rest))
 	case "review", "ultrareview":
 		return wrapStructured(app.Review(rest))
-	case "ultrareviewCommand":
-		return wrapStructured(app.Review(rest))
-	case "ultrareviewEnabled", "UltrareviewOverageDialog":
-		return wrapStructured(app.ReviewCompatibility(command, rest))
 	case "reviewRemote", "review-remote":
 		return wrapStructured(app.ReviewRemote(ctx, rest))
 	case "feedback", "bug":
@@ -957,8 +947,6 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.PRComments(ctx, rest))
 	case "install-github-app", "setupGitHubActions":
 		return wrapStructured(app.InstallGitHubApp(rest))
-	case "ApiKeyStep", "CheckExistingSecretStep", "CheckGitHubStep", "ChooseRepoStep", "CreatingStep", "ErrorStep", "ExistingWorkflowStep", "InstallAppStep", "OAuthFlowStep", "SuccessStep", "WarningsStep":
-		return wrapStructured(app.InstallGitHubAppStep(command, rest))
 	case "install-slack-app":
 		slackAppArgs := injectGlobalOutputFormat("install-slack-app", rest, format)
 		return wrapStructured(app.InstallSlackApp(slackAppArgs))
@@ -1006,20 +994,6 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.Subagent(rest, overrides))
 	case "reload-plugins":
 		return wrapStructured(app.ReloadPluginsWithFormat(rest, format))
-	case "PluginErrors", "PluginOptionsDialog", "PluginOptionsFlow", "PluginTrustWarning", "UnifiedInstalledCell", "parseArgs", "pluginDetailsHelpers", "usePagination":
-		return wrapStructured(app.PluginCompatibility(command, rest))
-	case "AddMarketplace":
-		return wrapStructured(app.Marketplace(append([]string{"sources", "add"}, rest...)))
-	case "ManageMarketplaces":
-		return wrapStructured(app.Marketplace(append([]string{"sources"}, rest...)))
-	case "BrowseMarketplace", "DiscoverPlugins":
-		return wrapStructured(app.Marketplace(append([]string{"browse"}, rest...)))
-	case "ValidatePlugin":
-		return wrapStructured(app.Marketplace(append([]string{"validate"}, rest...)))
-	case "ManagePlugins":
-		return wrapStructured(app.Marketplace(rest))
-	case "PluginSettings":
-		return wrapStructured(app.Marketplace(append([]string{"settings"}, rest...)))
 	case "plugin", "plugins", "marketplace":
 		return wrapStructured(app.Marketplace(rest))
 	case "login":
@@ -1033,17 +1007,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return nil
 	case "oauth-refresh":
 		return wrapStructured(app.OAuthRefresh(rest))
-	case "addCommand":
-		return wrapStructured(app.MCP(ctx, append([]string{"add"}, rest...)))
-	case "xaaIdpCommand":
-		return wrapStructured(app.XAAIDPCommand(ctx, rest))
 	case "providers":
 		if err := app.Providers(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
-	case "createMovedToPluginCommand":
-		return wrapStructured(app.MovedToPluginCommand(rest))
 	case "exit", "quit":
 		return wrapStructured(app.ExitCompatibility(rest))
 	case "good-claude":
@@ -2858,6 +2826,22 @@ func sshRemoteAuthForwarded(env map[string]string) bool {
 		}
 	}
 	return false
+}
+
+func shellQuoteArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	for index, arg := range args {
+		if index == 0 && arg == "codog" {
+			out = append(out, arg)
+			continue
+		}
+		if strings.ContainsAny(arg, " \t\n'\"") {
+			out = append(out, shellQuote(arg))
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 func sshRemoteShell(directory string, env map[string]string, args []string) string {
@@ -9469,19 +9453,28 @@ type marketplaceRemotePlugin struct {
 	UpdateCommand  string `json:"update_command,omitempty"`
 }
 
+type marketplacePagination struct {
+	Page       int `json:"page"`
+	PerPage    int `json:"per_page"`
+	Total      int `json:"total"`
+	TotalPages int `json:"total_pages"`
+	Start      int `json:"start"`
+	End        int `json:"end"`
+}
+
 type marketplaceRemoteReport struct {
-	Kind        string                         `json:"kind"`
-	Action      string                         `json:"action"`
-	Status      string                         `json:"status"`
-	Message     string                         `json:"message,omitempty"`
-	NextCommand string                         `json:"next_command,omitempty"`
-	Query       string                         `json:"query,omitempty"`
-	ID          string                         `json:"id,omitempty"`
-	Sources     []marketplaceSourceInfo        `json:"sources"`
-	Plugins     []marketplaceRemotePlugin      `json:"plugins,omitempty"`
-	Plugin      *marketplaceRemotePlugin       `json:"plugin,omitempty"`
-	Pagination  *pluginCompatibilityPagination `json:"pagination,omitempty"`
-	Total       int                            `json:"total"`
+	Kind        string                    `json:"kind"`
+	Action      string                    `json:"action"`
+	Status      string                    `json:"status"`
+	Message     string                    `json:"message,omitempty"`
+	NextCommand string                    `json:"next_command,omitempty"`
+	Query       string                    `json:"query,omitempty"`
+	ID          string                    `json:"id,omitempty"`
+	Sources     []marketplaceSourceInfo   `json:"sources"`
+	Plugins     []marketplaceRemotePlugin `json:"plugins,omitempty"`
+	Plugin      *marketplaceRemotePlugin  `json:"plugin,omitempty"`
+	Pagination  *marketplacePagination    `json:"pagination,omitempty"`
+	Total       int                       `json:"total"`
 }
 
 type marketplaceSourcesRequest struct {
@@ -9490,6 +9483,104 @@ type marketplaceSourcesRequest struct {
 	PublicKey string
 	Target    string
 	Path      string
+}
+
+func normalizePluginAction(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "list", "ls":
+		return "list"
+	case "health", "healthcheck", "lifecycle":
+		return "health"
+	case "show", "info", "describe", "details", "detail":
+		return "show"
+	case "sources", "source", "marketplaces", "manage-marketplaces":
+		return "sources"
+	case "settings", "config":
+		return "settings"
+	case "install", "add":
+		return "install"
+	case "install-remote", "remote-install":
+		return "install-remote"
+	case "update", "upgrade":
+		return "update"
+	case "remove", "rm", "delete", "uninstall":
+		return "remove"
+	case "enable", "on":
+		return "enable"
+	case "disable", "off":
+		return "disable"
+	case "validate", "check":
+		return "validate"
+	case "remote", "browse", "discover":
+		return "remote"
+	default:
+		return strings.ToLower(strings.TrimSpace(raw))
+	}
+}
+
+var pluginsActionCandidates = []string{
+	"list", "ls", "health", "healthcheck", "lifecycle", "show", "info", "describe", "details", "detail",
+	"sources", "source", "marketplaces", "manage-marketplaces", "add-marketplace", "remove-marketplace",
+	"delete-marketplace", "settings", "config", "remote", "browse", "discover", "updates", "install",
+	"add", "install-remote", "remote-install", "update", "upgrade", "enable", "on", "disable", "off",
+	"remove", "rm", "delete", "uninstall", "validate", "check",
+}
+
+func unknownPluginsActionHint(action string) string {
+	suggestions := toolnames.Suggestions(action, pluginsActionCandidates, 4)
+	switch len(suggestions) {
+	case 1:
+		return fmt.Sprintf("Did you mean `codog plugins %s`? Use `codog plugins list` or `codog plugins help` to inspect supported actions.", suggestions[0])
+	case 0:
+		return "Use `codog plugins list`, `health`, `show|info|describe`, `validate`, `sources`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`."
+	default:
+		return fmt.Sprintf("Did you mean one of: %s? Use `codog plugins list` or `codog plugins help` to inspect supported actions.", strings.Join(suggestions, ", "))
+	}
+}
+
+func normalizeMarketplaceAction(raw string) string {
+	action := strings.ToLower(strings.TrimSpace(raw))
+	switch action {
+	case "", "list", "show", "info", "describe", "health", "healthcheck", "lifecycle", "validate",
+		"sources", "source", "marketplaces", "manage-marketplaces", "add-marketplace", "remove-marketplace",
+		"delete-marketplace", "settings", "remote", "browse", "discover", "updates", "install", "install-remote",
+		"update", "enable", "disable", "remove", "uninstall":
+		return action
+	default:
+		return normalizePluginAction(raw)
+	}
+}
+
+func pluginManifestSurfaces(manifest plugins.Manifest) []string {
+	surfaces := []string{}
+	if len(manifest.Tools) > 0 {
+		surfaces = append(surfaces, "tools")
+	}
+	if len(manifest.Commands) > 0 {
+		surfaces = append(surfaces, "commands")
+	}
+	if len(manifest.Skills) > 0 {
+		surfaces = append(surfaces, "skills")
+	}
+	if len(manifest.Agents) > 0 {
+		surfaces = append(surfaces, "agents")
+	}
+	if len(manifest.Hooks) > 0 {
+		surfaces = append(surfaces, "hooks")
+	}
+	if len(manifest.MCPServers) > 0 {
+		surfaces = append(surfaces, "mcp_servers")
+	}
+	return surfaces
+}
+
+func validatePluginSource(source string) plugins.ValidationResult {
+	result, err := plugins.Validate(source)
+	if err != nil {
+		result.Success = false
+		result.Errors = []plugins.ValidationMessage{{Path: "file", Message: err.Error(), Code: "validation_failed"}}
+	}
+	return result
 }
 
 func (a *App) listPlugins(format string) error {
@@ -9923,7 +10014,7 @@ func normalizePluginHealthAction(action string) string {
 }
 
 func pluginHealthcheckForManifest(manifest plugins.Manifest) pluginHealthcheck {
-	validation := pluginCompatibilityValidationForSource(manifest.ID, manifest.Root)
+	validation := validatePluginSource(manifest.Root)
 	check := pluginHealthcheck{
 		PluginID:       manifest.ID,
 		Name:           manifest.Name,
@@ -10347,962 +10438,6 @@ func renderPluginValidation(out io.Writer, source string, result plugins.Validat
 		return &ExitError{Code: 1, Err: errors.New("plugin validation failed"), Silent: true}
 	}
 	return nil
-}
-
-type pluginCompatibilityRequest struct {
-	Format  string
-	Page    int
-	PerPage int
-	Args    []string
-}
-
-type pluginCompatibilitySummary struct {
-	Total      int `json:"total"`
-	Enabled    int `json:"enabled"`
-	Disabled   int `json:"disabled"`
-	Errors     int `json:"errors"`
-	Warnings   int `json:"warnings"`
-	TrustItems int `json:"trust_items"`
-	Tools      int `json:"tools"`
-	Commands   int `json:"commands"`
-	Skills     int `json:"skills"`
-	Agents     int `json:"agents"`
-	Hooks      int `json:"hooks"`
-	MCPServers int `json:"mcp_servers"`
-}
-
-type pluginCompatibilityItem struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name,omitempty"`
-	Version     string   `json:"version,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Enabled     bool     `json:"enabled"`
-	Path        string   `json:"path,omitempty"`
-	Tools       int      `json:"tools"`
-	Commands    int      `json:"commands"`
-	Skills      int      `json:"skills"`
-	Agents      int      `json:"agents"`
-	Hooks       int      `json:"hooks"`
-	MCPServers  int      `json:"mcp_servers"`
-	Surfaces    []string `json:"surfaces,omitempty"`
-	Risks       []string `json:"risks,omitempty"`
-}
-
-type pluginCompatibilityValidation struct {
-	ID       string                      `json:"id,omitempty"`
-	Source   string                      `json:"source"`
-	Success  bool                        `json:"success"`
-	Errors   []plugins.ValidationMessage `json:"errors,omitempty"`
-	Warnings []plugins.ValidationMessage `json:"warnings,omitempty"`
-}
-
-type pluginCompatibilityPagination struct {
-	Page       int `json:"page"`
-	PerPage    int `json:"per_page"`
-	Total      int `json:"total"`
-	TotalPages int `json:"total_pages"`
-	Start      int `json:"start"`
-	End        int `json:"end"`
-}
-
-type pluginCompatibilityParsedArgs struct {
-	Raw            []string `json:"raw,omitempty"`
-	Action         string   `json:"action"`
-	Target         string   `json:"target,omitempty"`
-	Args           []string `json:"args,omitempty"`
-	Mutation       bool     `json:"mutation"`
-	RequiresTarget bool     `json:"requires_target"`
-	LocalCommand   []string `json:"local_command,omitempty"`
-	NextCommand    string   `json:"next_command,omitempty"`
-	Usage          string   `json:"usage,omitempty"`
-	ErrorKind      string   `json:"error_kind,omitempty"`
-	Error          string   `json:"error,omitempty"`
-}
-
-type pluginCompatibilityPathDetail struct {
-	Spec   string `json:"spec"`
-	Path   string `json:"path,omitempty"`
-	Exists bool   `json:"exists"`
-	IsDir  bool   `json:"is_dir,omitempty"`
-	Error  string `json:"error,omitempty"`
-}
-
-type pluginCompatibilityToolDetail struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Command     string   `json:"command,omitempty"`
-	Args        []string `json:"args,omitempty"`
-	Permission  string   `json:"permission,omitempty"`
-	Executable  bool     `json:"executable"`
-	Risks       []string `json:"risks,omitempty"`
-}
-
-type pluginCompatibilityMCPServerDetail struct {
-	Name       string   `json:"name"`
-	Command    string   `json:"command,omitempty"`
-	URL        string   `json:"url,omitempty"`
-	Args       []string `json:"args,omitempty"`
-	EnvKeys    []string `json:"env_keys,omitempty"`
-	HeaderKeys []string `json:"header_keys,omitempty"`
-}
-
-type pluginCompatibilityDetails struct {
-	ID           string                               `json:"id"`
-	Name         string                               `json:"name,omitempty"`
-	Version      string                               `json:"version,omitempty"`
-	Description  string                               `json:"description,omitempty"`
-	Root         string                               `json:"root"`
-	DataDir      string                               `json:"data_dir"`
-	ManifestFile string                               `json:"manifest_file"`
-	Enabled      bool                                 `json:"enabled"`
-	Tools        []pluginCompatibilityToolDetail      `json:"tools,omitempty"`
-	Commands     []pluginCompatibilityPathDetail      `json:"commands,omitempty"`
-	Skills       []pluginCompatibilityPathDetail      `json:"skills,omitempty"`
-	Agents       []pluginCompatibilityPathDetail      `json:"agents,omitempty"`
-	Hooks        []pluginCompatibilityPathDetail      `json:"hooks,omitempty"`
-	MCPServers   []pluginCompatibilityMCPServerDetail `json:"mcp_servers,omitempty"`
-	Surfaces     []string                             `json:"surfaces,omitempty"`
-	Risks        []string                             `json:"risks,omitempty"`
-	Validation   *pluginCompatibilityValidation       `json:"validation,omitempty"`
-}
-
-type pluginCompatibilityReport struct {
-	Kind             string                          `json:"kind"`
-	Action           string                          `json:"action"`
-	Status           string                          `json:"status"`
-	Command          string                          `json:"command"`
-	Workspace        string                          `json:"workspace"`
-	PluginRoot       string                          `json:"plugin_root"`
-	Summary          pluginCompatibilitySummary      `json:"summary"`
-	Plugins          []pluginCompatibilityItem       `json:"plugins,omitempty"`
-	SelectedPlugin   *pluginCompatibilityItem        `json:"selected_plugin,omitempty"`
-	PluginDetails    *pluginCompatibilityDetails     `json:"plugin_details,omitempty"`
-	Validation       []pluginCompatibilityValidation `json:"validation,omitempty"`
-	TrustWarnings    []string                        `json:"trust_warnings,omitempty"`
-	Options          []string                        `json:"options,omitempty"`
-	Args             []string                        `json:"args,omitempty"`
-	NormalizedAction string                          `json:"normalized_action,omitempty"`
-	ParsedArgs       *pluginCompatibilityParsedArgs  `json:"parsed_args,omitempty"`
-	Pagination       *pluginCompatibilityPagination  `json:"pagination,omitempty"`
-	LoadError        string                          `json:"load_error,omitempty"`
-	DetailError      string                          `json:"detail_error,omitempty"`
-	Message          string                          `json:"message,omitempty"`
-}
-
-func (a *App) PluginCompatibility(command string, args []string) error {
-	req, err := parsePluginCompatibilityArgs(command, args)
-	if err != nil {
-		return err
-	}
-	report := a.buildPluginCompatibilityReport(command, req)
-	if req.Format == "json" {
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	}
-	renderPluginCompatibilityReport(a.Out, report)
-	return nil
-}
-
-func parsePluginCompatibilityArgs(command string, args []string) (pluginCompatibilityRequest, error) {
-	clean, format, err := stripJSONOnlyOutputFormat(command, args)
-	if err != nil {
-		return pluginCompatibilityRequest{}, err
-	}
-	req := pluginCompatibilityRequest{Format: format, Page: 1, PerPage: 20}
-	for index := 0; index < len(clean); index++ {
-		arg := clean[index]
-		switch {
-		case arg == "--page":
-			index++
-			if index >= len(clean) {
-				return req, errors.New("plugin page is required")
-			}
-			value, err := strconv.Atoi(clean[index])
-			if err != nil {
-				return req, err
-			}
-			req.Page = value
-		case strings.HasPrefix(arg, "--page="):
-			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--page="))
-			if err != nil {
-				return req, err
-			}
-			req.Page = value
-		case arg == "--per-page" || arg == "--limit":
-			index++
-			if index >= len(clean) {
-				return req, errors.New("plugin page size is required")
-			}
-			value, err := strconv.Atoi(clean[index])
-			if err != nil {
-				return req, err
-			}
-			req.PerPage = value
-		case strings.HasPrefix(arg, "--per-page="):
-			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--per-page="))
-			if err != nil {
-				return req, err
-			}
-			req.PerPage = value
-		case strings.HasPrefix(arg, "--limit="):
-			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
-			if err != nil {
-				return req, err
-			}
-			req.PerPage = value
-		default:
-			req.Args = append(req.Args, arg)
-		}
-	}
-	if req.Page < 1 {
-		req.Page = 1
-	}
-	if req.PerPage < 1 {
-		req.PerPage = 20
-	}
-	return req, nil
-}
-
-func (a *App) buildPluginCompatibilityReport(command string, req pluginCompatibilityRequest) pluginCompatibilityReport {
-	root := plugins.Root(a.Workspace)
-	manifests, loadErr := plugins.Load(a.Workspace)
-	items := pluginCompatibilityItems(manifests)
-	validation := validateInstalledPlugins(a.Workspace)
-	trustWarnings := pluginTrustWarnings(manifests)
-	report := pluginCompatibilityReport{
-		Kind:       "plugin_compatibility",
-		Action:     pluginCompatibilityAction(command),
-		Status:     "ok",
-		Command:    command,
-		Workspace:  a.Workspace,
-		PluginRoot: root,
-		Summary: pluginCompatibilitySummary{
-			Total:      len(items),
-			TrustItems: len(trustWarnings),
-		},
-		Plugins:       items,
-		Validation:    validation,
-		TrustWarnings: trustWarnings,
-		Options:       pluginCompatibilityOptions(),
-		Args:          append([]string(nil), req.Args...),
-	}
-	if loadErr != nil {
-		report.Status = "error"
-		report.LoadError = loadErr.Error()
-	}
-	for _, item := range items {
-		if item.Enabled {
-			report.Summary.Enabled++
-		} else {
-			report.Summary.Disabled++
-		}
-		report.Summary.Tools += item.Tools
-		report.Summary.Commands += item.Commands
-		report.Summary.Skills += item.Skills
-		report.Summary.Agents += item.Agents
-		report.Summary.Hooks += item.Hooks
-		report.Summary.MCPServers += item.MCPServers
-	}
-	for _, item := range validation {
-		report.Summary.Errors += len(item.Errors)
-		report.Summary.Warnings += len(item.Warnings)
-	}
-	if report.Summary.Errors > 0 && command == "PluginErrors" {
-		report.Status = "error"
-	}
-	if report.Summary.TrustItems > 0 && command == "PluginTrustWarning" {
-		report.Status = "warn"
-	}
-	if command == "parseArgs" {
-		parsed := parsePluginCompatibilityInvocation(req.Args)
-		report.ParsedArgs = &parsed
-		report.NormalizedAction = parsed.Action
-		if parsed.ErrorKind != "" {
-			report.Status = "error"
-		}
-		if parsed.Target != "" {
-			report.SelectedPlugin = selectPluginCompatibilityItem(items, parsed.Target)
-		}
-	} else if len(req.Args) > 0 {
-		report.NormalizedAction = normalizePluginAction(req.Args[0])
-		if selected := selectPluginCompatibilityItem(items, req.Args[0]); selected != nil {
-			report.SelectedPlugin = selected
-		}
-		if len(req.Args) > 1 && report.SelectedPlugin == nil {
-			if selected := selectPluginCompatibilityItem(items, req.Args[1]); selected != nil {
-				report.SelectedPlugin = selected
-			}
-		}
-	}
-	switch command {
-	case "PluginErrors":
-		report.Message = "Installed plugin manifests were validated."
-	case "PluginOptionsDialog", "PluginOptionsFlow":
-		report.Message = "Plugin management options are available through `codog marketplace` and `codog plugins`."
-	case "PluginTrustWarning":
-		report.Message = "Plugins can register executable tools, hooks, commands, agents, skills, and MCP servers; review trust warnings before enabling unknown plugins."
-	case "UnifiedInstalledCell":
-		report.Message = "Installed plugin capability surfaces are summarized for review."
-	case "parseArgs":
-		report.Message = "Plugin command arguments were parsed into a normalized action and remaining arguments."
-	case "pluginDetailsHelpers":
-		report.Message = "Plugin detail helpers resolved installed plugin metadata."
-		target := pluginCompatibilityDetailTarget(req.Args, report.SelectedPlugin)
-		if target != "" {
-			manifest := selectPluginManifest(manifests, target)
-			if manifest == nil {
-				report.Status = "error"
-				report.DetailError = fmt.Sprintf("plugin %q is not installed", target)
-				report.Message = "Plugin detail helpers could not resolve the requested plugin."
-			} else {
-				details := pluginCompatibilityDetailsForManifest(*manifest)
-				report.PluginDetails = &details
-				if report.SelectedPlugin == nil {
-					report.SelectedPlugin = selectPluginCompatibilityItem(items, details.ID)
-				}
-			}
-		}
-	case "usePagination":
-		report.Message = "Plugin list pagination was applied."
-	}
-	if command == "UnifiedInstalledCell" || command == "usePagination" {
-		pageItems, pagination := paginatePluginItems(items, req.Page, req.PerPage)
-		report.Plugins = pageItems
-		report.Pagination = &pagination
-	}
-	return report
-}
-
-func parsePluginCompatibilityInvocation(args []string) pluginCompatibilityParsedArgs {
-	parsed := pluginCompatibilityParsedArgs{
-		Raw:    append([]string(nil), args...),
-		Action: "list",
-		Usage:  "codog plugins list|health|show|info|describe|validate|install|install-remote|update|enable|disable|remove [ID|PATH]",
-	}
-	if len(args) == 0 {
-		parsed.LocalCommand = []string{"codog", "plugins", "list"}
-		parsed.NextCommand = strings.Join(parsed.LocalCommand, " ")
-		return parsed
-	}
-	actionRaw := strings.TrimSpace(args[0])
-	parsed.Action = normalizePluginAction(actionRaw)
-	parsed.Args = append([]string(nil), args[1:]...)
-	metadata := pluginActionMetadata(parsed.Action)
-	parsed.Mutation = metadata.mutation
-	parsed.RequiresTarget = metadata.requiresTarget
-	if !metadata.known {
-		parsed.ErrorKind = "unknown_plugins_action"
-		parsed.Error = fmt.Sprintf("unknown plugins action %q", actionRaw)
-		parsed.LocalCommand = []string{"codog", "plugins", actionRaw}
-		parsed.NextCommand = strings.Join(parsed.LocalCommand, " ")
-		return parsed
-	}
-	if len(parsed.Args) > 0 {
-		parsed.Target = parsed.Args[0]
-	}
-	if parsed.RequiresTarget && strings.TrimSpace(parsed.Target) == "" {
-		parsed.ErrorKind = "plugin_target_required"
-		parsed.Error = fmt.Sprintf("plugins action %q requires an ID or path", parsed.Action)
-	}
-	if parsed.Target != "" {
-		parsed.LocalCommand = append(pluginActionCommandPrefix(parsed.Action), parsed.Target)
-	} else {
-		parsed.LocalCommand = pluginActionCommandPrefix(parsed.Action)
-	}
-	parsed.NextCommand = strings.Join(shellQuoteArgs(parsed.LocalCommand), " ")
-	return parsed
-}
-
-type pluginActionInfo struct {
-	known          bool
-	mutation       bool
-	requiresTarget bool
-}
-
-func pluginActionMetadata(action string) pluginActionInfo {
-	switch action {
-	case "list", "health", "remote", "updates", "settings", "sources":
-		return pluginActionInfo{known: true}
-	case "show", "validate":
-		return pluginActionInfo{known: true, requiresTarget: true}
-	case "install", "install-remote", "update", "enable", "disable", "remove":
-		return pluginActionInfo{known: true, mutation: true, requiresTarget: true}
-	default:
-		return pluginActionInfo{}
-	}
-}
-
-func pluginActionCommandPrefix(action string) []string {
-	switch action {
-	case "list":
-		return []string{"codog", "plugins", "list"}
-	case "health":
-		return []string{"codog", "plugins", "health"}
-	case "show":
-		return []string{"codog", "plugins", "show"}
-	case "validate":
-		return []string{"codog", "plugins", "validate"}
-	case "install":
-		return []string{"codog", "marketplace", "install"}
-	case "install-remote":
-		return []string{"codog", "marketplace", "install-remote"}
-	case "update":
-		return []string{"codog", "marketplace", "update"}
-	case "enable":
-		return []string{"codog", "marketplace", "enable"}
-	case "disable":
-		return []string{"codog", "marketplace", "disable"}
-	case "remove":
-		return []string{"codog", "marketplace", "remove"}
-	case "remote":
-		return []string{"codog", "marketplace", "browse"}
-	case "updates":
-		return []string{"codog", "marketplace", "updates"}
-	case "settings":
-		return []string{"codog", "marketplace", "settings"}
-	case "sources":
-		return []string{"codog", "marketplace", "sources"}
-	default:
-		return []string{"codog", "plugins", action}
-	}
-}
-
-func shellQuoteArgs(args []string) []string {
-	out := make([]string, 0, len(args))
-	for index, arg := range args {
-		if index == 0 && arg == "codog" {
-			out = append(out, arg)
-			continue
-		}
-		if strings.ContainsAny(arg, " \t\n'\"") {
-			out = append(out, shellQuote(arg))
-			continue
-		}
-		out = append(out, arg)
-	}
-	return out
-}
-
-func pluginCompatibilityAction(command string) string {
-	switch command {
-	case "PluginErrors":
-		return "errors"
-	case "PluginOptionsDialog":
-		return "options_dialog"
-	case "PluginOptionsFlow":
-		return "options_flow"
-	case "PluginTrustWarning":
-		return "trust_warning"
-	case "UnifiedInstalledCell":
-		return "installed_cell"
-	case "parseArgs":
-		return "parse_args"
-	case "pluginDetailsHelpers":
-		return "details"
-	case "usePagination":
-		return "pagination"
-	default:
-		return "show"
-	}
-}
-
-func pluginCompatibilityCommand(topic string) string {
-	switch strings.ToLower(strings.TrimSpace(topic)) {
-	case "pluginerrors":
-		return "PluginErrors"
-	case "pluginoptionsdialog":
-		return "PluginOptionsDialog"
-	case "pluginoptionsflow":
-		return "PluginOptionsFlow"
-	case "plugintrustwarning":
-		return "PluginTrustWarning"
-	case "unifiedinstalledcell":
-		return "UnifiedInstalledCell"
-	case "parseargs":
-		return "parseArgs"
-	case "plugindetailshelpers":
-		return "pluginDetailsHelpers"
-	case "usepagination":
-		return "usePagination"
-	default:
-		return strings.TrimSpace(topic)
-	}
-}
-
-func pluginCompatibilityOptions() []string {
-	return []string{
-		"codog plugins list",
-		"codog plugins health",
-		"codog plugins show|info|describe ID",
-		"codog plugins validate PATH",
-		"codog marketplace sources",
-		"codog marketplace browse",
-		"codog marketplace install PATH",
-		"codog marketplace install-remote ID",
-		"codog marketplace enable ID",
-		"codog marketplace disable ID",
-		"codog marketplace remove ID",
-	}
-}
-
-func normalizePluginAction(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "list", "ls":
-		return "list"
-	case "health", "healthcheck", "lifecycle":
-		return "health"
-	case "show", "info", "describe", "details", "detail":
-		return "show"
-	case "sources", "source", "marketplaces", "manage-marketplaces":
-		return "sources"
-	case "settings", "config":
-		return "settings"
-	case "install", "add":
-		return "install"
-	case "install-remote", "remote-install":
-		return "install-remote"
-	case "update", "upgrade":
-		return "update"
-	case "remove", "rm", "delete", "uninstall":
-		return "remove"
-	case "enable", "on":
-		return "enable"
-	case "disable", "off":
-		return "disable"
-	case "validate", "check":
-		return "validate"
-	case "remote", "browse", "discover":
-		return "remote"
-	default:
-		return strings.ToLower(strings.TrimSpace(raw))
-	}
-}
-
-var pluginsActionCandidates = []string{
-	"list", "ls", "health", "healthcheck", "lifecycle", "show", "info", "describe", "details", "detail",
-	"sources", "source", "marketplaces", "manage-marketplaces", "add-marketplace", "remove-marketplace",
-	"delete-marketplace", "settings", "config", "remote", "browse", "discover", "updates", "install",
-	"add", "install-remote", "remote-install", "update", "upgrade", "enable", "on", "disable", "off",
-	"remove", "rm", "delete", "uninstall", "validate", "check",
-}
-
-func unknownPluginsActionHint(action string) string {
-	suggestions := toolnames.Suggestions(action, pluginsActionCandidates, 4)
-	switch len(suggestions) {
-	case 1:
-		return fmt.Sprintf("Did you mean `codog plugins %s`? Use `codog plugins list` or `codog plugins help` to inspect supported actions.", suggestions[0])
-	case 0:
-		return "Use `codog plugins list`, `health`, `show|info|describe`, `validate`, `sources`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`."
-	default:
-		return fmt.Sprintf("Did you mean one of: %s? Use `codog plugins list` or `codog plugins help` to inspect supported actions.", strings.Join(suggestions, ", "))
-	}
-}
-
-func normalizeMarketplaceAction(raw string) string {
-	action := strings.ToLower(strings.TrimSpace(raw))
-	switch action {
-	case "", "list", "show", "info", "describe", "health", "healthcheck", "lifecycle", "validate",
-		"sources", "source", "marketplaces", "manage-marketplaces", "add-marketplace", "remove-marketplace",
-		"delete-marketplace", "settings", "remote", "browse", "discover", "updates", "install", "install-remote",
-		"update", "enable", "disable", "remove", "uninstall":
-		return action
-	default:
-		return normalizePluginAction(raw)
-	}
-}
-
-func pluginCompatibilityItems(manifests []plugins.Manifest) []pluginCompatibilityItem {
-	items := make([]pluginCompatibilityItem, 0, len(manifests))
-	for _, manifest := range manifests {
-		items = append(items, pluginCompatibilityItem{
-			ID:          manifest.ID,
-			Name:        manifest.Name,
-			Version:     manifest.Version,
-			Description: manifest.Description,
-			Enabled:     manifest.Enabled,
-			Path:        manifest.Path,
-			Tools:       len(manifest.Tools),
-			Commands:    len(manifest.Commands),
-			Skills:      len(manifest.Skills),
-			Agents:      len(manifest.Agents),
-			Hooks:       len(manifest.Hooks),
-			MCPServers:  len(manifest.MCPServers),
-			Surfaces:    pluginManifestSurfaces(manifest),
-			Risks:       pluginManifestRisks(manifest),
-		})
-	}
-	return items
-}
-
-func pluginCompatibilityDetailsForManifest(manifest plugins.Manifest) pluginCompatibilityDetails {
-	details := pluginCompatibilityDetails{
-		ID:           manifest.ID,
-		Name:         manifest.Name,
-		Version:      manifest.Version,
-		Description:  manifest.Description,
-		Root:         manifest.Root,
-		DataDir:      plugins.DataDirForManifest(manifest),
-		ManifestFile: manifest.Path,
-		Enabled:      manifest.Enabled,
-		Tools:        pluginToolDetails(manifest.Tools),
-		Commands:     pluginPathDetails(manifest.Root, manifest.Commands),
-		Skills:       pluginPathDetails(manifest.Root, manifest.Skills),
-		Agents:       pluginPathDetails(manifest.Root, manifest.Agents),
-		Hooks:        pluginPathDetails(manifest.Root, manifest.Hooks),
-		MCPServers:   pluginMCPServerDetails(manifest.MCPServers),
-		Surfaces:     pluginManifestSurfaces(manifest),
-		Risks:        pluginManifestRisks(manifest),
-	}
-	validation := pluginCompatibilityValidationForSource(manifest.ID, manifest.Root)
-	details.Validation = &validation
-	return details
-}
-
-func pluginToolDetails(tools []plugins.ToolManifest) []pluginCompatibilityToolDetail {
-	out := make([]pluginCompatibilityToolDetail, 0, len(tools))
-	for _, tool := range tools {
-		out = append(out, pluginCompatibilityToolDetail{
-			Name:        tool.Name,
-			Description: tool.Description,
-			Command:     tool.Command,
-			Args:        append([]string(nil), tool.Args...),
-			Permission:  tool.Permission,
-			Executable:  strings.TrimSpace(tool.Command) != "",
-			Risks:       pluginToolRisks(tool),
-		})
-	}
-	return out
-}
-
-func pluginToolRisks(tool plugins.ToolManifest) []string {
-	risks := []string{}
-	if strings.TrimSpace(tool.Command) != "" {
-		risks = append(risks, fmt.Sprintf("tool %s executes a local command", tool.Name))
-	}
-	if strings.EqualFold(tool.Permission, "workspace-write") || strings.EqualFold(tool.Permission, "danger-full-access") || strings.EqualFold(tool.Permission, "allow") {
-		risks = append(risks, fmt.Sprintf("tool %s requests %s permission", tool.Name, tool.Permission))
-	}
-	return risks
-}
-
-func pluginManifestSurfaces(manifest plugins.Manifest) []string {
-	surfaces := []string{}
-	if len(manifest.Tools) > 0 {
-		surfaces = append(surfaces, "tools")
-	}
-	if len(manifest.Commands) > 0 {
-		surfaces = append(surfaces, "commands")
-	}
-	if len(manifest.Skills) > 0 {
-		surfaces = append(surfaces, "skills")
-	}
-	if len(manifest.Agents) > 0 {
-		surfaces = append(surfaces, "agents")
-	}
-	if len(manifest.Hooks) > 0 {
-		surfaces = append(surfaces, "hooks")
-	}
-	if len(manifest.MCPServers) > 0 {
-		surfaces = append(surfaces, "mcp_servers")
-	}
-	return surfaces
-}
-
-func pluginManifestRisks(manifest plugins.Manifest) []string {
-	risks := []string{}
-	for _, tool := range manifest.Tools {
-		risks = append(risks, pluginToolRisks(tool)...)
-	}
-	if len(manifest.Hooks) > 0 {
-		risks = append(risks, fmt.Sprintf("%d hook definition(s)", len(manifest.Hooks)))
-	}
-	if len(manifest.MCPServers) > 0 {
-		risks = append(risks, fmt.Sprintf("%d MCP server definition(s)", len(manifest.MCPServers)))
-	}
-	if len(manifest.Agents) > 0 {
-		risks = append(risks, fmt.Sprintf("%d agent definition(s)", len(manifest.Agents)))
-	}
-	return risks
-}
-
-func pluginPathDetails(root string, specs []string) []pluginCompatibilityPathDetail {
-	out := make([]pluginCompatibilityPathDetail, 0, len(specs))
-	for _, spec := range specs {
-		out = append(out, pluginPathDetail(root, spec))
-	}
-	return out
-}
-
-func pluginPathDetail(root string, spec string) pluginCompatibilityPathDetail {
-	detail := pluginCompatibilityPathDetail{Spec: spec}
-	path, err := plugins.ResolveContentPath(root, spec)
-	if err != nil {
-		detail.Error = err.Error()
-		return detail
-	}
-	detail.Path = path
-	info, err := os.Stat(path)
-	if err == nil {
-		detail.Exists = true
-		detail.IsDir = info.IsDir()
-		return detail
-	}
-	if !os.IsNotExist(err) {
-		detail.Error = err.Error()
-	}
-	return detail
-}
-
-func pluginMCPServerDetails(servers map[string]config.MCPServerConfig) []pluginCompatibilityMCPServerDetail {
-	names := make([]string, 0, len(servers))
-	for name := range servers {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	out := make([]pluginCompatibilityMCPServerDetail, 0, len(names))
-	for _, name := range names {
-		server := servers[name]
-		out = append(out, pluginCompatibilityMCPServerDetail{
-			Name:       name,
-			Command:    server.Command,
-			URL:        server.URL,
-			Args:       append([]string(nil), server.Args...),
-			EnvKeys:    mcpEnvKeys(server.Env),
-			HeaderKeys: mcpHeaderKeys(server.Headers),
-		})
-	}
-	return out
-}
-
-func mcpHeaderKeys(headers map[string]string) []string {
-	keys := make([]string, 0, len(headers))
-	for key := range headers {
-		key = strings.TrimSpace(key)
-		if key != "" {
-			keys = append(keys, key)
-		}
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func mcpEnvKeys(env []string) []string {
-	keys := make([]string, 0, len(env))
-	for _, value := range env {
-		key := strings.TrimSpace(value)
-		if index := strings.Index(key, "="); index >= 0 {
-			key = key[:index]
-		}
-		if key != "" {
-			keys = append(keys, key)
-		}
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func pluginTrustWarnings(manifests []plugins.Manifest) []string {
-	warnings := []string{}
-	for _, manifest := range manifests {
-		for _, risk := range pluginManifestRisks(manifest) {
-			warnings = append(warnings, fmt.Sprintf("%s: %s", manifest.ID, risk))
-		}
-	}
-	sort.Strings(warnings)
-	return warnings
-}
-
-func validateInstalledPlugins(workspace string) []pluginCompatibilityValidation {
-	root := plugins.Root(workspace)
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return []pluginCompatibilityValidation{}
-	}
-	out := []pluginCompatibilityValidation{}
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		source := filepath.Join(root, entry.Name())
-		item := pluginCompatibilityValidationForSource(entry.Name(), source)
-		if !item.Success || len(item.Warnings) > 0 {
-			out = append(out, item)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
-}
-
-func pluginCompatibilityValidationForSource(id string, source string) pluginCompatibilityValidation {
-	result, err := plugins.Validate(source)
-	item := pluginCompatibilityValidation{ID: id, Source: source}
-	if err != nil {
-		item.Success = false
-		item.Errors = []plugins.ValidationMessage{{Path: "file", Message: err.Error(), Code: "validation_failed"}}
-		return item
-	}
-	item.Success = result.Success
-	item.Errors = result.Errors
-	item.Warnings = result.Warnings
-	if result.Manifest != nil && result.Manifest.ID != "" {
-		item.ID = result.Manifest.ID
-	}
-	return item
-}
-
-func selectPluginCompatibilityItem(items []pluginCompatibilityItem, id string) *pluginCompatibilityItem {
-	id = strings.ToLower(strings.TrimSpace(id))
-	if id == "" {
-		return nil
-	}
-	for _, item := range items {
-		if strings.EqualFold(item.ID, id) || strings.EqualFold(item.Name, id) {
-			selected := item
-			return &selected
-		}
-	}
-	return nil
-}
-
-func selectPluginManifest(manifests []plugins.Manifest, id string) *plugins.Manifest {
-	id = strings.ToLower(strings.TrimSpace(id))
-	if id == "" {
-		return nil
-	}
-	for index := range manifests {
-		manifest := manifests[index]
-		if strings.EqualFold(manifest.ID, id) || strings.EqualFold(manifest.Name, id) || strings.EqualFold(filepath.Base(manifest.Root), id) {
-			selected := manifest
-			return &selected
-		}
-	}
-	return nil
-}
-
-func pluginCompatibilityDetailTarget(args []string, selected *pluginCompatibilityItem) string {
-	if selected != nil {
-		return selected.ID
-	}
-	for index, arg := range args {
-		value := strings.TrimSpace(arg)
-		if value == "" || strings.HasPrefix(value, "-") {
-			continue
-		}
-		if index == 0 {
-			action := normalizePluginAction(value)
-			if metadata := pluginActionMetadata(action); metadata.known {
-				continue
-			}
-		}
-		return value
-	}
-	return ""
-}
-
-func paginatePluginItems(items []pluginCompatibilityItem, page int, perPage int) ([]pluginCompatibilityItem, pluginCompatibilityPagination) {
-	if page < 1 {
-		page = 1
-	}
-	if perPage < 1 {
-		perPage = 20
-	}
-	total := len(items)
-	totalPages := 0
-	if total > 0 {
-		totalPages = (total + perPage - 1) / perPage
-	}
-	start := (page - 1) * perPage
-	if start > total {
-		start = total
-	}
-	end := start + perPage
-	if end > total {
-		end = total
-	}
-	return append([]pluginCompatibilityItem(nil), items[start:end]...), pluginCompatibilityPagination{
-		Page:       page,
-		PerPage:    perPage,
-		Total:      total,
-		TotalPages: totalPages,
-		Start:      start,
-		End:        end,
-	}
-}
-
-func renderPluginCompatibilityReport(out io.Writer, report pluginCompatibilityReport) {
-	fmt.Fprintln(out, "Plugin Compatibility")
-	fmt.Fprintf(out, "  Command          %s\n", report.Command)
-	fmt.Fprintf(out, "  Status           %s\n", report.Status)
-	fmt.Fprintf(out, "  Plugin root      %s\n", report.PluginRoot)
-	fmt.Fprintf(out, "  Installed        %d\n", report.Summary.Total)
-	fmt.Fprintf(out, "  Enabled          %d\n", report.Summary.Enabled)
-	fmt.Fprintf(out, "  Disabled         %d\n", report.Summary.Disabled)
-	fmt.Fprintf(out, "  Surfaces         tools=%d commands=%d skills=%d agents=%d hooks=%d mcp=%d\n",
-		report.Summary.Tools,
-		report.Summary.Commands,
-		report.Summary.Skills,
-		report.Summary.Agents,
-		report.Summary.Hooks,
-		report.Summary.MCPServers,
-	)
-	if report.Message != "" {
-		fmt.Fprintf(out, "  Message          %s\n", report.Message)
-	}
-	if report.LoadError != "" {
-		fmt.Fprintf(out, "  Load error       %s\n", report.LoadError)
-	}
-	if report.Pagination != nil {
-		fmt.Fprintf(out, "  Page             %d/%d\n", report.Pagination.Page, report.Pagination.TotalPages)
-	}
-	if report.DetailError != "" {
-		fmt.Fprintf(out, "  Detail error     %s\n", report.DetailError)
-	}
-	if report.PluginDetails != nil {
-		details := report.PluginDetails
-		fmt.Fprintf(out, "  Detail plugin    %s enabled=%t\n", details.ID, details.Enabled)
-		if len(details.Surfaces) > 0 {
-			fmt.Fprintf(out, "  Detail surfaces  %s\n", strings.Join(details.Surfaces, ", "))
-		}
-		fmt.Fprintf(out, "  Manifest file    %s\n", details.ManifestFile)
-		fmt.Fprintf(out, "  Data dir         %s\n", details.DataDir)
-		for _, tool := range details.Tools {
-			fmt.Fprintf(out, "  Tool             %s executable=%t permission=%s\n", tool.Name, tool.Executable, tool.Permission)
-		}
-		for _, command := range details.Commands {
-			fmt.Fprintf(out, "  Command file     %s exists=%t\n", command.Spec, command.Exists)
-		}
-		for _, skill := range details.Skills {
-			fmt.Fprintf(out, "  Skill file       %s exists=%t\n", skill.Spec, skill.Exists)
-		}
-		for _, hook := range details.Hooks {
-			fmt.Fprintf(out, "  Hook file        %s exists=%t\n", hook.Spec, hook.Exists)
-		}
-		for _, server := range details.MCPServers {
-			fmt.Fprintf(out, "  MCP server       %s command=%s\n", server.Name, server.Command)
-		}
-		if details.Validation != nil {
-			fmt.Fprintf(out, "  Validation       success=%t errors=%d warnings=%d\n", details.Validation.Success, len(details.Validation.Errors), len(details.Validation.Warnings))
-		}
-	}
-	for _, item := range report.Plugins {
-		surfaceText := "none"
-		if len(item.Surfaces) > 0 {
-			surfaceText = strings.Join(item.Surfaces, ",")
-		}
-		fmt.Fprintf(out, "  Plugin           %s enabled=%t surfaces=%s tools=%d commands=%d skills=%d\n", item.ID, item.Enabled, surfaceText, item.Tools, item.Commands, item.Skills)
-	}
-	for _, warning := range report.TrustWarnings {
-		fmt.Fprintf(out, "  Trust warning    %s\n", warning)
-	}
-	for _, item := range report.Validation {
-		for _, validationErr := range item.Errors {
-			fmt.Fprintf(out, "  Error            %s %s: %s\n", item.ID, validationErr.Path, validationErr.Message)
-		}
-		for _, warning := range item.Warnings {
-			fmt.Fprintf(out, "  Warning          %s %s: %s\n", item.ID, warning.Path, warning.Message)
-		}
-	}
 }
 
 func (a *App) marketplaceSourcesCommand(args []string, format string) error {
@@ -11897,7 +11032,7 @@ func (a *App) marketplaceRemoteReport(args []string) (marketplaceRemoteReport, e
 			Sources:     []marketplaceSourceInfo{},
 			Plugins:     []marketplaceRemotePlugin{},
 			Total:       0,
-			Pagination: &pluginCompatibilityPagination{
+			Pagination: &marketplacePagination{
 				Page:       req.Page,
 				PerPage:    req.PerPage,
 				Total:      0,
@@ -12000,7 +11135,7 @@ func filterMarketplaceRemotePlugins(items []marketplaceRemotePlugin, req marketp
 	}
 }
 
-func paginateMarketplaceRemotePlugins(items []marketplaceRemotePlugin, page int, perPage int) ([]marketplaceRemotePlugin, pluginCompatibilityPagination) {
+func paginateMarketplaceRemotePlugins(items []marketplaceRemotePlugin, page int, perPage int) ([]marketplaceRemotePlugin, marketplacePagination) {
 	if page < 1 {
 		page = 1
 	}
@@ -12020,7 +11155,7 @@ func paginateMarketplaceRemotePlugins(items []marketplaceRemotePlugin, page int,
 	if end > total {
 		end = total
 	}
-	return append([]marketplaceRemotePlugin(nil), items[start:end]...), pluginCompatibilityPagination{
+	return append([]marketplaceRemotePlugin(nil), items[start:end]...), marketplacePagination{
 		Page:       page,
 		PerPage:    perPage,
 		Total:      total,
@@ -19370,6 +18505,10 @@ func (a *App) notificationsReport(action string, path string) notificationsRepor
 }
 
 func notificationsEnabled(value *bool) bool {
+	return enabledByDefault(value)
+}
+
+func enabledByDefault(value *bool) bool {
 	return value == nil || *value
 }
 
@@ -21851,325 +20990,6 @@ func (a *App) Review(args []string) error {
 	return nil
 }
 
-type reviewCompatibilityReport struct {
-	Kind                string              `json:"kind"`
-	Action              string              `json:"action"`
-	Status              string              `json:"status"`
-	Command             string              `json:"command"`
-	Workspace           string              `json:"workspace"`
-	Enabled             bool                `json:"enabled"`
-	Configured          bool                `json:"configured,omitempty"`
-	Previous            bool                `json:"previous,omitempty"`
-	LocalReviewCommand  string              `json:"local_review_command"`
-	RemoteReviewCommand string              `json:"remote_review_command"`
-	DefaultLimit        int                 `json:"default_limit"`
-	RequestedLimit      int                 `json:"requested_limit,omitempty"`
-	Overage             bool                `json:"overage,omitempty"`
-	ChangedFiles        int                 `json:"changed_files,omitempty"`
-	ChangedLines        int                 `json:"changed_lines,omitempty"`
-	SecurityFindings    int                 `json:"security_findings,omitempty"`
-	ReviewStatus        string              `json:"review_status,omitempty"`
-	ReviewSignals       []string            `json:"review_signals,omitempty"`
-	LocalReview         *localreview.Report `json:"local_review,omitempty"`
-	Path                string              `json:"path,omitempty"`
-	ProviderRequestMade bool                `json:"provider_request_made"`
-	WorkspaceWillMutate bool                `json:"workspace_will_mutate"`
-	Message             string              `json:"message"`
-}
-
-func (a *App) ReviewCompatibility(command string, args []string) error {
-	if reviewCompatibilityAction(command) == "enabled" {
-		return a.reviewEnabledCompatibility(command, args)
-	}
-	clean, format, err := stripJSONOnlyOutputFormat(command, args)
-	if err != nil {
-		return err
-	}
-	req, err := parseReviewArgs(append(clean, "--output-format", "json"))
-	if err != nil {
-		req = reviewRequest{Format: "json", Limit: 200}
-	}
-	report := reviewCompatibilityReport{
-		Kind:                "review_compatibility",
-		Action:              reviewCompatibilityAction(command),
-		Status:              "ok",
-		Command:             command,
-		Workspace:           a.Workspace,
-		Enabled:             ultraReviewEnabled(a.Config.Future.UltraReviewEnabled),
-		Configured:          a.Config.Future.UltraReviewEnabled != nil,
-		LocalReviewCommand:  "codog ultrareview",
-		RemoteReviewCommand: "codog reviewRemote",
-		DefaultLimit:        200,
-		RequestedLimit:      req.Limit,
-		ProviderRequestMade: false,
-		WorkspaceWillMutate: false,
-	}
-	switch command {
-	case "UltrareviewOverageDialog":
-		reviewReport, err := localreview.Run(a.Workspace, localreview.Options{
-			Base:   req.Base,
-			Staged: req.Staged,
-			Limit:  req.Limit,
-		})
-		if err != nil {
-			return err
-		}
-		report.ChangedFiles = reviewReport.Summary.Files
-		report.ChangedLines = reviewReport.Summary.Additions + reviewReport.Summary.Deletions
-		report.ReviewStatus = reviewReport.Status
-		report.SecurityFindings = len(reviewReport.SecurityFindings)
-		report.ReviewSignals = append([]string(nil), reviewReport.Signals...)
-		report.LocalReview = &reviewReport
-		report.Overage = report.ChangedLines > req.Limit
-		if report.Overage {
-			report.Status = "warn"
-			report.Message = "Changed line count is above the requested review threshold; narrow the diff or raise --limit for a broader local review."
-		} else {
-			report.Status = reviewCompatibilityStatus(reviewReport)
-			report.Message = "Changed line count is within the requested review threshold."
-		}
-	default:
-		reviewReport, err := localreview.Run(a.Workspace, localreview.Options{
-			Base:   req.Base,
-			Staged: req.Staged,
-			Limit:  req.Limit,
-		})
-		if err != nil {
-			return err
-		}
-		report.ChangedFiles = reviewReport.Summary.Files
-		report.ChangedLines = reviewReport.Summary.Additions + reviewReport.Summary.Deletions
-		report.ReviewStatus = reviewReport.Status
-		report.SecurityFindings = len(reviewReport.SecurityFindings)
-		report.ReviewSignals = append([]string(nil), reviewReport.Signals...)
-		report.LocalReview = &reviewReport
-		report.Status = reviewCompatibilityStatus(reviewReport)
-		report.Message = "Local review scanner ran for the requested diff and returned a compatibility summary."
-	}
-	if format == "json" {
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	}
-	renderReviewCompatibilityReport(a.Out, report)
-	return nil
-}
-
-type reviewEnabledRequest struct {
-	Action string
-	Format string
-	Target string
-	Path   string
-}
-
-func (a *App) reviewEnabledCompatibility(command string, args []string) error {
-	req, err := parseReviewEnabledArgs(args)
-	if err != nil {
-		return err
-	}
-	previous := ultraReviewEnabled(a.Config.Future.UltraReviewEnabled)
-	report := reviewCompatibilityReport{
-		Kind:                "review_compatibility",
-		Action:              "enabled",
-		Status:              "ok",
-		Command:             command,
-		Workspace:           a.Workspace,
-		Enabled:             previous,
-		Configured:          a.Config.Future.UltraReviewEnabled != nil,
-		LocalReviewCommand:  "codog ultrareview",
-		RemoteReviewCommand: "codog reviewRemote",
-		DefaultLimit:        200,
-		ProviderRequestMade: false,
-		Message:             "Ultra review is enabled through the local `codog ultrareview` review command.",
-	}
-	switch req.Action {
-	case "status":
-	case "on", "off", "toggle":
-		next := req.Action == "on"
-		if req.Action == "toggle" {
-			next = !previous
-		}
-		path, err := a.preferenceConfigPath(req.Target, req.Path)
-		if err != nil {
-			return err
-		}
-		if err := setPreferenceBool(path, "preferences.ultrareview_enabled", legacyUltraReviewEnabledKey, next); err != nil {
-			return err
-		}
-		a.Config.Future.UltraReviewEnabled = &next
-		report.Status = "ok"
-		report.Action = "set"
-		report.Enabled = next
-		report.Configured = true
-		report.Previous = previous
-		report.Path = path
-		report.WorkspaceWillMutate = true
-		if next {
-			report.Message = "Ultra review preference saved as enabled."
-		} else {
-			report.Message = "Ultra review preference saved as disabled."
-		}
-	case "clear":
-		path, err := a.preferenceConfigPath(req.Target, req.Path)
-		if err != nil {
-			return err
-		}
-		if err := unsetPreferenceBool(path, "preferences.ultrareview_enabled", legacyUltraReviewEnabledKey); err != nil {
-			return err
-		}
-		a.Config.Future.UltraReviewEnabled = nil
-		report.Action = "clear"
-		report.Enabled = true
-		report.Configured = false
-		report.Previous = previous
-		report.Path = path
-		report.WorkspaceWillMutate = true
-		report.Message = "Ultra review preference cleared; default is enabled."
-	default:
-		return fmt.Errorf("unknown ultrareviewEnabled command %q", req.Action)
-	}
-	if req.Format == "json" {
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	}
-	renderReviewCompatibilityReport(a.Out, report)
-	return nil
-}
-
-func parseReviewEnabledArgs(args []string) (reviewEnabledRequest, error) {
-	req := reviewEnabledRequest{Action: "status", Format: "text", Target: "user"}
-	var rest []string
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, errors.New("ultrareviewEnabled output format is required")
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if index >= len(args) {
-				return req, errors.New("ultrareviewEnabled target is required")
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) {
-				return req, errors.New("ultrareviewEnabled config path is required")
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown ultrareviewEnabled flag %q", arg)
-		default:
-			rest = append(rest, arg)
-		}
-	}
-	if err := validateTextOrJSON(req.Format, "ultrareviewEnabled"); err != nil {
-		return req, err
-	}
-	if len(rest) == 0 {
-		return req, nil
-	}
-	switch strings.ToLower(rest[0]) {
-	case "status", "show":
-		req.Action = "status"
-	case "on", "enable", "enabled", "true":
-		req.Action = "on"
-	case "off", "disable", "disabled", "false":
-		req.Action = "off"
-	case "toggle":
-		req.Action = "toggle"
-	case "clear", "reset", "unset":
-		req.Action = "clear"
-	default:
-		return req, fmt.Errorf("unknown ultrareviewEnabled command %q", rest[0])
-	}
-	if len(rest) > 1 {
-		return req, fmt.Errorf("unexpected ultrareviewEnabled argument %q", rest[1])
-	}
-	return req, nil
-}
-
-func ultraReviewEnabled(value *bool) bool {
-	return value == nil || *value
-}
-
-func reviewCompatibilityStatus(report localreview.Report) string {
-	switch report.Status {
-	case "clean", "findings":
-		return report.Status
-	default:
-		return "ok"
-	}
-}
-
-func renderReviewCompatibilityReport(out io.Writer, report reviewCompatibilityReport) {
-	fmt.Fprintln(out, "Review Compatibility")
-	fmt.Fprintf(out, "  Command          %s\n", report.Command)
-	fmt.Fprintf(out, "  Status           %s\n", report.Status)
-	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
-	fmt.Fprintf(out, "  Local command    %s\n", report.LocalReviewCommand)
-	if report.ChangedFiles != 0 || report.ChangedLines != 0 {
-		fmt.Fprintf(out, "  Changed files    %d\n", report.ChangedFiles)
-		fmt.Fprintf(out, "  Changed lines    %d\n", report.ChangedLines)
-	}
-	if report.ReviewStatus != "" {
-		fmt.Fprintf(out, "  Review status    %s\n", report.ReviewStatus)
-	}
-	if report.SecurityFindings != 0 {
-		fmt.Fprintf(out, "  Security findings %d\n", report.SecurityFindings)
-	}
-	if report.Path != "" {
-		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
-	}
-	fmt.Fprintf(out, "  Message          %s\n", report.Message)
-	if len(report.ReviewSignals) != 0 {
-		fmt.Fprintln(out, "Signals")
-		for _, signal := range report.ReviewSignals {
-			fmt.Fprintf(out, "  - %s\n", signal)
-		}
-	}
-	if report.LocalReview != nil {
-		fmt.Fprintln(out)
-		localreview.RenderText(out, *report.LocalReview)
-	}
-}
-
-func reviewCompatibilityAction(command string) string {
-	switch command {
-	case "ultrareviewEnabled":
-		return "enabled"
-	case "UltrareviewOverageDialog":
-		return "overage"
-	default:
-		return "show"
-	}
-}
-
-func reviewCompatibilityCommand(topic string) string {
-	switch strings.ToLower(strings.TrimSpace(topic)) {
-	case "ultrareviewcommand":
-		return "ultrareviewCommand"
-	case "ultrareviewenabled":
-		return "ultrareviewEnabled"
-	case "ultrareviewoveragedialog":
-		return "UltrareviewOverageDialog"
-	default:
-		return strings.TrimSpace(topic)
-	}
-}
-
 func (a *App) ReviewRemote(ctx context.Context, args []string) error {
 	req, err := parseReviewRemoteArgs(args)
 	if err != nil {
@@ -22864,69 +21684,6 @@ type installGitHubAppRequest struct {
 	DryRun     bool
 }
 
-type installGitHubAppStepReport struct {
-	Kind                  string                     `json:"kind"`
-	Action                string                     `json:"action"`
-	Status                string                     `json:"status"`
-	Step                  string                     `json:"step"`
-	Command               string                     `json:"command"`
-	Workspace             string                     `json:"workspace"`
-	Repo                  string                     `json:"repo,omitempty"`
-	SecretName            string                     `json:"secret_name"`
-	APIKeyConfigured      bool                       `json:"api_key_configured"`
-	GitHubCLIAvailable    bool                       `json:"github_cli_available"`
-	GitHubCLIPath         string                     `json:"github_cli_path,omitempty"`
-	DocsURL               string                     `json:"docs_url"`
-	Workflows             []githubsetup.WorkflowFile `json:"workflows,omitempty"`
-	ExistingWorkflows     []string                   `json:"existing_workflows,omitempty"`
-	SecretCheck           *installGitHubSecretCheck  `json:"secret_check,omitempty"`
-	GitHubCheck           *installGitHubCLICheck     `json:"github_check,omitempty"`
-	ActionsCheck          *installGitHubActionsCheck `json:"actions_check,omitempty"`
-	OAuthProfile          string                     `json:"oauth_profile,omitempty"`
-	OAuthStatus           *oauth.Status              `json:"oauth_status,omitempty"`
-	OAuthProfiles         []oauthProviderSummary     `json:"oauth_profiles,omitempty"`
-	Instructions          []string                   `json:"instructions,omitempty"`
-	Messages              []string                   `json:"messages,omitempty"`
-	Warnings              []string                   `json:"warnings,omitempty"`
-	Errors                []string                   `json:"errors,omitempty"`
-	NextCommand           string                     `json:"next_command,omitempty"`
-	ProviderRequestMade   bool                       `json:"provider_request_made"`
-	WorkspaceWillMutate   bool                       `json:"workspace_will_mutate"`
-	InstallCommandMutates bool                       `json:"install_command_mutates"`
-}
-
-type installGitHubSecretCheck struct {
-	Attempted  bool     `json:"attempted"`
-	Available  bool     `json:"available"`
-	Exists     bool     `json:"exists"`
-	SecretName string   `json:"secret_name"`
-	Repo       string   `json:"repo,omitempty"`
-	Command    []string `json:"command,omitempty"`
-	Error      string   `json:"error,omitempty"`
-}
-
-type installGitHubCLICheck struct {
-	Attempted      bool     `json:"attempted"`
-	Available      bool     `json:"available"`
-	Authenticated  bool     `json:"authenticated"`
-	RepoAccessible bool     `json:"repo_accessible"`
-	Repo           string   `json:"repo,omitempty"`
-	AuthCommand    []string `json:"auth_command,omitempty"`
-	RepoCommand    []string `json:"repo_command,omitempty"`
-	AuthError      string   `json:"auth_error,omitempty"`
-	RepoError      string   `json:"repo_error,omitempty"`
-}
-
-type installGitHubActionsCheck struct {
-	Attempted      bool     `json:"attempted"`
-	Available      bool     `json:"available"`
-	Enabled        bool     `json:"enabled"`
-	Repo           string   `json:"repo,omitempty"`
-	AllowedActions string   `json:"allowed_actions,omitempty"`
-	Command        []string `json:"command,omitempty"`
-	Error          string   `json:"error,omitempty"`
-}
-
 type installSlackAppRequest struct {
 	Action string
 	Format string
@@ -23278,522 +22035,6 @@ func (a *App) InstallGitHubApp(args []string) error {
 	return nil
 }
 
-func (a *App) InstallGitHubAppStep(command string, args []string) error {
-	req, err := parseInstallGitHubAppArgs(args)
-	if err != nil {
-		return err
-	}
-	command = installGitHubAppStepCommand(command)
-	dryRun := true
-	if command == "CreatingStep" {
-		dryRun = req.DryRun
-	}
-	setupReport, err := githubsetup.Setup(githubsetup.Options{
-		Workspace:  a.Workspace,
-		SecretName: req.SecretName,
-		Workflows:  req.Workflows,
-		Force:      req.Force,
-		DryRun:     dryRun,
-	})
-	if err != nil {
-		return err
-	}
-	report := a.buildInstallGitHubAppStepReport(command, req, setupReport)
-	if req.Format == "json" {
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	}
-	renderInstallGitHubAppStepReport(a.Out, report)
-	return nil
-}
-
-func installGitHubAppStepCommand(topic string) string {
-	switch strings.ToLower(strings.TrimSpace(topic)) {
-	case "apikeystep":
-		return "ApiKeyStep"
-	case "checkexistingsecretstep":
-		return "CheckExistingSecretStep"
-	case "checkgithubstep":
-		return "CheckGitHubStep"
-	case "chooserepostep":
-		return "ChooseRepoStep"
-	case "creatingstep":
-		return "CreatingStep"
-	case "errorstep":
-		return "ErrorStep"
-	case "existingworkflowstep":
-		return "ExistingWorkflowStep"
-	case "installappstep":
-		return "InstallAppStep"
-	case "oauthflowstep":
-		return "OAuthFlowStep"
-	case "successstep":
-		return "SuccessStep"
-	case "warningsstep":
-		return "WarningsStep"
-	default:
-		return strings.TrimSpace(topic)
-	}
-}
-
-func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubAppRequest, setupReport githubsetup.Report) installGitHubAppStepReport {
-	ghPath, ghErr := exec.LookPath("gh")
-	existing := []string{}
-	for _, workflow := range setupReport.Workflows {
-		if workflow.Exists {
-			existing = append(existing, workflow.Path)
-		}
-	}
-	apiKeyConfigured := strings.TrimSpace(a.Config.APIKey) != "" ||
-		strings.TrimSpace(a.Config.AuthToken) != "" ||
-		strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != ""
-	report := installGitHubAppStepReport{
-		Kind:                  "install_github_app_step",
-		Action:                "check",
-		Status:                "ok",
-		Step:                  command,
-		Command:               command,
-		Workspace:             setupReport.Workspace,
-		Repo:                  setupReport.Repo,
-		SecretName:            setupReport.SecretName,
-		APIKeyConfigured:      apiKeyConfigured,
-		GitHubCLIAvailable:    ghErr == nil,
-		GitHubCLIPath:         ghPath,
-		DocsURL:               setupReport.DocsURL,
-		Workflows:             setupReport.Workflows,
-		ExistingWorkflows:     existing,
-		Instructions:          append([]string(nil), setupReport.Instructions...),
-		Warnings:              append([]string(nil), setupReport.Warnings...),
-		NextCommand:           installGitHubAppNextCommand(req),
-		ProviderRequestMade:   false,
-		WorkspaceWillMutate:   command == "CreatingStep" && !setupReport.DryRun,
-		InstallCommandMutates: true,
-	}
-	switch command {
-	case "ApiKeyStep":
-		if apiKeyConfigured {
-			report.Messages = append(report.Messages, "Anthropic credentials are available locally.")
-		} else {
-			report.Status = "warn"
-			report.Messages = append(report.Messages, "No local Anthropic API key or auth token was detected.")
-			report.Warnings = append(report.Warnings, "Set ANTHROPIC_API_KEY or configure Codog credentials before using the workflow.")
-		}
-	case "CheckExistingSecretStep":
-		report.Messages = append(report.Messages, fmt.Sprintf("Repository secret expected: %s", setupReport.SecretName))
-		report.Messages = append(report.Messages, fmt.Sprintf("Use `gh secret set %s --body \"$ANTHROPIC_API_KEY\"` to create or update it.", setupReport.SecretName))
-		secretCheck := installGitHubSecretCheck{
-			Available:  ghErr == nil,
-			SecretName: setupReport.SecretName,
-			Repo:       setupReport.Repo,
-		}
-		if ghErr != nil {
-			report.Status = "warn"
-			report.Warnings = append(report.Warnings, "GitHub CLI `gh` is not available; secret existence cannot be checked locally.")
-		} else if setupReport.Repo == "" {
-			report.Status = "warn"
-			report.Warnings = append(report.Warnings, "No GitHub origin remote was detected; pass a repository to gh manually if needed.")
-		} else {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			secretCheck = checkGitHubRepositorySecret(ctx, ghPath, setupReport.Repo, setupReport.SecretName)
-			report.ProviderRequestMade = secretCheck.Attempted
-			switch {
-			case secretCheck.Error != "":
-				report.Status = "warn"
-				report.Warnings = append(report.Warnings, fmt.Sprintf("Could not check GitHub repository secret: %s", secretCheck.Error))
-			case secretCheck.Exists:
-				report.Messages = append(report.Messages, fmt.Sprintf("Repository secret %s exists on %s.", setupReport.SecretName, setupReport.Repo))
-			default:
-				report.Status = "warn"
-				report.Warnings = append(report.Warnings, fmt.Sprintf("Repository secret %s was not found on %s.", setupReport.SecretName, setupReport.Repo))
-			}
-			cancel()
-		}
-		report.SecretCheck = &secretCheck
-	case "CheckGitHubStep":
-		githubCheck := installGitHubCLICheck{Available: ghErr == nil, Repo: setupReport.Repo}
-		if setupReport.Repo != "" {
-			report.Messages = append(report.Messages, "GitHub origin remote detected.")
-		} else {
-			report.Status = "warn"
-			report.Messages = append(report.Messages, "No GitHub origin remote was detected.")
-		}
-		if ghErr != nil {
-			report.Status = "warn"
-			report.Warnings = append(report.Warnings, "GitHub CLI `gh` is not available on PATH.")
-		} else {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			githubCheck = checkGitHubCLI(ctx, ghPath, setupReport.Repo)
-			report.ProviderRequestMade = githubCheck.Attempted
-			if githubCheck.Authenticated {
-				report.Messages = append(report.Messages, "GitHub CLI authentication is active.")
-			} else {
-				report.Status = "warn"
-				report.Warnings = append(report.Warnings, fmt.Sprintf("GitHub CLI authentication check failed: %s", fallbackMessage(githubCheck.AuthError, "not authenticated")))
-			}
-			if setupReport.Repo != "" {
-				if githubCheck.RepoAccessible {
-					report.Messages = append(report.Messages, fmt.Sprintf("Repository %s is accessible through gh.", setupReport.Repo))
-				} else {
-					report.Status = "warn"
-					report.Warnings = append(report.Warnings, fmt.Sprintf("GitHub repository access check failed: %s", fallbackMessage(githubCheck.RepoError, "repository not accessible")))
-				}
-			}
-			cancel()
-		}
-		report.GitHubCheck = &githubCheck
-	case "ChooseRepoStep":
-		if setupReport.Repo != "" {
-			report.Messages = append(report.Messages, fmt.Sprintf("Selected repository: %s", setupReport.Repo))
-		} else {
-			report.Status = "warn"
-			report.Messages = append(report.Messages, "Repository selection is unresolved because no GitHub origin remote was detected.")
-		}
-	case "ExistingWorkflowStep":
-		if len(existing) > 0 {
-			report.Status = "warn"
-			report.Messages = append(report.Messages, fmt.Sprintf("%d workflow file(s) already exist.", len(existing)))
-		} else {
-			report.Messages = append(report.Messages, "No selected workflow files exist yet.")
-		}
-	case "CreatingStep":
-		if setupReport.DryRun {
-			report.Status = "planned"
-			report.Messages = append(report.Messages, "Workflow creation is ready; no files were written because dry-run mode is enabled.")
-			report.Messages = append(report.Messages, "Run the next command to write workflow files.")
-			break
-		}
-		report.NextCommand = ""
-		changed := 0
-		for _, workflow := range setupReport.Workflows {
-			switch {
-			case workflow.Created:
-				changed++
-				report.Messages = append(report.Messages, fmt.Sprintf("Created workflow file: %s", workflow.Path))
-			case workflow.Overwritten:
-				changed++
-				report.Messages = append(report.Messages, fmt.Sprintf("Overwrote workflow file: %s", workflow.Path))
-			}
-		}
-		if changed == 0 {
-			report.Status = "warn"
-			report.Messages = append(report.Messages, "No workflow files were written.")
-		} else {
-			report.Messages = append(report.Messages, "Workflow creation completed.")
-		}
-	case "InstallAppStep":
-		report.Messages = append(report.Messages, "Install or authorize the GitHub App by following the setup documentation.")
-		report.Messages = append(report.Messages, setupReport.DocsURL)
-		actionsCheck := installGitHubActionsCheck{Available: ghErr == nil, Repo: setupReport.Repo}
-		if ghErr != nil {
-			report.Status = "warn"
-			report.Warnings = append(report.Warnings, "GitHub CLI `gh` is not available; GitHub Actions permissions cannot be checked locally.")
-		} else if setupReport.Repo == "" {
-			report.Status = "warn"
-			report.Warnings = append(report.Warnings, "No GitHub origin remote was detected; GitHub Actions permissions cannot be checked locally.")
-		} else {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			actionsCheck = checkGitHubActionsPermissions(ctx, ghPath, setupReport.Repo)
-			report.ProviderRequestMade = actionsCheck.Attempted
-			switch {
-			case actionsCheck.Error != "":
-				report.Status = "warn"
-				report.Warnings = append(report.Warnings, fmt.Sprintf("Could not check GitHub Actions permissions: %s", actionsCheck.Error))
-			case actionsCheck.Enabled:
-				report.Messages = append(report.Messages, fmt.Sprintf("GitHub Actions is enabled for %s.", setupReport.Repo))
-				if actionsCheck.AllowedActions != "" {
-					report.Messages = append(report.Messages, fmt.Sprintf("Allowed actions policy: %s.", actionsCheck.AllowedActions))
-				}
-			default:
-				report.Status = "warn"
-				report.Warnings = append(report.Warnings, fmt.Sprintf("GitHub Actions is disabled for %s.", setupReport.Repo))
-			}
-			cancel()
-		}
-		report.ActionsCheck = &actionsCheck
-	case "OAuthFlowStep":
-		a.populateGitHubAppOAuthChecks(&report)
-	case "SuccessStep":
-		a.populateGitHubAppSuccessChecks(&report, setupReport, ghPath, ghErr, apiKeyConfigured)
-		if len(report.Warnings) > 0 {
-			report.Status = "warn"
-			report.Messages = append(report.Messages, "Setup can proceed, but warnings should be reviewed first.")
-		} else {
-			report.Status = "ready"
-			report.Messages = append(report.Messages, "Local GitHub App setup checks are ready.")
-		}
-	case "WarningsStep":
-		a.populateGitHubAppSuccessChecks(&report, setupReport, ghPath, ghErr, apiKeyConfigured)
-		if len(report.Warnings) > 0 {
-			report.Status = "warn"
-			report.Messages = append(report.Messages, fmt.Sprintf("%d warning(s) need attention.", len(report.Warnings)))
-		} else {
-			report.Messages = append(report.Messages, "No warnings were produced by the local setup checks.")
-		}
-	case "ErrorStep":
-		a.populateGitHubAppErrorChecks(&report, setupReport, ghPath, ghErr, apiKeyConfigured)
-	default:
-		report.Messages = append(report.Messages, "GitHub App setup step report generated.")
-	}
-	return report
-}
-
-func (a *App) populateGitHubAppErrorChecks(report *installGitHubAppStepReport, setupReport githubsetup.Report, ghPath string, ghErr error, apiKeyConfigured bool) {
-	a.populateGitHubAppSuccessChecks(report, setupReport, ghPath, ghErr, apiKeyConfigured)
-	if len(report.Warnings) == 0 {
-		report.Messages = append(report.Messages, "No local setup errors were produced by the readiness checks.")
-		return
-	}
-	report.Status = "error"
-	report.Errors = append(report.Errors, report.Warnings...)
-	report.Warnings = nil
-	report.Messages = append(report.Messages, fmt.Sprintf("%d setup error(s) need attention.", len(report.Errors)))
-}
-
-func (a *App) populateGitHubAppOAuthChecks(report *installGitHubAppStepReport) {
-	profileName := strings.TrimSpace(a.Config.OAuthProfile)
-	oauthStatus, oauthProfiles := a.xaaOAuthStatus(profileName)
-	report.OAuthProfile = profileName
-	report.OAuthStatus = &oauthStatus
-	report.OAuthProfiles = oauthProfiles
-	switch {
-	case strings.TrimSpace(a.Config.ConfigHome) == "":
-		report.Status = "warn"
-		report.Warnings = append(report.Warnings, "Config home is unavailable; OAuth profile and token state cannot be inspected.")
-	case oauthStatus.Ready:
-		report.Messages = append(report.Messages, "OAuth token is ready for provider-backed setup.")
-		if oauthStatus.ProfileConfigured {
-			report.Messages = append(report.Messages, fmt.Sprintf("OAuth provider profile resolved: %s.", oauthStatus.ProfileName))
-		}
-	case !oauthStatus.ProfileConfigured && !oauthStatus.TokenPresent:
-		report.Status = "warn"
-		report.Warnings = append(report.Warnings, "No OAuth provider profile or token is configured.")
-		report.Messages = append(report.Messages, "Run `codog oauth provider save NAME ISSUER_URL CLIENT_ID [SCOPE...]` and then `codog oauth browser login NAME` or `codog oauth device login NAME`.")
-	case !oauthStatus.TokenPresent:
-		report.Status = "warn"
-		report.Warnings = append(report.Warnings, "No OAuth token is saved for the selected provider profile.")
-		report.Messages = append(report.Messages, "Run `codog oauth browser login PROFILE` or `codog oauth device login PROFILE` before enabling provider-backed workflow automation.")
-	case oauthStatus.Expired && !oauthStatus.CanRefresh:
-		report.Status = "warn"
-		report.Warnings = append(report.Warnings, fallbackMessage(oauthStatus.Issue, "OAuth token is expired and cannot be refreshed."))
-	default:
-		report.Status = "warn"
-		report.Warnings = append(report.Warnings, fallbackMessage(oauthStatus.Issue, "OAuth setup is not ready."))
-	}
-}
-
-func (a *App) populateGitHubAppSuccessChecks(report *installGitHubAppStepReport, setupReport githubsetup.Report, ghPath string, ghErr error, apiKeyConfigured bool) {
-	if !apiKeyConfigured {
-		report.Warnings = append(report.Warnings, "No local Anthropic API key or auth token was detected.")
-	}
-	missingWorkflows := []string{}
-	for _, workflow := range setupReport.Workflows {
-		if !workflow.Exists {
-			missingWorkflows = append(missingWorkflows, workflow.Path)
-		}
-	}
-	if len(missingWorkflows) > 0 {
-		report.Warnings = append(report.Warnings, fmt.Sprintf("%d selected workflow file(s) are not present yet.", len(missingWorkflows)))
-	} else {
-		report.Messages = append(report.Messages, "All selected workflow files are present.")
-	}
-	if ghErr != nil {
-		report.Warnings = append(report.Warnings, "GitHub CLI `gh` is not available on PATH.")
-		return
-	}
-	if setupReport.Repo == "" {
-		report.Warnings = append(report.Warnings, "No GitHub origin remote was detected.")
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	githubCheck := checkGitHubCLI(ctx, ghPath, setupReport.Repo)
-	report.GitHubCheck = &githubCheck
-	report.ProviderRequestMade = report.ProviderRequestMade || githubCheck.Attempted
-	if githubCheck.Authenticated {
-		report.Messages = append(report.Messages, "GitHub CLI authentication is active.")
-	} else {
-		report.Warnings = append(report.Warnings, fmt.Sprintf("GitHub CLI authentication check failed: %s", fallbackMessage(githubCheck.AuthError, "not authenticated")))
-	}
-	if githubCheck.RepoAccessible {
-		report.Messages = append(report.Messages, fmt.Sprintf("Repository %s is accessible through gh.", setupReport.Repo))
-	} else {
-		report.Warnings = append(report.Warnings, fmt.Sprintf("GitHub repository access check failed: %s", fallbackMessage(githubCheck.RepoError, "repository not accessible")))
-	}
-
-	secretCheck := checkGitHubRepositorySecret(ctx, ghPath, setupReport.Repo, setupReport.SecretName)
-	report.SecretCheck = &secretCheck
-	report.ProviderRequestMade = report.ProviderRequestMade || secretCheck.Attempted
-	switch {
-	case secretCheck.Error != "":
-		report.Warnings = append(report.Warnings, fmt.Sprintf("Could not check GitHub repository secret: %s", secretCheck.Error))
-	case secretCheck.Exists:
-		report.Messages = append(report.Messages, fmt.Sprintf("Repository secret %s exists on %s.", setupReport.SecretName, setupReport.Repo))
-	default:
-		report.Warnings = append(report.Warnings, fmt.Sprintf("Repository secret %s was not found on %s.", setupReport.SecretName, setupReport.Repo))
-	}
-
-	actionsCheck := checkGitHubActionsPermissions(ctx, ghPath, setupReport.Repo)
-	report.ActionsCheck = &actionsCheck
-	report.ProviderRequestMade = report.ProviderRequestMade || actionsCheck.Attempted
-	switch {
-	case actionsCheck.Error != "":
-		report.Warnings = append(report.Warnings, fmt.Sprintf("Could not check GitHub Actions permissions: %s", actionsCheck.Error))
-	case actionsCheck.Enabled:
-		report.Messages = append(report.Messages, fmt.Sprintf("GitHub Actions is enabled for %s.", setupReport.Repo))
-	default:
-		report.Warnings = append(report.Warnings, fmt.Sprintf("GitHub Actions is disabled for %s.", setupReport.Repo))
-	}
-}
-
-func commandErrorMessage(err error) string {
-	if err == nil {
-		return ""
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		stderr := strings.TrimSpace(string(exitErr.Stderr))
-		if stderr != "" {
-			return stderr
-		}
-	}
-	return err.Error()
-}
-
-func commandOutputErrorMessage(err error, output []byte) string {
-	if err == nil {
-		return ""
-	}
-	text := strings.TrimSpace(string(output))
-	if text != "" {
-		return text
-	}
-	return commandErrorMessage(err)
-}
-
-func fallbackMessage(value string, fallback string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-func checkGitHubCLI(ctx context.Context, ghPath string, repo string) installGitHubCLICheck {
-	check := installGitHubCLICheck{
-		Attempted: true,
-		Available: true,
-		Repo:      repo,
-	}
-	authArgs := []string{"auth", "status", "--hostname", "github.com"}
-	check.AuthCommand = append([]string{ghPath}, authArgs...)
-	authCmd := exec.CommandContext(ctx, ghPath, authArgs...)
-	authOut, authErr := authCmd.CombinedOutput()
-	if authErr != nil {
-		check.AuthError = commandOutputErrorMessage(authErr, authOut)
-		return check
-	}
-	check.Authenticated = true
-
-	if strings.TrimSpace(repo) == "" {
-		return check
-	}
-	repoArgs := []string{"repo", "view", repo, "--json", "nameWithOwner"}
-	check.RepoCommand = append([]string{ghPath}, repoArgs...)
-	repoCmd := exec.CommandContext(ctx, ghPath, repoArgs...)
-	repoOut, repoErr := repoCmd.CombinedOutput()
-	if repoErr != nil {
-		check.RepoError = commandOutputErrorMessage(repoErr, repoOut)
-		return check
-	}
-	var payload struct {
-		NameWithOwner string `json:"nameWithOwner"`
-	}
-	if err := json.Unmarshal(repoOut, &payload); err != nil {
-		check.RepoError = fmt.Sprintf("failed to parse gh repo view output: %v", err)
-		return check
-	}
-	if strings.TrimSpace(payload.NameWithOwner) == "" {
-		check.RepoError = "gh repo view returned no repository name"
-		return check
-	}
-	check.RepoAccessible = true
-	return check
-}
-
-func checkGitHubActionsPermissions(ctx context.Context, ghPath string, repo string) installGitHubActionsCheck {
-	args := []string{"api", fmt.Sprintf("repos/%s/actions/permissions", repo)}
-	check := installGitHubActionsCheck{
-		Attempted: true,
-		Available: true,
-		Repo:      repo,
-		Command:   append([]string{ghPath}, args...),
-	}
-	cmd := exec.CommandContext(ctx, ghPath, args...)
-	data, err := cmd.CombinedOutput()
-	if err != nil {
-		check.Error = commandOutputErrorMessage(err, data)
-		return check
-	}
-	var payload struct {
-		Enabled        bool   `json:"enabled"`
-		AllowedActions string `json:"allowed_actions"`
-	}
-	if err := json.Unmarshal(data, &payload); err != nil {
-		check.Error = fmt.Sprintf("failed to parse gh actions permissions output: %v", err)
-		return check
-	}
-	check.Enabled = payload.Enabled
-	check.AllowedActions = payload.AllowedActions
-	return check
-}
-
-func checkGitHubRepositorySecret(ctx context.Context, ghPath string, repo string, secretName string) installGitHubSecretCheck {
-	args := []string{"secret", "list", "--repo", repo, "--json", "name"}
-	check := installGitHubSecretCheck{
-		Attempted:  true,
-		Available:  true,
-		SecretName: secretName,
-		Repo:       repo,
-		Command:    append([]string{ghPath}, args...),
-	}
-	cmd := exec.CommandContext(ctx, ghPath, args...)
-	data, err := cmd.Output()
-	if err != nil {
-		check.Error = commandErrorMessage(err)
-		return check
-	}
-	var entries []struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(data, &entries); err != nil {
-		check.Error = fmt.Sprintf("failed to parse gh secret list output: %v", err)
-		return check
-	}
-	for _, entry := range entries {
-		if strings.EqualFold(strings.TrimSpace(entry.Name), secretName) {
-			check.Exists = true
-			break
-		}
-	}
-	return check
-}
-
-func installGitHubAppNextCommand(req installGitHubAppRequest) string {
-	args := []string{"codog", "install-github-app"}
-	for _, workflow := range req.Workflows {
-		args = append(args, "--workflow", shellQuote(workflow))
-	}
-	if strings.TrimSpace(req.SecretName) != "" {
-		args = append(args, "--secret-name", shellQuote(req.SecretName))
-	}
-	if req.Force {
-		args = append(args, "--force")
-	}
-	return strings.Join(args, " ")
-}
-
 func parseInstallGitHubAppArgs(args []string) (installGitHubAppRequest, error) {
 	req := installGitHubAppRequest{Format: "text"}
 	for index := 0; index < len(args); index++ {
@@ -23870,80 +22111,6 @@ func renderInstallGitHubAppReport(out io.Writer, report githubsetup.Report) {
 	}
 	for _, instruction := range report.Instructions {
 		fmt.Fprintf(out, "  Next             %s\n", instruction)
-	}
-}
-
-func renderInstallGitHubAppStepReport(out io.Writer, report installGitHubAppStepReport) {
-	fmt.Fprintln(out, "GitHub App Step")
-	fmt.Fprintf(out, "  Step             %s\n", report.Step)
-	fmt.Fprintf(out, "  Status           %s\n", report.Status)
-	fmt.Fprintf(out, "  Workspace        %s\n", report.Workspace)
-	if report.Repo != "" {
-		fmt.Fprintf(out, "  Repository       %s\n", report.Repo)
-	}
-	fmt.Fprintf(out, "  Secret           %s\n", report.SecretName)
-	fmt.Fprintf(out, "  API key          %t\n", report.APIKeyConfigured)
-	fmt.Fprintf(out, "  GitHub CLI       %t\n", report.GitHubCLIAvailable)
-	if report.GitHubCLIPath != "" {
-		fmt.Fprintf(out, "  gh path          %s\n", report.GitHubCLIPath)
-	}
-	if report.GitHubCheck != nil {
-		fmt.Fprintf(out, "  gh auth          %t\n", report.GitHubCheck.Authenticated)
-		if report.GitHubCheck.Repo != "" {
-			fmt.Fprintf(out, "  gh repo          %t\n", report.GitHubCheck.RepoAccessible)
-		}
-		if report.GitHubCheck.AuthError != "" {
-			fmt.Fprintf(out, "  gh auth error    %s\n", report.GitHubCheck.AuthError)
-		}
-		if report.GitHubCheck.RepoError != "" {
-			fmt.Fprintf(out, "  gh repo error    %s\n", report.GitHubCheck.RepoError)
-		}
-	}
-	if report.SecretCheck != nil {
-		fmt.Fprintf(out, "  Secret exists    %t\n", report.SecretCheck.Exists)
-		if report.SecretCheck.Error != "" {
-			fmt.Fprintf(out, "  Secret error     %s\n", report.SecretCheck.Error)
-		}
-	}
-	if report.ActionsCheck != nil {
-		fmt.Fprintf(out, "  Actions enabled  %t\n", report.ActionsCheck.Enabled)
-		if report.ActionsCheck.AllowedActions != "" {
-			fmt.Fprintf(out, "  Actions policy   %s\n", report.ActionsCheck.AllowedActions)
-		}
-		if report.ActionsCheck.Error != "" {
-			fmt.Fprintf(out, "  Actions error    %s\n", report.ActionsCheck.Error)
-		}
-	}
-	if report.OAuthStatus != nil {
-		fmt.Fprintf(out, "  OAuth ready      %t\n", report.OAuthStatus.Ready)
-		if report.OAuthStatus.ProfileName != "" {
-			fmt.Fprintf(out, "  OAuth profile    %s\n", report.OAuthStatus.ProfileName)
-		}
-		if report.OAuthStatus.Issue != "" {
-			fmt.Fprintf(out, "  OAuth issue      %s\n", report.OAuthStatus.Issue)
-		}
-	}
-	for _, workflow := range report.Workflows {
-		state := "ready"
-		if workflow.Exists {
-			state = "exists"
-		}
-		fmt.Fprintf(out, "  Workflow         %s %s %s\n", workflow.Name, state, workflow.Path)
-	}
-	for _, message := range report.Messages {
-		fmt.Fprintf(out, "  Message          %s\n", message)
-	}
-	for _, warning := range report.Warnings {
-		fmt.Fprintf(out, "  Warning          %s\n", warning)
-	}
-	for _, setupErr := range report.Errors {
-		fmt.Fprintf(out, "  Error            %s\n", setupErr)
-	}
-	for _, instruction := range report.Instructions {
-		fmt.Fprintf(out, "  Next             %s\n", instruction)
-	}
-	if report.NextCommand != "" {
-		fmt.Fprintf(out, "  Command          %s\n", report.NextCommand)
 	}
 }
 
@@ -30235,6 +28402,8 @@ type commandSurfaceReport struct {
 	HelpTopicCount                 int      `json:"help_topic_count"`
 	MissingHelpTopicCount          int      `json:"missing_help_topic_count"`
 	MissingHelpTopics              []string `json:"missing_help_topics,omitempty"`
+	FallbackHelpTopicCount         int      `json:"fallback_help_topic_count"`
+	FallbackHelpTopics             []string `json:"fallback_help_topics,omitempty"`
 	CompletionCommandCount         int      `json:"completion_command_count"`
 	MissingCompletionCommandCount  int      `json:"missing_completion_command_count"`
 	MissingCompletionCommands      []string `json:"missing_completion_commands,omitempty"`
@@ -30379,7 +28548,6 @@ type capabilitiesRequest struct {
 	Action          string
 	Query           string
 	Format          string
-	ReferenceRoot   string
 	CommandSnapshot string
 	ToolSnapshot    string
 }
@@ -30387,7 +28555,7 @@ type capabilitiesRequest struct {
 func parseCapabilitiesArgs(args []string) (capabilitiesRequest, error) {
 	req := capabilitiesRequest{Action: "show", Format: "text"}
 	positionals := []string{}
-	usage := "codog capabilities [show|list|resolve NAME|audit] [--reference-root PATH] [--commands-snapshot PATH] [--tools-snapshot PATH] [--json|--output-format text|json]"
+	usage := "codog capabilities [show|list|resolve NAME|audit] [--commands-snapshot PATH] [--tools-snapshot PATH] [--json|--output-format text|json]"
 	for index := 0; index < len(args); index++ {
 		arg := strings.TrimSpace(args[index])
 		switch {
@@ -30403,16 +28571,6 @@ func parseCapabilitiesArgs(args []string) (capabilitiesRequest, error) {
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--reference-root" || arg == "--source-root":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "capabilities audit", Flag: arg, Usage: usage}
-			}
-			req.ReferenceRoot = args[index]
-		case strings.HasPrefix(arg, "--reference-root="):
-			req.ReferenceRoot = strings.TrimPrefix(arg, "--reference-root=")
-		case strings.HasPrefix(arg, "--source-root="):
-			req.ReferenceRoot = strings.TrimPrefix(arg, "--source-root=")
 		case arg == "--commands-snapshot" || arg == "--command-snapshot":
 			index++
 			if index >= len(args) {
@@ -30461,7 +28619,7 @@ func parseCapabilitiesArgs(args []string) (capabilitiesRequest, error) {
 		}
 		req.Action = "resolve"
 		req.Query = positionals[1]
-	case "audit", "reference-audit", "parity-audit":
+	case "audit":
 		if len(positionals) > 1 {
 			return req, unexpectedExtraArgsError{Command: "capabilities audit", Args: positionals[1:], Usage: usage}
 		}
@@ -30471,9 +28629,8 @@ func parseCapabilitiesArgs(args []string) (capabilitiesRequest, error) {
 	}
 	req.CommandSnapshot = strings.TrimSpace(req.CommandSnapshot)
 	req.ToolSnapshot = strings.TrimSpace(req.ToolSnapshot)
-	req.ReferenceRoot = strings.TrimSpace(req.ReferenceRoot)
-	if req.Action == "audit" && req.CommandSnapshot == "" && req.ToolSnapshot == "" && req.ReferenceRoot == "" {
-		return req, requiredArgumentError{Command: "capabilities audit", Argument: "--reference-root, --commands-snapshot, or --tools-snapshot", Usage: usage}
+	if req.Action == "audit" && req.CommandSnapshot == "" && req.ToolSnapshot == "" {
+		return req, requiredArgumentError{Command: "capabilities audit", Argument: "--commands-snapshot or --tools-snapshot", Usage: usage}
 	}
 	return req, nil
 }
@@ -30571,19 +28728,6 @@ func (a *App) referenceParityAuditReport(req capabilitiesRequest) (referencePari
 		Action: "audit",
 		Status: "ok",
 	}
-	if req.ReferenceRoot != "" {
-		report.Source = "reference_root"
-		commands, tools, err := extractReferenceSurfaces(req.ReferenceRoot)
-		if err != nil {
-			return referenceParityAuditReport{}, err
-		}
-		commandAudit := auditReferenceEntries(commands, "commands", commandCapabilityNames(capabilities))
-		commandAudit.SourceRoot = req.ReferenceRoot
-		toolAudit := auditReferenceEntries(tools, "tools", toolCapabilityNames(capabilities))
-		toolAudit.SourceRoot = req.ReferenceRoot
-		report.Commands = &commandAudit
-		report.Tools = &toolAudit
-	}
 	if req.CommandSnapshot != "" {
 		audit, err := auditReferenceSurface(req.CommandSnapshot, "commands", commandCapabilityNames(capabilities))
 		if err != nil {
@@ -30678,327 +28822,6 @@ func readReferenceSnapshot(path string) ([]referenceSnapshotRef, error) {
 		return nil, fmt.Errorf("read reference snapshot: %w", err)
 	}
 	return entries, nil
-}
-
-func extractReferenceSurfaces(root string) ([]referenceSnapshotRef, []referenceSnapshotRef, error) {
-	sourceRoot, err := referenceSourceRoot(root)
-	if err != nil {
-		return nil, nil, err
-	}
-	commandRoot := filepath.Join(sourceRoot, "commands")
-	toolRoot := filepath.Join(sourceRoot, "tools")
-	if info, err := os.Stat(commandRoot); err != nil || !info.IsDir() {
-		return nil, nil, fmt.Errorf("reference commands directory not found: %s", commandRoot)
-	}
-	if info, err := os.Stat(toolRoot); err != nil || !info.IsDir() {
-		return nil, nil, fmt.Errorf("reference tools directory not found: %s", toolRoot)
-	}
-	commands, err := extractReferenceCommandEntries(sourceRoot, commandRoot)
-	if err != nil {
-		return nil, nil, err
-	}
-	tools, err := extractReferenceToolEntries(sourceRoot, toolRoot)
-	if err != nil {
-		return nil, nil, err
-	}
-	return commands, tools, nil
-}
-
-func referenceSourceRoot(root string) (string, error) {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return "", errors.New("reference root is required")
-	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-	absRoot = filepath.Clean(absRoot)
-	if filepath.Base(absRoot) == "src" {
-		return absRoot, nil
-	}
-	if info, err := os.Stat(filepath.Join(absRoot, "src")); err == nil && info.IsDir() {
-		return filepath.Join(absRoot, "src"), nil
-	}
-	return absRoot, nil
-}
-
-func extractReferenceCommandEntries(sourceRoot string, commandRoot string) ([]referenceSnapshotRef, error) {
-	extractor := referenceEntryExtractor{}
-	extractor.entriesByIdentity = map[string]referenceSnapshotRef{}
-	if err := filepath.WalkDir(commandRoot, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if shouldSkipReferenceDir(entry.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if shouldSkipReferenceFile(path) {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		text := string(data)
-		if isReferenceDisabledStub(text) {
-			return nil
-		}
-		sourceHint := referenceSourceHint(sourceRoot, path)
-		for _, entry := range extractReferenceCommandEntriesFromText(text, sourceHint) {
-			extractor.add(entry.Name, entry.SourceHint, entry.Responsibility)
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return extractor.entries(), nil
-}
-
-func extractReferenceCommandEntriesFromText(text string, sourceHint string) []referenceSnapshotRef {
-	var refs []referenceSnapshotRef
-	add := func(name string, responsibility string) {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			return
-		}
-		refs = append(refs, referenceSnapshotRef{Name: name, SourceHint: sourceHint, Responsibility: responsibility})
-	}
-	for _, block := range referenceCommandObjectBlocks(text) {
-		name := firstReferenceName(block)
-		if name == "" {
-			continue
-		}
-		add(name, "command_name")
-		for _, aliases := range referenceAliasBlocks(block) {
-			for _, alias := range parseReferenceAliases(aliases) {
-				add(alias, "command_alias")
-			}
-		}
-	}
-	if len(refs) == 0 && looksLikeExportedReferenceCommand(text) {
-		if name := firstReferenceName(text); name != "" {
-			add(name, "command_name")
-		}
-		for _, aliases := range referenceAliasBlocks(text) {
-			for _, alias := range parseReferenceAliases(aliases) {
-				add(alias, "command_alias")
-			}
-		}
-	}
-	return refs
-}
-
-func referenceCommandObjectBlocks(text string) []string {
-	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?m)(?:const|let|var)\s+[A-Za-z0-9_]+\s*:\s*Command\s*=\s*\{`),
-		regexp.MustCompile(`(?m)export\s+default\s+\{`),
-	}
-	var blocks []string
-	for _, pattern := range patterns {
-		for _, match := range pattern.FindAllStringIndex(text, -1) {
-			start := match[0]
-			end := min(len(text), start+4096)
-			blocks = append(blocks, text[start:end])
-		}
-	}
-	return blocks
-}
-
-func looksLikeExportedReferenceCommand(text string) bool {
-	if !strings.Contains(text, "export default") {
-		return false
-	}
-	return strings.Contains(text, "description:") ||
-		strings.Contains(text, "argumentHint:") ||
-		strings.Contains(text, "load:") ||
-		strings.Contains(text, "getPromptForCommand")
-}
-
-func firstReferenceName(text string) string {
-	pattern := regexp.MustCompile(`\bname\s*:\s*['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]`)
-	match := pattern.FindStringSubmatch(text)
-	if len(match) < 2 {
-		return ""
-	}
-	return strings.TrimSpace(match[1])
-}
-
-func referenceAliasBlocks(text string) []string {
-	pattern := regexp.MustCompile(`\baliases\s*:\s*\[([^\]]*)\]`)
-	matches := pattern.FindAllStringSubmatch(text, -1)
-	blocks := make([]string, 0, len(matches))
-	for _, match := range matches {
-		if len(match) > 1 {
-			blocks = append(blocks, match[1])
-		}
-	}
-	return blocks
-}
-
-func extractReferenceToolEntries(sourceRoot string, toolRoot string) ([]referenceSnapshotRef, error) {
-	extractor := referenceEntryExtractor{}
-	extractor.entriesByIdentity = map[string]referenceSnapshotRef{}
-	if err := filepath.WalkDir(toolRoot, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if shouldSkipReferenceDir(entry.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if shouldSkipReferenceFile(path) {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		sourceHint := referenceSourceHint(sourceRoot, path)
-		for _, entry := range extractReferenceToolEntriesFromText(string(data), sourceHint) {
-			extractor.add(entry.Name, entry.SourceHint, entry.Responsibility)
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return extractor.entries(), nil
-}
-
-func extractReferenceToolEntriesFromText(text string, sourceHint string) []referenceSnapshotRef {
-	var refs []referenceSnapshotRef
-	add := func(name string, responsibility string) {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			return
-		}
-		refs = append(refs, referenceSnapshotRef{Name: name, SourceHint: sourceHint, Responsibility: responsibility})
-	}
-	toolNamePattern := regexp.MustCompile(`\b(?:export\s+)?const\s+([A-Za-z0-9_]+_TOOL_NAME)\s*=\s*['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]`)
-	for _, match := range toolNamePattern.FindAllStringSubmatch(text, -1) {
-		if len(match) > 2 {
-			add(match[2], match[1])
-		}
-	}
-	toolExportPattern := regexp.MustCompile(`\bexport\s+const\s+([A-Za-z0-9_]*Tool)\b`)
-	for _, match := range toolExportPattern.FindAllStringSubmatch(text, -1) {
-		if len(match) > 1 {
-			add(match[1], "tool_export")
-		}
-	}
-	for _, block := range referenceBuildToolBlocks(text) {
-		if name := firstReferenceName(block); name != "" {
-			add(name, "build_tool_name")
-		}
-	}
-	return refs
-}
-
-func referenceBuildToolBlocks(text string) []string {
-	pattern := regexp.MustCompile(`\bbuildTool\s*\(\s*\{`)
-	var blocks []string
-	for _, match := range pattern.FindAllStringIndex(text, -1) {
-		start := match[0]
-		end := min(len(text), start+4096)
-		blocks = append(blocks, text[start:end])
-	}
-	return blocks
-}
-
-type referenceEntryExtractor struct {
-	entriesByIdentity map[string]referenceSnapshotRef
-}
-
-func (e *referenceEntryExtractor) add(name string, sourceHint string, responsibility string) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return
-	}
-	sourceHint = strings.TrimSpace(sourceHint)
-	key := normalizeReferenceName(name) + "\x00" + sourceHint
-	if key == "\x00"+sourceHint {
-		return
-	}
-	if _, exists := e.entriesByIdentity[key]; exists {
-		return
-	}
-	e.entriesByIdentity[key] = referenceSnapshotRef{
-		Name:           name,
-		SourceHint:     sourceHint,
-		Responsibility: responsibility,
-	}
-}
-
-func (e *referenceEntryExtractor) entries() []referenceSnapshotRef {
-	out := make([]referenceSnapshotRef, 0, len(e.entriesByIdentity))
-	for _, entry := range e.entriesByIdentity {
-		out = append(out, entry)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].SourceHint != out[j].SourceHint {
-			return out[i].SourceHint < out[j].SourceHint
-		}
-		return normalizeReferenceName(out[i].Name) < normalizeReferenceName(out[j].Name)
-	})
-	return out
-}
-
-func parseReferenceAliases(value string) []string {
-	value = strings.TrimSpace(value)
-	pattern := regexp.MustCompile(`['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]`)
-	matches := pattern.FindAllStringSubmatch(value, -1)
-	aliases := make([]string, 0, len(matches))
-	for _, match := range matches {
-		if len(match) > 1 && strings.TrimSpace(match[1]) != "" {
-			aliases = append(aliases, strings.TrimSpace(match[1]))
-		}
-	}
-	return aliases
-}
-
-func isReferenceDisabledStub(text string) bool {
-	normalized := strings.Join(strings.Fields(text), " ")
-	return strings.Contains(normalized, "isEnabled: () => false") &&
-		strings.Contains(normalized, "isHidden: true") &&
-		(strings.Contains(normalized, "name: 'stub'") ||
-			strings.Contains(normalized, `name: "stub"`) ||
-			strings.Contains(normalized, "name: `stub`"))
-}
-
-func shouldSkipReferenceDir(name string) bool {
-	switch name {
-	case ".git", "node_modules", "fixtures", "testdata", "__fixtures__", "__tests__":
-		return true
-	default:
-		return false
-	}
-}
-
-func shouldSkipReferenceFile(path string) bool {
-	base := filepath.Base(path)
-	if strings.HasPrefix(base, ".") {
-		return true
-	}
-	ext := filepath.Ext(base)
-	switch ext {
-	case ".ts", ".tsx", ".js", ".jsx":
-	default:
-		return true
-	}
-	lower := strings.ToLower(base)
-	return strings.Contains(lower, ".test.") || strings.Contains(lower, ".spec.") || strings.HasSuffix(lower, ".d.ts")
-}
-
-func referenceSourceHint(sourceRoot string, path string) string {
-	if rel, err := filepath.Rel(sourceRoot, path); err == nil {
-		return filepath.ToSlash(rel)
-	}
-	return filepath.ToSlash(filepath.Clean(path))
 }
 
 func commandCapabilityNames(report capabilitiesReport) map[string]string {
@@ -31354,7 +29177,7 @@ func renderCapabilityResolveText(out io.Writer, report capabilityResolveReport) 
 }
 
 func renderReferenceParityAuditText(out io.Writer, report referenceParityAuditReport) {
-	fmt.Fprintln(out, "Reference Parity Audit")
+	fmt.Fprintln(out, "Capability Snapshot Audit")
 	fmt.Fprintf(out, "  Status           %s\n", report.Status)
 	if report.Commands != nil {
 		renderReferenceSurfaceAuditText(out, *report.Commands)
@@ -31424,11 +29247,14 @@ func commandSurface() commandSurfaceReport {
 	commands := builtInCommandNames()
 	completionSet := stringSet(shellCompletionCommands())
 	missingHelp := []string{}
+	fallbackHelp := []string{}
 	missingCompletion := []string{}
 	noGlobalOutput := []string{}
 	for _, command := range commands {
-		if _, ok := commandHelpSpecFor(command); !ok {
+		if spec, ok := commandHelpSpecFor(command); !ok {
 			missingHelp = append(missingHelp, command)
+		} else if spec.SchemaVersion == "codog.help.fallback.v1" {
+			fallbackHelp = append(fallbackHelp, command)
 		}
 		if !completionSet[command] {
 			missingCompletion = append(missingCompletion, command)
@@ -31438,6 +29264,7 @@ func commandSurface() commandSurfaceReport {
 		}
 	}
 	sort.Strings(missingHelp)
+	sort.Strings(fallbackHelp)
 	sort.Strings(missingCompletion)
 	sort.Strings(noGlobalOutput)
 	report := commandSurfaceReport{
@@ -31446,6 +29273,8 @@ func commandSurface() commandSurfaceReport {
 		HelpTopicCount:                 len(commands) - len(missingHelp),
 		MissingHelpTopicCount:          len(missingHelp),
 		MissingHelpTopics:              missingHelp,
+		FallbackHelpTopicCount:         len(fallbackHelp),
+		FallbackHelpTopics:             fallbackHelp,
 		CompletionCommandCount:         len(commands) - len(missingCompletion),
 		MissingCompletionCommandCount:  len(missingCompletion),
 		MissingCompletionCommands:      missingCompletion,
@@ -31453,7 +29282,7 @@ func commandSurface() commandSurfaceReport {
 		NoGlobalOutputFormatCount:      len(noGlobalOutput),
 		NoGlobalOutputFormatCommands:   noGlobalOutput,
 	}
-	if len(missingCompletion) > 0 {
+	if len(missingHelp) > 0 || len(fallbackHelp) > 0 || len(missingCompletion) > 0 {
 		report.Status = "gap"
 	}
 	return report
@@ -31622,9 +29451,7 @@ func codogCapabilityProtocols() []string {
 
 func builtInCommandNames() []string {
 	return sortedUniqueStrings([]string{
-		"AddMarketplace",
 		"acp",
-		"addCommand",
 		"add-dir",
 		"advisor",
 		"agents",
@@ -31634,10 +29461,8 @@ func builtInCommandNames() []string {
 		"ant-trace",
 		"api",
 		"api-key",
-		"ApiKeyStep",
 		"app",
 		"auth",
-		"audit",
 		"autofix-pr",
 		"backfill-sessions",
 		"background",
@@ -31653,7 +29478,6 @@ func builtInCommandNames() []string {
 		"bridge-kick",
 		"break-cache",
 		"brief",
-		"BrowseMarketplace",
 		"bug",
 		"budget",
 		"btw",
@@ -31664,10 +29488,7 @@ func builtInCommandNames() []string {
 		"capabilities",
 		"changelog",
 		"checkpoint",
-		"CheckExistingSecretStep",
-		"CheckGitHubStep",
 		"chrome",
-		"ChooseRepoStep",
 		"clear",
 		"code-intel",
 		"color",
@@ -31683,8 +29504,6 @@ func builtInCommandNames() []string {
 		"conversation",
 		"copy",
 		"cost",
-		"createMovedToPluginCommand",
-		"CreatingStep",
 		"cron",
 		"cwd",
 		"ctx_viz",
@@ -31694,16 +29513,13 @@ func builtInCommandNames() []string {
 		"desktop",
 		"diagnostics",
 		"diff",
-		"DiscoverPlugins",
 		"doctor",
 		"dump-manifests",
 		"effort",
 		"enterprise",
 		"env",
-		"ErrorStep",
 		"exit",
 		"exit-plan",
-		"ExistingWorkflowStep",
 		"export",
 		"extra-usage",
 		"extra-usage-core",
@@ -31730,7 +29546,6 @@ func builtInCommandNames() []string {
 		"init-verifiers",
 		"insights",
 		"install",
-		"InstallAppStep",
 		"install-github-app",
 		"install-slack-app",
 		"issue",
@@ -31742,8 +29557,6 @@ func builtInCommandNames() []string {
 		"log",
 		"login",
 		"logout",
-		"ManageMarketplaces",
-		"ManagePlugins",
 		"map",
 		"marketplace",
 		"max-tokens",
@@ -31763,12 +29576,10 @@ func builtInCommandNames() []string {
 		"notebook-read",
 		"oauth",
 		"oauth-refresh",
-		"OAuthFlowStep",
 		"onboarding",
 		"open",
 		"output-style",
 		"parity",
-		"parity-audit",
 		"passes",
 		"paste",
 		"perf-issue",
@@ -31776,13 +29587,7 @@ func builtInCommandNames() []string {
 		"pin",
 		"plan",
 		"plugin",
-		"PluginErrors",
-		"PluginOptionsDialog",
-		"PluginOptionsFlow",
-		"PluginSettings",
-		"PluginTrustWarning",
 		"plugins",
-		"pluginDetailsHelpers",
 		"prefetch",
 		"pr",
 		"pr-comments",
@@ -31793,12 +29598,10 @@ func builtInCommandNames() []string {
 		"prompt",
 		"prompt-history",
 		"providers",
-		"parseArgs",
 		"python",
 		"rate-limit",
 		"rate-limit-options",
 		"reasoning",
-		"reference-audit",
 		"references",
 		"release-notes",
 		"report-schema",
@@ -31846,7 +29649,6 @@ func builtInCommandNames() []string {
 		"statusline",
 		"startup-report",
 		"stickers",
-		"SuccessStep",
 		"summary",
 		"symbols",
 		"system-prompt",
@@ -31869,28 +29671,20 @@ func builtInCommandNames() []string {
 		"tokens",
 		"trust",
 		"tui",
-		"UltrareviewOverageDialog",
 		"ultraplan",
 		"ultrareview",
-		"ultrareviewCommand",
-		"ultrareviewEnabled",
 		"undo",
-		"UnifiedInstalledCell",
 		"unpin",
 		"unfocus",
 		"updater",
 		"upgrade",
 		"usage",
-		"usePagination",
-		"ValidatePlugin",
 		"validation",
 		"version",
 		"vim",
 		"voice",
 		"web-setup",
 		"workspace",
-		"WarningsStep",
-		"xaaIdpCommand",
 	})
 }
 
@@ -45967,7 +43761,7 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 			"chrome_configured":        cfg.Future.ChromeDefaultEnabled != nil,
 			"notifications_enabled":    notificationsEnabled(cfg.Future.NotificationsEnabled),
 			"notifications_configured": cfg.Future.NotificationsEnabled != nil,
-			"ultrareview_enabled":      ultraReviewEnabled(cfg.Future.UltraReviewEnabled),
+			"ultrareview_enabled":      enabledByDefault(cfg.Future.UltraReviewEnabled),
 			"ultrareview_configured":   cfg.Future.UltraReviewEnabled != nil,
 		}, nil
 	case "editor_bridge", "editor-bridge", "bridge", "ide":
@@ -56940,215 +54734,6 @@ func (a *App) mcpRemove(args []string, format string) error {
 	return nil
 }
 
-type xaaIDPReport struct {
-	Kind               string                 `json:"kind"`
-	Action             string                 `json:"action"`
-	Status             string                 `json:"status"`
-	Command            string                 `json:"command"`
-	ConfiguredServers  []string               `json:"configured_servers"`
-	ServerCount        int                    `json:"server_count"`
-	AuthStatuses       []mcpauthdiag.Report   `json:"auth_statuses,omitempty"`
-	ErrorCount         int                    `json:"error_count,omitempty"`
-	ConfigHome         string                 `json:"config_home,omitempty"`
-	ProviderConfigured bool                   `json:"provider_configured"`
-	OAuthReady         bool                   `json:"oauth_ready"`
-	OAuthProfile       string                 `json:"oauth_profile,omitempty"`
-	OAuthStatus        *oauth.Status          `json:"oauth_status,omitempty"`
-	OAuthProfiles      []oauthProviderSummary `json:"oauth_profiles,omitempty"`
-	Message            string                 `json:"message"`
-	Usage              string                 `json:"usage"`
-}
-
-type xaaIDPRequest struct {
-	Format  string
-	Server  string
-	Profile string
-	Refresh bool
-}
-
-func (a *App) XAAIDPCommand(ctx context.Context, args []string) error {
-	req, err := parseXAAIDPArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Server != "" {
-		mcpArgs := []string{"auth", req.Server}
-		if req.Refresh {
-			mcpArgs = []string{"auth", "--refresh", req.Server}
-		}
-		if req.Format == "json" {
-			mcpArgs = append(mcpArgs, "--json")
-		}
-		return a.withOAuthProfile(req.Profile).MCP(ctx, mcpArgs)
-	}
-	configuredServers := sortedMCPServerNames(a.Config.MCPServers)
-	authStatuses := make([]mcpauthdiag.Report, 0, len(configuredServers))
-	errorCount := 0
-	profileName := strings.TrimSpace(req.Profile)
-	if profileName == "" {
-		profileName = a.Config.OAuthProfile
-	}
-	now := time.Now().UTC()
-	for _, name := range configuredServers {
-		result := mcp.InspectAuth(ctx, name, a.Config.MCPServers[name])
-		var status mcpauthdiag.Report
-		if req.Refresh {
-			status = mcpauthdiag.Refresh(ctx, result, a.Config.ConfigHome, profileName, now)
-		} else {
-			status = mcpauthdiag.Build(result, a.Config.ConfigHome, profileName, now)
-		}
-		if status.Status == "error" || status.Error != "" || status.RefreshError != "" {
-			errorCount++
-		}
-		authStatuses = append(authStatuses, status)
-	}
-	oauthStatus, oauthProfiles := a.xaaOAuthStatus(profileName)
-	report := xaaIDPReport{
-		Kind:               "mcp_compatibility",
-		Action:             "xaa_idp",
-		Command:            "xaaIdpCommand",
-		ConfiguredServers:  configuredServers,
-		ServerCount:        len(configuredServers),
-		AuthStatuses:       authStatuses,
-		ErrorCount:         errorCount,
-		ConfigHome:         a.Config.ConfigHome,
-		ProviderConfigured: a.Config.OAuthProfile != "" || a.Config.AuthToken != "" || oauthStatus.ProfileConfigured || oauthStatus.TokenPresent,
-		OAuthReady:         oauthStatus.Ready,
-		OAuthProfile:       profileName,
-		OAuthStatus:        &oauthStatus,
-		OAuthProfiles:      oauthProfiles,
-		Usage:              "codog xaaIdpCommand [--refresh|refresh] [SERVER] [--profile PROFILE] [--json]",
-	}
-	switch {
-	case len(configuredServers) == 0:
-		report.Status = "no_servers"
-		report.Message = "No MCP servers are configured. Add one with `codog mcp add NAME COMMAND [ARG...]` before running XAA IdP auth checks."
-	case errorCount > 0:
-		report.Status = "warn"
-		report.Message = "MCP auth preflight completed with server errors; inspect auth_statuses for details."
-	case req.Refresh:
-		report.Status = "ok"
-		report.Message = "MCP auth refresh completed for all configured servers."
-	default:
-		report.Status = "ok"
-		report.Message = "MCP auth preflight completed for all configured servers."
-	}
-	if req.Format == "json" {
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	}
-	renderXAAIDPReport(a.Out, report)
-	return nil
-}
-
-func parseXAAIDPArgs(args []string) (xaaIDPRequest, error) {
-	req := xaaIDPRequest{Format: "text"}
-	var positionals []string
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, errors.New("xaaIdpCommand output format is required")
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--profile":
-			index++
-			if index >= len(args) {
-				return req, errors.New("xaaIdpCommand profile is required")
-			}
-			req.Profile = args[index]
-		case strings.HasPrefix(arg, "--profile="):
-			req.Profile = strings.TrimPrefix(arg, "--profile=")
-		case arg == "--refresh":
-			req.Refresh = true
-		case arg == "--status":
-			req.Refresh = false
-		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown xaaIdpCommand flag %q", arg)
-		default:
-			positionals = append(positionals, arg)
-		}
-	}
-	if err := validateTextOrJSON(req.Format, "xaaIdpCommand"); err != nil {
-		return req, err
-	}
-	if len(positionals) > 0 {
-		first := strings.ToLower(strings.TrimSpace(positionals[0]))
-		if first == "refresh" {
-			req.Refresh = true
-			positionals = positionals[1:]
-		} else if first == "status" {
-			positionals = positionals[1:]
-		}
-	}
-	if len(positionals) > 1 {
-		return req, errors.New("usage: codog xaaIdpCommand [--refresh|refresh] [SERVER] [--profile PROFILE] [--json]")
-	}
-	if len(positionals) == 1 {
-		req.Server = positionals[0]
-	}
-	return req, nil
-}
-
-func (a *App) withOAuthProfile(profileName string) *App {
-	profileName = strings.TrimSpace(profileName)
-	if profileName == "" {
-		return a
-	}
-	copied := *a
-	copied.Config = a.Config
-	copied.Config.OAuthProfile = profileName
-	return &copied
-}
-
-func (a *App) xaaOAuthStatus(profileName string) (oauth.Status, []oauthProviderSummary) {
-	if strings.TrimSpace(a.Config.ConfigHome) == "" {
-		return oauth.Status{Kind: "oauth", Action: "status", Status: "error", ProfileName: profileName, Issue: "config home is unavailable"}, nil
-	}
-	status := oauth.InspectStatus(a.Config.ConfigHome, profileName, time.Now().UTC())
-	profiles, err := oauth.ListProviderProfiles(a.Config.ConfigHome)
-	if err != nil {
-		if status.Issue == "" {
-			status.Issue = err.Error()
-		}
-		return status, nil
-	}
-	summaries := make([]oauthProviderSummary, 0, len(profiles))
-	for _, profile := range profiles {
-		summaries = append(summaries, oauthProfileSummary(profile))
-	}
-	return status, summaries
-}
-
-func renderXAAIDPReport(out io.Writer, report xaaIDPReport) {
-	fmt.Fprintln(out, "XAA IdP Compatibility")
-	fmt.Fprintf(out, "  Status           %s\n", report.Status)
-	fmt.Fprintf(out, "  MCP servers      %d\n", report.ServerCount)
-	fmt.Fprintf(out, "  OAuth configured %t\n", report.ProviderConfigured)
-	fmt.Fprintf(out, "  OAuth ready      %t\n", report.OAuthReady)
-	if report.OAuthProfile != "" {
-		fmt.Fprintf(out, "  OAuth profile    %s\n", report.OAuthProfile)
-	}
-	if len(report.AuthStatuses) != 0 {
-		fmt.Fprintln(out, "  Auth statuses")
-		for _, status := range report.AuthStatuses {
-			fmt.Fprintf(out, "    %s\t%s\ttools=%d resources=%d", status.Server, status.Status, status.ToolCount, status.ResourceCount)
-			if status.Error != "" {
-				fmt.Fprintf(out, "\terror=%s", status.Error)
-			}
-			fmt.Fprintln(out)
-		}
-	}
-	fmt.Fprintf(out, "  Message          %s\n", report.Message)
-}
-
 type mcpAddRequest struct {
 	Name              string
 	Command           string
@@ -57417,333 +55002,6 @@ func (a *App) GoodClaude(args []string) error {
 		SessionMessages:     feedback.SessionMessages,
 	}
 	return renderSimpleCompatibility(a.Out, report, format)
-}
-
-func (a *App) MovedToPluginCommand(args []string) error {
-	req, err := parseMovedToPluginArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Command == "" {
-		report := simpleCompatibilityReport{
-			Kind:                "command_migration",
-			Action:              "moved_to_plugin",
-			Status:              "needs_command",
-			Command:             "createMovedToPluginCommand",
-			Workspace:           a.Workspace,
-			Message:             "Pass the archived command name to scaffold a local Codog plugin replacement.",
-			Args:                req.Args,
-			ProviderRequestMade: false,
-			WorkspaceWillMutate: false,
-			NextCommand:         "codog createMovedToPluginCommand COMMAND",
-			DryRun:              req.DryRun,
-			Force:               req.Force,
-		}
-		return renderSimpleCompatibility(a.Out, report, req.Format)
-	}
-	report, err := a.scaffoldMovedToPluginCommand(req)
-	if err != nil {
-		return err
-	}
-	return renderSimpleCompatibility(a.Out, report, req.Format)
-}
-
-type movedToPluginRequest struct {
-	Command string
-	Args    []string
-	Format  string
-	DryRun  bool
-	Force   bool
-}
-
-func parseMovedToPluginArgs(args []string) (movedToPluginRequest, error) {
-	req := movedToPluginRequest{Format: "text"}
-	commandParts := []string{}
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, errors.New("createMovedToPluginCommand output format is required")
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--dry-run":
-			req.DryRun = true
-		case arg == "--force":
-			req.Force = true
-		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown createMovedToPluginCommand flag %q", arg)
-		default:
-			commandParts = append(commandParts, arg)
-		}
-	}
-	if err := validateTextOrJSON(req.Format, "createMovedToPluginCommand"); err != nil {
-		return req, err
-	}
-	req.Args = append([]string(nil), commandParts...)
-	req.Command = strings.TrimSpace(strings.Join(commandParts, " "))
-	return req, nil
-}
-
-func (a *App) scaffoldMovedToPluginCommand(req movedToPluginRequest) (simpleCompatibilityReport, error) {
-	pluginID := movedPluginSlug(req.Command)
-	commandName := movedPluginSlug(req.Command)
-	pluginRoot := filepath.Join(plugins.Root(a.Workspace), pluginID)
-	manifestFile := filepath.Join(pluginRoot, "plugin.json")
-	commandFile := filepath.Join(pluginRoot, "commands", commandName+".md")
-	skillFile := filepath.Join(pluginRoot, "skills", commandName, "SKILL.md")
-	scriptFile := filepath.Join(pluginRoot, "bin", "moved-command-event.sh")
-	draft, err := movedPluginDraftFiles(req.Command, pluginID, commandName)
-	if err != nil {
-		return simpleCompatibilityReport{}, err
-	}
-	bytes := len(draft.Manifest) + len(draft.Command) + len(draft.Skill) + len(draft.Script)
-	created := false
-	status := "ok"
-	message := "Local plugin migration bridge was created."
-	workspaceWillMutate := !req.DryRun
-	if req.DryRun {
-		message = "Local plugin migration bridge was planned; no files were written."
-		workspaceWillMutate = false
-	} else if movedPluginDraftExists(manifestFile, commandFile, skillFile, scriptFile) && !req.Force {
-		status = "exists"
-		message = "Local plugin migration bridge already exists; use --force to overwrite it."
-		workspaceWillMutate = false
-	} else {
-		files := []struct {
-			path string
-			data []byte
-			mode os.FileMode
-		}{
-			{path: manifestFile, data: draft.Manifest, mode: 0o644},
-			{path: commandFile, data: draft.Command, mode: 0o644},
-			{path: skillFile, data: draft.Skill, mode: 0o644},
-			{path: scriptFile, data: draft.Script, mode: 0o755},
-		}
-		for _, file := range files {
-			if err := os.MkdirAll(filepath.Dir(file.path), 0o755); err != nil {
-				return simpleCompatibilityReport{}, err
-			}
-			if err := os.WriteFile(file.path, file.data, file.mode); err != nil {
-				return simpleCompatibilityReport{}, err
-			}
-		}
-		result, err := plugins.Validate(pluginRoot)
-		if err != nil {
-			return simpleCompatibilityReport{}, err
-		}
-		if !result.Success {
-			return simpleCompatibilityReport{}, fmt.Errorf("generated plugin failed validation: %s", pluginValidationSummary(result))
-		}
-		created = true
-	}
-	report := simpleCompatibilityReport{
-		Kind:                "command_migration",
-		Action:              "moved_to_plugin",
-		Status:              status,
-		Command:             "createMovedToPluginCommand",
-		Workspace:           a.Workspace,
-		Message:             message,
-		Args:                req.Args,
-		ProviderRequestMade: false,
-		WorkspaceWillMutate: workspaceWillMutate,
-		NextCommand:         "codog commands show " + shellQuote(pluginID+":"+commandName),
-		File:                commandFile,
-		Bytes:               bytes,
-		PluginID:            pluginID,
-		PluginRoot:          pluginRoot,
-		ManifestFile:        manifestFile,
-		CommandFile:         commandFile,
-		DryRun:              req.DryRun,
-		Created:             created,
-		Force:               req.Force,
-	}
-	return report, nil
-}
-
-func movedPluginDraftExists(paths ...string) bool {
-	for _, path := range paths {
-		if _, err := os.Stat(path); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-func movedPluginSlug(value string) string {
-	value = strings.TrimSpace(strings.TrimPrefix(value, "/"))
-	value = strings.TrimSuffix(value, ".md")
-	value = strings.ToLower(value)
-	var builder strings.Builder
-	lastDash := false
-	for _, char := range value {
-		switch {
-		case char >= 'a' && char <= 'z':
-			builder.WriteRune(char)
-			lastDash = false
-		case char >= '0' && char <= '9':
-			builder.WriteRune(char)
-			lastDash = false
-		case char == '-' || char == '_' || char == '.' || char == ':' || char == '/' || char == '\\' || char == ' ' || char == '\t' || char == '\n' || char == '\r':
-			if builder.Len() > 0 && !lastDash {
-				builder.WriteByte('-')
-				lastDash = true
-			}
-		}
-	}
-	out := strings.Trim(builder.String(), "-")
-	if out == "" {
-		return "moved-command"
-	}
-	return out
-}
-
-type movedPluginDraft struct {
-	Manifest []byte
-	Command  []byte
-	Skill    []byte
-	Script   []byte
-}
-
-func movedPluginDraftFiles(command string, pluginID string, commandName string) (movedPluginDraft, error) {
-	displayName := strings.TrimSpace(command)
-	if displayName == "" {
-		displayName = commandName
-	}
-	toolName := movedPluginToolName(commandName)
-	manifest := struct {
-		ID          string                 `json:"id"`
-		Name        string                 `json:"name"`
-		Version     string                 `json:"version"`
-		Description string                 `json:"description"`
-		Commands    []string               `json:"commands"`
-		Skills      []string               `json:"skills"`
-		Tools       []plugins.ToolManifest `json:"tools"`
-	}{
-		ID:          pluginID,
-		Name:        pluginID,
-		Version:     "0.1.0",
-		Description: fmt.Sprintf("Local migration bridge for archived command %q.", displayName),
-		Commands:    []string{"./commands/" + commandName + ".md"},
-		Skills:      []string{"./skills/" + commandName},
-		Tools: []plugins.ToolManifest{{
-			Name:        toolName,
-			Description: "Record a structured invocation event for the migrated command " + displayName + ".",
-			Command:     "${CLAUDE_PLUGIN_ROOT}/bin/moved-command-event.sh",
-			Args:        []string{"${CLAUDE_PLUGIN_DATA}", displayName, pluginID},
-			Permission:  string(tools.PermissionWorkspace),
-			InputSchema: map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"properties": map[string]any{
-					"arguments": map[string]any{"type": "string"},
-					"intent":    map[string]any{"type": "string"},
-				},
-			},
-		}},
-	}
-	manifestData, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return movedPluginDraft{}, err
-	}
-	manifestData = append(manifestData, '\n')
-	description, _ := json.Marshal("Bridge archived command " + displayName + " to a concrete Codog plugin workflow.")
-	argumentHint, _ := json.Marshal("[arguments]")
-	commandDoc := fmt.Sprintf(`---
-description: %s
-argument-hint: %s
----
-
-# Plugin bridge: %s
-
-This command is the local bridge for the archived command '%s'.
-
-Treat $ARGUMENTS as the exact user arguments for '%s'. Preserve them when routing to tools, skills, hooks, or MCP servers declared by plugin '%s'.
-
-Execution workflow:
-
-1. Inspect this plugin with 'codog commands show %s:%s' or 'codog skills show %s:%s' when command details are needed.
-2. Call the '%s' tool with {"arguments":"$ARGUMENTS","intent":"%s"} to record a structured migration event before acting.
-3. Use plugin '%s' as the authoritative replacement surface for this archived command.
-4. Preserve user arguments exactly unless a plugin tool or skill documents a stricter schema.
-
-Arguments: $ARGUMENTS
-`, string(description), string(argumentHint), displayName, displayName, displayName, pluginID, pluginID, commandName, pluginID, commandName, toolName, displayName, pluginID)
-	skillDescription, _ := json.Marshal("Use the migrated plugin bridge for archived command " + displayName + ".")
-	skillDoc := fmt.Sprintf(`---
-description: %s
-allowed-tools:
-  - %s
-argument-hint: [arguments]
----
-# %s Plugin Bridge
-
-Use this skill when a request maps to archived command '%s'.
-
-First record the invocation with tool '%s'. Then route the request through the plugin's declared commands, tools, skills, hooks, or MCP servers. Keep user arguments intact and explain any unsupported operation with the structured event returned by the tool.
-`, string(skillDescription), toolName, displayName, displayName, toolName)
-	script := fmt.Sprintf(`#!/bin/sh
-set -eu
-data_dir=${1:-.}
-command_name=${2:-%s}
-plugin_id=${3:-%s}
-mkdir -p "$data_dir"
-payload=$(cat)
-stamp=$(date -u +"%%Y%%m%%dT%%H%%M%%SZ" 2>/dev/null || printf 'unknown')
-raw_file="$data_dir/moved-command-$stamp-$$.json"
-event_file="$data_dir/moved-command-events.jsonl"
-printf '%%s' "$payload" > "$raw_file"
-bytes=$(wc -c < "$raw_file" | tr -d ' ')
-escape_json_string() {
-  printf '%%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
-}
-raw_path=$(escape_json_string "$raw_file")
-command_name_json=$(escape_json_string "$command_name")
-plugin_json=$(escape_json_string "$plugin_id")
-recorded_at=$(date -u +"%%Y-%%m-%%dT%%H:%%M:%%SZ" 2>/dev/null || printf 'unknown')
-event=$(printf '{"kind":"moved_command_event","status":"ok","command":%s,"plugin_id":%s,"command_name":"%%s","plugin":"%%s","bytes":%%s,"raw_path":"%%s","recorded_at":"%%s"}\n' "$command_name_json" "$plugin_json" "$bytes" "$raw_path" "$recorded_at")
-printf '%%s' "$event" >> "$event_file"
-printf '%%s' "$event"
-`, jsonStringLiteral(displayName), jsonStringLiteral(pluginID), jsonStringLiteral(displayName), jsonStringLiteral(pluginID))
-	return movedPluginDraft{
-		Manifest: manifestData,
-		Command:  []byte(commandDoc),
-		Skill:    []byte(skillDoc),
-		Script:   []byte(script),
-	}, nil
-}
-
-func movedPluginToolName(commandName string) string {
-	name := strings.ReplaceAll(movedPluginSlug(commandName), "-", "_")
-	if name == "" {
-		name = "moved_command"
-	}
-	return name + "_moved_command_event"
-}
-
-func jsonStringLiteral(value string) string {
-	data, _ := json.Marshal(value)
-	return string(data)
-}
-
-func pluginValidationSummary(result plugins.ValidationResult) string {
-	if len(result.Errors) == 0 {
-		return "unknown validation error"
-	}
-	parts := make([]string, 0, len(result.Errors))
-	for _, item := range result.Errors {
-		if item.Path != "" {
-			parts = append(parts, item.Path+": "+item.Message)
-			continue
-		}
-		parts = append(parts, item.Message)
-	}
-	return strings.Join(parts, "; ")
 }
 
 func renderSimpleCompatibility(out io.Writer, report simpleCompatibilityReport, format string) error {
@@ -63341,18 +60599,18 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "subagent", "allowed-tools", "android", "ant-trace", "api", "api-key", "apikeystep", "app", "auth", "audit", "autofix-pr", "backfill-sessions", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome", "cost",
-		"break-cache", "bridge", "bridge-kick", "bootstrap-plan", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "completion", "config", "continue", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
-		"debug-tool-call", "deferred-init", "definition", "desktop", "diagnostics", "diff", "doctor", "dump-manifests", "effort", "enterprise", "env", "errorstep", "exit", "exit-plan", "existingworkflowstep",
-		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "git", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
-		"format", "help", "history", "hover", "ide", "init", "init-verifiers", "insights", "install", "install-github-app", "install-slack-app", "ios", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "map", "marketplace", "max-tokens", "max-turns",
-		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauth", "oauth-refresh", "oauthflowstep", "onboarding", "open", "output-style", "parity", "parity-audit", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
-		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "pr_comments", "profile", "prompt", "prompt-history", "privacy-settings", "project", "providers", "parseargs", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
-		"reference-audit", "remote", "remote-control", "remote-env", "remote-setup", "rename", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "safer-scope", "sandbox-toggle",
+	case "acp", "add-dir", "advisor", "agents", "subagent", "allowed-tools", "android", "ant-trace", "api", "api-key", "app", "auth", "autofix-pr", "backfill-sessions", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome", "cost",
+		"break-cache", "bridge", "bridge-kick", "bootstrap-plan", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "completion", "config", "continue", "context", "context-noninteractive", "conversation", "cron", "ctx_viz",
+		"debug-tool-call", "deferred-init", "definition", "desktop", "diagnostics", "diff", "doctor", "dump-manifests", "effort", "enterprise", "env", "exit", "exit-plan",
+		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "git", "good-claude", "green", "green-contract", "heapdump", "hooks", "language",
+		"format", "help", "history", "hover", "ide", "init", "init-verifiers", "insights", "install", "install-github-app", "install-slack-app", "ios", "issue", "keybindings", "listen", "log", "map", "marketplace", "max-tokens", "max-turns",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauth", "oauth-refresh", "onboarding", "open", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
+		"pr-comments", "pr_comments", "profile", "prompt", "prompt-history", "privacy-settings", "project", "providers", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
+		"remote", "remote-control", "remote-env", "remote-setup", "rename", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "safer-scope", "sandbox-toggle",
 		"references", "scope", "search", "security-review", "self-test", "server", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "slash", "skill", "skills", "speak", "ssh", "state", "status", "statusline", "symbols",
-		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "successstep", "summary", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "terminalsetup", "theme", "tokens", "tool-details", "trust",
+		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "summary", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "terminalsetup", "theme", "tokens", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
-		"teleport", "ultraplan", "ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "unpin", "upgrade", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
+		"teleport", "ultraplan", "ultrareview", "unpin", "upgrade", "usage", "version", "vim", "voice", "web-setup", "workspace", "cwd", "rewind":
 		return true
 	default:
 		return false
@@ -63520,6 +60778,7 @@ type commandHelpSpec struct {
 	ProtocolFields          []string
 	ContractFields          []string
 	ProtocolMethods         []string
+	OmitOperationalMetadata bool
 }
 
 func localCommandHelpSpec(topic, command, usage, text string, fields, statuses []string, mutates bool) commandHelpSpec {
@@ -63681,6 +60940,14 @@ func parseCommandHelpFormat(command string, args []string, fallbackFormat string
 
 func renderCommandHelpSpec(out io.Writer, spec commandHelpSpec, format string) error {
 	if format == "json" {
+		var localOnly, requiresCredentials, requiresProviderRequest, requiresSessionResume, mutatesWorkspace *bool
+		if !spec.OmitOperationalMetadata {
+			localOnly = boolPtr(spec.LocalOnly)
+			requiresCredentials = boolPtr(spec.RequiresCredentials)
+			requiresProviderRequest = boolPtr(spec.RequiresProviderRequest)
+			requiresSessionResume = boolPtr(spec.RequiresSessionResume)
+			mutatesWorkspace = boolPtr(spec.MutatesWorkspace)
+		}
 		data, _ := json.MarshalIndent(helpReport{
 			Kind:                    "help",
 			Action:                  "help",
@@ -63693,11 +60960,11 @@ func renderCommandHelpSpec(out io.Writer, spec commandHelpSpec, format string) e
 			Aliases:                 append([]string(nil), spec.Aliases...),
 			Formats:                 append([]string(nil), spec.Formats...),
 			Related:                 append([]string(nil), spec.Related...),
-			LocalOnly:               boolPtr(spec.LocalOnly),
-			RequiresCredentials:     boolPtr(spec.RequiresCredentials),
-			RequiresProviderRequest: boolPtr(spec.RequiresProviderRequest),
-			RequiresSessionResume:   boolPtr(spec.RequiresSessionResume),
-			MutatesWorkspace:        boolPtr(spec.MutatesWorkspace),
+			LocalOnly:               localOnly,
+			RequiresCredentials:     requiresCredentials,
+			RequiresProviderRequest: requiresProviderRequest,
+			RequiresSessionResume:   requiresSessionResume,
+			MutatesWorkspace:        mutatesWorkspace,
 			ServeStartsDaemon:       spec.ServeStartsDaemon,
 			OutputFields:            append([]string(nil), spec.OutputFields...),
 			WorkspaceFields:         append([]string(nil), spec.WorkspaceFields...),
@@ -64265,25 +61532,12 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"capabilities",
 			"capabilities",
-			"codog capabilities [show|list|resolve NAME|audit] [--reference-root PATH] [--commands-snapshot PATH] [--tools-snapshot PATH] [--output-format text|json]",
-			"Capabilities\n\nUsage:\n  codog capabilities [show|list] [--output-format text|json]\n  codog capabilities resolve NAME [--output-format text|json]\n  codog capabilities audit --reference-root PATH [--output-format text|json]\n  codog capabilities audit --commands-snapshot PATH --tools-snapshot PATH [--output-format text|json]\n\nReports the commands, slash commands, tools, protocols, MCP resources, and feature flags supported by this build. `resolve` projects the live execution registry for one command, slash command, tool, or Claude-style tool alias. `audit` compares Codog's live command and tool surface against Claude Code reference source or snapshots.\n",
+			"codog capabilities [show|list|resolve NAME|audit] [--commands-snapshot PATH] [--tools-snapshot PATH] [--output-format text|json]",
+			"Capabilities\n\nUsage:\n  codog capabilities [show|list] [--output-format text|json]\n  codog capabilities resolve NAME [--output-format text|json]\n  codog capabilities audit [--commands-snapshot PATH] [--tools-snapshot PATH] [--output-format text|json]\n\nReports the commands, slash commands, tools, protocols, MCP resources, and feature flags supported by this build. `resolve` projects the live execution registry for one command, slash command, tool, or tool alias. `audit` compares the live registry against explicit public JSON snapshots; it does not inspect another product's source tree.\n",
 			[]string{"commands", "slash_commands", "tools", "features", "protocols", "mcp", "matches", "suggestions", "covered_count", "missing_count"},
 			[]string{"ok", "gap", "not_found", "error"},
 			false,
 		), true
-	case "audit", "reference-audit", "parity-audit":
-		spec := localCommandHelpSpec(
-			"parity-audit",
-			"parity-audit",
-			"codog parity-audit --reference-root PATH [--output-format text|json]",
-			"Parity Audit\n\nUsage:\n  codog parity-audit --reference-root PATH [--output-format text|json]\n  codog parity-audit --commands-snapshot PATH --tools-snapshot PATH [--output-format text|json]\n  codog reference-audit [same flags]\n  codog audit [same flags]\n\nCompares Codog's live command and tool surface against a Claude-Code-style reference source tree or exported command/tool snapshots. This is a top-level alias for `codog capabilities audit` so parity checks can run without going through the broader capabilities report.\n",
-			[]string{"commands", "tools", "covered_count", "missing_count", "missing_groups", "source"},
-			[]string{"ok", "gap", "error"},
-			false,
-		)
-		spec.Aliases = []string{"audit", "reference-audit", "capabilities audit"}
-		spec.Related = []string{"codog capabilities", "codog mock-parity", "codog slash"}
-		return spec, true
 	case "cost":
 		return localCommandHelpSpec(
 			"cost",
@@ -64469,8 +61723,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
-	case "mock-limits":
-		return localCommandHelpSpec(
+	case "mock-limits", "mock-server":
+		spec := localCommandHelpSpec(
 			"mock-limits",
 			"mock-limits",
 			"codog mock-limits [show|status|plan|serve|server|start|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--output-format text|json]",
@@ -64478,7 +61732,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"addr", "base_url", "failures", "retry_after_ms", "endpoint"},
 			[]string{"ready", "serving", "error"},
 			false,
-		), true
+		)
+		spec.Aliases = []string{"mock-server"}
+		if strings.EqualFold(strings.TrimSpace(topic), "mock-server") {
+			spec.Topic = "mock-server"
+			spec.Command = "mock-server"
+			spec.Usage = "codog mock-server [ADDR] [--failures N] [--retry-after-ms N] [--output-format text|json]"
+			spec.Text = "Mock Server\n\nUsage:\n  codog mock-server [ADDR] [--failures N] [--retry-after-ms N] [--output-format text|json]\n\nAlias for `codog mock-limits serve`; starts the local retry and streaming test server.\n"
+			spec.Aliases = []string{"mock-limits"}
+		}
+		return spec, true
 	case "mock-parity", "parity", "self-test":
 		spec := localCommandHelpSpec(
 			"mock-parity",
@@ -64511,6 +61774,36 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"kind", "action", "status", "result", "target", "backup_path", "rolled_back"},
 			[]string{"ok", "error"},
 			true,
+		), true
+	case "updater":
+		return localCommandHelpSpec(
+			"updater",
+			"updater",
+			"codog updater [status|show|check|verify|download|install|rollback] [ARGS...] [--output-format text|json]",
+			"Updater\n\nUsage:\n  codog updater status\n  codog updater check [URL] [PUBLIC_KEY]\n  codog updater verify URL PUBLIC_KEY\n  codog updater download [URL] [PLATFORM] [DEST] [PUBLIC_KEY]\n  codog updater install ARTIFACT [TARGET]\n  codog updater rollback [TARGET]\n\nInspects local update artifacts and performs explicit manifest checks, downloads, installs, or backup rollback. No official update channel is bundled.\n",
+			[]string{"kind", "action", "status", "result"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "enterprise":
+		return localCommandHelpSpec(
+			"enterprise",
+			"enterprise",
+			"codog enterprise [audit|status|show] [LIMIT] | codog enterprise verify POLICY PUBLIC_KEY",
+			"Enterprise\n\nUsage:\n  codog enterprise [audit|status|show] [LIMIT]\n  codog enterprise verify POLICY PUBLIC_KEY\n\nAudits local permission events and verifies explicitly supplied signed policy files. Codog does not connect to an organization policy service.\n",
+			[]string{"kind", "action", "status", "events", "summary", "warnings"},
+			[]string{"ok", "warn", "error"},
+			false,
+		), true
+	case "dump-manifests":
+		return localCommandHelpSpec(
+			"dump-manifests",
+			"dump-manifests",
+			"codog dump-manifests [--manifests-dir PATH] [--output-format text|json]",
+			"Dump Manifests\n\nUsage:\n  codog dump-manifests [--manifests-dir PATH] [--output-format text|json]\n\nDiscovers local tool, command, skill, agent, hook, plugin, and MCP manifests for the selected workspace.\n",
+			[]string{"workspace", "tools", "commands", "skills", "agents", "hooks", "plugins", "mcp_servers"},
+			[]string{"ok", "error"},
+			false,
 		), true
 	case "notifications":
 		return localCommandHelpSpec(
@@ -64557,7 +61850,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "warn", "error"},
 			true,
 		), true
-	case "marketplace", "plugin", "plugins", "addmarketplace", "managemarketplaces", "browsemarketplace", "discoverplugins", "validateplugin", "manageplugins", "pluginsettings":
+	case "marketplace", "plugin", "plugins":
 		command := strings.TrimSpace(topic)
 		if command == "" {
 			command = "marketplace"
@@ -64571,17 +61864,6 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "healthy", "degraded", "failed", "error"},
 			true,
 		), true
-	case "pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "plugintrustwarning", "unifiedinstalledcell", "parseargs", "plugindetailshelpers", "usepagination":
-		command := pluginCompatibilityCommand(topic)
-		return localCommandHelpSpec(
-			command,
-			command,
-			fmt.Sprintf("codog %s [PLUGIN|ACTION] [--page N] [--per-page N] [--output-format text|json]", command),
-			fmt.Sprintf("%s\n\nUsage:\n  codog %s [PLUGIN|ACTION] [--page N] [--per-page N] [--output-format text|json]\n\nCompatibility entrypoint for Claude Code plugin helper `%s`. It inspects installed Codog plugins, validates plugin manifests, reports trust warnings for executable plugin surfaces, normalizes plugin command arguments, and can paginate installed plugin summaries.\n", command, command, command),
-			[]string{"summary", "plugins", "selected_plugin", "validation", "trust_warnings", "pagination", "normalized_action"},
-			[]string{"ok", "warn", "error"},
-			false,
-		), true
 	case "mcp":
 		return localCommandHelpSpec(
 			"mcp",
@@ -64591,53 +61873,6 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"servers", "tools", "resources", "prompts", "result"},
 			[]string{"ok", "error"},
 			true,
-		), true
-	case "addcommand":
-		return localCommandHelpSpec(
-			"addCommand",
-			"addCommand",
-			"codog addCommand NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] [--output-format text|json]",
-			"addCommand\n\nUsage:\n  codog addCommand NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] [--output-format text|json]\n\nCompatibility entrypoint for the archived MCP add command. It delegates to `codog mcp add` and persists the MCP stdio server configuration in Codog config.\n",
-			[]string{"name", "path", "server"},
-			[]string{"ok", "error"},
-			true,
-		), true
-	case "xaaidpcommand":
-		return localCommandHelpSpec(
-			"xaaIdpCommand",
-			"xaaIdpCommand",
-			"codog xaaIdpCommand [--refresh|refresh] [SERVER] [--profile PROFILE] [--output-format text|json]",
-			"xaaIdpCommand\n\nUsage:\n  codog xaaIdpCommand [--refresh|refresh] [SERVER] [--profile PROFILE] [--output-format text|json]\n\nCompatibility entrypoint for archived MCP XAA IdP authentication. With a server name it delegates to `codog mcp auth [--refresh] SERVER`; without one it runs MCP auth preflight for all configured servers and summarizes local OAuth profile/token readiness. `--refresh` refreshes the saved OAuth token before reporting readiness.\n",
-			[]string{"configured_servers", "auth_statuses", "oauth_status", "oauth_profiles", "provider_configured", "oauth_ready", "usage"},
-			[]string{"ok", "warn", "no_servers", "error"},
-			false,
-		), true
-	case "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog":
-		command := reviewCompatibilityCommand(topic)
-		usage := fmt.Sprintf("codog %s [--staged] [--base REF] [--limit N] [--output-format text|json]", command)
-		text := fmt.Sprintf("%s\n\nUsage:\n  codog %s [--staged] [--base REF] [--limit N] [--output-format text|json]\n\nCompatibility entrypoint for Claude Code ultra review helpers. `ultrareviewCommand` delegates to local review; `UltrareviewOverageDialog` checks the current diff against a local review line threshold; `ultrareviewEnabled` reports or updates the stored local preference.\n", command, command)
-		if command == "ultrareviewEnabled" {
-			usage = "codog ultrareviewEnabled [status|on|off|toggle|clear] [--target user|project|local] [--output-format text|json]"
-			text = "ultrareviewEnabled\n\nUsage:\n  codog ultrareviewEnabled [status|on|off|toggle|clear] [--target user|project|local] [--output-format text|json]\n\nCompatibility entrypoint for the Claude Code ultra review enabled helper. It reports or updates the local `preferences.ultrareview_enabled` preference; the default is enabled when unset.\n"
-		}
-		return localCommandHelpSpec(
-			command,
-			command,
-			usage,
-			text,
-			[]string{"enabled", "configured", "local_review_command", "requested_limit", "changed_lines", "overage", "path", "message"},
-			[]string{"ok", "warn", "error"},
-			false,
-		), true
-	case "createmovedtoplugincommand":
-		return localCommandHelpSpec(
-			"createMovedToPluginCommand",
-			"createMovedToPluginCommand",
-			"codog createMovedToPluginCommand COMMAND [--dry-run] [--force] [--output-format text|json]",
-			"createMovedToPluginCommand\n\nUsage:\n  codog createMovedToPluginCommand COMMAND [--dry-run] [--force] [--output-format text|json]\n\nCompatibility entrypoint for archived commands that moved into plugins. It scaffolds a local Codog plugin migration draft under `.codog/plugins` and exposes the replacement as a plugin-backed slash command.\n",
-			[]string{"message", "plugin_id", "plugin_root", "manifest_file", "command_file", "next_command", "args"},
-			[]string{"ok", "exists", "needs_command", "error"},
-			false,
 		), true
 	case "good-claude":
 		return localCommandHelpSpec(
@@ -64678,17 +61913,6 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"repository", "pull_request", "items", "prompt", "file"},
 			[]string{"ready", "no_comments", "error"},
 			true,
-		), true
-	case "apikeystep", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "creatingstep", "errorstep", "existingworkflowstep", "installappstep", "oauthflowstep", "successstep", "warningsstep":
-		command := installGitHubAppStepCommand(topic)
-		return localCommandHelpSpec(
-			command,
-			command,
-			fmt.Sprintf("codog %s [--workflow claude|review|all] [--secret-name NAME] [--output-format text|json]", command),
-			fmt.Sprintf("%s\n\nUsage:\n  codog %s [--workflow claude|review|all] [--secret-name NAME] [--output-format text|json]\n\nCompatibility entrypoint for the Claude Code GitHub App setup step named `%s`. Most steps perform a non-mutating local check; `CreatingStep` writes selected workflow files unless `--dry-run` is passed. Reports include repository detection, credential readiness, existing workflow files, GitHub CLI availability, warnings, and the concrete `codog install-github-app` command when a separate apply step is needed.\n", command, command, command),
-			[]string{"step", "workspace", "repo", "secret_name", "api_key_configured", "github_cli_available", "workflows", "warnings", "next_command"},
-			[]string{"ok", "warn", "planned", "ready", "error"},
-			false,
 		), true
 	case "install-github-app":
 		return localCommandHelpSpec(
@@ -64933,23 +62157,30 @@ func isBuiltInCommandName(topic string) bool {
 func genericBuiltInCommandHelpSpec(topic string) commandHelpSpec {
 	command := strings.TrimSpace(topic)
 	usage := "codog " + command + " [ARGS...]"
-	if commandAcceptsGlobalOutputFormat(command) {
-		usage += " [--output-format text|json]"
+	description := fmt.Sprintf("No detailed command metadata is registered for %s.", command)
+	related := []string{"codog capabilities resolve " + command}
+	schemaVersion := "codog.help.fallback.v1"
+	if slashSpec, ok := slash.Lookup("/" + command); ok {
+		usage = "codog " + strings.TrimPrefix(strings.TrimSpace(slashSpec.Usage), "/")
+		description = strings.TrimSpace(slashSpec.Description)
+		related = append([]string{slashSpec.Name}, related...)
+		schemaVersion = "codog.help.generated.v1"
 	}
+	if commandAcceptsGlobalOutputFormat(command) {
+		if !strings.Contains(usage, "--output-format") {
+			usage += " [--output-format text|json]"
+		}
+	}
+	title := titleCaseASCII(command)
 	return commandHelpSpec{
 		Topic:                   command,
 		Command:                 command,
 		Usage:                   usage,
-		Text:                    fmt.Sprintf("%s\n\nUsage:\n  %s\n\nThis built-in command is part of Codog's declared command surface. Detailed command-specific help has not been specialized yet; use `codog capabilities resolve %s --output-format json` for registry metadata and `codog --help` for the global command list.\n", titleCaseASCII(command), usage, shellQuote(command)),
-		SchemaVersion:           "codog.help.generic.v1",
-		LocalOnly:               true,
-		RequiresCredentials:     false,
-		RequiresProviderRequest: false,
-		RequiresSessionResume:   false,
-		MutatesWorkspace:        false,
-		OutputFields:            []string{"status", "command"},
-		StatusValues:            []string{"ok", "error"},
-		Related:                 []string{"codog capabilities", "codog capabilities resolve " + command},
+		Text:                    fmt.Sprintf("%s\n\nUsage:\n  %s\n\n%s\n", title, usage, description),
+		SchemaVersion:           schemaVersion,
+		Formats:                 []string{"text", "json"},
+		Related:                 related,
+		OmitOperationalMetadata: true,
 	}
 }
 

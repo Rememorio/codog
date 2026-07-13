@@ -824,11 +824,17 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 
 	out.Reset()
 	require.NoError(t, renderHelpCommand(&out, []string{"background", "--output-format", "json"}))
+	report = helpReport{}
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "background", report.Topic)
 	require.Equal(t, "background", report.Command)
-	require.Equal(t, "codog.help.generic.v1", report.SchemaVersion)
-	require.Contains(t, report.Help, "declared command surface")
+	require.Equal(t, "codog.help.generated.v1", report.SchemaVersion)
+	require.Contains(t, report.Usage, "run|list|board|heartbeat|status|stop|restart|logs|watch|prune|supervise")
+	require.Contains(t, report.Help, "Manage local background tasks")
+	require.NotContains(t, report.Help, "not been specialized")
+	require.Nil(t, report.LocalOnly)
+	require.Nil(t, report.MutatesWorkspace)
+	require.Contains(t, report.Related, "/background")
 	require.Contains(t, report.Related, "codog capabilities resolve background")
 
 	out.Reset()
@@ -1136,21 +1142,6 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "mcp",
 		},
 		{
-			name:  "mcp addCommand local help",
-			args:  []string{"--config", configPath, "addCommand", "--help", "--output-format", "json"},
-			topic: "addCommand",
-		},
-		{
-			name:  "plugin helper local help",
-			args:  []string{"--config", configPath, "PluginErrors", "--help", "--output-format", "json"},
-			topic: "PluginErrors",
-		},
-		{
-			name:  "review helper local help",
-			args:  []string{"--config", configPath, "ultrareviewEnabled", "--help", "--output-format", "json"},
-			topic: "ultrareviewEnabled",
-		},
-		{
 			name:  "good claude local help",
 			args:  []string{"--config", configPath, "good-claude", "--help", "--output-format", "json"},
 			topic: "good-claude",
@@ -1159,11 +1150,6 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			name:  "setupGitHubActions local help",
 			args:  []string{"--config", configPath, "setupGitHubActions", "--help", "--output-format", "json"},
 			topic: "setupGitHubActions",
-		},
-		{
-			name:  "github app step local help",
-			args:  []string{"--config", configPath, "ApiKeyStep", "--help", "--output-format", "json"},
-			topic: "ApiKeyStep",
 		},
 		{
 			name:  "api local help",
@@ -1456,30 +1442,19 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Release.ExcludedProductionSurfaces, "updater_manifest")
 	require.Contains(t, report.Release.ExcludedProductionSurfaces, "managed_policy")
 	require.Contains(t, report.Commands, "prompt")
-	require.Contains(t, report.Commands, "addCommand")
 	require.Contains(t, report.Commands, "ant-trace")
 	require.Contains(t, report.Commands, "api")
-	require.Contains(t, report.Commands, "ApiKeyStep")
-	require.Contains(t, report.Commands, "audit")
 	require.Contains(t, report.Commands, "break-cache")
 	require.Contains(t, report.Commands, "caches")
-	require.Contains(t, report.Commands, "CheckExistingSecretStep")
-	require.Contains(t, report.Commands, "CheckGitHubStep")
-	require.Contains(t, report.Commands, "ChooseRepoStep")
-	require.Contains(t, report.Commands, "CreatingStep")
 	require.Contains(t, report.Commands, "extra-usage-core")
 	require.Contains(t, report.Commands, "extra-usage-noninteractive")
-	require.Contains(t, report.Commands, "ExistingWorkflowStep")
-	require.Contains(t, report.Commands, "ErrorStep")
 	require.Contains(t, report.Commands, "exit")
 	require.Contains(t, report.Commands, "autofix-pr")
-	require.Contains(t, report.Commands, "InstallAppStep")
 	require.Contains(t, report.Commands, "resume")
 	require.Contains(t, report.Commands, "session")
 	require.Contains(t, report.Commands, "clear")
 	require.Contains(t, report.Commands, "context-noninteractive")
 	require.Contains(t, report.Commands, "conversation")
-	require.Contains(t, report.Commands, "createMovedToPluginCommand")
 	require.Contains(t, report.Commands, "validation")
 	require.Contains(t, report.Commands, "reviewRemote")
 	require.Contains(t, report.Commands, "permissions")
@@ -1506,27 +1481,11 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "mock-limits")
 	require.Contains(t, report.Commands, "mock-parity")
 	require.Contains(t, report.Commands, "onboarding")
-	require.Contains(t, report.Commands, "parity-audit")
 	require.Contains(t, report.Commands, "perf-issue")
-	require.Contains(t, report.Commands, "AddMarketplace")
-	require.Contains(t, report.Commands, "BrowseMarketplace")
-	require.Contains(t, report.Commands, "DiscoverPlugins")
-	require.Contains(t, report.Commands, "ManageMarketplaces")
-	require.Contains(t, report.Commands, "ManagePlugins")
-	require.Contains(t, report.Commands, "PluginErrors")
-	require.Contains(t, report.Commands, "PluginOptionsDialog")
-	require.Contains(t, report.Commands, "PluginOptionsFlow")
-	require.Contains(t, report.Commands, "PluginSettings")
-	require.Contains(t, report.Commands, "PluginTrustWarning")
-	require.Contains(t, report.Commands, "UnifiedInstalledCell")
-	require.Contains(t, report.Commands, "ValidatePlugin")
-	require.Contains(t, report.Commands, "parseArgs")
-	require.Contains(t, report.Commands, "pluginDetailsHelpers")
 	require.Contains(t, report.Commands, "profile")
 	require.Contains(t, report.Commands, "rc")
 	require.Contains(t, report.Commands, "rate-limit")
 	require.Contains(t, report.Commands, "reasoning")
-	require.Contains(t, report.Commands, "reference-audit")
 	require.Contains(t, report.Commands, "reset")
 	require.Contains(t, report.Commands, "settings")
 	require.Contains(t, report.Commands, "skill")
@@ -1534,16 +1493,21 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "temperature")
 	require.Contains(t, report.Commands, "telemetry")
 	require.Contains(t, report.Commands, "workspace")
-	require.Contains(t, report.Commands, "OAuthFlowStep")
-	require.Contains(t, report.Commands, "SuccessStep")
-	require.Contains(t, report.Commands, "WarningsStep")
-	require.Contains(t, report.Commands, "usePagination")
-	require.Contains(t, report.Commands, "ultrareviewCommand")
-	require.Contains(t, report.Commands, "ultrareviewEnabled")
-	require.Contains(t, report.Commands, "UltrareviewOverageDialog")
-	require.Contains(t, report.Commands, "xaaIdpCommand")
 	require.Contains(t, report.Commands, "cwd")
 	require.Contains(t, report.Commands, "tool-details")
+	for _, internalName := range []string{
+		"AddMarketplace", "addCommand", "ApiKeyStep", "BrowseMarketplace",
+		"CheckExistingSecretStep", "CheckGitHubStep", "ChooseRepoStep", "CreatingStep",
+		"createMovedToPluginCommand", "DiscoverPlugins", "ErrorStep", "ExistingWorkflowStep", "InstallAppStep",
+		"ManageMarketplaces", "ManagePlugins", "OAuthFlowStep", "parseArgs",
+		"pluginDetailsHelpers", "PluginErrors", "PluginOptionsDialog", "PluginOptionsFlow",
+		"PluginSettings", "PluginTrustWarning", "SuccessStep", "ultrareviewCommand",
+		"ultrareviewEnabled", "UltrareviewOverageDialog", "UnifiedInstalledCell",
+		"usePagination", "ValidatePlugin", "WarningsStep", "xaaIdpCommand",
+		"audit", "parity-audit", "reference-audit",
+	} {
+		require.NotContains(t, report.Commands, internalName)
+	}
 	require.Contains(t, report.Features, "approval_tokens")
 	require.Contains(t, report.Features, "broad_cwd_guard")
 	require.Contains(t, report.Features, "bootstrap_plan")
@@ -1589,6 +1553,8 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, report.CommandCount, report.CommandSurface.HelpTopicCount)
 	require.Zero(t, report.CommandSurface.MissingHelpTopicCount)
 	require.Empty(t, report.CommandSurface.MissingHelpTopics)
+	require.Zero(t, report.CommandSurface.FallbackHelpTopicCount)
+	require.Empty(t, report.CommandSurface.FallbackHelpTopics)
 	require.Equal(t, report.CommandCount, report.CommandSurface.CompletionCommandCount)
 	require.Zero(t, report.CommandSurface.MissingCompletionCommandCount)
 	require.Empty(t, report.CommandSurface.MissingCompletionCommands)
@@ -1854,36 +1820,25 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, capabilityReportHasSlash(report, "/good-claude"))
 	require.True(t, capabilityReportHasMCPResource(report, "codog://workspace"))
 	require.True(t, capabilityReportHasMCPPrompt(report, "review_changes"))
-	require.True(t, commandAcceptsGlobalOutputFormat("addCommand"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ant-trace"))
-	require.True(t, commandAcceptsGlobalOutputFormat("ApiKeyStep"))
-	require.True(t, commandAcceptsGlobalOutputFormat("audit"))
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
-	require.True(t, commandAcceptsGlobalOutputFormat("CheckGitHubStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("code-intel"))
 	require.True(t, commandAcceptsGlobalOutputFormat("completion"))
-	require.True(t, commandAcceptsGlobalOutputFormat("CreatingStep"))
-	require.True(t, commandAcceptsGlobalOutputFormat("ExistingWorkflowStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("generateSessionName"))
 	require.True(t, commandAcceptsGlobalOutputFormat("good-claude"))
-	require.True(t, commandAcceptsGlobalOutputFormat("parity-audit"))
-	require.True(t, commandAcceptsGlobalOutputFormat("reference-audit"))
-	require.True(t, commandAcceptsGlobalOutputFormat("SuccessStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("onboarding"))
-	require.True(t, commandAcceptsGlobalOutputFormat("AddMarketplace"))
-	require.True(t, commandAcceptsGlobalOutputFormat("BrowseMarketplace"))
-	require.True(t, commandAcceptsGlobalOutputFormat("DiscoverPlugins"))
-	require.True(t, commandAcceptsGlobalOutputFormat("ManageMarketplaces"))
-	require.True(t, commandAcceptsGlobalOutputFormat("ManagePlugins"))
-	require.True(t, commandAcceptsGlobalOutputFormat("PluginErrors"))
-	require.True(t, commandAcceptsGlobalOutputFormat("PluginSettings"))
-	require.True(t, commandAcceptsGlobalOutputFormat("PluginTrustWarning"))
-	require.True(t, commandAcceptsGlobalOutputFormat("ValidatePlugin"))
 	require.True(t, commandAcceptsGlobalOutputFormat("settings"))
 	require.True(t, commandAcceptsGlobalOutputFormat("skill"))
 	require.True(t, commandAcceptsGlobalOutputFormat("slash"))
-	require.True(t, commandAcceptsGlobalOutputFormat("ultrareviewEnabled"))
-	require.True(t, commandAcceptsGlobalOutputFormat("xaaIdpCommand"))
+	for _, internalName := range []string{
+		"AddMarketplace", "addCommand", "ApiKeyStep", "BrowseMarketplace",
+		"CheckGitHubStep", "CreatingStep", "DiscoverPlugins", "ExistingWorkflowStep",
+		"ManageMarketplaces", "ManagePlugins", "PluginErrors", "PluginSettings",
+		"PluginTrustWarning", "SuccessStep", "ultrareviewEnabled", "ValidatePlugin",
+		"xaaIdpCommand", "audit", "parity-audit", "reference-audit",
+	} {
+		require.False(t, commandAcceptsGlobalOutputFormat(internalName))
+	}
 	require.True(t, commandAcceptsGlobalOutputFormat("bug"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bookmarks"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bridge"))
@@ -1950,87 +1905,39 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, audit.Tools.Covered, referenceAuditMatch{Name: "BashTool", SourceHint: "tools/BashTool/BashTool.tsx", Matched: "bash"})
 	out.Reset()
 	require.NoError(t, app.Capabilities([]string{"audit", "--commands-snapshot", commandSnapshot}))
-	require.Contains(t, out.String(), "Reference Parity Audit")
+	require.Contains(t, out.String(), "Capability Snapshot Audit")
 	require.Contains(t, out.String(), "Commands")
 	require.Contains(t, out.String(), "Uncovered groups")
 	require.Contains(t, out.String(), "missing-reference-command")
 
-	referenceRoot := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(referenceRoot, "src", "commands", "status"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(referenceRoot, "src", "commands", "missing"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(referenceRoot, "src", "commands", "disabled"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(referenceRoot, "src", "commands", "report"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(referenceRoot, "src", "tools", "BashTool"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(referenceRoot, "src", "tools", "MissingReferenceTool"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "commands", "status", "index.ts"), []byte(`export default { name: 'status', aliases: ['st'] }`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "commands", "missing", "index.ts"), []byte(`export default { name: 'missing-reference-command' }`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "commands", "disabled", "index.js"), []byte(`export default { isEnabled: () => false, isHidden: true, name: 'stub' };`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "commands", "report", "sections.ts"), []byte(`export const sections = [{ name: 'not-a-command' }]`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "tools", "BashTool", "BashTool.tsx"), []byte(`export const BashTool = buildTool({ name: BASH_TOOL_NAME })`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "tools", "BashTool", "toolName.ts"), []byte(`export const BASH_TOOL_NAME = 'Bash'`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "tools", "BashTool", "bashSecurity.ts"), []byte(`export const bashSecurity = true`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(referenceRoot, "src", "tools", "MissingReferenceTool", "index.ts"), []byte(`export const MissingReferenceTool = buildTool({ name: 'MissingReferenceTool' })`), 0o644))
-	out.Reset()
-	require.NoError(t, app.Capabilities([]string{"audit", "--reference-root", referenceRoot, "--json"}))
-	var sourceAudit referenceParityAuditReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &sourceAudit))
-	require.Equal(t, "reference_root", sourceAudit.Source)
-	require.NotNil(t, sourceAudit.Commands)
-	require.Equal(t, 3, sourceAudit.Commands.ReferenceCount)
-	require.Equal(t, 1, sourceAudit.Commands.CoveredCount)
-	require.Equal(t, 1, sourceAudit.Commands.GroupCoveredCount)
-	require.Equal(t, 1, sourceAudit.Commands.MissingCount)
-	require.Equal(t, referenceRoot, sourceAudit.Commands.SourceRoot)
-	require.NotNil(t, sourceAudit.Tools)
-	require.Equal(t, 3, sourceAudit.Tools.ReferenceCount)
-	require.Equal(t, 2, sourceAudit.Tools.CoveredCount)
-	require.Equal(t, 0, sourceAudit.Tools.GroupCoveredCount)
-	require.Equal(t, 1, sourceAudit.Tools.MissingCount)
-	require.Contains(t, sourceAudit.Tools.Covered, referenceAuditMatch{Name: "BashTool", SourceHint: "tools/BashTool/BashTool.tsx", Matched: "bash"})
-	require.Contains(t, sourceAudit.Tools.Covered, referenceAuditMatch{Name: "Bash", SourceHint: "tools/BashTool/toolName.ts", Matched: "bash"})
 }
 
-func TestTopLevelParityAuditCommand(t *testing.T) {
-	configHome := t.TempDir()
+func TestInternalReferenceSymbolsAreNotCLICommands(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	data, err := json.Marshal(map[string]string{"config_home": configHome})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(configPath, data, 0o644))
-	commandSnapshot := filepath.Join(t.TempDir(), "commands.json")
-	require.NoError(t, os.WriteFile(commandSnapshot, []byte(`[
-		{"name":"status","source_hint":"commands/status/index.ts"},
-		{"name":"missing-reference-command","source_hint":"commands/missing/index.ts"}
-	]`), 0o644))
-	toolSnapshot := filepath.Join(t.TempDir(), "tools.json")
-	require.NoError(t, os.WriteFile(toolSnapshot, []byte(`[
-		{"name":"BashTool","source_hint":"tools/BashTool/BashTool.tsx"}
-	]`), 0o644))
+	require.NoError(t, os.WriteFile(configPath, []byte("{}\n"), 0o644))
 
-	out, err := captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "parity-audit", "--commands-snapshot", commandSnapshot, "--tools-snapshot", toolSnapshot, "--json"}, config.FlagOverrides{})
-	})
-	require.NoError(t, err)
-	var audit referenceParityAuditReport
-	require.NoError(t, json.Unmarshal([]byte(out), &audit))
-	require.Equal(t, "capabilities", audit.Kind)
-	require.Equal(t, "audit", audit.Action)
-	require.Equal(t, "gap", audit.Status)
-	require.NotNil(t, audit.Commands)
-	require.Equal(t, 2, audit.Commands.ReferenceCount)
-	require.Equal(t, 1, audit.Commands.CoveredCount)
-	require.Equal(t, "missing-reference-command", audit.Commands.Missing[0].Name)
-	require.NotNil(t, audit.Tools)
-	require.Equal(t, 1, audit.Tools.ReferenceCount)
-	require.Equal(t, 1, audit.Tools.CoveredCount)
-
-	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "help", "parity-audit", "--json"}, config.FlagOverrides{})
-	})
-	require.NoError(t, err)
-	var help helpReport
-	require.NoError(t, json.Unmarshal([]byte(out), &help))
-	require.Equal(t, "parity-audit", help.Topic)
-	require.Contains(t, help.Help, "codog parity-audit --reference-root PATH")
+	for _, command := range []string{
+		"AddMarketplace", "addCommand", "ApiKeyStep", "BrowseMarketplace",
+		"CheckExistingSecretStep", "CheckGitHubStep", "ChooseRepoStep",
+		"createMovedToPluginCommand", "CreatingStep", "DiscoverPlugins", "ErrorStep",
+		"ExistingWorkflowStep", "InstallAppStep", "ManageMarketplaces", "ManagePlugins",
+		"OAuthFlowStep", "parseArgs", "pluginDetailsHelpers", "PluginErrors",
+		"PluginOptionsDialog", "PluginOptionsFlow", "PluginSettings", "PluginTrustWarning",
+		"SuccessStep", "ultrareviewCommand", "ultrareviewEnabled",
+		"UltrareviewOverageDialog", "UnifiedInstalledCell", "usePagination",
+		"ValidatePlugin", "WarningsStep", "xaaIdpCommand",
+	} {
+		t.Run(command, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), []string{"--config", configPath, "--json", command}, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var report commandNotFoundReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, "command_not_found", report.Kind)
+			require.Equal(t, command, report.Command)
+		})
+	}
 }
 
 func TestSlashCommandDiscoveryCLI(t *testing.T) {
@@ -24365,92 +24272,6 @@ func TestReviewCommandAndSlash(t *testing.T) {
 	require.Contains(t, cliOut, `"kind": "review"`)
 	require.Contains(t, cliOut, `"rule": "pipe-to-shell"`)
 
-	cliOut, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "ultrareviewCommand", "--json"}, config.FlagOverrides{})
-	})
-	require.NoError(t, err)
-	require.Contains(t, cliOut, `"kind": "review"`)
-	require.Contains(t, cliOut, `"rule": "pipe-to-shell"`)
-
-	out.Reset()
-	require.NoError(t, app.ReviewCompatibility("ultrareviewCommand", []string{"--json"}))
-	var compatibilityReport reviewCompatibilityReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &compatibilityReport))
-	require.Equal(t, "review_compatibility", compatibilityReport.Kind)
-	require.Equal(t, "show", compatibilityReport.Action)
-	require.Equal(t, "findings", compatibilityReport.Status)
-	require.Equal(t, "findings", compatibilityReport.ReviewStatus)
-	require.GreaterOrEqual(t, compatibilityReport.ChangedFiles, 1)
-	require.GreaterOrEqual(t, compatibilityReport.SecurityFindings, 1)
-	require.Contains(t, compatibilityReport.ReviewSignals, "security findings in changed files")
-	require.NotNil(t, compatibilityReport.LocalReview)
-	require.Equal(t, "review", compatibilityReport.LocalReview.Kind)
-	require.Equal(t, "pipe-to-shell", compatibilityReport.LocalReview.SecurityFindings[0].Rule)
-	out.Reset()
-
-	cliOut, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ultrareviewEnabled"}, config.FlagOverrides{})
-	})
-	require.NoError(t, err)
-	var enabledReport reviewCompatibilityReport
-	require.NoError(t, json.Unmarshal([]byte(cliOut), &enabledReport))
-	require.True(t, enabledReport.Enabled)
-	require.Equal(t, "enabled", enabledReport.Action)
-	require.False(t, enabledReport.Configured)
-
-	cliOut, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ultrareviewEnabled", "off", "--path", configPath}, config.FlagOverrides{})
-	})
-	require.NoError(t, err)
-	var disabledReport reviewCompatibilityReport
-	require.NoError(t, json.Unmarshal([]byte(cliOut), &disabledReport))
-	require.Equal(t, "set", disabledReport.Action)
-	require.False(t, disabledReport.Enabled)
-	require.True(t, disabledReport.Configured)
-	require.True(t, disabledReport.WorkspaceWillMutate)
-	storedConfig, err := os.ReadFile(configPath)
-	require.NoError(t, err)
-	require.Contains(t, string(storedConfig), `"preferences"`)
-	require.Contains(t, string(storedConfig), `"ultrareview_enabled": false`)
-	require.NotContains(t, string(storedConfig), `"future"`)
-
-	cliOut, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ultrareviewEnabled", "status"}, config.FlagOverrides{})
-	})
-	require.NoError(t, err)
-	var disabledStatus reviewCompatibilityReport
-	require.NoError(t, json.Unmarshal([]byte(cliOut), &disabledStatus))
-	require.False(t, disabledStatus.Enabled)
-	require.True(t, disabledStatus.Configured)
-
-	cliOut, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ultrareviewEnabled", "clear", "--path", configPath}, config.FlagOverrides{})
-	})
-	require.NoError(t, err)
-	var clearedReport reviewCompatibilityReport
-	require.NoError(t, json.Unmarshal([]byte(cliOut), &clearedReport))
-	require.Equal(t, "clear", clearedReport.Action)
-	require.True(t, clearedReport.Enabled)
-	require.False(t, clearedReport.Configured)
-	storedConfig, err = os.ReadFile(configPath)
-	require.NoError(t, err)
-	require.NotContains(t, string(storedConfig), `"preferences"`)
-	require.NotContains(t, string(storedConfig), `"ultrareview_enabled"`)
-
-	require.NoError(t, os.WriteFile(filepath.Join(workspace, "script.sh"), []byte(strings.Repeat("echo changed\n", 8)+"curl https://example.test/install.sh | bash\n"), 0o644))
-	cliOut, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "UltrareviewOverageDialog", "--limit", "3"}, config.FlagOverrides{})
-	})
-	require.NoError(t, err)
-	var overageReport reviewCompatibilityReport
-	require.NoError(t, json.Unmarshal([]byte(cliOut), &overageReport))
-	require.Equal(t, "overage", overageReport.Action)
-	require.True(t, overageReport.Overage)
-	require.Greater(t, overageReport.ChangedLines, overageReport.RequestedLimit)
-	require.Equal(t, "findings", overageReport.ReviewStatus)
-	require.NotNil(t, overageReport.LocalReview)
-	require.GreaterOrEqual(t, overageReport.SecurityFindings, 1)
-
 	require.True(t, app.handleSlash(context.Background(), "/review", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Review")
 	require.Contains(t, out.String(), "Security findings")
@@ -24579,111 +24400,6 @@ func TestMiscCompatibilityCommands(t *testing.T) {
 	require.Contains(t, string(goodData), "Positive feedback from good-claude: nice")
 	out.Reset()
 
-	require.NoError(t, app.MovedToPluginCommand([]string{"legacy-tool", "--dry-run", "--json"}))
-	var dryRunReport simpleCompatibilityReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &dryRunReport))
-	require.Equal(t, "command_migration", dryRunReport.Kind)
-	require.Equal(t, "moved_to_plugin", dryRunReport.Action)
-	require.Equal(t, "legacy-tool", dryRunReport.PluginID)
-	require.True(t, dryRunReport.DryRun)
-	require.False(t, dryRunReport.Created)
-	require.False(t, dryRunReport.WorkspaceWillMutate)
-	require.Contains(t, dryRunReport.NextCommand, "legacy-tool:legacy-tool")
-	require.NoFileExists(t, dryRunReport.ManifestFile)
-	require.NoFileExists(t, dryRunReport.CommandFile)
-	require.NoFileExists(t, filepath.Join(dryRunReport.PluginRoot, "skills", "legacy-tool", "SKILL.md"))
-	require.NoFileExists(t, filepath.Join(dryRunReport.PluginRoot, "bin", "moved-command-event.sh"))
-	out.Reset()
-
-	require.NoError(t, app.MovedToPluginCommand([]string{"legacy-tool", "--json"}))
-	var movedReport simpleCompatibilityReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &movedReport))
-	require.Equal(t, "command_migration", movedReport.Kind)
-	require.Equal(t, "moved_to_plugin", movedReport.Action)
-	require.Equal(t, "ok", movedReport.Status)
-	require.Equal(t, "legacy-tool", movedReport.PluginID)
-	require.True(t, movedReport.WorkspaceWillMutate)
-	require.True(t, movedReport.Created)
-	require.False(t, movedReport.DryRun)
-	require.Contains(t, movedReport.NextCommand, "commands show 'legacy-tool:legacy-tool'")
-	require.FileExists(t, movedReport.ManifestFile)
-	require.FileExists(t, movedReport.CommandFile)
-	require.FileExists(t, filepath.Join(movedReport.PluginRoot, "skills", "legacy-tool", "SKILL.md"))
-	require.FileExists(t, filepath.Join(movedReport.PluginRoot, "bin", "moved-command-event.sh"))
-	require.Greater(t, movedReport.Bytes, 0)
-	validation, err := plugins.Validate(movedReport.PluginRoot)
-	require.NoError(t, err)
-	require.True(t, validation.Success)
-	require.NotNil(t, validation.Manifest)
-	require.Len(t, validation.Manifest.Tools, 1)
-	require.Equal(t, "legacy_tool_moved_command_event", validation.Manifest.Tools[0].Name)
-	require.Equal(t, string(tools.PermissionWorkspace), validation.Manifest.Tools[0].Permission)
-	require.Contains(t, validation.Manifest.Tools[0].Command, "${CLAUDE_PLUGIN_ROOT}")
-	require.Equal(t, []string{"./skills/legacy-tool"}, validation.Manifest.Skills)
-	commandData, err := os.ReadFile(movedReport.CommandFile)
-	require.NoError(t, err)
-	require.Contains(t, string(commandData), "Arguments: $ARGUMENTS")
-	require.Contains(t, string(commandData), "Plugin bridge")
-	require.Contains(t, string(commandData), "legacy_tool_moved_command_event")
-	require.Contains(t, string(commandData), "codog commands show legacy-tool:legacy-tool")
-	require.NotContains(t, string(commandData), "missing plugin implementation")
-	require.NotContains(t, string(commandData), "Replace this "+"body")
-	skillData, err := os.ReadFile(filepath.Join(movedReport.PluginRoot, "skills", "legacy-tool", "SKILL.md"))
-	require.NoError(t, err)
-	require.Contains(t, string(skillData), "allowed-tools:")
-	require.Contains(t, string(skillData), "legacy_tool_moved_command_event")
-	out.Reset()
-
-	require.NoError(t, app.Commands([]string{"list", "--json"}))
-	var commandsReport struct {
-		Commands []struct {
-			Name   string `json:"name"`
-			Source string `json:"source"`
-		} `json:"commands"`
-	}
-	require.NoError(t, json.Unmarshal(out.Bytes(), &commandsReport))
-	require.Contains(t, commandsReport.Commands, struct {
-		Name   string `json:"name"`
-		Source string `json:"source"`
-	}{Name: "legacy-tool:legacy-tool", Source: "plugin:legacy-tool"})
-	out.Reset()
-
-	require.NoError(t, app.Commands([]string{"show", "legacy-tool:legacy-tool", "--json"}))
-	var commandReport struct {
-		Name       string `json:"name"`
-		Source     string `json:"source"`
-		PluginRoot string `json:"plugin_root"`
-		Body       string `json:"body"`
-	}
-	require.NoError(t, json.Unmarshal(out.Bytes(), &commandReport))
-	require.Equal(t, "legacy-tool:legacy-tool", commandReport.Name)
-	require.Equal(t, "plugin:legacy-tool", commandReport.Source)
-	require.NotEmpty(t, commandReport.PluginRoot)
-	require.Contains(t, commandReport.Body, "Plugin bridge")
-	require.Contains(t, commandReport.Body, "legacy_tool_moved_command_event")
-	require.NotContains(t, commandReport.Body, "missing plugin implementation")
-	require.NotContains(t, commandReport.Body, "Replace this "+"body")
-	out.Reset()
-
-	require.NoError(t, app.Commands([]string{"run", "legacy-tool:legacy-tool", "file.go"}))
-	require.Contains(t, out.String(), "Arguments: file.go")
-	out.Reset()
-
-	if runtime.GOOS != "windows" {
-		app.Tools = tools.NewRegistry(workspace)
-		require.NoError(t, app.RegisterPluginTools())
-		require.True(t, app.Tools.Has("legacy_tool_moved_command_event"))
-		toolOut, err := app.Tools.Execute(context.Background(), "legacy_tool_moved_command_event", []byte(`{"arguments":"file.go","intent":"legacy-tool"}`), nil)
-		require.NoError(t, err)
-		require.Contains(t, toolOut, `moved_command_event`)
-		eventLog := filepath.Join(workspace, ".codog", "plugin-data", "legacy-tool", "moved-command-events.jsonl")
-		require.FileExists(t, eventLog)
-		eventData, err := os.ReadFile(eventLog)
-		require.NoError(t, err)
-		require.Contains(t, string(eventData), `"plugin_id":"legacy-tool"`)
-		require.Contains(t, string(eventData), `"command":"legacy-tool"`)
-		require.Contains(t, string(eventData), `"bytes":`)
-	}
 }
 
 func TestAutofixPRCommandAndSlash(t *testing.T) {
@@ -25043,260 +24759,6 @@ func TestInstallGitHubAppCommandAndSlash(t *testing.T) {
 	require.Contains(t, cliOut, `"dry_run": true`)
 	require.Contains(t, cliOut, `"name": "claude"`)
 	require.Contains(t, cliOut, `"name": "review"`)
-}
-
-func TestInstallGitHubAppStepCompatibilityCommands(t *testing.T) {
-	workspace := t.TempDir()
-	workflowPath := filepath.Join(workspace, ".github", "workflows", "claude.yml")
-	require.NoError(t, os.MkdirAll(filepath.Dir(workflowPath), 0o755))
-	require.NoError(t, os.WriteFile(workflowPath, []byte("custom workflow\n"), 0o644))
-
-	var out bytes.Buffer
-	app := &App{
-		Config:    config.Config{APIKey: "test-key"},
-		Workspace: workspace,
-		Out:       &out,
-		Err:       io.Discard,
-	}
-	require.NoError(t, app.InstallGitHubAppStep("ApiKeyStep", []string{"--workflow", "claude", "--json"}))
-	var apiReport installGitHubAppStepReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &apiReport))
-	require.Equal(t, "install_github_app_step", apiReport.Kind)
-	require.Equal(t, "ApiKeyStep", apiReport.Step)
-	require.Equal(t, "ok", apiReport.Status)
-	require.True(t, apiReport.APIKeyConfigured)
-	require.False(t, apiReport.ProviderRequestMade)
-	require.False(t, apiReport.WorkspaceWillMutate)
-	require.True(t, apiReport.InstallCommandMutates)
-	require.Contains(t, apiReport.NextCommand, "codog install-github-app")
-	out.Reset()
-
-	require.NoError(t, app.InstallGitHubAppStep("ExistingWorkflowStep", []string{"--workflow", "claude", "--json"}))
-	var existingReport installGitHubAppStepReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &existingReport))
-	require.Equal(t, "ExistingWorkflowStep", existingReport.Step)
-	require.Equal(t, "warn", existingReport.Status)
-	require.Contains(t, existingReport.ExistingWorkflows, workflowPath)
-	require.Contains(t, existingReport.Messages[0], "workflow")
-	out.Reset()
-
-	require.NoError(t, app.InstallGitHubAppStep("CreatingStep", []string{"--workflow", "review", "--secret-name", "CLAUDE_KEY", "--json"}))
-	var creatingReport installGitHubAppStepReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &creatingReport))
-	require.Equal(t, "CreatingStep", creatingReport.Step)
-	require.Equal(t, "ok", creatingReport.Status)
-	require.True(t, creatingReport.WorkspaceWillMutate)
-	require.Empty(t, creatingReport.NextCommand)
-	require.Len(t, creatingReport.Workflows, 1)
-	require.True(t, creatingReport.Workflows[0].Created)
-	reviewPath := filepath.Join(workspace, ".github", "workflows", "claude-code-review.yml")
-	reviewData, err := os.ReadFile(reviewPath)
-	require.NoError(t, err)
-	require.Contains(t, string(reviewData), "${{ secrets.CLAUDE_KEY }}")
-	require.Contains(t, creatingReport.Messages, "Workflow creation completed.")
-	out.Reset()
-
-	dryWorkspace := t.TempDir()
-	dryApp := &App{
-		Config:    config.Config{APIKey: "test-key"},
-		Workspace: dryWorkspace,
-		Out:       &out,
-		Err:       io.Discard,
-	}
-	require.NoError(t, dryApp.InstallGitHubAppStep("CreatingStep", []string{"--workflow", "review", "--dry-run", "--json"}))
-	var dryReport installGitHubAppStepReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &dryReport))
-	require.Equal(t, "planned", dryReport.Status)
-	require.False(t, dryReport.WorkspaceWillMutate)
-	require.Contains(t, dryReport.NextCommand, "codog install-github-app")
-	require.NotContains(t, dryReport.NextCommand, "--dry-run")
-	require.False(t, fileExists(filepath.Join(dryWorkspace, ".github", "workflows", "claude-code-review.yml")))
-	out.Reset()
-
-	if runtime.GOOS != "windows" {
-		if _, err := exec.LookPath("git"); err == nil {
-			secretWorkspace := initGitRepo(t)
-			runGit(t, secretWorkspace, "remote", "add", "origin", "git@github.com:acme/widgets.git")
-			fakeBin := t.TempDir()
-			fakeGH := filepath.Join(fakeBin, "gh")
-			require.NoError(t, os.WriteFile(fakeGH, []byte(`#!/bin/sh
-if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
-  echo "Logged in to github.com"
-  exit 0
-fi
-if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
-  cat <<'JSON'
-{"nameWithOwner":"acme/widgets"}
-JSON
-  exit 0
-fi
-if [ "$1" = "secret" ] && [ "$2" = "list" ]; then
-  cat <<'JSON'
-[{"name":"ANTHROPIC_API_KEY"},{"name":"OTHER_SECRET"}]
-JSON
-  exit 0
-fi
-if [ "$1" = "api" ] && [ "$2" = "repos/acme/widgets/actions/permissions" ]; then
-  cat <<'JSON'
-{"enabled":true,"allowed_actions":"all"}
-JSON
-  exit 0
-fi
-echo "unexpected gh invocation: $*" >&2
-exit 1
-`), 0o755))
-			t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
-			secretApp := &App{
-				Config:    config.Config{APIKey: "test-key"},
-				Workspace: secretWorkspace,
-				Out:       &out,
-				Err:       io.Discard,
-			}
-			require.NoError(t, secretApp.InstallGitHubAppStep("CheckExistingSecretStep", []string{"--json"}))
-			var secretReport installGitHubAppStepReport
-			require.NoError(t, json.Unmarshal(out.Bytes(), &secretReport))
-			require.Equal(t, "CheckExistingSecretStep", secretReport.Step)
-			require.Equal(t, "ok", secretReport.Status)
-			require.True(t, secretReport.ProviderRequestMade)
-			require.NotNil(t, secretReport.SecretCheck)
-			require.True(t, secretReport.SecretCheck.Attempted)
-			require.True(t, secretReport.SecretCheck.Available)
-			require.True(t, secretReport.SecretCheck.Exists)
-			require.Equal(t, "acme/widgets", secretReport.SecretCheck.Repo)
-			require.Contains(t, secretReport.SecretCheck.Command, "--json")
-			require.Contains(t, secretReport.Messages, "Repository secret ANTHROPIC_API_KEY exists on acme/widgets.")
-			out.Reset()
-
-			require.NoError(t, secretApp.InstallGitHubAppStep("CheckGitHubStep", []string{"--json"}))
-			var githubReport installGitHubAppStepReport
-			require.NoError(t, json.Unmarshal(out.Bytes(), &githubReport))
-			require.Equal(t, "CheckGitHubStep", githubReport.Step)
-			require.Equal(t, "ok", githubReport.Status)
-			require.True(t, githubReport.ProviderRequestMade)
-			require.NotNil(t, githubReport.GitHubCheck)
-			require.True(t, githubReport.GitHubCheck.Attempted)
-			require.True(t, githubReport.GitHubCheck.Authenticated)
-			require.True(t, githubReport.GitHubCheck.RepoAccessible)
-			require.Equal(t, "acme/widgets", githubReport.GitHubCheck.Repo)
-			require.Contains(t, githubReport.GitHubCheck.AuthCommand, "status")
-			require.Contains(t, githubReport.GitHubCheck.RepoCommand, "view")
-			require.Contains(t, githubReport.Messages, "GitHub CLI authentication is active.")
-			require.Contains(t, githubReport.Messages, "Repository acme/widgets is accessible through gh.")
-			out.Reset()
-
-			require.NoError(t, secretApp.InstallGitHubAppStep("InstallAppStep", []string{"--json"}))
-			var installReport installGitHubAppStepReport
-			require.NoError(t, json.Unmarshal(out.Bytes(), &installReport))
-			require.Equal(t, "InstallAppStep", installReport.Step)
-			require.Equal(t, "ok", installReport.Status)
-			require.True(t, installReport.ProviderRequestMade)
-			require.NotNil(t, installReport.ActionsCheck)
-			require.True(t, installReport.ActionsCheck.Attempted)
-			require.True(t, installReport.ActionsCheck.Available)
-			require.True(t, installReport.ActionsCheck.Enabled)
-			require.Equal(t, "all", installReport.ActionsCheck.AllowedActions)
-			require.Contains(t, installReport.ActionsCheck.Command, "repos/acme/widgets/actions/permissions")
-			require.Contains(t, installReport.Messages, "GitHub Actions is enabled for acme/widgets.")
-			require.Contains(t, installReport.Messages, "Allowed actions policy: all.")
-			out.Reset()
-
-			require.NoError(t, secretApp.InstallGitHubAppStep("WarningsStep", []string{"--json"}))
-			var deepWarningsReport installGitHubAppStepReport
-			require.NoError(t, json.Unmarshal(out.Bytes(), &deepWarningsReport))
-			require.Equal(t, "WarningsStep", deepWarningsReport.Step)
-			require.Equal(t, "warn", deepWarningsReport.Status)
-			require.True(t, deepWarningsReport.ProviderRequestMade)
-			require.NotNil(t, deepWarningsReport.GitHubCheck)
-			require.NotNil(t, deepWarningsReport.SecretCheck)
-			require.NotNil(t, deepWarningsReport.ActionsCheck)
-			require.Contains(t, deepWarningsReport.Warnings, "2 selected workflow file(s) are not present yet.")
-			require.Contains(t, deepWarningsReport.Messages, "1 warning(s) need attention.")
-			out.Reset()
-
-			require.NoError(t, secretApp.InstallGitHubAppStep("ErrorStep", []string{"--json"}))
-			var errorReport installGitHubAppStepReport
-			require.NoError(t, json.Unmarshal(out.Bytes(), &errorReport))
-			require.Equal(t, "ErrorStep", errorReport.Step)
-			require.Equal(t, "error", errorReport.Status)
-			require.True(t, errorReport.ProviderRequestMade)
-			require.NotNil(t, errorReport.GitHubCheck)
-			require.NotNil(t, errorReport.SecretCheck)
-			require.NotNil(t, errorReport.ActionsCheck)
-			require.Contains(t, errorReport.Errors, "2 selected workflow file(s) are not present yet.")
-			require.Empty(t, errorReport.Warnings)
-			require.Contains(t, errorReport.Messages, "1 setup error(s) need attention.")
-			out.Reset()
-
-			successWorkflowDir := filepath.Join(secretWorkspace, ".github", "workflows")
-			require.NoError(t, os.MkdirAll(successWorkflowDir, 0o755))
-			require.NoError(t, os.WriteFile(filepath.Join(successWorkflowDir, "claude.yml"), []byte("name: Claude Code\n"), 0o644))
-			require.NoError(t, os.WriteFile(filepath.Join(successWorkflowDir, "claude-code-review.yml"), []byte("name: Claude Code Review\n"), 0o644))
-			require.NoError(t, secretApp.InstallGitHubAppStep("SuccessStep", []string{"--json"}))
-			var successReport installGitHubAppStepReport
-			require.NoError(t, json.Unmarshal(out.Bytes(), &successReport))
-			require.Equal(t, "SuccessStep", successReport.Step)
-			require.Equal(t, "ready", successReport.Status)
-			require.True(t, successReport.ProviderRequestMade)
-			require.NotNil(t, successReport.GitHubCheck)
-			require.True(t, successReport.GitHubCheck.Authenticated)
-			require.True(t, successReport.GitHubCheck.RepoAccessible)
-			require.NotNil(t, successReport.SecretCheck)
-			require.True(t, successReport.SecretCheck.Exists)
-			require.NotNil(t, successReport.ActionsCheck)
-			require.True(t, successReport.ActionsCheck.Enabled)
-			require.Len(t, successReport.Workflows, 2)
-			require.True(t, successReport.Workflows[0].Exists)
-			require.True(t, successReport.Workflows[1].Exists)
-			require.Contains(t, successReport.Messages, "All selected workflow files are present.")
-			require.Contains(t, successReport.Messages, "Local GitHub App setup checks are ready.")
-			require.Empty(t, successReport.Warnings)
-			out.Reset()
-
-			oauthHome := t.TempDir()
-			_, err = oauth.SaveToken(oauthHome, oauth.Token{
-				AccessToken: "oauth-access-1234",
-				ExpiresAt:   time.Now().UTC().Add(time.Hour),
-			})
-			require.NoError(t, err)
-			oauthApp := &App{
-				Config:    config.Config{ConfigHome: oauthHome, APIKey: "test-key"},
-				Workspace: secretWorkspace,
-				Out:       &out,
-				Err:       io.Discard,
-			}
-			require.NoError(t, oauthApp.InstallGitHubAppStep("OAuthFlowStep", []string{"--json"}))
-			var oauthReport installGitHubAppStepReport
-			require.NoError(t, json.Unmarshal(out.Bytes(), &oauthReport))
-			require.Equal(t, "OAuthFlowStep", oauthReport.Step)
-			require.Equal(t, "ok", oauthReport.Status)
-			require.False(t, oauthReport.ProviderRequestMade)
-			require.NotNil(t, oauthReport.OAuthStatus)
-			require.True(t, oauthReport.OAuthStatus.TokenPresent)
-			require.True(t, oauthReport.OAuthStatus.Ready)
-			require.False(t, oauthReport.OAuthStatus.Expired)
-			require.Contains(t, oauthReport.Messages, "OAuth token is ready for provider-backed setup.")
-			require.Empty(t, oauthReport.Warnings)
-			out.Reset()
-		}
-	}
-
-	configHome := t.TempDir()
-	configPath := filepath.Join(configHome, "config.json")
-	configData, err := json.Marshal(map[string]string{"config_home": configHome})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
-	oldWD, err := os.Getwd()
-	require.NoError(t, err)
-	require.NoError(t, os.Chdir(workspace))
-	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
-	cliOut, err := captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "WarningsStep", "--workflow", "claude"}, config.FlagOverrides{})
-	})
-	require.NoError(t, err)
-	var warningsReport installGitHubAppStepReport
-	require.NoError(t, json.Unmarshal([]byte(cliOut), &warningsReport))
-	require.Equal(t, "WarningsStep", warningsReport.Step)
-	require.NotEmpty(t, warningsReport.Warnings)
 }
 
 func TestInstallSlackAppCommandAndSlash(t *testing.T) {
@@ -27069,25 +26531,6 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Contains(t, actionCommandsFromMCPReport(aggregateAuth.AuthStatuses[0].NextActions), "codog mcp tools test")
 	out.Reset()
 
-	require.NoError(t, app.XAAIDPCommand(context.Background(), []string{"--json"}))
-	var xaaReport xaaIDPReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &xaaReport))
-	require.Equal(t, "mcp_compatibility", xaaReport.Kind)
-	require.Equal(t, "xaa_idp", xaaReport.Action)
-	require.Equal(t, "ok", xaaReport.Status)
-	require.Equal(t, 1, xaaReport.ServerCount)
-	require.Contains(t, xaaReport.ConfiguredServers, "test")
-	require.Len(t, xaaReport.AuthStatuses, 1)
-	require.Equal(t, "test", xaaReport.AuthStatuses[0].Server)
-	require.Equal(t, "ok", xaaReport.AuthStatuses[0].Status)
-	require.Equal(t, 1, xaaReport.AuthStatuses[0].ToolCount)
-	require.Equal(t, 1, xaaReport.AuthStatuses[0].ResourceCount)
-	require.True(t, xaaReport.ProviderConfigured)
-	require.True(t, xaaReport.OAuthReady)
-	require.NotNil(t, xaaReport.OAuthStatus)
-	require.True(t, xaaReport.OAuthStatus.TokenPresent)
-	out.Reset()
-
 	require.True(t, app.handleSlash(context.Background(), "/mcp tools test", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), `"name": "echo"`)
 	out.Reset()
@@ -27371,100 +26814,7 @@ func TestMCPAuthClearCommand(t *testing.T) {
 	require.Equal(t, "second-access-token", loaded.AccessToken)
 }
 
-func TestXAAIDPRefreshCommand(t *testing.T) {
-	server := oauthRefreshTestServer(t)
-	defer server.Close()
-	configHome := t.TempDir()
-	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "default", server.URL, "client-1", nil)
-	require.NoError(t, err)
-	saveExpiredToken := func() {
-		t.Helper()
-		_, err := oauth.SaveToken(configHome, oauth.Token{
-			AccessToken:  "old-access",
-			RefreshToken: "refresh-1",
-			ExpiresAt:    time.Now().UTC().Add(-time.Hour),
-		})
-		require.NoError(t, err)
-	}
-	saveExpiredToken()
-	mcpServer := config.MCPServerConfig{
-		Command:  os.Args[0],
-		Args:     []string{"-test.run=TestAgentMCPHelperProcess"},
-		Env:      []string{"CODOG_AGENT_MCP_HELPER=1"},
-		Required: true,
-	}
-	var out bytes.Buffer
-	app := &App{
-		Config: config.Config{ConfigHome: configHome, MCPServers: map[string]config.MCPServerConfig{"test": mcpServer}},
-		Out:    &out,
-		Err:    io.Discard,
-	}
-
-	require.NoError(t, app.XAAIDPCommand(context.Background(), []string{"--refresh", "test", "--json"}))
-	var serverReport mcpauthdiag.Report
-	require.NoError(t, json.Unmarshal(out.Bytes(), &serverReport))
-	require.Equal(t, "test", serverReport.Server)
-	require.True(t, serverReport.Refreshed)
-	loaded, err := oauth.LoadToken(configHome)
-	require.NoError(t, err)
-	require.Equal(t, "refreshed-access", loaded.AccessToken)
-	out.Reset()
-
-	saveExpiredToken()
-	require.NoError(t, app.XAAIDPCommand(context.Background(), []string{"refresh", "--json"}))
-	var aggregate xaaIDPReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &aggregate))
-	require.Equal(t, "mcp_compatibility", aggregate.Kind)
-	require.Equal(t, "ok", aggregate.Status)
-	require.Equal(t, "MCP auth refresh completed for all configured servers.", aggregate.Message)
-	require.Len(t, aggregate.AuthStatuses, 1)
-	require.True(t, aggregate.AuthStatuses[0].Refreshed)
-	loaded, err = oauth.LoadToken(configHome)
-	require.NoError(t, err)
-	require.Equal(t, "refreshed-access", loaded.AccessToken)
-}
-
-func TestXAAIDPServerHonorsProfile(t *testing.T) {
-	server := oauthRefreshTestServer(t)
-	defer server.Close()
-	configHome := t.TempDir()
-	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "work", server.URL, "client-1", nil)
-	require.NoError(t, err)
-	_, err = oauth.SaveToken(configHome, oauth.Token{
-		AccessToken:  "profile-access",
-		RefreshToken: "refresh-1",
-		ExpiresAt:    time.Now().UTC().Add(time.Hour),
-	})
-	require.NoError(t, err)
-	mcpServer := config.MCPServerConfig{
-		Command:  os.Args[0],
-		Args:     []string{"-test.run=TestAgentMCPHelperProcess"},
-		Env:      []string{"CODOG_AGENT_MCP_HELPER=1"},
-		Required: true,
-	}
-	var out bytes.Buffer
-	app := &App{
-		Config: config.Config{
-			ConfigHome:   configHome,
-			OAuthProfile: "default",
-			MCPServers:   map[string]config.MCPServerConfig{"test": mcpServer},
-		},
-		Out: &out,
-		Err: io.Discard,
-	}
-
-	require.NoError(t, app.XAAIDPCommand(context.Background(), []string{"test", "--profile", "work", "--json"}))
-	var report mcpauthdiag.Report
-	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
-	require.Equal(t, "test", report.Server)
-	require.Equal(t, "work", report.OAuthProfile)
-	require.NotNil(t, report.OAuthStatus)
-	require.Equal(t, "work", report.OAuthStatus.ProfileName)
-	require.True(t, report.OAuthStatus.ProfileConfigured)
-	require.True(t, report.OAuthStatus.TokenPresent)
-}
-
-func TestMCPAddCommandCompatibility(t *testing.T) {
+func TestMCPAddCommand(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(configHome, "config.json")
 	data, err := json.Marshal(map[string]string{"config_home": configHome})
@@ -27472,7 +26822,7 @@ func TestMCPAddCommandCompatibility(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, data, 0o644))
 
 	out, err := captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "addCommand", "demo", "echo", "ok", "--env", "A=B"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "mcp", "add", "demo", "echo", "ok", "--env", "A=B"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
 	require.Contains(t, out, `"kind": "mcp"`)
@@ -34802,7 +34152,7 @@ func TestMarketplaceRemoteWithoutSourcesReportsStatus(t *testing.T) {
 	require.NotNil(t, report.Pagination)
 }
 
-func TestMarketplaceCompatibilityCommands(t *testing.T) {
+func TestMarketplaceCommands(t *testing.T) {
 	workspace := t.TempDir()
 	configPath := filepath.Join(workspace, "config.json")
 	index := plugins.MarketplaceIndex{
@@ -34818,7 +34168,7 @@ func TestMarketplaceCompatibilityCommands(t *testing.T) {
 	indexURL := server.URL + "/index.json"
 
 	out, err := captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "AddMarketplace", indexURL, "--path", configPath}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "marketplace", "sources", "add", indexURL, "--path", configPath}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
 	var addReport marketplaceSourcesReport
@@ -34827,7 +34177,7 @@ func TestMarketplaceCompatibilityCommands(t *testing.T) {
 	require.True(t, addReport.Added)
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ManageMarketplaces"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "marketplace", "sources"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
 	var listReport marketplaceSourcesReport
@@ -34836,7 +34186,7 @@ func TestMarketplaceCompatibilityCommands(t *testing.T) {
 	require.Len(t, listReport.Sources, 1)
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "BrowseMarketplace"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "marketplace", "browse"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
 	var indexes []plugins.MarketplaceIndex
@@ -34847,7 +34197,7 @@ func TestMarketplaceCompatibilityCommands(t *testing.T) {
 	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(`{"id":"source-plugin","name":"source-plugin","tools":[{"name":"source_tool","command":"echo ok","permission":"read-only"}]}`), 0o644))
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ValidatePlugin", pluginDir}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "marketplace", "validate", pluginDir}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
 	var validation pluginValidationReport
@@ -34857,190 +34207,13 @@ func TestMarketplaceCompatibilityCommands(t *testing.T) {
 	require.True(t, validation.Success)
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "PluginSettings"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "marketplace", "settings"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
 	var settings marketplaceSettingsReport
 	require.NoError(t, json.Unmarshal([]byte(out), &settings))
 	require.Equal(t, "settings", settings.Action)
 	require.Len(t, settings.Sources, 1)
-}
-
-func TestPluginCompatibilityHelperCommands(t *testing.T) {
-	workspace := t.TempDir()
-	demoDir := filepath.Join(workspace, ".codog", "plugins", "demo")
-	require.NoError(t, os.MkdirAll(demoDir, 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(demoDir, "commands"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(demoDir, "skills", "review"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(demoDir, "agents"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(demoDir, "hooks"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "commands", "fix.md"), []byte("# Fix\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "skills", "review", "SKILL.md"), []byte("# Review\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "agents", "review.json"), []byte(`{"id":"review","prompt":"review it"}`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "hooks", "post.sh"), []byte("#!/bin/sh\n"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "plugin.json"), []byte(`{
-		"id":"demo",
-		"name":"demo",
-		"version":"0.1.0",
-		"description":"Demo plugin",
-		"tools":[{"name":"demo_tool","command":"echo ok","permission":"workspace-write"}],
-		"commands":["commands/fix.md"],
-		"skills":["skills/review/SKILL.md"],
-		"agents":["agents/review.json"],
-		"hooks":["hooks/post.sh"],
-		"mcp_servers":{"demo":{"command":"demo-mcp","args":["--stdio"],"env":["DEMO_TOKEN=secret"]}}
-	}`), 0o644))
-	badDir := filepath.Join(workspace, ".codog", "plugins", "bad")
-	require.NoError(t, os.MkdirAll(badDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(badDir, "plugin.json"), []byte(`{
-		"id":"bad",
-		"name":"bad",
-		"tools":[{"name":"bad_tool","command":"echo bad","permission":"root"}]
-	}`), 0o644))
-
-	var out bytes.Buffer
-	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
-	require.NoError(t, app.PluginCompatibility("PluginTrustWarning", []string{"--json"}))
-	var trust pluginCompatibilityReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &trust))
-	require.Equal(t, "plugin_compatibility", trust.Kind)
-	require.Equal(t, "trust_warning", trust.Action)
-	require.Equal(t, "warn", trust.Status)
-	require.GreaterOrEqual(t, trust.Summary.TrustItems, 1)
-	require.Equal(t, 2, trust.Summary.Tools)
-	require.Equal(t, 1, trust.Summary.Commands)
-	require.Equal(t, 1, trust.Summary.Skills)
-	require.Equal(t, 1, trust.Summary.Agents)
-	require.Equal(t, 1, trust.Summary.Hooks)
-	require.Equal(t, 1, trust.Summary.MCPServers)
-	require.NotEmpty(t, trust.TrustWarnings)
-	demoItem := selectPluginCompatibilityItem(trust.Plugins, "demo")
-	require.NotNil(t, demoItem)
-	require.Equal(t, []string{"tools", "commands", "skills", "agents", "hooks", "mcp_servers"}, demoItem.Surfaces)
-	out.Reset()
-
-	require.NoError(t, app.PluginCompatibility("PluginErrors", []string{"--json"}))
-	var errorsReport pluginCompatibilityReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &errorsReport))
-	require.Equal(t, "errors", errorsReport.Action)
-	require.Equal(t, "error", errorsReport.Status)
-	require.GreaterOrEqual(t, errorsReport.Summary.Errors, 1)
-	out.Reset()
-
-	require.NoError(t, app.PluginCompatibility("parseArgs", []string{"show", "demo", "--json"}))
-	var parseReport pluginCompatibilityReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &parseReport))
-	require.Equal(t, "parse_args", parseReport.Action)
-	require.Equal(t, "show", parseReport.NormalizedAction)
-	require.NotNil(t, parseReport.SelectedPlugin)
-	require.Equal(t, "demo", parseReport.SelectedPlugin.ID)
-	require.NotNil(t, parseReport.ParsedArgs)
-	require.Equal(t, "show", parseReport.ParsedArgs.Action)
-	require.Equal(t, "demo", parseReport.ParsedArgs.Target)
-	require.False(t, parseReport.ParsedArgs.Mutation)
-	require.True(t, parseReport.ParsedArgs.RequiresTarget)
-	require.Equal(t, []string{"codog", "plugins", "show", "demo"}, parseReport.ParsedArgs.LocalCommand)
-	require.Equal(t, "codog plugins show demo", parseReport.ParsedArgs.NextCommand)
-	out.Reset()
-
-	require.NoError(t, app.PluginCompatibility("parseArgs", []string{"info", "demo", "--json"}))
-	var parseInfoReport pluginCompatibilityReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &parseInfoReport))
-	require.Equal(t, "show", parseInfoReport.NormalizedAction)
-	require.NotNil(t, parseInfoReport.ParsedArgs)
-	require.Equal(t, "show", parseInfoReport.ParsedArgs.Action)
-	require.Equal(t, "demo", parseInfoReport.ParsedArgs.Target)
-	require.Equal(t, "codog plugins show demo", parseInfoReport.ParsedArgs.NextCommand)
-	out.Reset()
-
-	require.NoError(t, app.PluginCompatibility("parseArgs", []string{"health", "--json"}))
-	var parseHealthReport pluginCompatibilityReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &parseHealthReport))
-	require.Equal(t, "health", parseHealthReport.NormalizedAction)
-	require.NotNil(t, parseHealthReport.ParsedArgs)
-	require.Equal(t, "health", parseHealthReport.ParsedArgs.Action)
-	require.False(t, parseHealthReport.ParsedArgs.Mutation)
-	require.False(t, parseHealthReport.ParsedArgs.RequiresTarget)
-	require.Equal(t, []string{"codog", "plugins", "health"}, parseHealthReport.ParsedArgs.LocalCommand)
-	require.Equal(t, "codog plugins health", parseHealthReport.ParsedArgs.NextCommand)
-	out.Reset()
-
-	require.NoError(t, app.PluginCompatibility("parseArgs", []string{"enable", "--json"}))
-	var missingTarget pluginCompatibilityReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &missingTarget))
-	require.Equal(t, "error", missingTarget.Status)
-	require.NotNil(t, missingTarget.ParsedArgs)
-	require.Equal(t, "enable", missingTarget.ParsedArgs.Action)
-	require.True(t, missingTarget.ParsedArgs.Mutation)
-	require.True(t, missingTarget.ParsedArgs.RequiresTarget)
-	require.Equal(t, "plugin_target_required", missingTarget.ParsedArgs.ErrorKind)
-	require.Equal(t, []string{"codog", "marketplace", "enable"}, missingTarget.ParsedArgs.LocalCommand)
-	out.Reset()
-
-	require.NoError(t, app.PluginCompatibility("parseArgs", []string{"bogus", "--json"}))
-	var unknownAction pluginCompatibilityReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &unknownAction))
-	require.Equal(t, "error", unknownAction.Status)
-	require.NotNil(t, unknownAction.ParsedArgs)
-	require.Equal(t, "bogus", unknownAction.ParsedArgs.Action)
-	require.Equal(t, "unknown_plugins_action", unknownAction.ParsedArgs.ErrorKind)
-	require.Contains(t, unknownAction.ParsedArgs.Error, "unknown plugins action")
-	out.Reset()
-
-	require.NoError(t, app.PluginCompatibility("pluginDetailsHelpers", []string{"show", "demo", "--json"}))
-	var detailsReport pluginCompatibilityReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &detailsReport))
-	require.Equal(t, "details", detailsReport.Action)
-	require.Equal(t, "ok", detailsReport.Status)
-	require.NotNil(t, detailsReport.SelectedPlugin)
-	require.Equal(t, "demo", detailsReport.SelectedPlugin.ID)
-	require.NotNil(t, detailsReport.PluginDetails)
-	require.Equal(t, "demo", detailsReport.PluginDetails.ID)
-	require.Equal(t, filepath.Join(demoDir, "plugin.json"), detailsReport.PluginDetails.ManifestFile)
-	require.Equal(t, filepath.Join(workspace, ".codog", "plugin-data", "demo"), detailsReport.PluginDetails.DataDir)
-	require.Len(t, detailsReport.PluginDetails.Tools, 1)
-	require.Equal(t, "demo_tool", detailsReport.PluginDetails.Tools[0].Name)
-	require.True(t, detailsReport.PluginDetails.Tools[0].Executable)
-	require.Contains(t, detailsReport.PluginDetails.Tools[0].Risks, "tool demo_tool executes a local command")
-	require.Len(t, detailsReport.PluginDetails.Commands, 1)
-	require.True(t, detailsReport.PluginDetails.Commands[0].Exists)
-	require.Len(t, detailsReport.PluginDetails.Skills, 1)
-	require.True(t, detailsReport.PluginDetails.Skills[0].Exists)
-	require.Len(t, detailsReport.PluginDetails.Agents, 1)
-	require.True(t, detailsReport.PluginDetails.Agents[0].Exists)
-	require.Len(t, detailsReport.PluginDetails.Hooks, 1)
-	require.True(t, detailsReport.PluginDetails.Hooks[0].Exists)
-	require.Len(t, detailsReport.PluginDetails.MCPServers, 1)
-	require.Equal(t, "demo", detailsReport.PluginDetails.MCPServers[0].Name)
-	require.Equal(t, []string{"--stdio"}, detailsReport.PluginDetails.MCPServers[0].Args)
-	require.Equal(t, []string{"DEMO_TOKEN"}, detailsReport.PluginDetails.MCPServers[0].EnvKeys)
-	require.Equal(t, []string{"tools", "commands", "skills", "agents", "hooks", "mcp_servers"}, detailsReport.PluginDetails.Surfaces)
-	require.NotNil(t, detailsReport.PluginDetails.Validation)
-	require.True(t, detailsReport.PluginDetails.Validation.Success)
-	out.Reset()
-
-	require.NoError(t, app.PluginCompatibility("UnifiedInstalledCell", []string{"--limit", "1"}))
-	require.Contains(t, out.String(), "Surfaces")
-	require.Contains(t, out.String(), "Plugin           bad")
-	require.Contains(t, out.String(), "surfaces=tools")
-	out.Reset()
-
-	require.NoError(t, app.PluginCompatibility("pluginDetailsHelpers", []string{"missing", "--json"}))
-	var missingDetails pluginCompatibilityReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &missingDetails))
-	require.Equal(t, "error", missingDetails.Status)
-	require.Contains(t, missingDetails.DetailError, "missing")
-	out.Reset()
-
-	require.NoError(t, app.PluginCompatibility("usePagination", []string{"--page", "2", "--per-page", "1", "--json"}))
-	var pageReport pluginCompatibilityReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &pageReport))
-	require.Equal(t, "pagination", pageReport.Action)
-	require.NotNil(t, pageReport.Pagination)
-	require.Equal(t, 2, pageReport.Pagination.Page)
-	require.Equal(t, 1, pageReport.Pagination.PerPage)
-	require.Equal(t, 2, pageReport.Pagination.Total)
-	require.Len(t, pageReport.Plugins, 1)
 }
 
 func TestMarketplaceDisableSkipsPluginToolRegistration(t *testing.T) {
