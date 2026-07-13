@@ -3,7 +3,7 @@
 Codog is a Go-native, single-binary coding agent for real terminal work. It
 keeps the important parts of an agent runtime in one inspectable binary: model
 streaming, workspace tools, permissions, local sessions, hooks, skills, MCP,
-and a full-screen terminal UI.
+and an inline terminal UI that preserves completed turns in scrollback.
 
 Codog references Claude Code's local product shape and coding workflows, but it
 does not copy Claude Code's implementation, does not pretend to be an Anthropic
@@ -47,7 +47,7 @@ codog -p "summarize this project"
 ```
 
 For multi-turn work, start Codog from a repository. The default interactive
-command opens the full-screen TUI; the legacy line-oriented shell remains
+command opens the inline TUI; the legacy line-oriented shell remains
 available as `repl`.
 
 ```sh

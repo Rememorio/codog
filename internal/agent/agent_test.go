@@ -259,6 +259,31 @@ func TestTUIRuntimeBadgesReflectConfig(t *testing.T) {
 	require.Equal(t, []string{"model: glm52", "fast: on", "thinking: high"}, app.tuiRuntimeBadges())
 }
 
+func TestResumeSessionChoicesUseIdentityAndPromptFallback(t *testing.T) {
+	updated := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	choices := resumeSessionChoices([]session.Session{
+		{
+			ID:       "named-session",
+			Identity: session.SessionIdentity{Title: "Review auth flow", Workspace: "/workspace/auth"},
+			Metadata: session.SessionMetadata{UpdatedAt: updated},
+			Messages: []anthropic.Message{anthropic.TextMessage("user", "ignored fallback")},
+		},
+		{
+			ID:       "fallback-session",
+			Identity: session.SessionIdentity{Title: "fallback-session"},
+			Metadata: session.SessionMetadata{ModifiedAt: updated.Add(-time.Hour)},
+			Messages: []anthropic.Message{anthropic.TextMessage("user", "Investigate the scheduler race in the worker pool")},
+		},
+	})
+
+	require.Len(t, choices, 2)
+	require.Equal(t, "Review auth flow", choices[0].Title)
+	require.Equal(t, "/workspace/auth", choices[0].Workspace)
+	require.Equal(t, updated, choices[0].UpdatedAt)
+	require.Equal(t, "Investigate the scheduler race in the worker pool", choices[1].Title)
+	require.Equal(t, updated.Add(-time.Hour), choices[1].UpdatedAt)
+}
+
 func TestEnterpriseAuditListsEvents(t *testing.T) {
 	configHome := t.TempDir()
 	require.NoError(t, audit.NewStore(configHome).Append(audit.Event{
@@ -736,7 +761,8 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, helpOutput, "Start the TUI and submit an initial prompt")
 	require.Contains(t, helpOutput, "help all [query]")
 	require.Contains(t, helpOutput, "--continue, -c")
-	require.Contains(t, helpOutput, "--resume ID|latest, -r ID|latest")
+	require.Contains(t, helpOutput, "--resume [ID|latest], -r [ID|latest]")
+	require.Contains(t, helpOutput, "omit ID to choose")
 	require.Contains(t, helpOutput, "--fork-session")
 	require.Contains(t, helpOutput, "--fallback-model name")
 	require.Contains(t, helpOutput, "--thinking enabled|adaptive|disabled")
@@ -757,7 +783,7 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "show", globalReport.Action)
 	require.Equal(t, "ok", globalReport.Status)
 	require.Contains(t, globalReport.Help, "--continue, -c")
-	require.Contains(t, globalReport.Help, "--resume ID|latest, -r ID|latest")
+	require.Contains(t, globalReport.Help, "--resume [ID|latest], -r [ID|latest]")
 	require.Contains(t, globalReport.Help, "--fork-session")
 	require.Contains(t, globalReport.Help, "--fallback-model name")
 	require.Contains(t, globalReport.Help, "--thinking enabled|adaptive|disabled")
@@ -11046,6 +11072,42 @@ func TestParseFlagsSupportsMaxBudgetUSDForPrompt(t *testing.T) {
 	require.ErrorAs(t, err, &flagErr)
 	require.Equal(t, "--max-budget-usd", flagErr.Flag)
 	require.Contains(t, flagErr.Message, "prompt mode")
+}
+
+func TestParseFlagsSupportsInteractiveBareResume(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{"--resume"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, interactiveResumeValue, overrides.Resume)
+	require.Empty(t, command)
+	require.Empty(t, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--resume", "--model", "glm52", "tui"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, interactiveResumeValue, overrides.Resume)
+	require.Equal(t, "glm52", overrides.Model)
+	require.Equal(t, "tui", command)
+	require.Empty(t, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--resume", "/status"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, interactiveResumeValue, overrides.Resume)
+	require.Equal(t, "/status", command)
+	require.Empty(t, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--resume=session-id", "tui"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "session-id", overrides.Resume)
+	require.Equal(t, "tui", command)
+	require.Empty(t, rest)
+}
+
+func TestTerminalInputRejectsNonTTYCharacterDevice(t *testing.T) {
+	input, err := os.Open(os.DevNull)
+	require.NoError(t, err)
+	defer input.Close()
+
+	_, ok := terminalInput(input)
+	require.False(t, ok)
 }
 
 func TestParseFlagsSupportsDebugAndVerbose(t *testing.T) {

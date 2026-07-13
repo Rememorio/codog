@@ -153,6 +153,48 @@ expect eof
 	require.Contains(t, output, "history selected")
 }
 
+func TestRealBinaryBareResumeOpensSearchablePickerWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	server := httptest.NewServer(mockanthropic.Server{Text: "picker seed answer"}.Handler())
+	defer server.Close()
+	extraEnv := []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}
+
+	alpha := runCodogWithExtraEnv(t, bin, workspace, configHome, extraEnv, nil, "--name", "picker-alpha", "--model", "claude-sonnet-4-5", "-p", "alpha resume prompt")
+	require.Equal(t, 0, alpha.Code, alpha.Combined())
+	alphaID := extractSessionID(t, alpha.Stderr)
+	beta := runCodogWithExtraEnv(t, bin, workspace, configHome, extraEnv, nil, "--name", "picker-beta", "--model", "claude-sonnet-4-5", "-p", "beta resume prompt")
+	require.Equal(t, 0, beta.Code, beta.Combined())
+
+	output := runExpectCodog(t, bin, workspace, configHome, extraEnv, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --resume --model claude-sonnet-4-5
+expect "Resume a session"
+send "picker-alpha"
+expect "Filter: picker-alpha"
+expect "picker-alpha"
+send "\r"
+expect "Session `+alphaID+`"
+expect "codog"
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, output, "Resume a session")
+	require.Contains(t, output, "picker-alpha")
+	require.Contains(t, output, alphaID)
+	require.NotContains(t, output, "\x1b[?1049h")
+
+	nonTTY := runCodogWithExtraEnv(t, bin, workspace, configHome, extraEnv, []byte{}, "--resume")
+	require.NotEqual(t, 0, nonTTY.Code, nonTTY.Combined())
+	require.Contains(t, nonTTY.Combined(), "requires an interactive terminal")
+	require.Contains(t, nonTTY.Combined(), "--resume latest")
+}
+
 func TestRealBinaryTUIShowsProviderErrorsWithTTY(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()

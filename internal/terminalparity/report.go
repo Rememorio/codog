@@ -42,6 +42,7 @@ type Report struct {
 	TUIFullScreenLayout       bool     `json:"tui_full_screen_layout"`
 	TUIInlineLayout           bool     `json:"tui_inline_layout"`
 	TUIDefaultInline          bool     `json:"tui_default_inline"`
+	TUIResumePicker           bool     `json:"tui_resume_picker"`
 	TUITranscriptViewport     bool     `json:"tui_transcript_viewport"`
 	TUILocalHelpPanel         bool     `json:"tui_local_help_panel"`
 	TUIStatusBar              bool     `json:"tui_status_bar"`
@@ -64,6 +65,10 @@ func Build() Report {
 	completionPreview := tui.PreviewWithCandidates("/sta", nil, 80, 24, true, false)
 	helpPreview := tui.PreviewWithCandidates("/help", nil, 80, 24, false, false)
 	inlinePreview := tui.PreviewInlineWithCandidates("", nil, 80, 24, false, false)
+	resumePreview := tui.PreviewSessionPicker([]tui.SessionChoice{
+		{ID: "resume-alpha", Title: "Alpha session"},
+		{ID: "resume-beta", Title: "Beta session"},
+	}, "beta", 80, 24, true)
 	report := Report{
 		Status:                    "ready",
 		SlashCommandCount:         len(specs),
@@ -76,6 +81,7 @@ func Build() Report {
 		TUIFullScreenLayout:       strings.Contains(submitPreview.View, "composer") && strings.Contains(submitPreview.View, "Codog TUI"),
 		TUIInlineLayout:           strings.Contains(inlinePreview.View, "codog") && strings.Contains(inlinePreview.View, "❯") && !strings.Contains(inlinePreview.View, "composer"),
 		TUIDefaultInline:          true,
+		TUIResumePicker:           resumePreview.MatchCount == 1 && resumePreview.SelectedID == "resume-beta" && strings.Contains(resumePreview.View, "Beta session") && !strings.Contains(resumePreview.View, "Alpha session"),
 		TUITranscriptViewport:     strings.Contains(submitPreview.View, "Interactive coding agent ready"),
 		TUILocalHelpPanel:         helpPreview.HelpOpen && strings.Contains(helpPreview.View, "Core commands"),
 		TUIStatusBar:              strings.Contains(submitPreview.View, "Enter send") && strings.Contains(submitPreview.View, "Tab") && strings.Contains(submitPreview.View, "Esc"),
@@ -92,6 +98,7 @@ func Build() Report {
 		!report.TUIFullScreenLayout ||
 		!report.TUIInlineLayout ||
 		!report.TUIDefaultInline ||
+		!report.TUIResumePicker ||
 		!report.TUITranscriptViewport ||
 		!report.TUILocalHelpPanel ||
 		!report.TUIStatusBar ||

@@ -1585,7 +1585,7 @@ func PreviewWithUndo(input string, inserted string, width int, height int) Previ
 	}
 }
 
-// Shell starts the full-screen interactive TUI loop.
+// Shell starts the interactive TUI loop.
 func Shell(ctx context.Context, options ShellOptions) error {
 	if ctx == nil {
 		ctx = context.Background()

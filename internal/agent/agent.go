@@ -119,6 +119,7 @@ import (
 	"github.com/Rememorio/codog/internal/workerstate"
 	"github.com/Rememorio/codog/internal/workspaceops"
 	"github.com/Rememorio/codog/internal/worktree"
+	"github.com/charmbracelet/x/term"
 	"github.com/chzyer/readline"
 )
 
@@ -548,6 +549,30 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		AgentDefinitions: agentDefinitions,
 		InlineAgents:     inlineAgentDefinitions,
 		PluginDirs:       append([]string(nil), pluginDirs...),
+	}
+	if overrides.Resume == interactiveResumeValue {
+		if _, ok := terminalInput(app.In); !ok {
+			return renderInteractiveOnlyWithHint(app.Out, "resume", "--resume without a session id requires an interactive terminal", "Pass `--resume latest` or `--resume SESSION_ID` in non-interactive mode.", format)
+		}
+		sessions, err := app.Sessions.List()
+		if err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, format)
+		}
+		if len(sessions) == 0 {
+			return renderCLIError(app.Out, invalidFlagValueError{
+				Flag:    "--resume",
+				Message: "no saved sessions are available to resume",
+				Usage:   "codog [--resume latest|--resume SESSION_ID]",
+			}, format)
+		}
+		selected, err := tui.SelectSession(ctx, resumeSessionChoices(sessions))
+		if err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, format)
+		}
+		if selected == "" {
+			return nil
+		}
+		overrides.Resume = selected
 	}
 	if overrides.IDE {
 		if err := app.connectActiveIDE(); err != nil {
@@ -37681,6 +37706,39 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 	return a.finishREPL(ctx, sess, loopErr)
 }
 
+func resumeSessionChoices(sessions []session.Session) []tui.SessionChoice {
+	choices := make([]tui.SessionChoice, 0, len(sessions))
+	for _, sess := range sessions {
+		title := strings.TrimSpace(sess.Identity.Title)
+		if title == "" || title == sess.ID {
+			for _, message := range sess.Messages {
+				if message.Role != "user" {
+					continue
+				}
+				if text := firstMessageText(message); text != "" {
+					title = trimSingleLine(text, 72)
+					break
+				}
+			}
+		}
+		if title == "" {
+			title = sess.ID
+		}
+		updatedAt := sess.Metadata.UpdatedAt
+		if updatedAt.IsZero() {
+			updatedAt = sess.Metadata.ModifiedAt
+		}
+		choices = append(choices, tui.SessionChoice{
+			ID:           sess.ID,
+			Title:        title,
+			Workspace:    sess.Identity.Workspace,
+			MessageCount: len(sess.Messages),
+			UpdatedAt:    updatedAt,
+		})
+	}
+	return choices
+}
+
 func (a *App) tuiModelOptions() []string {
 	out := []string{}
 	add := func(value string) {
@@ -39090,11 +39148,7 @@ func terminalInput(input io.Reader) (*os.File, bool) {
 	if !ok {
 		return nil, false
 	}
-	info, err := file.Stat()
-	if err != nil {
-		return nil, false
-	}
-	return file, info.Mode()&os.ModeCharDevice != 0
+	return file, term.IsTerminal(file.Fd())
 }
 
 type slashCompleter struct {
@@ -60182,6 +60236,7 @@ func (f optionalFloatFlag) String() string {
 }
 
 func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides, string, []string, error) {
+	args = normalizeOptionalResumeFlag(args)
 	args = normalizeOptionalFromPRFlag(args)
 	args = normalizeVariadicAddDirFlag(args)
 	args = normalizeVariadicPluginDirFlag(args)
@@ -60570,6 +60625,34 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		rest = append(rest, "--json-schema", base.JSONSchema)
 	}
 	return base, command, rest, nil
+}
+
+const interactiveResumeValue = "__codog_interactive_resume__"
+
+func normalizeOptionalResumeFlag(args []string) []string {
+	normalized := make([]string, 0, len(args)+1)
+	for index, arg := range args {
+		trimmed := strings.TrimSpace(arg)
+		if trimmed == "--resume=" || trimmed == "-r=" {
+			normalized = append(normalized, strings.TrimSuffix(arg, "=")+"="+interactiveResumeValue)
+			continue
+		}
+		if trimmed != "--resume" && trimmed != "-r" {
+			normalized = append(normalized, arg)
+			continue
+		}
+		if index+1 >= len(args) {
+			normalized = append(normalized, arg, interactiveResumeValue)
+			continue
+		}
+		next := strings.TrimSpace(args[index+1])
+		if next == "" || strings.HasPrefix(next, "-") || strings.HasPrefix(next, "/") || looksLikeCommandName(next) {
+			normalized = append(normalized, arg, interactiveResumeValue)
+			continue
+		}
+		normalized = append(normalized, arg)
+	}
+	return normalized
 }
 
 func normalizeOptionalFromPRFlag(args []string) []string {
@@ -62657,8 +62740,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return commandHelpSpec{
 			Topic:                   "resume",
 			Command:                 "resume",
-			Usage:                   "codog --resume|-r ID|latest [--fork-session] [--resume-session-at MESSAGE_ID] [prompt TEXT|repl|/slash-command] | codog --continue|-c [--fork-session] [prompt TEXT|repl|/slash-command]",
-			Text:                    "Resume\n\nUsage:\n  codog --resume|-r ID|latest [--fork-session] [--resume-session-at MESSAGE_ID] [prompt TEXT|repl|/slash-command]\n  codog --continue|-c [--fork-session] [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, /paste, /bookmarks, or /session. `-r` is an alias for `--resume`; `--continue` and `-c` resume the latest session. With `--fork-session`, Codog copies the resumed transcript into a new session before continuing; combine it with `--session-id` to choose the fork ID. With `--resume-session-at`, prompt mode resumes only through the assistant message with the requested message id. Help is local and does not open a session.\n",
+			Usage:                   "codog --resume|-r [ID|latest] [--fork-session] [--resume-session-at MESSAGE_ID] [prompt TEXT|repl|/slash-command] | codog --continue|-c [--fork-session] [prompt TEXT|repl|/slash-command]",
+			Text:                    "Resume\n\nUsage:\n  codog --resume|-r [ID|latest] [--fork-session] [--resume-session-at MESSAGE_ID] [prompt TEXT|repl|/slash-command]\n  codog --continue|-c [--fork-session] [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, /paste, /bookmarks, or /session. Omit the session id in an interactive terminal to open the searchable resume picker. `-r` is an alias for `--resume`; `--continue` and `-c` resume the latest session. With `--fork-session`, Codog copies the resumed transcript into a new session before continuing; combine it with `--session-id` to choose the fork ID. With `--resume-session-at`, prompt mode resumes only through the assistant message with the requested message id. Help is local and does not open a session.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
@@ -62742,7 +62825,7 @@ Arguments:
   prompt                              Start the TUI and submit an initial prompt.
 
 Core commands:
-  tui                                 Start the full-screen interactive session.
+  tui                                 Start the inline interactive session.
   repl                                Start the line-oriented interactive session.
   prompt                              Run one provider-backed turn and exit.
   sessions                            List, inspect, resume, fork, or repair sessions.
@@ -62792,7 +62875,8 @@ Options:
   --cwd path, -C path                 Run from another working directory.
   --session-id id                     Select a session id.
   --name name                         Set the session display name.
-  --resume ID|latest, -r ID|latest    Resume a saved session.
+  --resume [ID|latest], -r [ID|latest]
+                                      Resume a saved session; omit ID to choose.
   --continue, -c                      Resume the latest session.
   --fork-session                      Fork the resumed session before continuing.
   --resume-session-at message-id      Resume through a specific assistant message.
@@ -62813,6 +62897,7 @@ Examples:
   %s -p "explain the failing test"
   %s -p --output-format stream-json "run the tests and fix failures"
   %s --continue
+  %s --resume
   %s --resume latest "continue the previous task"
   %s help all mcp
   %s help background
