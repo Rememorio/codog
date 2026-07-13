@@ -18,6 +18,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/mockanthropic"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -431,6 +432,40 @@ expect eof
 
 	require.Contains(t, output, "streaming early marker")
 	require.Contains(t, output, "Interrupted by user.")
+}
+
+func TestRealBinaryTUIRendersMarkdownWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	server := httptest.NewServer(mockanthropic.Server{
+		Turns: []mockanthropic.Turn{{
+			Text: "# ACCEPTANCE_HEADING\n\n**ACCEPTANCE_BOLD**\n\n- ACCEPTANCE_LIST\n\n```go\nMARKDOWN_ACCEPTANCE_OK\n```",
+		}},
+	}.Handler())
+	defer server.Close()
+
+	output := runExpectCodog(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model claude-sonnet-4-5 tui
+expect "codog"
+send "render markdown acceptance\r"
+expect "MARKDOWN_ACCEPTANCE_OK"
+send "/exit\r"
+expect eof
+`)
+
+	plain := ansi.Strip(output)
+	require.Contains(t, plain, "ACCEPTANCE_HEADING")
+	require.Contains(t, plain, "ACCEPTANCE_BOLD")
+	require.Contains(t, plain, "- ACCEPTANCE_LIST")
+	require.Contains(t, plain, "MARKDOWN_ACCEPTANCE_OK")
+	require.NotContains(t, plain, "# ACCEPTANCE_HEADING")
+	require.NotContains(t, plain, "**ACCEPTANCE_BOLD**")
+	require.NotContains(t, plain, "```go")
 }
 
 func TestRealBinaryTUIShowsToolResultsWithTTY(t *testing.T) {

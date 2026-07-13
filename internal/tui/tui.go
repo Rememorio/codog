@@ -8475,7 +8475,11 @@ func renderTranscriptEntry(entry transcriptEntry, width int, index int, total in
 		marker := transcriptRoleMarker(role)
 		prefix := styles.role(role).Render(marker)
 		contentWidth := max(4, width-lipgloss.Width(marker)-1)
-		wrapped := strings.ReplaceAll(wrapTranscriptText(text, contentWidth), "\n", "\n  ")
+		content := wrapTranscriptText(text, contentWidth)
+		if strings.EqualFold(role, "assistant") {
+			content = renderAssistantMarkdown(text, contentWidth, styles)
+		}
+		wrapped := strings.ReplaceAll(content, "\n", "\n  ")
 		return prefix + " " + wrapped
 	}
 	text := entry.Text
@@ -8483,7 +8487,11 @@ func renderTranscriptEntry(entry transcriptEntry, width int, index int, total in
 		text = "(empty)"
 	}
 	header := fmt.Sprintf("%03d/%03d %s · %d %s · %d %s", index+1, max(1, total), role, transcriptLineCount(text), plural("line", transcriptLineCount(text)), len([]rune(text)), plural("char", len([]rune(text))))
-	return styles.role(role).Render(header) + "\n" + wrapTranscriptText(text, width)
+	content := wrapTranscriptText(text, width)
+	if strings.EqualFold(role, "assistant") {
+		content = renderAssistantMarkdown(text, width, styles)
+	}
+	return styles.role(role).Render(header) + "\n" + content
 }
 
 func renderToolActivity(activity ToolActivity, width int, expanded bool, themed ...themeStyles) string {
