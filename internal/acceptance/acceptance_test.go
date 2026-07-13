@@ -127,6 +127,36 @@ expect eof
 	require.NotContains(t, plain, "references/checklist")
 }
 
+func TestRealBinaryTUIModeCycleUpdatesRuntimeWithoutTranscriptNoise(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+
+	output := runExpectCodog(t, bin, workspace, configHome, nil, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model glm52 --permission-mode workspace-write tui
+expect "accept edits on"
+send "\033\[Z"
+expect "plan mode on"
+send "/status\r"
+expect "Permission"
+expect "read-only"
+expect "Plan"
+expect "active"
+send "/exit\r"
+expect eof
+`)
+
+	plain := ansi.Strip(output)
+	require.Contains(t, plain, "accept edits on")
+	require.Contains(t, plain, "plan mode on")
+	require.Contains(t, plain, "Permission")
+	require.Contains(t, plain, "read-only")
+	require.Contains(t, plain, "Plan")
+	require.Contains(t, plain, "active")
+	require.NotContains(t, plain, "Mode: plan")
+}
+
 func TestRealBinaryInteractiveStartupPersistsWorkspaceTrustWithTTY(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()

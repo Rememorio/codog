@@ -37860,7 +37860,13 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		Keybindings:        a.tuiKeybindings(),
 		ContextKeybindings: a.tuiContextKeybindings(),
 		CycleMode: func() string {
-			return modeState.Cycle()
+			label := modeState.Cycle()
+			modeState.Apply(&a.Config)
+			return label
+		},
+		ReadModeLabel: func() string {
+			modeState.Sync(a.Config)
+			return modeState.Label()
 		},
 		PermissionRespond: func(response tui.PermissionResponse) {
 			select {
@@ -38873,6 +38879,15 @@ func (s *tuiModeState) Cycle() string {
 	}
 	s.index = (s.index + 1) % len(s.options)
 	return s.Label()
+}
+
+func (s *tuiModeState) Sync(cfg config.Config) {
+	if s == nil {
+		return
+	}
+	next := newTUIModeState(cfg)
+	s.options = next.options
+	s.index = next.index
 }
 
 func (s *tuiModeState) Apply(cfg *config.Config) {

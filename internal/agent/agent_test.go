@@ -326,6 +326,17 @@ func TestTUIModeStatePreservesBypassPermissionMode(t *testing.T) {
 	require.False(t, cfg.PlanMode)
 }
 
+func TestTUIModeStateSyncsExternalPermissionChanges(t *testing.T) {
+	state := newTUIModeState(config.Config{PermissionMode: "workspace-write"})
+	require.Equal(t, "accept edits", state.Label())
+
+	state.Sync(config.Config{PermissionMode: "read-only", PlanMode: true})
+	require.Equal(t, "plan", state.Label())
+
+	state.Sync(config.Config{PermissionMode: "allow"})
+	require.Equal(t, "bypass permissions", state.Label())
+}
+
 func TestTUIRuntimeBadgesReflectConfig(t *testing.T) {
 	fast := true
 	app := &App{Config: config.Config{

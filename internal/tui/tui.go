@@ -201,6 +201,7 @@ type ShellOptions struct {
 	Keybindings               map[string][]string
 	ContextKeybindings        map[string]map[string][]string
 	CycleMode                 func() string
+	ReadModeLabel             func() string
 	// FullScreen opts into the alternate-screen renderer. The default inline
 	// renderer keeps completed conversation turns in terminal scrollback.
 	FullScreen bool
@@ -298,6 +299,7 @@ type model struct {
 	keybindings               map[string]map[string]bool
 	contextKeybindings        map[string]map[string]map[string]bool
 	cycleMode                 func() string
+	readModeLabel             func() string
 	history                   []string
 	historyPos                int
 	draft                     string
@@ -1725,6 +1727,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.keybindings = normalizeTUIKeybindings(options.Keybindings)
 	m.contextKeybindings = normalizeTUIContextKeybindings(options.ContextKeybindings)
 	m.cycleMode = options.CycleMode
+	m.readModeLabel = options.ReadModeLabel
 	m.initialPrompt = strings.TrimSpace(options.InitialPrompt)
 	m.attachments = append([]string(nil), options.InitialAttachments...)
 	m.setHistory(options.History)
@@ -1808,6 +1811,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.startInput(msg.Value)
 	case turnDoneMsg:
 		m.busy = false
+		m.refreshModeLabel()
 		m.clearInteractionPrompts()
 		m.turnMessages = nil
 		if m.turnCancel != nil {
@@ -2548,13 +2552,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.busy || m.cycleMode == nil {
 				return m, nil
 			}
-			if label := strings.TrimSpace(m.cycleMode()); label != "" {
-				m.modeLabel = label
-				m.status = m.mode()
-				m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Mode: " + label})
-				m.refreshViewport()
-				m.viewport.GotoBottom()
-			}
+			m.cyclePermissionMode()
 			return m, nil
 		case "ctrl+r":
 			if !m.todosOpen && len(m.history) > 0 {
@@ -2914,13 +2912,32 @@ func (m model) inlineFooterText(width int) string {
 		}
 		return strings.Join(hints, " · ")
 	}
-	if mode := strings.TrimSpace(m.modeLabel); mode != "" {
+	if mode := permissionModeFooterLabel(m.modeLabel); mode != "" && !footerHintsContain(hints, mode) {
 		status += " · " + mode
 	}
 	if len(hints) > 0 {
 		status += " · " + strings.Join(hints, " · ")
 	}
 	return status
+}
+
+func (m *model) cyclePermissionMode() {
+	if m.cycleMode == nil {
+		return
+	}
+	if label := strings.TrimSpace(m.cycleMode()); label != "" {
+		m.modeLabel = label
+		m.status = "ready"
+	}
+}
+
+func (m *model) refreshModeLabel() {
+	if m.readModeLabel == nil {
+		return
+	}
+	if label := strings.TrimSpace(m.readModeLabel()); label != "" {
+		m.modeLabel = label
+	}
 }
 
 type turnDoneMsg struct {
@@ -3508,13 +3525,7 @@ func (m model) handleBoundTUIActionKey(key string) (model, bool, tea.Cmd) {
 		if m.busy || m.cycleMode == nil {
 			return m, true, nil
 		}
-		if label := strings.TrimSpace(m.cycleMode()); label != "" {
-			m.modeLabel = label
-			m.status = m.mode()
-			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Mode: " + label})
-			m.refreshViewport()
-			m.viewport.GotoBottom()
-		}
+		m.cyclePermissionMode()
 		return m, true, nil
 	case m.isBoundTUIAction("open model picker", key):
 		if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
@@ -7593,12 +7604,15 @@ func (m model) promptFooterText(width int) string {
 		baseStatus = m.mode()
 	}
 	status := statusBarText(baseStatus, width)
+	hints := m.promptFooterHints(width)
 	if m.transcriptMode && !strings.EqualFold(baseStatus, "transcript") {
 		status = appendStatusMode(status, "transcript", width)
 	}
-	status = appendStatusMode(status, m.modeLabel, width)
+	mode := permissionModeFooterLabel(m.modeLabel)
+	if !footerHintsContain(hints, mode) {
+		status = appendStatusMode(status, mode, width)
+	}
 	status = truncateFooterLine(status, limit)
-	hints := m.promptFooterHints(width)
 	if len(hints) == 0 {
 		return status
 	}
@@ -7607,6 +7621,18 @@ func (m model) promptFooterText(width int) string {
 		return status
 	}
 	return status + "\n" + byline
+}
+
+func footerHintsContain(hints []string, text string) bool {
+	if text == "" {
+		return false
+	}
+	for _, hint := range hints {
+		if strings.Contains(hint, text) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m model) promptFooterHints(width int) []string {
@@ -7748,6 +7774,9 @@ func (m model) promptFooterHints(width int) []string {
 		add("Esc cancel")
 		return trimFooterHints(hints, width)
 	}
+	if mode := permissionModeFooterLabel(m.modeLabel); mode != "" {
+		add(mode + " (Shift+Tab cycle)")
+	}
 	add("? for shortcuts")
 	add("/ commands")
 	add("@ files")
@@ -7767,9 +7796,6 @@ func (m model) promptFooterHints(width int) []string {
 	} else {
 		add("Ctrl+O transcript")
 	}
-	if strings.TrimSpace(m.modeLabel) != "" {
-		add("mode: " + m.modeLabel)
-	}
 	if m.vimEnabled {
 		if m.vimNormal {
 			add("vim: normal")
@@ -7777,7 +7803,7 @@ func (m model) promptFooterHints(width int) []string {
 			add("vim: insert")
 		}
 	}
-	if m.cycleMode != nil || strings.TrimSpace(m.modeLabel) != "" {
+	if permissionModeFooterLabel(m.modeLabel) == "" && (m.cycleMode != nil || strings.TrimSpace(m.modeLabel) != "") {
 		add("Shift+Tab mode")
 	}
 	if m.stashedPrompt != nil {
@@ -7792,6 +7818,25 @@ func (m model) promptFooterHints(width int) []string {
 		add("Ctrl+B background")
 	}
 	return trimFooterHints(hints, width)
+}
+
+func permissionModeFooterLabel(label string) string {
+	switch strings.ToLower(strings.TrimSpace(label)) {
+	case "", "default":
+		return ""
+	case "accept edits":
+		return "⏵⏵ accept edits on"
+	case "plan":
+		return "⏸ plan mode on"
+	case "read-only":
+		return "⏸ read-only mode on"
+	case "bypass permissions":
+		return "⏵⏵ bypass permissions on"
+	case "danger full access":
+		return "⏵⏵ danger full access on"
+	default:
+		return strings.TrimSpace(label)
+	}
 }
 
 func trimFooterHints(hints []string, width int) []string {
@@ -8819,7 +8864,7 @@ func helpPanel(candidates []string, width int, themed ...themeStyles) string {
 		"Common workflows",
 		"  ask normally       describe the code change, investigation, or test you want",
 		"  @path              attach a file reference to the next prompt",
-		"  !command           run a local shell command through the permission flow",
+		"  !command           run a local shell command directly",
 		"  /attach PATH       stage files or images for the next prompt",
 		"  /paste             insert clipboard text or stage clipboard images",
 		"",

@@ -603,6 +603,8 @@ func TestHelpPanelDescribesCoreInteractiveInputs(t *testing.T) {
 	require.Contains(t, help, "interactive coding agent")
 	require.Contains(t, help, "@path")
 	require.Contains(t, help, "!command")
+	require.Contains(t, help, "run a local shell command directly")
+	require.NotContains(t, help, "through the permission flow")
 	require.Contains(t, help, "/attach PATH")
 	require.Contains(t, help, "/paste")
 	require.Contains(t, help, "Enter sends the composer")
@@ -674,7 +676,7 @@ func TestPromptFooterShowsContextualIdleHints(t *testing.T) {
 	require.Contains(t, footer, "Ctrl+T tasks")
 	require.Contains(t, footer, "Ctrl+S restore stash")
 	require.Contains(t, footer, "1 attached")
-	require.Contains(t, footer, "accept edits")
+	require.Contains(t, footer, "⏵⏵ accept edits on")
 	require.Contains(t, footer, "model: glm52")
 	require.Contains(t, footer, "fast: off")
 	require.Contains(t, footer, "thinking: medium")
@@ -751,14 +753,15 @@ func TestShiftTabCyclesTUILocalMode(t *testing.T) {
 	m := newModel(context.Background(), ta, nil, nil)
 	m.modeLabel = "default"
 	m.cycleMode = func() string { return "accept edits" }
+	transcriptCount := len(m.transcript)
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
 	m = updated.(model)
 
 	require.Equal(t, "accept edits", m.modeLabel)
-	require.Equal(t, "system", m.transcript[len(m.transcript)-1].Role)
-	require.Equal(t, "Mode: accept edits", m.transcript[len(m.transcript)-1].Text)
-	require.Contains(t, m.View(), "accept edits")
+	require.Len(t, m.transcript, transcriptCount)
+	require.Equal(t, "ready", m.status)
+	require.Contains(t, m.View(), "⏵⏵ accept edits on")
 }
 
 func TestAltMCyclesTUILocalModeFallback(t *testing.T) {
@@ -766,15 +769,49 @@ func TestAltMCyclesTUILocalModeFallback(t *testing.T) {
 	m := newModel(context.Background(), ta, nil, nil)
 	m.modeLabel = "default"
 	m.cycleMode = func() string { return "plan" }
+	transcriptCount := len(m.transcript)
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}, Alt: true})
 	m = updated.(model)
 
 	require.Equal(t, "plan", m.modeLabel)
 	require.Empty(t, m.textarea.Value())
-	require.Equal(t, "system", m.transcript[len(m.transcript)-1].Role)
-	require.Equal(t, "Mode: plan", m.transcript[len(m.transcript)-1].Text)
+	require.Len(t, m.transcript, transcriptCount)
+	require.Contains(t, m.View(), "⏸ plan mode on")
 	require.Contains(t, helpPanel(nil, 100), "Alt/Meta+M")
+}
+
+func TestTurnCompletionRefreshesExternalPermissionMode(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.modeLabel = "accept edits"
+	m.readModeLabel = func() string { return "plan" }
+	m.busy = true
+
+	updated, _ := m.Update(turnDoneMsg{Role: "system"})
+	m = updated.(model)
+
+	require.Equal(t, "plan", m.modeLabel)
+	require.Contains(t, m.View(), "⏸ plan mode on")
+}
+
+func TestInlineFooterPrioritizesActivePermissionMode(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.modeLabel = "accept edits"
+	m.currentModel = "glm52"
+	m.runtimeBadges = []string{"model: glm52"}
+	m.cycleMode = func() string { return "plan" }
+
+	footer := m.inlineFooterText(80)
+
+	require.Contains(t, footer, "⏵⏵ accept edits on")
+	require.Contains(t, footer, "Shift+Tab cycle")
+	require.Contains(t, footer, "? for shortcuts")
+
+	m.status = "slash"
+	footer = m.inlineFooterText(80)
+	require.Equal(t, 1, strings.Count(footer, "accept edits on"))
 }
 
 func TestCtrlOTogglesExpandedTranscript(t *testing.T) {
