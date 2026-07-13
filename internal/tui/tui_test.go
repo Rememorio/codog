@@ -609,7 +609,7 @@ func TestPromptFooterConstrainsLongStatusAtTerminalWidth(t *testing.T) {
 	footer := fitFooterText(m.promptFooterText(80), 78)
 	require.Contains(t, footer, "12 queued restored")
 	require.True(t, strings.HasSuffix(strings.Split(footer, "\n")[0], "..."))
-	rendered := statusStyle().Width(80).Render(footer)
+	rendered := stylesForTheme("auto").status().Width(80).Render(footer)
 	for _, line := range strings.Split(rendered, "\n") {
 		require.LessOrEqual(t, lipgloss.Width(line), 80, line)
 	}

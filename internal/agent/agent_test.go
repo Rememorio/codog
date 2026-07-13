@@ -1578,6 +1578,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "status_config_validation")
 	require.Contains(t, report.Features, "team_watch")
 	require.Contains(t, report.Features, "telemetry_preferences")
+	require.Contains(t, report.Features, "tui_first_run_theme_onboarding")
+	require.Contains(t, report.Features, "tui_live_theme_picker")
+	require.Contains(t, report.Features, "tui_no_color_theme")
 	require.Contains(t, report.Features, "tool_search_mcp_degraded")
 	require.Contains(t, report.Features, "typed_task_packets")
 	require.Contains(t, report.Features, "worker_startup_no_evidence")
@@ -20872,6 +20875,10 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 		Err:       &errOut,
 	}
 
+	require.NoError(t, app.Theme([]string{"list", "--json"}))
+	require.Contains(t, out.String(), `"theme": "auto"`)
+	out.Reset()
+
 	require.NoError(t, app.Theme([]string{"dark", "--json"}))
 	require.Contains(t, out.String(), `"kind": "theme"`)
 	require.Contains(t, out.String(), `"theme": "dark"`)
@@ -20904,6 +20911,17 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.Contains(t, out.String(), `"action": "set"`)
 	require.Contains(t, out.String(), `"theme": "dark"`)
 	require.Equal(t, "dark", app.Config.Theme)
+	out.Reset()
+
+	require.NoError(t, app.Theme([]string{"use", "ansi", "--json"}))
+	require.Contains(t, out.String(), `"theme": "dark-ansi"`)
+	require.Equal(t, "dark-ansi", app.Config.Theme)
+	out.Reset()
+
+	err = app.Theme([]string{"use", "unknown-theme", "--json"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "theme must be one of")
+	require.Equal(t, "dark-ansi", app.Config.Theme)
 	out.Reset()
 
 	require.NoError(t, app.Language([]string{"use", "Japanese", "--json"}))

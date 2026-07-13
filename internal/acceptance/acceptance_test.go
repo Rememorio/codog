@@ -101,6 +101,10 @@ spawn -noecho $env(CODOG_TEST_BIN) --model glm52
 expect "Accessing workspace:"
 expect "No, exit"
 send "\r"
+expect "Let's get started."
+expect "Dark mode"
+send "\033\[B"
+send "\r"
 expect "codog"
 send "/exit\r"
 expect eof
@@ -112,17 +116,20 @@ expect eof
 	require.NoError(t, err)
 	var persisted struct {
 		TrustedRoots []string `json:"trustedRoots"`
+		Theme        string   `json:"theme"`
 	}
 	require.NoError(t, json.Unmarshal(data, &persisted))
 	trustedWorkspace, err := filepath.EvalSymlinks(workspace)
 	require.NoError(t, err)
 	require.Contains(t, persisted.TrustedRoots, trustedWorkspace)
+	require.Equal(t, "dark", persisted.Theme)
 
 	second := runExpectCodogUntrusted(t, bin, workspace, configHome, nil, `
 set timeout 20
 spawn -noecho $env(CODOG_TEST_BIN) --model glm52
 expect {
   "Accessing workspace:" { exit 1 }
+  "Let's get started." { exit 1 }
   "codog" {}
   timeout { exit 1 }
 }
@@ -130,6 +137,7 @@ send "/exit\r"
 expect eof
 `)
 	require.NotContains(t, second, "Accessing workspace:")
+	require.NotContains(t, second, "Let's get started.")
 }
 
 func TestRealBinaryWorkspaceTrustRejectsProjectHelperBeforeConfigLoad(t *testing.T) {
@@ -189,6 +197,36 @@ expect eof
 	require.Contains(t, output, "Show local workspace")
 	require.Contains(t, output, "/statusline")
 	require.Contains(t, output, "/doctor")
+}
+
+func TestRealBinaryTUIThemePickerPreviewsAndPersistsWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+
+	output := runExpectCodog(t, bin, workspace, configHome, nil, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model glm52
+expect "codog"
+send "/theme\r"
+expect "Dark mode"
+send "\033\[B"
+expect "Light mode"
+send "\r"
+expect "Theme"
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, output, "Dark mode")
+	require.Contains(t, output, "Light mode")
+	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	var persisted struct {
+		Theme string `json:"theme"`
+	}
+	require.NoError(t, json.Unmarshal(data, &persisted))
+	require.Equal(t, "light", persisted.Theme)
 }
 
 func TestRealBinaryTUISearchesPromptHistoryWithTTY(t *testing.T) {
@@ -1081,6 +1119,8 @@ func runCodogWithExtraEnv(t *testing.T, bin string, workspace string, configHome
 func runExpectCodog(t *testing.T, bin string, workspace string, configHome string, extraEnv []string, script string) string {
 	t.Helper()
 	_, err := config.SetFileValue(filepath.Join(configHome, "config.json"), "trustedRoots", []string{workspace})
+	require.NoError(t, err)
+	_, err = config.SetFileValue(filepath.Join(configHome, "config.json"), "theme", "dark")
 	require.NoError(t, err)
 	return runExpectCodogUntrusted(t, bin, workspace, configHome, extraEnv, script)
 }

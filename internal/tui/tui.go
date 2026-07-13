@@ -75,6 +75,9 @@ type TaskBoardFunc func(context.Context) (string, error)
 type TodoListFunc func(context.Context) ([]TodoItem, error)
 type RuntimeControlFunc func(context.Context) (RuntimeControlResult, error)
 type ModelSelectFunc func(context.Context, string) (RuntimeControlResult, error)
+
+// ThemeSelectFunc persists a theme selected from the live TUI picker.
+type ThemeSelectFunc func(context.Context, string) (RuntimeControlResult, error)
 type ConversationRestoreFunc func(context.Context, int) (RuntimeControlResult, error)
 type ConversationForkFunc func(context.Context, int) (RuntimeControlResult, error)
 type ConversationSummarizeFunc func(context.Context, int) (RuntimeControlResult, error)
@@ -121,6 +124,8 @@ type ShellOptions struct {
 	ModelOptions              []string
 	CurrentModel              string
 	SelectModel               ModelSelectFunc
+	Theme                     string
+	SelectTheme               ThemeSelectFunc
 	ToggleFast                RuntimeControlFunc
 	ToggleThinking            RuntimeControlFunc
 	StopBackground            RuntimeControlFunc
@@ -161,6 +166,7 @@ type Preview struct {
 	GlobalSearch    bool
 	TodosOpen       bool
 	ModelPicker     bool
+	ThemePicker     bool
 	MessageMenu     bool
 	AttachmentsOpen bool
 	DiffDialog      bool
@@ -261,6 +267,11 @@ type model struct {
 	currentModel              string
 	modelPickerSelected       int
 	selectModel               ModelSelectFunc
+	theme                     string
+	themePicker               bool
+	themePickerSelected       int
+	themePickerOriginal       string
+	selectTheme               ThemeSelectFunc
 	toggleFast                RuntimeControlFunc
 	toggleThinking            RuntimeControlFunc
 	stopBackground            RuntimeControlFunc
@@ -1612,6 +1623,12 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.modelOptions = normalizeModelOptions(options.ModelOptions)
 	m.currentModel = strings.TrimSpace(options.CurrentModel)
 	m.selectModel = options.SelectModel
+	m.theme, _ = NormalizeThemeName(options.Theme)
+	if m.theme == "" {
+		m.theme = "auto"
+	}
+	m.selectTheme = options.SelectTheme
+	m.applyTheme()
 	m.toggleFast = options.ToggleFast
 	m.toggleThinking = options.ToggleThinking
 	m.stopBackground = options.StopBackground
@@ -1660,9 +1677,11 @@ func newModel(ctx context.Context, ta textarea.Model, candidates []string, entri
 		candidates:     candidates,
 		status:         "ready",
 		transcript:     entries,
+		theme:          "auto",
 		historyPos:     -1,
 		streamingIndex: -1,
 	}
+	m.applyTheme()
 	m.refreshViewport()
 	return m
 }
@@ -1858,6 +1877,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.applyRuntimeControlResult(msg.Result)
 		return m, m.flushInlineTranscript()
+	case themeSelectDoneMsg:
+		if msg.Err != nil {
+			m.theme = msg.Previous
+			m.applyTheme()
+			m.status = "theme error"
+			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+			return m, m.flushInlineTranscript()
+		}
+		m.theme = msg.Selected
+		m.applyTheme()
+		m.applyRuntimeControlResult(msg.Result)
+		return m, m.flushInlineTranscript()
 	case turnStreamMsg:
 		m.appendStreamDelta(msg.Role, msg.Delta)
 		if strings.EqualFold(msg.Role, "permission") {
@@ -1886,6 +1919,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.Paste {
 			return m.handlePastedInput(msg)
+		}
+		if m.themePicker {
+			switch msg.String() {
+			case "ctrl+c", "esc":
+				m.closeThemePicker(true)
+				return m, nil
+			case "up", "left", "ctrl+p", "k", "shift+tab":
+				m.moveThemePicker(-1)
+				return m, nil
+			case "down", "right", "ctrl+n", "j", "tab":
+				m.moveThemePicker(1)
+				return m, nil
+			case "home":
+				m.setThemePickerIndex(0)
+				return m, nil
+			case "end":
+				m.setThemePickerIndex(len(ThemeNames()) - 1)
+				return m, nil
+			case "enter":
+				return m.acceptThemePicker()
+			default:
+				return m, nil
+			}
 		}
 		if m.diffDialog {
 			if next, handled, cmd := m.handleBoundDiffAction(msg); handled {
@@ -2614,11 +2670,12 @@ func (m model) View() string {
 	if m.width == 0 {
 		m.layout(80, 24)
 	}
+	styles := stylesForTheme(m.theme)
 	barWidth := max(3, m.width)
 	barContentWidth := barWidth - 2
-	title := headerStyle().Width(barWidth).Render(truncateFooterLine(m.headerText(), barContentWidth))
+	title := styles.header().Width(barWidth).Render(truncateFooterLine(m.headerText(), barContentWidth))
 	if m.inline {
-		title = inlineHeaderStyle().Render(truncateFooterLine(m.headerText(), barContentWidth))
+		title = styles.inlineHeader().Render(truncateFooterLine(m.headerText(), barContentWidth))
 	}
 	body := m.viewport.View()
 	if m.inline {
@@ -2630,52 +2687,55 @@ func (m model) View() string {
 	}
 	composer := composerTextarea.View()
 	if !m.inline {
-		composer = panelTitleStyle().Render(" composer ") + "\n" + composer
+		composer = styles.panelTitle().Render(" composer ") + "\n" + composer
 	}
 	if m.commandArgumentHint != "" || m.inlineGhostText != "" {
-		composer += "\n" + renderCommandAssist(m.commandArgumentHint, m.inlineGhostText)
+		composer += "\n" + renderCommandAssist(m.commandArgumentHint, m.inlineGhostText, styles)
 	}
 	if len(m.matches) > 0 {
-		composer += "\n" + renderCompletions(m.matches, m.selected)
+		composer += "\n" + renderCompletions(m.matches, m.selected, styles)
 	}
 	if m.searchOpen {
-		composer += "\n" + renderHistorySearch(m.searchHits, m.searchPos, m.textarea.Value())
+		composer += "\n" + renderHistorySearch(m.searchHits, m.searchPos, m.textarea.Value(), styles)
 	}
 	if m.quickOpen {
-		composer += "\n" + renderQuickOpen(m.quickOpenMatches, m.quickOpenSelected, m.textarea.Value(), m.width, m.quickOpenPreviewPath, m.quickOpenPreviewLines)
+		composer += "\n" + renderQuickOpen(m.quickOpenMatches, m.quickOpenSelected, m.textarea.Value(), m.width, m.quickOpenPreviewPath, m.quickOpenPreviewLines, styles)
 	}
 	if m.globalSearch {
-		composer += "\n" + renderGlobalSearch(m.globalSearchMatches, m.globalSearchSelected, m.textarea.Value(), m.width, m.globalSearchPreviewPath, m.globalSearchPreviewLine, m.globalSearchPreviewLines)
+		composer += "\n" + renderGlobalSearch(m.globalSearchMatches, m.globalSearchSelected, m.textarea.Value(), m.width, m.globalSearchPreviewPath, m.globalSearchPreviewLine, m.globalSearchPreviewLines, styles)
 	}
 	if m.todosOpen {
-		composer += "\n" + renderTodosPanel(m.todoItems, m.todosLoading, m.todoErr, m.width)
+		composer += "\n" + renderTodosPanel(m.todoItems, m.todosLoading, m.todoErr, m.width, styles)
 	}
 	if m.modelPicker {
-		composer += "\n" + renderModelPicker(m.modelOptions, m.currentModel, m.modelPickerSelected, m.width)
+		composer += "\n" + renderModelPicker(m.modelOptions, m.currentModel, m.modelPickerSelected, m.width, styles)
+	}
+	if m.themePicker {
+		composer += "\n" + renderThemePicker(m.theme, m.themePickerSelected, m.width, styles)
 	}
 	if m.messageActions {
 		targetPos, targetCount := m.messageActionTargetPosition()
-		composer += "\n" + renderMessageActions(m.messageActionEntry(), m.messageActionSelected, m.width, targetPos, targetCount)
+		composer += "\n" + renderMessageActions(m.messageActionEntry(), m.messageActionSelected, m.width, targetPos, targetCount, styles)
 	}
 	if m.diffDialog {
-		composer += "\n" + renderDiffDialog(m.diffSources, m.diffSourceSelected, m.diffFileSelected, m.diffDetail, m.width)
+		composer += "\n" + renderDiffDialog(m.diffSources, m.diffSourceSelected, m.diffFileSelected, m.diffDetail, m.width, styles)
 	}
 	if len(m.queuedPrompts) > 0 {
-		composer += "\n" + renderQueuedPrompts(m.queuedPrompts)
+		composer += "\n" + renderQueuedPrompts(m.queuedPrompts, styles)
 	}
 	if m.attachmentsOpen {
-		composer += "\n" + renderAttachmentPanel(m.attachments, m.attachmentSelected, m.width)
+		composer += "\n" + renderAttachmentPanel(m.attachments, m.attachmentSelected, m.width, styles)
 	} else if len(m.attachments) > 0 {
-		composer += "\n" + renderPendingAttachments(m.attachments)
+		composer += "\n" + renderPendingAttachments(m.attachments, styles)
 	}
 	if m.stashedPrompt != nil {
-		composer += "\n" + renderStashNotice(m.stashedPrompt)
+		composer += "\n" + renderStashNotice(m.stashedPrompt, styles)
 	}
 	statusText := fitFooterText(m.promptFooterText(barWidth), barContentWidth)
-	status := statusStyle().Width(barWidth).Render(statusText)
+	status := styles.status().Width(barWidth).Render(statusText)
 	if m.inline {
 		statusText = fitFooterText(m.inlineFooterText(barWidth), barContentWidth)
-		status = inlineStatusStyle().Render(statusText)
+		status = styles.inlineStatus().Render(statusText)
 	}
 	parts := []string{title}
 	if body != "" {
@@ -2778,6 +2838,13 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 	}
+	if isThemePickerInput(value) && m.selectTheme != nil {
+		m.appendHistory(value)
+		m.textarea.SetValue("")
+		m.historyPos = -1
+		m.openThemePicker()
+		return m, nil
+	}
 	if m.handleAttachmentInput(value) {
 		return m, nil
 	}
@@ -2853,6 +2920,15 @@ func (m model) startInput(value string) (tea.Model, tea.Cmd) {
 		return m, runSubmitAttachmentsCommand(ctx, m.submitAttachments, value, attachments)
 	}
 	return m, runSubmitCommand(ctx, m.submit, value)
+}
+
+func isThemePickerInput(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "/theme", "/color":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m model) startBashInput(value string) (tea.Model, tea.Cmd) {
@@ -4290,6 +4366,13 @@ type runtimeControlDoneMsg struct {
 	Err    error
 }
 
+type themeSelectDoneMsg struct {
+	Result   RuntimeControlResult
+	Selected string
+	Previous string
+	Err      error
+}
+
 func runExternalEditorCommand(ctx context.Context, editor ExternalEditorFunc, value string) tea.Cmd {
 	return func() tea.Msg {
 		text, err := editor(ctx, value)
@@ -4336,6 +4419,13 @@ func runModelSelectCommand(ctx context.Context, selectModel ModelSelectFunc, mod
 	return func() tea.Msg {
 		result, err := selectModel(ctx, model)
 		return runtimeControlDoneMsg{Result: result, Err: err}
+	}
+}
+
+func runThemeSelectCommand(ctx context.Context, selectTheme ThemeSelectFunc, theme string, previous string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := selectTheme(ctx, theme)
+		return themeSelectDoneMsg{Result: result, Selected: theme, Previous: previous, Err: err}
 	}
 }
 
@@ -5064,24 +5154,25 @@ func filepathToSlash(path string) string {
 	return strings.ReplaceAll(path, "\\", "/")
 }
 
-func renderCompletions(matches []string, selected int) string {
+func renderCompletions(matches []string, selected int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	if len(matches) == 0 {
 		return ""
 	}
 	if selected < 0 || selected >= len(matches) {
 		selected = 0
 	}
-	lines := []string{completionTitleStyle().Render(" suggestions ")}
+	lines := []string{styles.completionTitle().Render(" suggestions ")}
 	for index, match := range matches {
 		prefix := "  "
-		style := completionStyle()
+		style := styles.completion()
 		if index == selected {
 			prefix = "> "
-			style = selectedCompletionStyle()
+			style = styles.selectedCompletion()
 		}
 		lines = append(lines, style.Render(prefix+completionDisplayLine(match)))
 	}
-	lines = append(lines, completionStyle().Render("  Enter accept · Tab complete · Esc close"))
+	lines = append(lines, styles.completion().Render("  Enter accept · Tab complete · Esc close"))
 	return strings.Join(lines, "\n")
 }
 
@@ -5103,58 +5194,61 @@ func completionDisplayLine(candidate string) string {
 	return truncateForComposer(candidate+"  -  "+spec.Description, 120)
 }
 
-func renderCommandAssist(argumentHint string, inlineHint string) string {
+func renderCommandAssist(argumentHint string, inlineHint string, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	lines := []string{}
 	if argumentHint != "" {
-		lines = append(lines, completionTitleStyle().Render(" command args "))
-		lines = append(lines, completionStyle().Render("  "+truncateForComposer(argumentHint, 120)))
+		lines = append(lines, styles.completionTitle().Render(" command args "))
+		lines = append(lines, styles.completion().Render("  "+truncateForComposer(argumentHint, 120)))
 	}
 	if inlineHint != "" {
 		if len(lines) == 0 {
-			lines = append(lines, completionTitleStyle().Render(" command hint "))
+			lines = append(lines, styles.completionTitle().Render(" command hint "))
 		}
-		lines = append(lines, completionStyle().Render("  "+truncateForComposer("ghost: "+inlineHint+"  ·  Tab accept", 120)))
+		lines = append(lines, styles.completion().Render("  "+truncateForComposer("ghost: "+inlineHint+"  ·  Tab accept", 120)))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func renderHistorySearch(matches []string, selected int, query string) string {
+func renderHistorySearch(matches []string, selected int, query string, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	query = strings.TrimSpace(query)
 	title := " history "
 	if query != "" {
 		title = fmt.Sprintf(" history: %s ", query)
 	}
-	lines := []string{completionTitleStyle().Render(title)}
+	lines := []string{styles.completionTitle().Render(title)}
 	if len(matches) == 0 {
-		return strings.Join(append(lines, completionStyle().Render("  no matches")), "\n")
+		return strings.Join(append(lines, styles.completion().Render("  no matches")), "\n")
 	}
 	if selected < 0 || selected >= len(matches) {
 		selected = 0
 	}
 	for index, match := range matches {
 		prefix := "  "
-		style := completionStyle()
+		style := styles.completion()
 		if index == selected {
 			prefix = "> "
-			style = selectedCompletionStyle()
+			style = styles.selectedCompletion()
 		}
 		lines = append(lines, style.Render(prefix+truncateForComposer(match, 100)))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func renderQueuedPrompts(queued []string) string {
+func renderQueuedPrompts(queued []string, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	if len(queued) == 0 {
 		return ""
 	}
-	lines := []string{completionTitleStyle().Render(fmt.Sprintf(" queued prompts: %d ", len(queued)))}
+	lines := []string{styles.completionTitle().Render(fmt.Sprintf(" queued prompts: %d ", len(queued)))}
 	start := 0
 	if len(queued) > 3 {
 		start = len(queued) - 3
-		lines = append(lines, completionStyle().Render(fmt.Sprintf("  ... %d earlier", start)))
+		lines = append(lines, styles.completion().Render(fmt.Sprintf("  ... %d earlier", start)))
 	}
 	for index := start; index < len(queued); index++ {
-		lines = append(lines, completionStyle().Render(fmt.Sprintf("  %d. %s", index+1, truncateForComposer(queuedPromptDisplay(queued[index]), 100))))
+		lines = append(lines, styles.completion().Render(fmt.Sprintf("  %d. %s", index+1, truncateForComposer(queuedPromptDisplay(queued[index]), 100))))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -5192,6 +5286,82 @@ func (m *model) openModelPicker() {
 	m.modelPicker = true
 	m.modelPickerSelected = indexOfModelOption(m.modelOptions, m.currentModel)
 	m.status = "model picker"
+}
+
+func (m *model) openThemePicker() {
+	if m.selectTheme == nil {
+		m.status = "no theme picker"
+		return
+	}
+	if m.helpOpen {
+		m.helpOpen = false
+	}
+	m.matches = nil
+	m.selected = 0
+	m.themePicker = true
+	m.themePickerOriginal = m.theme
+	m.themePickerSelected = indexOfTheme(ThemeNames(), m.theme)
+	m.status = "theme picker"
+	m.applyTheme()
+}
+
+func (m *model) closeThemePicker(restore bool) {
+	if restore && m.themePickerOriginal != "" {
+		m.theme = m.themePickerOriginal
+	}
+	m.themePicker = false
+	m.themePickerSelected = 0
+	m.themePickerOriginal = ""
+	m.status = m.mode()
+	m.applyTheme()
+}
+
+func (m *model) moveThemePicker(delta int) {
+	options := ThemeNames()
+	if len(options) == 0 {
+		return
+	}
+	m.themePickerSelected = (m.themePickerSelected + delta + len(options)) % len(options)
+	m.theme = options[m.themePickerSelected]
+	m.status = "theme preview"
+	m.applyTheme()
+}
+
+func (m *model) setThemePickerIndex(index int) {
+	options := ThemeNames()
+	if len(options) == 0 {
+		return
+	}
+	m.themePickerSelected = clampIndex(index, len(options))
+	m.theme = options[m.themePickerSelected]
+	m.status = "theme preview"
+	m.applyTheme()
+}
+
+func (m model) acceptThemePicker() (tea.Model, tea.Cmd) {
+	options := ThemeNames()
+	if len(options) == 0 || m.selectTheme == nil {
+		m.closeThemePicker(true)
+		return m, nil
+	}
+	selected := options[clampIndex(m.themePickerSelected, len(options))]
+	previous := m.themePickerOriginal
+	m.theme = selected
+	m.themePicker = false
+	m.themePickerOriginal = ""
+	m.status = "saving theme"
+	m.applyTheme()
+	return m, runThemeSelectCommand(m.ctx, m.selectTheme, selected, previous)
+}
+
+func (m *model) applyTheme() {
+	name, ok := NormalizeThemeName(m.theme)
+	if !ok {
+		name = "auto"
+	}
+	m.theme = name
+	stylesForTheme(name).applyTextarea(&m.textarea)
+	m.refreshViewport()
 }
 
 func (m *model) closeModelPicker() {
@@ -5393,24 +5563,25 @@ func indexOfModelOption(options []string, current string) int {
 	return 0
 }
 
-func renderModelPicker(options []string, current string, selected int, width int) string {
+func renderModelPicker(options []string, current string, selected int, width int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	limit := 120
 	if width > 0 {
 		limit = max(12, width-8)
 	}
-	lines := []string{completionTitleStyle().Render(" model picker ")}
+	lines := []string{styles.completionTitle().Render(" model picker ")}
 	if len(options) == 0 {
-		return strings.Join(append(lines, completionStyle().Render("  no models configured")), "\n")
+		return strings.Join(append(lines, styles.completion().Render("  no models configured")), "\n")
 	}
 	if selected < 0 || selected >= len(options) {
 		selected = 0
 	}
 	for index, option := range options {
 		prefix := "  "
-		style := completionStyle()
+		style := styles.completion()
 		if index == selected {
 			prefix = "> "
-			style = selectedCompletionStyle()
+			style = styles.selectedCompletion()
 		}
 		suffix := ""
 		if strings.EqualFold(option, current) {
@@ -5418,7 +5589,38 @@ func renderModelPicker(options []string, current string, selected int, width int
 		}
 		lines = append(lines, style.Render(prefix+truncateForComposer(option+suffix, limit)))
 	}
-	lines = append(lines, completionStyle().Render("  Enter select · Up/Down move · Esc cancel"))
+	lines = append(lines, styles.completion().Render("  Enter select · Up/Down move · Esc cancel"))
+	return strings.Join(lines, "\n")
+}
+
+func renderThemePicker(current string, selected int, width int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
+	options := ThemeNames()
+	limit := 120
+	if width > 0 {
+		limit = max(12, width-8)
+	}
+	lines := []string{styles.completionTitle().Render(" theme ")}
+	for index, option := range options {
+		prefix := "  "
+		style := styles.completion()
+		if index == selected {
+			prefix = "❯ "
+			style = styles.selectedCompletion()
+		}
+		suffix := ""
+		if option == current {
+			suffix = "  preview"
+		}
+		labelLimit := max(1, limit-lipgloss.Width(prefix))
+		lines = append(lines, style.Render(prefix+truncateForComposer(themeLabel(option)+suffix, labelLimit)))
+	}
+	lines = append(lines, styles.completion().Render("  Enter save · Up/Down preview · Esc restore"))
+	if width > 0 {
+		for index := range lines {
+			lines[index] = truncateFooterLine(lines[index], max(12, width))
+		}
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -5733,7 +5935,8 @@ func quoteMessageText(text string) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderMessageActions(entry transcriptEntry, selected int, width int, targetPos int, targetCount int) string {
+func renderMessageActions(entry transcriptEntry, selected int, width int, targetPos int, targetCount int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	limit := 120
 	if width > 0 {
 		limit = max(12, width-8)
@@ -5746,21 +5949,21 @@ func renderMessageActions(entry transcriptEntry, selected int, width int, target
 	if targetCount > 1 && targetPos > 0 {
 		title = fmt.Sprintf(" message actions %d/%d ", targetPos, targetCount)
 	}
-	lines := []string{completionTitleStyle().Render(title)}
+	lines := []string{styles.completionTitle().Render(title)}
 	summary := strings.Join(strings.Fields(entry.Text), " ")
 	if summary == "" {
 		summary = "(empty message)"
 	}
-	lines = append(lines, completionStyle().Render("  "+truncateForComposer(role+": "+summary, limit)))
+	lines = append(lines, styles.completion().Render("  "+truncateForComposer(role+": "+summary, limit)))
 	if selected < 0 || selected >= len(messageActionLabels) {
 		selected = 0
 	}
 	for index, action := range messageActionLabels {
 		prefix := "  "
-		style := completionStyle()
+		style := styles.completion()
 		if index == selected {
 			prefix = "> "
-			style = selectedCompletionStyle()
+			style = styles.selectedCompletion()
 		}
 		lines = append(lines, style.Render(prefix+action))
 	}
@@ -5768,22 +5971,23 @@ func renderMessageActions(entry transcriptEntry, selected int, width int, target
 	if targetCount > 1 {
 		hint = "  Enter apply · c copy · Up/Down choose · Left/Right message · Esc cancel"
 	}
-	lines = append(lines, completionStyle().Render(hint))
+	lines = append(lines, styles.completion().Render(hint))
 	return strings.Join(lines, "\n")
 }
 
-func renderQuickOpen(matches []string, selected int, query string, width int, previewPath string, previewLines []string) string {
+func renderQuickOpen(matches []string, selected int, query string, width int, previewPath string, previewLines []string, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	query = strings.TrimSpace(query)
 	title := " quick open "
 	if query != "" {
 		title = fmt.Sprintf(" quick open: %s ", query)
 	}
-	lines := []string{completionTitleStyle().Render(title)}
+	lines := []string{styles.completionTitle().Render(title)}
 	if query == "" {
-		return strings.Join(append(lines, completionStyle().Render("  start typing to search files")), "\n")
+		return strings.Join(append(lines, styles.completion().Render("  start typing to search files")), "\n")
 	}
 	if len(matches) == 0 {
-		return strings.Join(append(lines, completionStyle().Render("  no matching files")), "\n")
+		return strings.Join(append(lines, styles.completion().Render("  no matching files")), "\n")
 	}
 	if selected < 0 || selected >= len(matches) {
 		selected = 0
@@ -5794,28 +5998,29 @@ func renderQuickOpen(matches []string, selected int, query string, width int, pr
 	}
 	for index, match := range matches {
 		prefix := "  "
-		style := completionStyle()
+		style := styles.completion()
 		if index == selected {
 			prefix = "> "
-			style = selectedCompletionStyle()
+			style = styles.selectedCompletion()
 		}
 		lines = append(lines, style.Render(prefix+truncateForComposer(match, limit)))
 	}
 	if previewPath != "" {
-		lines = append(lines, completionTitleStyle().Render(" preview "))
-		lines = append(lines, completionStyle().Render("  "+truncateForComposer(previewPath, limit)))
+		lines = append(lines, styles.completionTitle().Render(" preview "))
+		lines = append(lines, styles.completion().Render("  "+truncateForComposer(previewPath, limit)))
 		if len(previewLines) == 0 {
-			lines = append(lines, completionStyle().Render("  (empty file)"))
+			lines = append(lines, styles.completion().Render("  (empty file)"))
 		}
 		for _, line := range previewLines {
-			lines = append(lines, completionStyle().Render("  "+truncateForComposer(line, limit)))
+			lines = append(lines, styles.completion().Render("  "+truncateForComposer(line, limit)))
 		}
 	}
-	lines = append(lines, completionStyle().Render("  Enter/Tab insert @file · Shift+Tab insert path · Esc cancel"))
+	lines = append(lines, styles.completion().Render("  Enter/Tab insert @file · Shift+Tab insert path · Esc cancel"))
 	return strings.Join(lines, "\n")
 }
 
-func renderTodosPanel(items []TodoItem, loading bool, errText string, width int) string {
+func renderTodosPanel(items []TodoItem, loading bool, errText string, width int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	limit := 120
 	if width > 0 {
 		limit = max(12, width-8)
@@ -5825,27 +6030,27 @@ func renderTodosPanel(items []TodoItem, loading bool, errText string, width int)
 		completed, inProgress, pending := todoCounts(items)
 		title = fmt.Sprintf(" tasks: %d total, %d done, %d active, %d open ", len(items), completed, inProgress, pending)
 	}
-	lines := []string{completionTitleStyle().Render(title)}
+	lines := []string{styles.completionTitle().Render(title)}
 	switch {
 	case loading:
-		lines = append(lines, completionStyle().Render("  loading tasks..."))
+		lines = append(lines, styles.completion().Render("  loading tasks..."))
 	case strings.TrimSpace(errText) != "":
-		lines = append(lines, completionStyle().Render("  error: "+truncateForComposer(errText, limit)))
+		lines = append(lines, styles.completion().Render("  error: "+truncateForComposer(errText, limit)))
 	case len(items) == 0:
-		lines = append(lines, completionStyle().Render("  no tasks"))
+		lines = append(lines, styles.completion().Render("  no tasks"))
 	default:
 		visible := items
 		if len(visible) > 10 {
 			visible = visible[:10]
 		}
 		for _, item := range visible {
-			lines = append(lines, completionStyle().Render("  "+truncateForComposer(renderTodoLine(item), limit)))
+			lines = append(lines, styles.completion().Render("  "+truncateForComposer(renderTodoLine(item), limit)))
 		}
 		if hidden := len(items) - len(visible); hidden > 0 {
-			lines = append(lines, completionStyle().Render(fmt.Sprintf("  ... %d more", hidden)))
+			lines = append(lines, styles.completion().Render(fmt.Sprintf("  ... %d more", hidden)))
 		}
 	}
-	lines = append(lines, completionStyle().Render("  Ctrl+T close · /todos manage tasks · Ctrl+Shift+T background tasks"))
+	lines = append(lines, styles.completion().Render("  Ctrl+T close · /todos manage tasks · Ctrl+Shift+T background tasks"))
 	return strings.Join(lines, "\n")
 }
 
@@ -5912,18 +6117,19 @@ func normalizeTUITodoItems(items []TodoItem) []TodoItem {
 	return out
 }
 
-func renderGlobalSearch(matches []globalSearchMatch, selected int, query string, width int, previewPath string, previewLine int, previewLines []string) string {
+func renderGlobalSearch(matches []globalSearchMatch, selected int, query string, width int, previewPath string, previewLine int, previewLines []string, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	query = strings.TrimSpace(query)
 	title := " global search "
 	if query != "" {
 		title = fmt.Sprintf(" global search: %s ", query)
 	}
-	lines := []string{completionTitleStyle().Render(title)}
+	lines := []string{styles.completionTitle().Render(title)}
 	if query == "" {
-		return strings.Join(append(lines, completionStyle().Render("  type to search workspace")), "\n")
+		return strings.Join(append(lines, styles.completion().Render("  type to search workspace")), "\n")
 	}
 	if len(matches) == 0 {
-		return strings.Join(append(lines, completionStyle().Render("  no matches")), "\n")
+		return strings.Join(append(lines, styles.completion().Render("  no matches")), "\n")
 	}
 	if selected < 0 || selected >= len(matches) {
 		selected = 0
@@ -5934,25 +6140,25 @@ func renderGlobalSearch(matches []globalSearchMatch, selected int, query string,
 	}
 	for index, match := range matches {
 		prefix := "  "
-		style := completionStyle()
+		style := styles.completion()
 		if index == selected {
 			prefix = "> "
-			style = selectedCompletionStyle()
+			style = styles.selectedCompletion()
 		}
 		label := fmt.Sprintf("%s:%d  %s", match.File, match.Line, strings.TrimSpace(match.Text))
 		lines = append(lines, style.Render(prefix+truncateForComposer(label, limit)))
 	}
 	if previewPath != "" {
-		lines = append(lines, completionTitleStyle().Render(" preview "))
-		lines = append(lines, completionStyle().Render("  "+truncateForComposer(fmt.Sprintf("%s:%d", previewPath, previewLine), limit)))
+		lines = append(lines, styles.completionTitle().Render(" preview "))
+		lines = append(lines, styles.completion().Render("  "+truncateForComposer(fmt.Sprintf("%s:%d", previewPath, previewLine), limit)))
 		if len(previewLines) == 0 {
-			lines = append(lines, completionStyle().Render("  (empty file)"))
+			lines = append(lines, styles.completion().Render("  (empty file)"))
 		}
 		for _, line := range previewLines {
-			lines = append(lines, completionStyle().Render("  "+truncateForComposer(line, limit)))
+			lines = append(lines, styles.completion().Render("  "+truncateForComposer(line, limit)))
 		}
 	}
-	lines = append(lines, completionStyle().Render("  Enter/Tab insert @file#Lline · Shift+Tab insert path:line · Esc cancel"))
+	lines = append(lines, styles.completion().Render("  Enter/Tab insert @file#Lline · Shift+Tab insert path:line · Esc cancel"))
 	return strings.Join(lines, "\n")
 }
 
@@ -6136,23 +6342,25 @@ func globalSearchReference(match globalSearchMatch, mention bool) string {
 	return fmt.Sprintf("%s:%d ", match.File, match.Line)
 }
 
-func renderPendingAttachments(attachments []string) string {
+func renderPendingAttachments(attachments []string, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	if len(attachments) == 0 {
 		return ""
 	}
-	lines := []string{completionTitleStyle().Render(fmt.Sprintf(" attachments: %d ", len(attachments)))}
+	lines := []string{styles.completionTitle().Render(fmt.Sprintf(" attachments: %d ", len(attachments)))}
 	start := 0
 	if len(attachments) > 4 {
 		start = len(attachments) - 4
-		lines = append(lines, completionStyle().Render(fmt.Sprintf("  ... %d earlier", start)))
+		lines = append(lines, styles.completion().Render(fmt.Sprintf("  ... %d earlier", start)))
 	}
 	for index := start; index < len(attachments); index++ {
-		lines = append(lines, completionStyle().Render(fmt.Sprintf("  %d. %s", index+1, truncateForComposer(attachments[index], 100))))
+		lines = append(lines, styles.completion().Render(fmt.Sprintf("  %d. %s", index+1, truncateForComposer(attachments[index], 100))))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func renderAttachmentPanel(attachments []string, selected int, width int) string {
+func renderAttachmentPanel(attachments []string, selected int, width int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	if len(attachments) == 0 {
 		return ""
 	}
@@ -6161,24 +6369,25 @@ func renderAttachmentPanel(attachments []string, selected int, width int) string
 	if width > 0 {
 		limit = max(12, width-8)
 	}
-	lines := []string{completionTitleStyle().Render(fmt.Sprintf(" attachments %d/%d ", selected+1, len(attachments)))}
+	lines := []string{styles.completionTitle().Render(fmt.Sprintf(" attachments %d/%d ", selected+1, len(attachments)))}
 	for index, attachment := range attachments {
 		prefix := "  "
-		style := completionStyle()
+		style := styles.completion()
 		if index == selected {
 			prefix = "> "
-			style = selectedCompletionStyle()
+			style = styles.selectedCompletion()
 		}
 		lines = append(lines, style.Render(fmt.Sprintf("%s%d. %s", prefix, index+1, truncateForComposer(attachment, limit))))
 	}
-	lines = append(lines, completionStyle().Render("  Left/Right select · Backspace/Delete remove · Down/Esc close"))
+	lines = append(lines, styles.completion().Render("  Left/Right select · Backspace/Delete remove · Down/Esc close"))
 	return strings.Join(lines, "\n")
 }
 
-func renderDiffDialog(sources []DiffSource, sourceIndex int, fileIndex int, detail bool, width int) string {
+func renderDiffDialog(sources []DiffSource, sourceIndex int, fileIndex int, detail bool, width int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	sources = normalizeDiffSources(sources)
 	if len(sources) == 0 {
-		return completionTitleStyle().Render(" diff ") + "\n" + completionStyle().Render("  no changes")
+		return styles.completionTitle().Render(" diff ") + "\n" + styles.completion().Render("  no changes")
 	}
 	sourceIndex = clampIndex(sourceIndex, len(sources))
 	source := sources[sourceIndex]
@@ -6187,20 +6396,20 @@ func renderDiffDialog(sources []DiffSource, sourceIndex int, fileIndex int, deta
 		limit = max(12, width-8)
 	}
 	title := fmt.Sprintf(" diff %d/%d: %s ", sourceIndex+1, len(sources), source.Name)
-	lines := []string{completionTitleStyle().Render(title)}
+	lines := []string{styles.completionTitle().Render(title)}
 	if source.Subtitle != "" {
-		lines = append(lines, completionStyle().Render("  "+truncateForComposer(source.Subtitle, limit)))
+		lines = append(lines, styles.completion().Render("  "+truncateForComposer(source.Subtitle, limit)))
 	}
 	if len(source.Files) == 0 {
-		lines = append(lines, completionStyle().Render("  no changed files"))
-		lines = append(lines, completionStyle().Render("  Left/Right source · Esc close"))
+		lines = append(lines, styles.completion().Render("  no changed files"))
+		lines = append(lines, styles.completion().Render("  Left/Right source · Esc close"))
 		return strings.Join(lines, "\n")
 	}
 	fileIndex = clampIndex(fileIndex, len(source.Files))
 	selected := source.Files[fileIndex]
 	if detail {
 		header := fmt.Sprintf("  %s %s", strings.ToUpper(selected.Status), selected.Path)
-		lines = append(lines, selectedCompletionStyle().Render(truncateForComposer(header, limit)))
+		lines = append(lines, styles.selectedCompletion().Render(truncateForComposer(header, limit)))
 		diff := strings.TrimSpace(selected.Diff)
 		if diff == "" {
 			diff = selected.Summary
@@ -6209,19 +6418,19 @@ func renderDiffDialog(sources []DiffSource, sourceIndex int, fileIndex int, deta
 			diff = "(no diff preview)"
 		}
 		for _, line := range firstLines(diff, 12) {
-			lines = append(lines, completionStyle().Render("  "+truncateForComposer(line, limit)))
+			lines = append(lines, styles.completion().Render("  "+truncateForComposer(line, limit)))
 		}
-		lines = append(lines, completionStyle().Render("  Left back · Esc close"))
+		lines = append(lines, styles.completion().Render("  Left back · Esc close"))
 		return strings.Join(lines, "\n")
 	}
 	stats := fmt.Sprintf("%d changed %s", len(source.Files), plural("file", len(source.Files)))
-	lines = append(lines, completionStyle().Render("  "+stats))
+	lines = append(lines, styles.completion().Render("  "+stats))
 	for index, file := range source.Files {
 		prefix := "  "
-		style := completionStyle()
+		style := styles.completion()
 		if index == fileIndex {
 			prefix = "> "
-			style = selectedCompletionStyle()
+			style = styles.selectedCompletion()
 		}
 		summary := strings.TrimSpace(file.Summary)
 		if summary != "" {
@@ -6229,7 +6438,7 @@ func renderDiffDialog(sources []DiffSource, sourceIndex int, fileIndex int, deta
 		}
 		lines = append(lines, style.Render(truncateForComposer(fmt.Sprintf("%s%s %s%s", prefix, strings.ToUpper(file.Status), file.Path, summary), limit)))
 	}
-	lines = append(lines, completionStyle().Render("  Up/Down file · Left/Right source · Enter detail · Esc close"))
+	lines = append(lines, styles.completion().Render("  Up/Down file · Left/Right source · Enter detail · Esc close"))
 	return strings.Join(lines, "\n")
 }
 
@@ -6246,7 +6455,8 @@ func firstLines(text string, limit int) []string {
 	return lines
 }
 
-func renderStashNotice(stash *composerStash) string {
+func renderStashNotice(stash *composerStash, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	if stash == nil {
 		return ""
 	}
@@ -6254,10 +6464,10 @@ func renderStashNotice(stash *composerStash) string {
 	if summary == "" {
 		summary = fmt.Sprintf("%d pending %s", len(stash.Attachments), plural("attachment", len(stash.Attachments)))
 	}
-	lines := []string{completionTitleStyle().Render(" stashed prompt ")}
-	lines = append(lines, completionStyle().Render("  Ctrl+S restore: "+summary))
+	lines := []string{styles.completionTitle().Render(" stashed prompt ")}
+	lines = append(lines, styles.completion().Render("  Ctrl+S restore: "+summary))
 	if len(stash.Attachments) > 0 {
-		lines = append(lines, completionStyle().Render(fmt.Sprintf("  attachments: %d", len(stash.Attachments))))
+		lines = append(lines, styles.completion().Render(fmt.Sprintf("  attachments: %d", len(stash.Attachments))))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -7105,7 +7315,7 @@ func (m *model) layout(width int, height int) {
 
 func (m *model) refreshViewport() {
 	if m.helpOpen {
-		m.viewport.SetContent(helpPanel(m.completionCandidates(), m.viewport.Width))
+		m.viewport.SetContent(helpPanel(m.completionCandidates(), m.viewport.Width, stylesForTheme(m.theme)))
 		return
 	}
 	lines := []string{}
@@ -7115,7 +7325,7 @@ func (m *model) refreshViewport() {
 	}
 	for index, entry := range m.transcript[start:] {
 		index += start
-		lines = append(lines, renderTranscriptEntry(entry, max(8, m.viewport.Width-2), index, len(m.transcript), m.transcriptMode))
+		lines = append(lines, renderTranscriptEntry(entry, max(8, m.viewport.Width-2), index, len(m.transcript), m.transcriptMode, stylesForTheme(m.theme)))
 	}
 	m.viewport.SetContent(strings.Join(lines, "\n\n"))
 }
@@ -7148,7 +7358,7 @@ func (m model) renderTranscriptRange(start int, end int) string {
 	width := max(8, m.viewport.Width-2)
 	entries := make([]string, 0, end-start)
 	for index := start; index < end; index++ {
-		entries = append(entries, renderTranscriptEntry(m.transcript[index], width, index, len(m.transcript), m.transcriptMode))
+		entries = append(entries, renderTranscriptEntry(m.transcript[index], width, index, len(m.transcript), m.transcriptMode, stylesForTheme(m.theme)))
 	}
 	return strings.Join(entries, "\n\n")
 }
@@ -7185,6 +7395,9 @@ func (m model) mode() string {
 	}
 	if m.modelPicker {
 		return "model picker"
+	}
+	if m.themePicker {
+		return "theme picker"
 	}
 	if m.messageActions {
 		return "message actions"
@@ -7246,7 +7459,8 @@ func isLocalHelpInput(value string) bool {
 	}
 }
 
-func renderTranscriptEntry(entry transcriptEntry, width int, index int, total int, transcriptMode bool) string {
+func renderTranscriptEntry(entry transcriptEntry, width int, index int, total int, transcriptMode bool, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	role := strings.TrimSpace(entry.Role)
 	if role == "" {
 		role = "message"
@@ -7257,7 +7471,7 @@ func renderTranscriptEntry(entry transcriptEntry, width int, index int, total in
 			text = "(empty)"
 		}
 		marker := transcriptRoleMarker(role)
-		prefix := roleStyle(role).Render(marker)
+		prefix := styles.role(role).Render(marker)
 		contentWidth := max(4, width-lipgloss.Width(marker)-1)
 		wrapped := strings.ReplaceAll(wrapTranscriptText(text, contentWidth), "\n", "\n  ")
 		return prefix + " " + wrapped
@@ -7267,7 +7481,7 @@ func renderTranscriptEntry(entry transcriptEntry, width int, index int, total in
 		text = "(empty)"
 	}
 	header := fmt.Sprintf("%03d/%03d %s · %d %s · %d %s", index+1, max(1, total), role, transcriptLineCount(text), plural("line", transcriptLineCount(text)), len([]rune(text)), plural("char", len([]rune(text))))
-	return roleStyle(role).Render(header) + "\n" + wrapTranscriptText(text, width)
+	return styles.role(role).Render(header) + "\n" + wrapTranscriptText(text, width)
 }
 
 func transcriptRoleMarker(role string) string {
@@ -7346,12 +7560,13 @@ func wrapTranscriptLine(line string, width int) []string {
 	return out
 }
 
-func helpPanel(candidates []string, width int) string {
+func helpPanel(candidates []string, width int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	if len(candidates) > 12 {
 		candidates = candidates[:12]
 	}
 	sections := []string{
-		panelTitleStyle().Render(" help "),
+		styles.panelTitle().Render(" help "),
 		"Codog is an interactive coding agent. Type a task, reference @files, run !shell commands, or use slash commands.",
 		"Enter sends the composer. Shift+Enter, Alt+Enter, Ctrl+J, or a trailing backslash inserts a newline.",
 		"",
@@ -7432,51 +7647,9 @@ func isREPLExitInput(value string) bool {
 	}
 }
 
-func headerStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("62")).Padding(0, 1)
-}
-
-func inlineHeaderStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).PaddingLeft(2)
-}
-
-func statusStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Background(lipgloss.Color("238")).Padding(0, 1)
-}
-
-func inlineStatusStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("244")).PaddingLeft(2)
-}
-
-func panelTitleStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-}
-
-func completionStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-}
-
-func completionTitleStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
-}
-
-func selectedCompletionStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("31"))
-}
-
-func roleStyle(role string) lipgloss.Style {
-	switch strings.ToLower(role) {
-	case "assistant":
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	case "tool":
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
-	case "permission":
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
-	case "question":
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("45"))
-	case "user":
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	default:
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("241"))
+func resolveThemeStyles(themed []themeStyles) themeStyles {
+	if len(themed) > 0 {
+		return themed[0]
 	}
+	return stylesForTheme("auto")
 }

@@ -475,6 +475,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if !proceed {
 			return nil
 		}
+		proceed, err = configureInteractiveTheme(ctx, overrides)
+		if err != nil {
+			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+		}
+		if !proceed {
+			return nil
+		}
 	}
 
 	cfg, err := config.Load(overrides)
@@ -581,7 +588,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 				Usage:   "codog [--resume latest|--resume SESSION_ID]",
 			}, format)
 		}
-		selected, err := tui.SelectSession(ctx, resumeSessionChoices(sessions))
+		selected, err := tui.SelectSessionWithTheme(ctx, resumeSessionChoices(sessions), cfg.Theme)
 		if err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, format)
 		}
@@ -1364,7 +1371,7 @@ func confirmInteractiveWorkspaceTrust(ctx context.Context, workspace string, ove
 	if workspaceMatchesTrustedRoots(workspace, cfg.TrustedRoots) {
 		return true, nil
 	}
-	trusted, err := tui.ConfirmWorkspaceTrust(ctx, workspace)
+	trusted, err := tui.ConfirmWorkspaceTrustWithTheme(ctx, workspace, cfg.Theme)
 	if err != nil || !trusted {
 		return false, err
 	}
@@ -1373,6 +1380,33 @@ func confirmInteractiveWorkspaceTrust(ctx context.Context, workspace string, ove
 	_, err = config.SetFileValue(filepath.Join(cfg.ConfigHome, "config.json"), "trustedRoots", roots)
 	if err != nil {
 		return false, fmt.Errorf("persist workspace trust: %w", err)
+	}
+	return true, nil
+}
+
+func configureInteractiveTheme(ctx context.Context, overrides config.FlagOverrides) (bool, error) {
+	if _, ok := terminalInput(os.Stdin); !ok {
+		return true, nil
+	}
+	userOverrides := overrides
+	userOverrides.SettingSources = []string{"user"}
+	userOverrides.SettingSourcesSet = true
+	cfg, _, err := config.LoadForInspection(userOverrides)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(cfg.Theme) != "" {
+		if _, ok := tui.NormalizeThemeName(cfg.Theme); ok {
+			return true, nil
+		}
+	}
+	selected, accepted, err := tui.SelectTheme(ctx, "auto", true)
+	if err != nil || !accepted {
+		return false, err
+	}
+	_, err = config.SetFileValue(filepath.Join(cfg.ConfigHome, "config.json"), "theme", selected)
+	if err != nil {
+		return false, fmt.Errorf("persist terminal theme: %w", err)
 	}
 	return true, nil
 }
@@ -16745,7 +16779,7 @@ func normalizeOutputStyleAction(action string) string {
 	}
 }
 
-var availableThemes = []string{"default", "dark", "light", "ansi", "no-color"}
+var availableThemes = tui.ThemeNames()
 
 type themeRequest struct {
 	Action string
@@ -16785,6 +16819,7 @@ func (a *App) Theme(args []string) error {
 		if err := validateThemeName(req.Name); err != nil {
 			return err
 		}
+		req.Name, _ = tui.NormalizeThemeName(req.Name)
 		path, err := a.preferenceConfigPath(req.Target, req.Path)
 		if err != nil {
 			return err
@@ -16976,11 +17011,14 @@ func renderThemeReport(out io.Writer, report themeReport) {
 }
 
 func effectiveTheme(theme string) string {
-	theme = strings.TrimSpace(theme)
-	if theme == "" {
-		return "default"
+	return effectiveTUITheme(theme)
+}
+
+func effectiveTUITheme(theme string) string {
+	if normalized, ok := tui.NormalizeThemeName(theme); ok {
+		return normalized
 	}
-	return theme
+	return "auto"
 }
 
 func validateThemeName(name string) error {
@@ -16992,14 +17030,11 @@ func validateThemeName(name string) error {
 			Usage:    themeUsage,
 		}
 	}
-	for _, r := range name {
-		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' {
-			continue
-		}
+	if _, ok := tui.NormalizeThemeName(name); !ok {
 		return invalidFlagValueError{
 			Flag:    "theme",
 			Value:   name,
-			Message: "theme name may only contain letters, digits, dash, underscore, or dot",
+			Message: "theme must be one of: " + strings.Join(availableThemes, ", "),
 			Usage:   themeUsage,
 		}
 	}
@@ -29765,6 +29800,9 @@ func codogCapabilityFeatures() []string {
 		"status_config_validation",
 		"team_watch",
 		"telemetry_preferences",
+		"tui_first_run_theme_onboarding",
+		"tui_live_theme_picker",
+		"tui_no_color_theme",
 		"task_id_alias_schemas",
 		"task_create_prompt_contract",
 		"task_get_list_compat_fields",
@@ -37747,6 +37785,10 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		SelectModel: func(ctx context.Context, model string) (tui.RuntimeControlResult, error) {
 			return a.selectTUIModel(ctx, model)
 		},
+		Theme: effectiveTUITheme(a.Config.Theme),
+		SelectTheme: func(ctx context.Context, theme string) (tui.RuntimeControlResult, error) {
+			return a.selectTUITheme(ctx, theme)
+		},
 		ToggleFast: func(ctx context.Context) (tui.RuntimeControlResult, error) {
 			return a.toggleTUIFast(ctx)
 		},
@@ -37884,6 +37926,32 @@ func (a *App) selectTUIModel(ctx context.Context, selected string) (tui.RuntimeC
 		lines = append(lines, "Previous: "+previous)
 	}
 	return tui.RuntimeControlResult{Title: "Model", Status: "model selected", Lines: lines, Badges: []string{"model: " + strings.TrimSpace(a.Config.Model)}}, nil
+}
+
+func (a *App) selectTUITheme(ctx context.Context, selected string) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	rawSelected := selected
+	selected, ok := tui.NormalizeThemeName(selected)
+	if !ok {
+		return tui.RuntimeControlResult{}, fmt.Errorf("unknown theme %q", rawSelected)
+	}
+	previous := effectiveTUITheme(a.Config.Theme)
+	var out bytes.Buffer
+	oldOut, oldErr := a.Out, a.Err
+	a.Out, a.Err = &out, &out
+	err := a.Theme([]string{"set", selected})
+	a.Out, a.Err = oldOut, oldErr
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	return tui.RuntimeControlResult{
+		Title:  "Theme",
+		Status: "theme " + selected,
+		Lines:  []string{"Theme: " + selected, "Previous: " + previous},
+		Badges: []string{"theme: " + selected},
+	}, nil
 }
 
 func (a *App) toggleTUIFast(ctx context.Context) (tui.RuntimeControlResult, error) {

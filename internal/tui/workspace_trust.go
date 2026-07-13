@@ -11,10 +11,16 @@ import (
 // interactive agent runtime. Escape, explicit rejection, and a confirmed
 // Ctrl-C exit deny access.
 func ConfirmWorkspaceTrust(ctx context.Context, workspace string) (bool, error) {
+	return ConfirmWorkspaceTrustWithTheme(ctx, workspace, "auto")
+}
+
+// ConfirmWorkspaceTrustWithTheme asks for workspace trust using the configured
+// terminal theme.
+func ConfirmWorkspaceTrustWithTheme(ctx context.Context, workspace string, theme string) (bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	model := newWorkspaceTrustModel(workspace)
+	model := newWorkspaceTrustModelWithTheme(workspace, theme)
 	final, err := tea.NewProgram(model, tea.WithContext(ctx)).Run()
 	if err != nil {
 		return false, err
@@ -30,13 +36,23 @@ type workspaceTrustModel struct {
 	decided     bool
 	exitPending bool
 	width       int
+	theme       string
 }
 
 func newWorkspaceTrustModel(workspace string) workspaceTrustModel {
+	return newWorkspaceTrustModelWithTheme(workspace, "auto")
+}
+
+func newWorkspaceTrustModelWithTheme(workspace string, theme string) workspaceTrustModel {
+	theme, ok := NormalizeThemeName(theme)
+	if !ok {
+		theme = "auto"
+	}
 	return workspaceTrustModel{
 		workspace: strings.TrimSpace(workspace),
 		selected:  0,
 		width:     80,
+		theme:     theme,
 	}
 }
 
@@ -91,23 +107,24 @@ func (m workspaceTrustModel) View() string {
 	width := max(12, m.width)
 	contentWidth := max(1, width-2)
 	workspace := truncateFooterLine(m.workspace, contentWidth)
+	styles := stylesForTheme(m.theme)
 	lines := []string{
-		inlineHeaderStyle().Render(truncateFooterLine("Accessing workspace:", contentWidth)),
-		inlineStatusStyle().Render(workspace),
+		styles.inlineHeader().Render(truncateFooterLine("Accessing workspace:", contentWidth)),
+		styles.inlineStatus().Render(workspace),
 		"",
 	}
 	lines = append(lines, wrapTranscriptLine("Quick safety check: Is this a project you created or one you trust? If not, review this folder first.", width)...)
 	lines = append(lines, wrapTranscriptLine("Codog can read, edit, and execute files here. Project settings may also configure hooks, plugins, and MCP servers.", width)...)
 	lines = append(lines,
 		"",
-		renderTrustChoice("Yes, I trust this folder", m.selected == 0, width),
-		renderTrustChoice("No, exit", m.selected == 1, width),
+		renderTrustChoice("Yes, I trust this folder", m.selected == 0, width, styles),
+		renderTrustChoice("No, exit", m.selected == 1, width, styles),
 	)
 	footer := "↑/↓ select · Enter confirm · Esc cancel"
 	if m.exitPending {
 		footer = "Press Ctrl+C again to exit"
 	}
-	lines = append(lines, inlineStatusStyle().Render(truncateFooterLine(footer, contentWidth)))
+	lines = append(lines, styles.inlineStatus().Render(truncateFooterLine(footer, contentWidth)))
 	for index := range lines {
 		lines[index] = truncateFooterLine(lines[index], width)
 	}
@@ -129,14 +146,15 @@ func PreviewWorkspaceTrust(workspace string, width int) WorkspaceTrustPreview {
 	return WorkspaceTrustPreview{View: m.View(), SelectedChoice: m.selected}
 }
 
-func renderTrustChoice(label string, selected bool, width int) string {
+func renderTrustChoice(label string, selected bool, width int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	marker := "  "
 	if selected {
 		marker = "❯ "
 	}
 	line := truncateFooterLine(marker+label, max(1, width))
 	if selected {
-		return selectedCompletionStyle().Render(line)
+		return styles.selectedCompletion().Render(line)
 	}
 	return line
 }

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // SessionChoice is one saved conversation shown by the resume picker.
@@ -55,10 +54,16 @@ func PreviewSessionPicker(choices []SessionChoice, query string, width int, heig
 // SelectSession opens an inline, searchable saved-session picker. An empty
 // result means the user canceled the picker.
 func SelectSession(ctx context.Context, choices []SessionChoice) (string, error) {
+	return SelectSessionWithTheme(ctx, choices, "auto")
+}
+
+// SelectSessionWithTheme opens the saved-session picker with the configured
+// terminal theme. An empty result means the user canceled the picker.
+func SelectSessionWithTheme(ctx context.Context, choices []SessionChoice, theme string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	model := newSessionPickerModel(choices)
+	model := newSessionPickerModelWithTheme(choices, theme)
 	final, err := tea.NewProgram(model, tea.WithContext(ctx)).Run()
 	if err != nil {
 		return "", err
@@ -79,13 +84,23 @@ type sessionPickerModel struct {
 	canceled   bool
 	width      int
 	height     int
+	theme      string
 }
 
 func newSessionPickerModel(choices []SessionChoice) sessionPickerModel {
+	return newSessionPickerModelWithTheme(choices, "auto")
+}
+
+func newSessionPickerModelWithTheme(choices []SessionChoice, theme string) sessionPickerModel {
+	theme, ok := NormalizeThemeName(theme)
+	if !ok {
+		theme = "auto"
+	}
 	model := sessionPickerModel{
 		choices: append([]SessionChoice(nil), choices...),
 		width:   80,
 		height:  24,
+		theme:   theme,
 	}
 	model.applyFilter()
 	return model
@@ -168,14 +183,15 @@ func (m sessionPickerModel) View() string {
 	}
 	width := max(12, m.width)
 	contentWidth := max(1, width-2)
-	lines := []string{inlineHeaderStyle().Render(truncateFooterLine("Resume a session", contentWidth))}
+	styles := stylesForTheme(m.theme)
+	lines := []string{styles.inlineHeader().Render(truncateFooterLine("Resume a session", contentWidth))}
 	if len(m.filtered) == 0 {
-		lines = append(lines, "  "+completionStyle().Render(truncateFooterLine("No matching sessions", max(1, width-2))))
+		lines = append(lines, "  "+styles.completion().Render(truncateFooterLine("No matching sessions", max(1, width-2))))
 	} else {
 		start, end := m.visibleRange()
 		for position := start; position < end; position++ {
 			choice := m.choices[m.filtered[position]]
-			line := renderSessionChoice(choice, position == m.selected, width)
+			line := renderSessionChoice(choice, position == m.selected, width, styles)
 			lines = append(lines, line)
 		}
 	}
@@ -184,7 +200,7 @@ func (m sessionPickerModel) View() string {
 		query = "Filter: " + m.query
 	}
 	footer := truncateFooterLine(query+" · ↑/↓ select · Enter resume · Esc cancel", contentWidth)
-	lines = append(lines, inlineStatusStyle().Render(footer))
+	lines = append(lines, styles.inlineStatus().Render(footer))
 	return strings.Join(lines, "\n")
 }
 
@@ -220,7 +236,8 @@ func (m sessionPickerModel) visibleRange() (int, int) {
 	return start, end
 }
 
-func renderSessionChoice(choice SessionChoice, selected bool, width int) string {
+func renderSessionChoice(choice SessionChoice, selected bool, width int, themed ...themeStyles) string {
+	styles := resolveThemeStyles(themed)
 	marker := "  "
 	if selected {
 		marker = "❯ "
@@ -238,7 +255,7 @@ func renderSessionChoice(choice SessionChoice, selected bool, width int) string 
 	}
 	line := truncateFooterLine(marker+title+"  "+meta, max(1, width))
 	if selected {
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("31")).Render(line)
+		return styles.selectedCompletion().Render(line)
 	}
 	return line
 }

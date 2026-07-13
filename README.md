@@ -48,7 +48,8 @@ codog -p "summarize this project"
 
 For multi-turn work, start Codog from a repository. The default interactive
 command opens the inline TUI; the legacy line-oriented shell remains
-available as `repl`.
+available as `repl`. The first interactive launch asks for workspace trust and
+a terminal theme; use `/theme` later to preview and change it in place.
 
 ```sh
 codog
