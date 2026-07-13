@@ -26,6 +26,7 @@ import (
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/reportconformance"
 	"github.com/Rememorio/codog/internal/sandbox"
+	"github.com/Rememorio/codog/internal/shellstate"
 	"github.com/Rememorio/codog/internal/undo"
 	"github.com/stretchr/testify/require"
 )
@@ -456,6 +457,46 @@ func TestBashToolPersistsSessionCWD(t *testing.T) {
 	out, err = registry.Execute(ctx, "KillBash", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
 	require.NoError(t, err)
 	require.Contains(t, out, `"backgroundTaskId": "`+payload.Task.ID+`"`)
+}
+
+func TestBashToolPersistsSessionCWDUnderSandboxExec(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("requires macOS sandbox-exec")
+	}
+	if _, err := exec.LookPath("sandbox-exec"); err != nil {
+		t.Skip("sandbox-exec is unavailable")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	subdir := filepath.Join(workspace, "sub")
+	require.NoError(t, os.Mkdir(subdir, 0o755))
+	physicalSubdir, err := filepath.EvalSymlinks(subdir)
+	require.NoError(t, err)
+	ctx := ContextWithSessionID(context.Background(), "sandbox-session")
+	tool := BashTool{Workspace: workspace, ConfigHome: configHome, SandboxStrategy: "sandbox-exec"}
+
+	out, err := tool.Execute(ctx, []byte(`{"command":"printf LIVE_TOOL_OK && cd sub"}`))
+	require.NoError(t, err)
+	var result struct {
+		Stdout        string                         `json:"stdout"`
+		Stderr        string                         `json:"stderr"`
+		CWD           string                         `json:"cwd"`
+		SandboxStatus sandbox.SandboxExecutionStatus `json:"sandboxStatus"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	require.Equal(t, "LIVE_TOOL_OK", result.Stdout)
+	require.Empty(t, result.Stderr)
+	require.Equal(t, physicalSubdir, result.CWD)
+	require.Empty(t, result.SandboxStatus.InternalWritablePaths)
+	require.NotContains(t, out, ".bash-cwd-")
+	entries, err := os.ReadDir(shellstate.Dir(configHome, "sandbox-session"))
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "cwd", entries[0].Name())
+
+	out, err = tool.Execute(ctx, []byte(`{"command":"printf %s \"$PWD\""}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"stdout": "`+escapeJSONSubstring(physicalSubdir)+`"`)
 }
 
 func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {

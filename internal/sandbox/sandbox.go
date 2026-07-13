@@ -88,28 +88,30 @@ type SandboxRequestOptions struct {
 	NetworkIsolation      *bool
 	FilesystemMode        FilesystemIsolationMode
 	AllowedMounts         []string
+	InternalWritablePaths []string
 }
 
 type SandboxExecutionStatus struct {
-	Enabled             bool            `json:"enabled"`
-	Requested           SandboxRequest  `json:"requested"`
-	Supported           bool            `json:"supported"`
-	Active              bool            `json:"active"`
-	Strategy            string          `json:"strategy,omitempty"`
-	NamespaceSupported  bool            `json:"namespace_supported"`
-	NamespaceActive     bool            `json:"namespace_active"`
-	NetworkSupported    bool            `json:"network_supported"`
-	NetworkActive       bool            `json:"network_active"`
-	FilesystemMode      string          `json:"filesystem_mode"`
-	FilesystemActive    bool            `json:"filesystem_active"`
-	AllowedMounts       []string        `json:"allowed_mounts"`
-	InContainer         bool            `json:"in_container"`
-	ContainerMarkers    []string        `json:"container_markers,omitempty"`
-	FallbackReason      string          `json:"fallback_reason,omitempty"`
-	CapabilityGaps      []CapabilityGap `json:"capability_gaps,omitempty"`
-	ConfiguredStrategy  string          `json:"configured_strategy,omitempty"`
-	ResolutionStatus    string          `json:"resolution_status,omitempty"`
-	ResolutionAvailable bool            `json:"resolution_available"`
+	Enabled               bool            `json:"enabled"`
+	Requested             SandboxRequest  `json:"requested"`
+	Supported             bool            `json:"supported"`
+	Active                bool            `json:"active"`
+	Strategy              string          `json:"strategy,omitempty"`
+	NamespaceSupported    bool            `json:"namespace_supported"`
+	NamespaceActive       bool            `json:"namespace_active"`
+	NetworkSupported      bool            `json:"network_supported"`
+	NetworkActive         bool            `json:"network_active"`
+	FilesystemMode        string          `json:"filesystem_mode"`
+	FilesystemActive      bool            `json:"filesystem_active"`
+	AllowedMounts         []string        `json:"allowed_mounts"`
+	InContainer           bool            `json:"in_container"`
+	ContainerMarkers      []string        `json:"container_markers,omitempty"`
+	FallbackReason        string          `json:"fallback_reason,omitempty"`
+	CapabilityGaps        []CapabilityGap `json:"capability_gaps,omitempty"`
+	ConfiguredStrategy    string          `json:"configured_strategy,omitempty"`
+	ResolutionStatus      string          `json:"resolution_status,omitempty"`
+	ResolutionAvailable   bool            `json:"resolution_available"`
+	InternalWritablePaths []string        `json:"-"`
 }
 
 type CapabilityGap struct {
@@ -374,10 +376,12 @@ func ResolveSandboxExecutionStatusFor(strategy, workspace string, opts SandboxRe
 			Available:  false,
 			Effective:  "",
 		})
+		status.InternalWritablePaths = normalizePrivateWritablePaths(opts.InternalWritablePaths, workspace)
 		return status, "", nil
 	}
 	resolution := ResolveStrategyReportFor(strategy, detected)
 	status := sandboxExecutionStatusFromResolution(strategy, workspace, request, detected, resolution)
+	status.InternalWritablePaths = normalizePrivateWritablePaths(opts.InternalWritablePaths, workspace)
 	if resolution.Error != "" {
 		return status, "", fmt.Errorf("%s", resolution.Error)
 	}
@@ -460,7 +464,7 @@ func BuildShellCommandWithStatus(strategy, workspace, command string, status San
 			"--tmpfs", "/tmp",
 			"--chdir", absWorkspace,
 		}
-		for _, mount := range status.AllowedMounts {
+		for _, mount := range sandboxWritablePaths(status) {
 			if mount == "" || mount == absWorkspace {
 				continue
 			}
@@ -685,7 +689,7 @@ func macOSSandboxProfileForStatus(workspace string, status SandboxExecutionStatu
 	if !status.NetworkActive {
 		rules = append(rules[:6], append([]string{"(allow network*)"}, rules[6:]...)...)
 	}
-	for _, mount := range status.AllowedMounts {
+	for _, mount := range sandboxWritablePaths(status) {
 		mount = strings.TrimSpace(mount)
 		if mount == "" || mount == workspace {
 			continue
@@ -693,6 +697,13 @@ func macOSSandboxProfileForStatus(workspace string, status SandboxExecutionStatu
 		rules = append(rules, "(allow file-write* (subpath "+strconv.Quote(mount)+"))")
 	}
 	return strings.Join(rules, "\n")
+}
+
+func sandboxWritablePaths(status SandboxExecutionStatus) []string {
+	paths := make([]string, 0, len(status.AllowedMounts)+len(status.InternalWritablePaths))
+	paths = append(paths, status.AllowedMounts...)
+	paths = append(paths, status.InternalWritablePaths...)
+	return dedupeKeepOrder(paths)
 }
 
 func detectContainer(inputs DetectionInputs) ContainerStatus {
@@ -798,6 +809,16 @@ func normalizeMounts(mounts []string, workspace string) []string {
 		out = append(out, filepath.Clean(mount))
 	}
 	return dedupeKeepOrder(out)
+}
+
+func normalizePrivateWritablePaths(paths []string, workspace string) []string {
+	paths = normalizeMounts(paths, workspace)
+	for index, path := range paths {
+		if physical, err := filepath.EvalSymlinks(path); err == nil {
+			paths[index] = physical
+		}
+	}
+	return dedupeKeepOrder(paths)
 }
 
 func cloneSandboxRequest(request SandboxRequest) SandboxRequest {

@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -23,6 +24,27 @@ func TestBuildShellCommandSandboxExec(t *testing.T) {
 	require.Contains(t, args[1], "(deny default)")
 	require.Contains(t, args[1], workspace)
 	require.Equal(t, []string{"sh", "-lc", "pwd"}, args[2:])
+}
+
+func TestBuildShellCommandIncludesPrivateWritablePaths(t *testing.T) {
+	workspace := t.TempDir()
+	privateDir := t.TempDir()
+	status := SandboxExecutionStatus{
+		AllowedMounts:         []string{filepath.Join(workspace, "logs")},
+		InternalWritablePaths: []string{privateDir},
+	}
+
+	name, args, err := BuildShellCommandWithStatus("sandbox-exec", workspace, "pwd", status)
+	require.NoError(t, err)
+	require.Equal(t, "sandbox-exec", name)
+	require.Contains(t, args[1], privateDir)
+	_, args, err = BuildShellCommandWithStatus("bwrap", workspace, "pwd", status)
+	require.NoError(t, err)
+	require.Contains(t, args, privateDir)
+
+	data, err := json.Marshal(status)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), privateDir)
 }
 
 func TestBuildShellCommandBwrap(t *testing.T) {

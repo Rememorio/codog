@@ -2739,6 +2739,26 @@ func wrapCommandWithCWDProbe(command string, cwdFile string) string {
 	return command + "\n__codog_status=$?\npwd -P > " + shellQuoteToolArg(cwdFile) + "\nexit $__codog_status"
 }
 
+func createCWDProbe(configHome string, sessionID string) (string, string, error) {
+	stateDir := shellstate.Dir(configHome, sessionID)
+	if stateDir == "" {
+		return "", "", nil
+	}
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return "", "", err
+	}
+	probeDir, err := os.MkdirTemp(stateDir, ".bash-cwd-")
+	if err != nil {
+		return "", "", err
+	}
+	probePath := filepath.Join(probeDir, "cwd")
+	if err := os.WriteFile(probePath, nil, 0o600); err != nil {
+		_ = os.RemoveAll(probeDir)
+		return "", "", err
+	}
+	return probePath, probeDir, nil
+}
+
 const maxBashOutputBytes = 16 * 1024
 
 type persistedBashOutput struct {
@@ -2995,20 +3015,22 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	}
 	commandText := payload.Command
 	cwdProbePath := ""
+	cwdProbeDir := ""
 	if SessionIDFromContext(ctx) != "" && strings.TrimSpace(t.ConfigHome) != "" && !payload.RunInBackground {
-		probe, err := os.CreateTemp("", "codog-cwd-*.txt")
+		cwdProbePath, cwdProbeDir, err = createCWDProbe(t.ConfigHome, SessionIDFromContext(ctx))
 		if err != nil {
 			return "", err
 		}
-		cwdProbePath = probe.Name()
-		_ = probe.Close()
-		defer os.Remove(cwdProbePath)
+		defer os.RemoveAll(cwdProbeDir)
 		commandText = wrapCommandWithCWDProbe(commandText, cwdProbePath)
 	}
 	strategy := bashSandboxStrategy(t.SandboxStrategy, t.Sandbox, payload.DangerouslyDisableSandbox)
 	requestOptions, err := bashSandboxRequestOptions(t.Sandbox, strategy, payload.DangerouslyDisableSandbox, payload.NamespaceRestrictions, payload.NamespaceRestrictionsAlt, payload.IsolateNetwork, payload.IsolateNetworkAlt, payload.FilesystemMode, payload.FilesystemModeAlt, payload.AllowedMounts, payload.AllowedMountsAlt)
 	if err != nil {
 		return "", err
+	}
+	if cwdProbeDir != "" {
+		requestOptions.InternalWritablePaths = append(requestOptions.InternalWritablePaths, cwdProbeDir)
 	}
 	command, args, effectiveSandbox, sandboxStatus, err := sandbox.ShellCommandWithSandboxStatus(strategy, t.Workspace, commandText, requestOptions)
 	if err != nil {
