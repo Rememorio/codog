@@ -1353,6 +1353,8 @@ type FlagOverrides struct {
 	FromPR                         string
 	ResumeSessionAt                string
 	Prefill                        string
+	InitialPrompt                  string
+	InitialAttachments             []string
 	DeepLinkOrigin                 bool
 	DeepLinkRepo                   string
 	DeepLinkLastFetchMS            int64

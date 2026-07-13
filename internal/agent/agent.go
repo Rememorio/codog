@@ -33129,6 +33129,9 @@ func buildCommandNotFoundReport(command string, args []string) commandNotFoundRe
 	if len(cleanArgs) > 0 {
 		prompt := strings.TrimSpace(strings.Join(append([]string{command}, cleanArgs...), " "))
 		hint = fmt.Sprintf("Use `codog prompt %q` to send this as a prompt, or run `codog --help` to list commands.", prompt)
+		if len(suggestions) > 0 {
+			hint = fmt.Sprintf("Did you mean: %s? %s", strings.Join(suggestions, ", "), hint)
+		}
 	} else if len(suggestions) > 0 {
 		hint = fmt.Sprintf("Did you mean: %s? Run `codog --help` to list commands.", strings.Join(suggestions, ", "))
 	}
@@ -37301,6 +37304,8 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		Candidates:              a.slashCompletionCandidates(sess.ID),
 		FileCandidates:          fileCandidates,
 		Prefill:                 overrides.Prefill,
+		InitialPrompt:           overrides.InitialPrompt,
+		InitialAttachments:      overrides.InitialAttachments,
 		History:                 history,
 		Entries:                 entries,
 		SubmitStreamAttachments: submit,
@@ -60077,6 +60082,28 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		return base, "", nil, nil
 	}
 	command, rest := rest[0], rest[1:]
+	if isInteractiveInitialPrompt(command, rest) {
+		if strings.TrimSpace(base.Prefill) != "" {
+			return base, "", nil, invalidFlagValueError{
+				Flag:    "--prefill",
+				Value:   command,
+				Message: "--prefill cannot be combined with an initial prompt",
+				Usage:   "codog --prefill TEXT or codog \"<prompt>\"",
+			}
+		}
+		if strings.TrimSpace(outputFormat) != "" || jsonOutput {
+			return base, "", nil, invalidFlagValueError{
+				Flag:    "--output-format",
+				Value:   resolveGlobalOutputFormat(outputFormat, jsonOutput),
+				Message: "--output-format requires --print for a positional prompt",
+				Usage:   "codog --print --output-format text|json|stream-json \"<prompt>\"",
+			}
+		}
+		base.InitialPrompt = strings.TrimSpace(strings.Join(append([]string{command}, rest...), " "))
+		base.InitialAttachments = append([]string(nil), promptAttachments...)
+		command = ""
+		rest = nil
+	}
 	if strings.TrimSpace(base.Prefill) != "" && !commandAcceptsPrefill(command) {
 		return base, "", nil, invalidFlagValueError{
 			Flag:    "--prefill",
@@ -60456,6 +60483,23 @@ func isKnownNonPromptCommand(value string) bool {
 	return false
 }
 
+func isInteractiveInitialPrompt(command string, args []string) bool {
+	command = strings.TrimSpace(command)
+	if command == "" || strings.HasPrefix(command, "/") || strings.EqualFold(command, "prompt") || isKnownNonPromptCommand(command) {
+		return false
+	}
+	lower := strings.ToLower(command)
+	if lower == "fork" || (len(args) == 0 && (lower == "quit" || bareApprovalSlashName(lower) != "")) {
+		return false
+	}
+	for _, arg := range args {
+		if strings.HasPrefix(strings.TrimSpace(arg), "-") {
+			return false
+		}
+	}
+	return true
+}
+
 func missingToolFlagArgument(args []string) (missingArgumentError, bool) {
 	for index := 0; index < len(args); index++ {
 		if argument, inlineValue, inline, ok := parseToolSelectionFlag(args[index]); ok {
@@ -60693,12 +60737,32 @@ type helpReport struct {
 	ProtocolMethods         []string `json:"protocol_methods,omitempty"`
 }
 
+type helpCatalogReport struct {
+	Kind     string             `json:"kind"`
+	Action   string             `json:"action"`
+	Status   string             `json:"status"`
+	Query    string             `json:"query,omitempty"`
+	Count    int                `json:"count"`
+	Commands []helpCatalogEntry `json:"commands"`
+}
+
+type helpCatalogEntry struct {
+	Name        string   `json:"name"`
+	Usage       string   `json:"usage"`
+	Description string   `json:"description"`
+	Aliases     []string `json:"aliases,omitempty"`
+}
+
 func renderHelpCommand(out io.Writer, args []string) error {
 	format, topic, err := parseHelpArgs(args)
 	if err != nil {
 		return err
 	}
 	if topic != "" {
+		fields := strings.Fields(topic)
+		if len(fields) > 0 && strings.EqualFold(fields[0], "all") {
+			return renderHelpCatalog(out, strings.Join(fields[1:], " "), format)
+		}
 		if spec, ok := commandHelpSpecFor(topic); ok {
 			return renderCommandHelpSpec(out, spec, format)
 		}
@@ -60722,6 +60786,70 @@ func renderHelpCommand(out io.Writer, args []string) error {
 	}
 	fmt.Fprint(out, help)
 	return nil
+}
+
+func renderHelpCatalog(out io.Writer, query string, format string) error {
+	report := buildHelpCatalog(query)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Codog Commands")
+	if report.Query != "" {
+		fmt.Fprintf(out, "  Filter           %s\n", report.Query)
+	}
+	fmt.Fprintf(out, "  Commands         %d\n", report.Count)
+	fmt.Fprintln(out, "  Use `codog help COMMAND` for detailed usage.")
+	for _, command := range report.Commands {
+		fmt.Fprintf(out, "\n  %-24s %s\n", command.Name, command.Description)
+		fmt.Fprintf(out, "    %s\n", command.Usage)
+	}
+	return nil
+}
+
+func buildHelpCatalog(query string) helpCatalogReport {
+	query = strings.ToLower(strings.TrimSpace(query))
+	commands := make([]helpCatalogEntry, 0, len(builtInCommandNames()))
+	for _, name := range builtInCommandNames() {
+		spec, ok := commandHelpSpecFor(name)
+		if !ok {
+			continue
+		}
+		entry := helpCatalogEntry{
+			Name:        name,
+			Usage:       spec.Usage,
+			Description: commandHelpDescription(spec),
+			Aliases:     append([]string(nil), spec.Aliases...),
+		}
+		if query != "" {
+			haystack := strings.ToLower(strings.Join(append([]string{entry.Name, entry.Usage, entry.Description}, entry.Aliases...), "\n"))
+			if !strings.Contains(haystack, query) {
+				continue
+			}
+		}
+		commands = append(commands, entry)
+	}
+	return helpCatalogReport{
+		Kind:     "help",
+		Action:   "catalog",
+		Status:   "ok",
+		Query:    query,
+		Count:    len(commands),
+		Commands: commands,
+	}
+}
+
+func commandHelpDescription(spec commandHelpSpec) string {
+	paragraphs := strings.Split(strings.TrimSpace(spec.Text), "\n\n")
+	for _, paragraph := range paragraphs[1:] {
+		paragraph = strings.TrimSpace(paragraph)
+		if paragraph == "" || strings.HasPrefix(paragraph, "Usage:") {
+			continue
+		}
+		return strings.Join(strings.Fields(paragraph), " ")
+	}
+	return "Run this Codog command."
 }
 
 func parseHelpArgs(args []string) (string, string, error) {
@@ -62197,236 +62325,100 @@ func printHelp(out io.Writer) {
 }
 
 func helpText(exe string) string {
-	help := `%s is a Go-native coding agent CLI.
+	help := `%s is a Go-native interactive coding agent.
 
 Usage:
-  %s [flags] prompt [--stdin] [--attach PATH] [--input-format text|stream-json] [--json-schema SCHEMA] "explain this repo" [--json|--output-format text|json|stream-json] | -p "explain this repo"
-  %s [flags] btw "quick side question" [--session ID|--resume ID]
-  %s version [--json|--output-format text|json]
-  %s config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--json|--output-format text|json]
-  %s reset [status|SECTION|all --confirm] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] api [routes|status|serve] [ADDR|--addr ADDR] [--json|--output-format text|json]
-  %s server [--host HOST] [--port PORT] [--auth-token TOKEN] [--unix PATH] [--workspace DIR] [--idle-timeout MS] [--max-sessions N] [--json|--output-format text|json]
-  %s open <cc-url|http-url> [-p|--print [PROMPT]] [--json|--output-format text|json|stream-json]
-  %s <cc-url|cc+unix-url> [-p|--print [PROMPT]] [--json|--output-format text|json|stream-json]
-  %s [flags] api-key [status|set KEY|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] language [status|show|LANGUAGE|set|use LANGUAGE|clear|off] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] repl
-  %s [flags] tui
-  %s [flags] clear [--confirm] [--json|--output-format text|json]
-  %s [flags] conversation [--confirm] [--json|--output-format text|json]
-  %s [flags] sessions [list|show|exists|search|audit|repair|export|import|fork|rename|prune|delete]
-  %s [flags] backfill-sessions [--json|--output-format text|json]
-  %s [flags] generateSessionName [--session ID|--resume ID|latest] [--source first|last] [--rename] [--json|--output-format text|json]
-  %s [flags] rename NEW_ID [--session ID] [--json|--output-format text|json]
-  %s [flags] history [--session ID] [--limit N] [--json|--output-format text|json]
-  %s [flags] summary [--session ID|--resume ID|latest] [--json|--output-format text|json]
-  %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
-  %s [flags] todos [list|ls|add|new|start|doing|done|complete|pending|reopen|clear|reset] [ARGS...] [--json|--output-format text|json]
-  %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID] | paste [--print|--json] [--session ID]
-  %s [flags] pin|unpin [message-index|last] [--session ID] [--json|--output-format text|json]
-  %s [flags] skill|skills [list|ls|search|find|audit|doctor|sources|roots|status|enable|disable|show|info|describe|invoke|add|install|uninstall]
-  %s [flags] commands [list|ls|search|find|audit|doctor|sources|roots|show|view|run|render|exec|add|install|uninstall|remove|rm]
-  %s [flags] templates [list|ls|search|find|audit|doctor|sources|roots|show|view|apply|render|run|add|install|uninstall|remove|rm]
-  %s [flags] hooks [list|health EVENT|run EVENT|watch-paths list|check] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
-  %s [flags] output-style [list|ls|search|find|audit|doctor|sources|roots|status|show|view|set|use|clear|off] [NAME] [--json|--output-format text|json]
-  %s [flags] model [NAME] | models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|set MODEL|clear|reset|help] [--target user|project|local] [--path PATH] [--json|--output-format text|json]
-  %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] budget [status|show|ls|set|use|reset|clear|off] [--max-tokens N] [--max-turns N] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] max-tokens [N]
-  %s [flags] temperature [VALUE|set VALUE|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] max-turns [N]
-  %s [flags] permissions [show|read-only|workspace-write|danger-full-access|prompt|allow]
-  %s [flags] allowed-tools [list|add|remove|clear] [TOOL...]
-  %s [flags] brief [MESSAGE] [--status normal|proactive] [--attach PATH] [--json|--output-format text|json]
-  %s [flags] mcp [list|serve|self|show|add|remove|tools|auth|call|resources|resource-templates|read|prompts|prompt]
-  %s [flags] capabilities [show|list|resolve NAME] [--json|--output-format text|json]
-  %s [flags] bootstrap-plan [--json|--output-format text|json]
-  %s [flags] prefetch [run|status] [--json|--output-format text|json]
-  %s [flags] deferred-init|startup-report [status|run] [--json|--output-format text|json]
-  %s acp [serve] [--json|--output-format text|json]
-  %s [flags] status [--json|--output-format text|json]
-  %s [flags] statusline [--json|--output-format text|json]
-  %s [flags] setup [status|init|terminal|all] [--shell zsh|bash|fish|powershell] [--path PATH] [--json|--output-format text|json]
-  %s [flags] terminal-setup [status|snippet|install|uninstall] [--shell zsh|bash|fish|powershell] [--path PATH] [--force] [--json|--output-format text|json]
-  %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
-  %s [flags] context-noninteractive [--session ID|--resume ID|latest] [--json|--output-format text|json]
-  %s [flags] ctx_viz [--session ID|--resume ID|latest] [--output PATH] [--json|--output-format text|json]
-  %s [flags] workspace|cwd [status|PATH|set PATH] [--json|--output-format text|json]
-  %s [flags] init [--json|--output-format text|json]
-  %s [flags] init-verifiers [--target claude|codog] [--dry-run] [--force] [--json|--output-format text|json]
-  %s [flags] onboarding [--path PATH] [--json|--output-format text|json]
-  %s [flags] state [--json|--output-format text|json]
-  %s [flags] memory [list|select|show|search|relevant|add|path|ensure|edit|reset] [ARGS...] [--all] [--confirm] [--limit N] [--editor COMMAND] [--no-open] [--json|--output-format text|json]
-  %s [flags] project [--json|--output-format text|json]
-  %s [flags] env [--json|--output-format text|json]
-  %s [flags] files [PATH] [--glob GLOB] [--limit N] [--hidden] [--json|--output-format text|json]
-  %s [flags] scope [preview|apply|restore] [--choice auto|workspace|ignore|both] [--target PATH] [--json|--output-format text|json]
-  %s [flags] search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json|--output-format text|json]
-  %s [flags] security-review [--limit N] [--json|--output-format text|json]
-  %s [flags] bughunter [PATH] [--limit N] [--json|--output-format text|json]
-  %s [flags] review|ultrareview [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
-  %s [flags] reviewRemote [PR|URL|NUMBER] [--repo OWNER/REPO] [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
-  %s [flags] feedback [MESSAGE...] [--session ID] [--output PATH] [--json|--output-format text|json]
-  %s [flags] pr [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
-  %s [flags] commit-push-pr MESSAGE [--title TITLE] [--body BODY] [--branch NAME] [--base REF] [--remote NAME] [--staged] [--draft] [--no-pr] [--dry-run] [--json|--output-format text|json]
-  %s [flags] autofix-pr [PR|URL|NUMBER] [--repo OWNER/REPO] [--limit N] [--write|--output PATH] [--json|--output-format text|json]
-  %s [flags] pr-comments [PR|URL|NUMBER] [--repo OWNER/REPO] [--json|--output-format text|json]
-  %s [flags] install-github-app [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]
-  %s [flags] setupGitHubActions [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]
-  %s [flags] install-slack-app [status|list] [--no-open] [--json|--output-format text|json]
-  %s [flags] stickers [status|list] [--no-open] [--json|--output-format text|json]
-  %s [flags] passes [status|list|show|open|set-url URL|clear-url] [--no-open] [--json|--output-format text|json]
-  %s [flags] issue [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
-  %s [flags] focus [PATH...] [--json|--output-format text|json]
-  %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
-  %s [flags] add-dir [PATH...|list|remove PATH|clear] [--json|--output-format text|json]
-  %s [flags] validation [add-dir] [PATH...] [--json|--output-format text|json]
-  %s [flags] theme [status|show|list|ls|NAME|set|use NAME|clear|off] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] color [list|NAME|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] vim [on|off|toggle|status] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] effort [auto|low|medium|high|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] reasoning [auto|low|medium|high|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] fast [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] voice [status|set-command|on|off|toggle|test|listen|transcribe|clear] [--command COMMAND] [--input TEXT] [--timeout-ms N] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] listen [--input TEXT] [--timeout-ms N] [--json|--output-format text|json]
-  %s [flags] speak [TEXT|last|status|set-command|clear] [--session ID|--resume latest] [--nth N] [--input TEXT] [--timeout-ms N] [--json|--output-format text|json]
-  %s [flags] chrome [status|on|off|toggle|clear|install|permissions|reconnect] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] telemetry [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] keybindings [show|path|init|open|edit|validate|resolve CONTEXT KEY] [--force] [--path PATH] [--json|--output-format text|json]
-  %s [flags] notifications [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] cost --resume latest
-  %s [flags] cache [--session ID|--resume ID|latest] [--json|--output-format text|json]
-  %s [flags] caches [--session ID|--resume ID|latest] [--json|--output-format text|json]
-  %s [flags] break-cache [--session ID|--resume ID|latest] [MESSAGE] [--json|--output-format text|json]
-  %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
-  %s [flags] stats [--session ID|--resume ID|latest] [--json|--output-format text|json]
-  %s [flags] metrics [--session ID|--resume ID|latest] [--limit N] [--json|--output-format text|json]
-  %s [flags] perf-issue [--limit N] [--token-threshold N] [--tool-threshold N] [--write|--output PATH] [--json|--output-format text|json]
-  %s [flags] insights [--limit N] [--json|--output-format text|json]
-  %s [flags] think-back|thinkback-play [--year YYYY] [--limit N] [--output PATH] [--json|--output-format text|json]
-  %s [flags] extra-usage [status|list|--admin|--personal] [--no-open] [--json|--output-format text|json]
-  %s [flags] extra-usage-core [status|list|--admin|--personal] [--no-open] [--json|--output-format text|json]
-  %s [flags] extra-usage-noninteractive [status|list|--admin|--personal] [--json|--output-format text|json]
-  %s [flags] compact [--session ID|--resume ID|latest] [--keep N] [--json|--output-format text|json]
-  %s [flags] undo [--json|--output-format text|json]
-  %s [flags] rate-limit [status|set|reset] [--max-retries N] [--initial-backoff-ms N] [--max-backoff-ms N] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] rate-limit-options [--json|--output-format text|json]
-  %s [flags] reset-limits [--target user|project|local] [--path PATH] [--json|--output-format text|json]
-  %s [flags] ant-trace [--no-request] [--message TEXT] [--timeout-ms N] [--write|--output PATH] [--json|--output-format text|json]
-  %s [flags] mock-limits [serve|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--json|--output-format text|json]
-  %s [flags] mock-parity [run|check|manifest] [--report PATH] [--json|--output-format text|json]
-  %s [flags] plan|ultraplan [show|enter|set|open|edit|exit|clear] [TEXT] [--json|--output-format text|json]
-  %s [flags] doctor [--json|--output-format text|json]
-  %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
-  %s [flags] branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--json|--output-format text|json]
-  %s [flags] stale-base [check] [BASE_COMMIT] [--base-commit REF] [--json|--output-format text|json]
-  %s [flags] green-contract [check] [--merge-ready] [--required-level LEVEL] [--observed-level LEVEL] [--test-command COMMAND] [--test-result COMMAND=EXIT] [--base-branch-fresh] [--recovery-context] [--json|--output-format text|json]
-  %s [flags] g004-conformance [validate] [FILE|JSON] [--input JSON|--file PATH|--stdin] [--json|--output-format text|json]
-  %s [flags] report-schema [registry|canonicalize|project] [--input JSON|--file PATH|--stdin] [--json|--output-format text|json]
-  %s [flags] trust [resolve] [SCREEN_TEXT] [--cwd PATH] [--worktree PATH] [--allow PATTERN] [--deny PATH] [--json|--output-format text|json]
-  %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
-  %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] [--json|--output-format text|json] | blame FILE [line] [--json|--output-format text|json] | commit [--all] MESSAGE [--json|--output-format text|json]
-  %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log [count] [--json|--output-format text|json] | git changelog [count] [--json|--output-format text|json] | git blame FILE [line] [--json|--output-format text|json] | git stash [list|push|apply|pop] [ARGS...] [--json|--output-format text|json] | git commit [--all] MESSAGE [--json|--output-format text|json]
-  %s [flags] stash [list|push|apply|pop] [ARGS...] [--json|--output-format text|json]
-  %s [flags] changelog [count] [--json|--output-format text|json]
-  %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]
-  %s [flags] run [--timeout-ms N] COMMAND [ARG...]
-  %s [flags] node|python [--timeout-ms N] CODE|FILE [ARG...]
-  %s [flags] test|build|lint [--timeout-ms N] [ARGS...]
-  %s [flags] symbols|diagnostics|map|references|definition|hover|teleport|completion|format [ARGS...] [--json]
-  %s mock-server :8089
-  %s self-test [--json|--output-format text|json]
-  %s dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]
-  %s system-prompt [--json|--output-format text|json]
-  %s debug-tool-call TOOL JSON [--json|--output-format text|json]
-  %s background run "command" | background list [session-id] | background board [stalled-after-seconds] | background heartbeat ID [--status STATUS] [--transport-alive true|false] | background status|stop|restart ID | background logs ID [bytes|--bytes N] | background watch ID [offset|--offset N] [--max-events N] | background prune [days] [keep]
-  %s tasks|bashes list|board|heartbeat|status|stop|restart|logs|watch ID [--json|--output-format text|json]
-  %s cron list|create|delete|due|mark-run|run-due [ARGS...] [--json|--output-format text|json]
-  %s team list|create|get|status|logs|watch|delete [ARGS...] [--json|--output-format text|json]
-  %s agents list [FILTER] | agents show|info|describe NAME | agents create NAME | agents run [--worktree] NAME PROMPT | agents runs [AGENT] | agents board [seconds] | agents status RUN_ID | agents heartbeat RUN_ID [FLAGS] | agents stop RUN_ID | agents update RUN_ID MESSAGE | agents output RUN_ID [bytes] | agents prune [days] [keep] | agents run-remove RUN_ID | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
-  %s subagent list [AGENT] | subagent steer RUN_ID MESSAGE | subagent kill RUN_ID | subagent status RUN_ID | subagent logs RUN_ID [bytes] [--json|--output-format text|json]
-  %s reload-plugins [--json|--output-format text|json]
-  %s plugin|plugins|marketplace list|health|show|info|describe|validate|sources|remote list|search|show|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
-  %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]
-  %s setup-token [TOKEN|--token TOKEN|--stdin] [--json|--output-format text|json]
-  %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
-  %s sandbox | code-intel symbols|diagnostics|completion|format|notebook-read|notebook-edit|lsp
-  %s heapdump [PATH] [--no-gc] [--json|--output-format text|json]
-  %s code-intel notebook-read NOTEBOOK [--cell-index N] [--limit N] [--include-outputs] [--json|--output-format text|json]
-  %s code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--json|--output-format text|json]
-  %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
-  %s remote [status|enable|disable|clear|serve] [addr] | bridge|remote-control|rc [status|clear|serve] | bridge-kick [status|clear] | ide [status|clear] | updater [status|show|check|verify|download|install|rollback]
-  %s sandbox-toggle [status|on|off|detect|sandbox-exec|bwrap|unshare|restricted-token|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s upgrade [status|show|check|verify|download|install|rollback] ARGS...
-  %s install [ARTIFACT [TARGET]] [--json|--output-format json]
-  %s rollback [TARGET] [--json|--output-format text|json]
-  %s ssh <host> [dir] [--permission-mode MODE] [--dangerously-skip-permissions] [--local] [--execute] [--json|--output-format text|json]
-  %s remote-env [show|set|clear] [--enabled on|off] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
-  %s remote-setup|web-setup [status|enable|disable|clear] [--addr HOST:PORT] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
-  %s desktop|app [status] [--session ID|--resume latest] [--json|--output-format text|json]
-  %s mobile|ios|android [all|ios|android] [--addr HOST:PORT] [--session ID|--resume latest] [--json|--output-format text|json]
-  %s --acp|-acp [serve] [--json|--output-format text|json]
-  %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
-  %s config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--json|--output-format text|json]
+  %s [options] [prompt]
+  %s [options] -p|--print [prompt]
+  %s [options] command [args...]
 
-Flags:
-  --model NAME
-  --fallback-model NAME
+Arguments:
+  prompt                              Start the TUI and submit an initial prompt.
+
+Core commands:
+  tui                                 Start the full-screen interactive session.
+  repl                                Start the line-oriented interactive session.
+  prompt                              Run one provider-backed turn and exit.
+  sessions                            List, inspect, resume, fork, or repair sessions.
+  mcp                                 Configure MCP servers, tools, resources, and prompts.
+  plugins                             Inspect and manage local plugins.
+  skills                              Inspect and invoke local skills.
+  config                              Inspect or update layered configuration.
+  doctor                              Diagnose local runtime and integration health.
+  capabilities                        Inspect commands, tools, protocols, and feature support.
+  completion                          Generate shell completion or list code completions.
+  help all [query]                    List all commands, optionally filtered.
+  version                             Print the Codog version.
+
+Options:
+  -p, --print                         Print a response and exit.
+  --output-format text|json|stream-json
+                                      Select prompt output; stream-json requires --print.
+  --input-format text|stream-json     Select prompt input; requires --print.
+  --include-partial-messages          Emit partial assistant events with stream-json.
+  --replay-user-messages              Replay stream-json user messages to stdout.
+  --json-schema schema                Validate structured prompt output.
+  --model name                        Select the model for this session.
+  --fallback-model name               Use a fallback model when the primary is overloaded.
   --thinking enabled|adaptive|disabled
-  --cwd PATH | -C PATH | --directory PATH
-  --base-url URL
-  --system-prompt TEXT
-  --system-prompt-file PATH
-  --append-system-prompt TEXT
-  --append-system-prompt-file PATH
-  --session ID
-  --session-id ID
-  --name NAME
-  --resume ID|latest | -r ID|latest
-  --continue | -c
-  --fork-session
-  --resume-session-at MESSAGE_ID
-  --debug
-  --verbose | -v
-  --debug-file PATH
-  --permission-mode read-only|workspace-write|danger-full-access|prompt|allow
-  --dangerously-skip-permissions
-  --skip-permissions
-  --allow-broad-cwd
-  --no-session-persistence
-  --input-format text|stream-json
-  --replay-user-messages
-  --include-partial-messages
-  --json-schema SCHEMA
-  --max-budget-usd USD
-  --allowed-tools TOOL[,TOOL]
-  --disallowed-tools TOOL[,TOOL]
-  --tools TOOL[,TOOL]
-  --add-dir DIR[,DIR]
-  --mcp-config PATH|JSON
-  --strict-mcp-config
-  --max-turns N
-  --max-tokens N
-  --temperature VALUE
-  --json
-  --output-format text|json (prompt also accepts stream-json; CODOG_OUTPUT_FORMAT sets the default)
-  --config PATH
-  --settings PATH|JSON
+                                      Select provider thinking behavior.
+  --base-url url                      Use an Anthropic-compatible provider endpoint.
+  --system-prompt text                Replace the base system prompt.
+  --system-prompt-file path           Read the base system prompt from a file.
+  --append-system-prompt text         Append text to the system prompt.
+  --append-system-prompt-file path    Read appended system prompt text from a file.
+  --permission-mode mode              read-only, workspace-write, danger-full-access,
+                                      prompt, or allow.
+  --dangerously-skip-permissions      Bypass permission checks.
+  --allowed-tools rule                Allow a tool or tool rule; repeat or comma-separate.
+  --disallowed-tools rule             Deny a tool or tool rule; repeat or comma-separate.
+  --tools names                       Restrict tools exposed to the model.
+  --add-dir path                      Add an allowed tool directory; repeatable.
+  --attach path                       Attach a text, image, or PDF file.
+  --mcp-config path|json              Merge MCP configuration; repeatable.
+  --strict-mcp-config                 Ignore configured MCP servers not passed explicitly.
+  --settings path|json                Load additional settings.
+  --config path                       Use a specific Codog config file.
+  --cwd path, -C path                 Run from another working directory.
+  --session-id id                     Select a session id.
+  --name name                         Set the session display name.
+  --resume ID|latest, -r ID|latest    Resume a saved session.
+  --continue, -c                      Resume the latest session.
+  --fork-session                      Fork the resumed session before continuing.
+  --resume-session-at message-id      Resume through a specific assistant message.
+  --prefill text                      Pre-fill interactive input without sending it.
+  --max-turns n                       Limit model/tool loop iterations.
+  --max-tokens n                      Limit output tokens.
+  --max-budget-usd usd                Limit estimated spend in print mode.
+  --temperature value                 Set sampling temperature from 0 to 1.
+  --no-session-persistence            Do not save a print-mode session.
+  --debug                             Print startup diagnostics to stderr.
+  --verbose                           Enable verbose diagnostics.
+  -h, --help                          Show help.
+  -v, --version                       Print the version.
+
+Examples:
+  %s
+  %s "inspect this repository and summarize its architecture"
+  %s -p "explain the failing test"
+  %s -p --output-format stream-json "run the tests and fix failures"
+  %s --continue
+  %s --resume latest "continue the previous task"
+  %s help all mcp
+  %s help background
+
+Deep links:
+  %s <cc-url|cc+unix-url> [-p|--print [prompt]]
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL, ANTHROPIC_DEFAULT_MODEL, ANTHROPIC_SMALL_FAST_MODEL, ANTHROPIC_MAX_TOKENS, ANTHROPIC_TEMPERATURE, ANTHROPIC_REASONING_EFFORT, CLAUDE_MODEL, CLAUDE_CONFIG_HOME, CLAUDE_CONFIG_DIR, OPENAI_API_KEY, OPENAI_BASE_URL, OLLAMA_HOST, XAI_API_KEY, XAI_BASE_URL, DASHSCOPE_API_KEY, DASHSCOPE_BASE_URL, CODOG_CONFIG_HOME, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_MAX_TOKENS, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_LANGUAGE, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_OAUTH_PROFILE, CODOG_TEMPERATURE, CODOG_EXTRA_BODY, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+  CODOG_CONFIG_HOME, CODOG_MODEL, CODOG_BASE_URL, CODOG_OUTPUT_FORMAT,
+  CODOG_EXTRA_BODY, ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN,
+  ANTHROPIC_BASE_URL, OPENAI_API_KEY, OPENAI_BASE_URL, OLLAMA_HOST
+
+Run %s help command for command-specific help and %s help all for the full catalog.
 `
-	rendered := strings.ReplaceAll(help, "%s", exe)
-	return strings.Replace(rendered, "\nFlags:\n", "\nResume-safe commands: "+resumeSafeCommandsHelpLine()+"\n\nFlags:\n", 1)
+	return strings.ReplaceAll(help, "%s", exe)
 }
-
-func resumeSafeCommandsHelpLine() string {
-	return strings.Join(slash.ResumeSupportedNames(), ", ")
-}
-
 func redact(value string) string {
 	if value == "" {
 		return ""

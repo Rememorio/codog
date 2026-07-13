@@ -727,45 +727,23 @@ func TestRunCLIPlanModeRequiredForcesReadOnlyStatus(t *testing.T) {
 	require.Contains(t, out, `"permission_mode_source": "cli"`)
 }
 
-func requireResumeSafeHelpLine(t *testing.T, help string) string {
-	t.Helper()
-	for _, line := range strings.Split(help, "\n") {
-		if strings.HasPrefix(line, "Resume-safe commands:") {
-			require.NotEmpty(t, strings.TrimSpace(strings.TrimPrefix(line, "Resume-safe commands:")))
-			return line
-		}
-	}
-	require.Fail(t, "help output is missing Resume-safe commands line")
-	return ""
-}
-
 func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	var out bytes.Buffer
 	require.NoError(t, renderHelpCommand(&out, nil))
 	helpOutput := out.String()
 	require.Contains(t, helpOutput, "Usage:")
-	require.Contains(t, helpOutput, "prompt")
-	require.Contains(t, helpOutput, "--continue | -c")
-	require.Contains(t, helpOutput, "--resume ID|latest | -r ID|latest")
+	require.Contains(t, helpOutput, "[options] [prompt]")
+	require.Contains(t, helpOutput, "Start the TUI and submit an initial prompt")
+	require.Contains(t, helpOutput, "help all [query]")
+	require.Contains(t, helpOutput, "--continue, -c")
+	require.Contains(t, helpOutput, "--resume ID|latest, -r ID|latest")
 	require.Contains(t, helpOutput, "--fork-session")
-	require.Contains(t, helpOutput, "--fallback-model NAME")
+	require.Contains(t, helpOutput, "--fallback-model name")
 	require.Contains(t, helpOutput, "--thinking enabled|adaptive|disabled")
 	require.Contains(t, helpOutput, "--include-partial-messages")
 	require.Contains(t, helpOutput, "<cc-url|cc+unix-url>")
-	require.Contains(t, helpOutput, "models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|set MODEL|clear|reset|help]")
-	require.Contains(t, helpOutput, "--target user|project|local")
 	require.Contains(t, helpOutput, "CODOG_EXTRA_BODY")
-	resumeLine := requireResumeSafeHelpLine(t, helpOutput)
-	require.Contains(t, resumeLine, "/status")
-	require.Contains(t, resumeLine, "/mcp")
-	require.Contains(t, resumeLine, "/capabilities")
-	require.Contains(t, resumeLine, "/commit")
-	require.Contains(t, resumeLine, "/listen")
-	require.Contains(t, resumeLine, "/new")
-	require.Contains(t, resumeLine, "/notebook-edit")
-	require.Contains(t, resumeLine, "/ultraplan")
-	require.NotContains(t, resumeLine, "/approve")
-	require.NotContains(t, resumeLine, "/quit")
+	require.NotContains(t, helpOutput, "Resume-safe commands:")
 	out.Reset()
 
 	require.NoError(t, renderHelpCommand(&out, []string{"--output-format", "json"}))
@@ -774,16 +752,38 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "help", globalReport.Kind)
 	require.Equal(t, "show", globalReport.Action)
 	require.Equal(t, "ok", globalReport.Status)
-	require.Contains(t, globalReport.Help, "--continue | -c")
-	require.Contains(t, globalReport.Help, "--resume ID|latest | -r ID|latest")
+	require.Contains(t, globalReport.Help, "--continue, -c")
+	require.Contains(t, globalReport.Help, "--resume ID|latest, -r ID|latest")
 	require.Contains(t, globalReport.Help, "--fork-session")
-	require.Contains(t, globalReport.Help, "--fallback-model NAME")
+	require.Contains(t, globalReport.Help, "--fallback-model name")
 	require.Contains(t, globalReport.Help, "--thinking enabled|adaptive|disabled")
 	require.Contains(t, globalReport.Help, "--include-partial-messages")
 	require.Contains(t, globalReport.Help, "<cc-url|cc+unix-url>")
-	require.Contains(t, globalReport.Help, "models [list|ls|aliases|shortcuts|routes|routing|search|find QUERY|show|view|inspect [MODEL]|current|set MODEL|clear|reset|help]")
-	require.Contains(t, globalReport.Help, "--target user|project|local")
-	require.Equal(t, resumeLine, requireResumeSafeHelpLine(t, globalReport.Help))
+	require.Contains(t, globalReport.Help, "help all [query]")
+	out.Reset()
+
+	require.NoError(t, renderHelpCommand(&out, []string{"all", "--output-format", "json"}))
+	var catalog helpCatalogReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &catalog))
+	require.Equal(t, "catalog", catalog.Action)
+	require.Equal(t, len(builtInCommandNames()), catalog.Count)
+	require.Len(t, catalog.Commands, catalog.Count)
+	require.Contains(t, catalog.Commands, helpCatalogEntry{
+		Name:        "background",
+		Usage:       "codog background [run|list|board|heartbeat|status|stop|restart|logs|watch|prune|supervise] [--output-format text|json]",
+		Description: "Manage local background tasks.",
+	})
+	out.Reset()
+
+	require.NoError(t, renderHelpCommand(&out, []string{"all", "mcp", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &catalog))
+	require.Equal(t, "mcp", catalog.Query)
+	require.NotZero(t, catalog.Count)
+	require.Less(t, catalog.Count, len(builtInCommandNames()))
+	for _, entry := range catalog.Commands {
+		haystack := strings.ToLower(strings.Join(append([]string{entry.Name, entry.Usage, entry.Description}, entry.Aliases...), " "))
+		require.Contains(t, haystack, "mcp")
+	}
 	out.Reset()
 
 	require.NoError(t, renderHelpCommand(&out, []string{"doctor", "--output-format", "json"}))
@@ -1929,7 +1929,7 @@ func TestInternalReferenceSymbolsAreNotCLICommands(t *testing.T) {
 	} {
 		t.Run(command, func(t *testing.T) {
 			out, err := captureStdout(t, func() error {
-				return RunCLI(context.Background(), []string{"--config", configPath, "--json", command}, config.FlagOverrides{})
+				return RunCLI(context.Background(), []string{"--config", configPath, "--json", command, "--not-a-command-option"}, config.FlagOverrides{})
 			})
 			require.Error(t, err)
 			var report commandNotFoundReport
@@ -3316,7 +3316,7 @@ func TestUnknownCommandOutputContract(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, data, 0o644))
 
 	out, err := captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "statuz"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "statuz", "--not-a-command-option"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
 	var exitErr *ExitError
@@ -3329,6 +3329,7 @@ func TestUnknownCommandOutputContract(t *testing.T) {
 	require.Equal(t, "command_not_found", report.ErrorKind)
 	require.Equal(t, "error", report.Status)
 	require.Equal(t, "statuz", report.Command)
+	require.Equal(t, []string{"--not-a-command-option"}, report.Args)
 	require.Equal(t, "usage", report.Error.Kind)
 	require.Equal(t, "parse_args", report.Error.Operation)
 	require.Equal(t, "statuz", report.Error.Target)
@@ -3336,7 +3337,7 @@ func TestUnknownCommandOutputContract(t *testing.T) {
 	require.Contains(t, report.Hint, "status")
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "foobar", "baz"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "foobar", "baz", "--not-a-command-option"}, config.FlagOverrides{})
 	})
 	require.Empty(t, out)
 	require.Error(t, err)
@@ -3346,7 +3347,7 @@ func TestUnknownCommandOutputContract(t *testing.T) {
 	require.Contains(t, err.Error(), "codog prompt")
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "no", "thanks"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "no", "thanks", "--not-a-command-option"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
 	require.ErrorAs(t, err, &exitErr)
@@ -3354,7 +3355,7 @@ func TestUnknownCommandOutputContract(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "command_not_found", report.Kind)
 	require.Equal(t, "no", report.Command)
-	require.Equal(t, []string{"thanks"}, report.Args)
+	require.Equal(t, []string{"thanks", "--not-a-command-option"}, report.Args)
 	require.Equal(t, "usage", report.Error.Kind)
 	require.Equal(t, "parse_args", report.Error.Operation)
 	require.Equal(t, "no", report.Error.Target)
@@ -11162,6 +11163,40 @@ func TestParseFlagsSupportsPrintAliases(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "prompt", command)
 	require.Equal(t, []string{"describe", "--attach", "notes.txt", "--attach", "image.png"}, rest)
+}
+
+func TestParseFlagsTreatsFreeTextAsInteractiveInitialPrompt(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{
+		"--model", "glm52",
+		"--attach", "screenshot.png",
+		"inspect", "this", "repository",
+	}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Empty(t, command)
+	require.Empty(t, rest)
+	require.Equal(t, "inspect this repository", overrides.InitialPrompt)
+	require.Equal(t, []string{"screenshot.png"}, overrides.InitialAttachments)
+	require.Equal(t, "glm52", overrides.Model)
+
+	_, command, rest, err = parseFlags([]string{"status"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "status", command)
+	require.Empty(t, rest)
+
+	_, command, rest, err = parseFlags([]string{"statsu", "--json"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "statsu", command)
+	require.Equal(t, []string{"--json"}, rest)
+}
+
+func TestParseFlagsRejectsInteractivePromptOutputAndPrefillConflicts(t *testing.T) {
+	_, _, _, err := parseFlags([]string{"--output-format", "json", "inspect this repository"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires --print")
+
+	_, _, _, err = parseFlags([]string{"--prefill", "draft", "inspect this repository"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot be combined")
 }
 
 func TestParseFlagsSupportsCompactPromptMode(t *testing.T) {

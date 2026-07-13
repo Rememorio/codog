@@ -90,7 +90,7 @@ func TestEnterSubmitsExactSlashCommandBeforeLongerCompletion(t *testing.T) {
 		return "Tools ok", true, nil
 	}
 	m.refreshCompletionMenu()
-	require.Contains(t, m.matches, "/statusline --json")
+	require.Empty(t, m.matches)
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
@@ -107,12 +107,20 @@ func TestEnterSubmitsLocalExitBeforeLongerCompletion(t *testing.T) {
 	ta := newPromptTextarea("/exit")
 	m := newModel(context.Background(), ta, []string{"/exit-plan"}, nil)
 	m.refreshCompletionMenu()
-	require.Contains(t, m.matches, "/exit-plan")
+	require.Empty(t, m.matches)
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	require.NotNil(t, cmd)
 	require.Empty(t, m.matches)
+}
+
+func TestExactSlashCommandKeepsOnlyItsArgumentCompletions(t *testing.T) {
+	ta := newPromptTextarea("/model")
+	m := newModel(context.Background(), ta, []string{"/model", "/model glm52", "/models"}, nil)
+	m.refreshCompletionMenu()
+
+	require.Equal(t, []string{"/model glm52"}, m.matches)
 }
 
 func TestCompletionListRendersSelectedSuggestion(t *testing.T) {
@@ -735,6 +743,33 @@ func TestPromptTextareaUsesPrefill(t *testing.T) {
 	require.Equal(t, "review this diff", ta.Value())
 	require.Equal(t, 16000, ta.CharLimit)
 	require.Equal(t, "Ask codog to inspect, edit, test, or explain this repository...", ta.Placeholder)
+}
+
+func TestInitialPromptStartsFirstTurnWithAttachments(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.initialPrompt = "inspect this repository"
+	m.attachments = []string{"screenshot.png"}
+	m.submitAttachments = func(_ context.Context, prompt string, attachments []string) (string, error) {
+		require.Equal(t, "inspect this repository", prompt)
+		require.Equal(t, []string{"screenshot.png"}, attachments)
+		return "done", nil
+	}
+
+	updated, cmd := m.Update(initialPromptMsg{Value: m.initialPrompt})
+	next := updated.(model)
+	require.True(t, next.busy)
+	require.Empty(t, next.initialPrompt)
+	require.Empty(t, next.attachments)
+	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "inspect this repository")
+	require.Contains(t, next.transcript[len(next.transcript)-1].Text, "screenshot.png")
+	require.NotNil(t, cmd)
+
+	result := cmd()
+	done, ok := result.(turnDoneMsg)
+	require.True(t, ok)
+	require.Equal(t, "done", done.Output)
+	require.NoError(t, done.Err)
 }
 
 func TestPreviewWithCandidatesRendersMultipleMatches(t *testing.T) {

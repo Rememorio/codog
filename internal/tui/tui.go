@@ -102,6 +102,8 @@ type ShellOptions struct {
 	Candidates                []string
 	FileCandidates            []string
 	Prefill                   string
+	InitialPrompt             string
+	InitialAttachments        []string
 	History                   []string
 	Entries                   []Entry
 	Submit                    SubmitFunc
@@ -272,6 +274,7 @@ type model struct {
 	messageActionTarget       int
 	messageActionSelected     int
 	queuedPrompts             []string
+	initialPrompt             string
 	attachments               []string
 	attachmentsOpen           bool
 	attachmentSelected        int
@@ -1609,6 +1612,8 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.keybindings = normalizeTUIKeybindings(options.Keybindings)
 	m.contextKeybindings = normalizeTUIContextKeybindings(options.ContextKeybindings)
 	m.cycleMode = options.CycleMode
+	m.initialPrompt = strings.TrimSpace(options.InitialPrompt)
+	m.attachments = append([]string(nil), options.InitialAttachments...)
 	m.setHistory(options.History)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
@@ -1663,11 +1668,19 @@ func defaultTranscriptEntries() []transcriptEntry {
 }
 
 func (m model) Init() tea.Cmd {
-	return textarea.Blink
+	if m.initialPrompt == "" {
+		return textarea.Blink
+	}
+	return tea.Batch(textarea.Blink, func() tea.Msg {
+		return initialPromptMsg{Value: m.initialPrompt}
+	})
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case initialPromptMsg:
+		m.initialPrompt = ""
+		return m.startInput(msg.Value)
 	case turnDoneMsg:
 		m.busy = false
 		m.turnMessages = nil
@@ -2625,6 +2638,10 @@ type turnDoneMsg struct {
 	Output      string
 	Err         error
 	Interrupted bool
+}
+
+type initialPromptMsg struct {
+	Value string
 }
 
 func (m model) submitCurrentInput() (tea.Model, tea.Cmd) {
@@ -4619,8 +4636,15 @@ func automaticCompletionCandidates(value string, candidates []string) []string {
 	}
 	out := make([]string, 0, len(candidates))
 	normalizedValue := strings.TrimSpace(value)
+	exactCommand := ""
+	if isExactSlashCommandInput(normalizedValue) {
+		exactCommand = firstSlashCommandToken(normalizedValue)
+	}
 	for _, candidate := range candidates {
 		if strings.TrimSpace(candidate) == normalizedValue && !strings.HasSuffix(candidate, " ") {
+			continue
+		}
+		if exactCommand != "" && firstSlashCommandToken(candidate) != exactCommand {
 			continue
 		}
 		out = append(out, candidate)
