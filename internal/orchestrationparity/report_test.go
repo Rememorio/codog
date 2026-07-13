@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/stretchr/testify/require"
 )
 
@@ -64,6 +65,34 @@ func TestBuildCountsPluginSurfaces(t *testing.T) {
 	require.Equal(t, 1, report.PluginAgentCount)
 	require.Equal(t, 1, report.PluginMCPServerCount)
 	require.Equal(t, 1, report.ConfiguredMCPCount)
+}
+
+func TestBuildCountsSessionPluginSurfaces(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	pluginDir := filepath.Join(t.TempDir(), "session")
+	require.NoError(t, os.MkdirAll(filepath.Join(pluginDir, "skills", "audit"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(`{
+  "id": "session",
+  "tools": [{"name": "session_check", "command": "echo"}],
+  "skills": ["skills"]
+}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "skills", "audit", "SKILL.md"), []byte("---\nname: audit\ndescription: Session audit\n---\nAudit.\n"), 0o644))
+
+	manifests, err := plugins.LoadWithDirs(workspace, []string{pluginDir})
+	require.NoError(t, err)
+	report := Build(Options{
+		ConfigHome:      configHome,
+		Workspace:       workspace,
+		PluginManifests: manifests,
+	})
+
+	require.Equal(t, "ready", report.Status)
+	require.Equal(t, 1, report.PluginCount)
+	require.Equal(t, 1, report.EnabledPluginCount)
+	require.Equal(t, 1, report.PluginToolCount)
+	require.Equal(t, 1, report.PluginSkillCount)
+	require.Greater(t, report.ActiveSkillCount, 0)
 }
 
 func TestBuildReportsDegradedForBrokenStores(t *testing.T) {

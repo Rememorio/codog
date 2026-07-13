@@ -14,9 +14,10 @@ import (
 // Options supplies filesystem roots and configured MCP servers for the
 // orchestration readiness report.
 type Options struct {
-	ConfigHome string
-	Workspace  string
-	MCPServers map[string]config.MCPServerConfig
+	ConfigHome      string
+	Workspace       string
+	MCPServers      map[string]config.MCPServerConfig
+	PluginManifests []plugins.Manifest
 }
 
 // Report is a compact, JSON-safe summary of the local orchestration surfaces
@@ -83,9 +84,13 @@ func Build(options Options) Report {
 	} else {
 		report.TeamCount = len(teams)
 	}
-	if loadedSkills, err := skills.Load(options.ConfigHome, options.Workspace); err != nil {
+	loadedSkills, skillErr := skills.LoadWithManifests(options.ConfigHome, options.Workspace, options.PluginManifests)
+	if options.PluginManifests == nil {
+		loadedSkills, skillErr = skills.Load(options.ConfigHome, options.Workspace)
+	}
+	if skillErr != nil {
 		report.SkillsDiscoveryReady = false
-		report.addLoadError("skills", err)
+		report.addLoadError("skills", skillErr)
 	} else {
 		report.SkillCount = len(loadedSkills)
 		for _, skill := range loadedSkills {
@@ -93,11 +98,20 @@ func Build(options Options) Report {
 				report.ActiveSkillCount++
 			}
 		}
-		report.SkillSourceCount = len(skills.Sources(options.ConfigHome, options.Workspace))
+		if options.PluginManifests == nil {
+			report.SkillSourceCount = len(skills.Sources(options.ConfigHome, options.Workspace))
+		} else {
+			report.SkillSourceCount = len(skills.SourcesWithManifests(options.ConfigHome, options.Workspace, options.PluginManifests))
+		}
 	}
-	if manifests, err := plugins.Load(options.Workspace); err != nil {
+	manifests := options.PluginManifests
+	var manifestErr error
+	if manifests == nil {
+		manifests, manifestErr = plugins.Load(options.Workspace)
+	}
+	if manifestErr != nil {
 		report.PluginDiscoveryReady = false
-		report.addLoadError("plugins", err)
+		report.addLoadError("plugins", manifestErr)
 	} else {
 		report.PluginCount = len(manifests)
 		for _, manifest := range manifests {

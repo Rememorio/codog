@@ -47,6 +47,61 @@ func TestLoadPluginManifest(t *testing.T) {
 	require.Equal(t, filepath.Join(workspace, ".codog", "plugin-data", "demo"), DataDirForManifest(manifests[0]))
 }
 
+func TestLoadWithDirsAddsAndOverridesSessionPlugins(t *testing.T) {
+	workspace := t.TempDir()
+	installed := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(installed, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(installed, "plugin.json"), []byte(`{"id":"demo","name":"Installed","description":"installed"}`), 0o644))
+
+	sessionRoot := filepath.Join(t.TempDir(), "session-demo")
+	require.NoError(t, os.MkdirAll(filepath.Join(sessionRoot, "hooks"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sessionRoot, "plugin.json"), []byte(`{"id":"demo","name":"Session","description":"session","tools":[{"name":"session_tool","command":"printf","permission":"read-only"}],"hooks":["hooks/hooks.json"],"mcp_servers":{"local":{"command":"${CLAUDE_PLUGIN_ROOT}/mcp","args":["${CLAUDE_PLUGIN_DATA}"]}}}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(sessionRoot, "hooks", "hooks.json"), []byte(`{"pre_tool_use":["${CLAUDE_PLUGIN_ROOT}/pre.sh"]}`), 0o644))
+	extraRoot := filepath.Join(t.TempDir(), "extra")
+	require.NoError(t, os.MkdirAll(extraRoot, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(extraRoot, "plugin.json"), []byte(`{"id":"extra","name":"Extra","description":"extra"}`), 0o644))
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	relativeSessionRoot, err := filepath.Rel(cwd, sessionRoot)
+	require.NoError(t, err)
+
+	manifests, err := LoadWithDirs(workspace, []string{relativeSessionRoot, filepath.Join(extraRoot, "plugin.json")})
+	require.NoError(t, err)
+	require.Len(t, manifests, 2)
+	require.Equal(t, "demo", manifests[0].ID)
+	require.Equal(t, "Session", manifests[0].Name)
+	require.True(t, manifests[0].Session)
+	require.True(t, manifests[0].Enabled)
+	require.True(t, filepath.IsAbs(manifests[0].Root))
+	require.Equal(t, sessionRoot, manifests[0].Root)
+	require.Equal(t, DataDir(workspace, "demo"), DataDirForManifest(manifests[0]))
+	require.Equal(t, "extra", manifests[1].ID)
+	require.True(t, manifests[1].Session)
+	hookFiles, err := LoadHookConfigsFromManifests(manifests)
+	require.NoError(t, err)
+	require.Len(t, hookFiles, 1)
+	require.Equal(t, filepath.ToSlash(sessionRoot)+"/pre.sh", hookFiles[0].Config.PreToolUseCommands[0].Command)
+	servers := LoadMCPServersFromManifests(manifests)
+	require.Equal(t, filepath.ToSlash(sessionRoot)+"/mcp", servers["plugin:demo:local"].Command)
+	require.Equal(t, []string{filepath.ToSlash(DataDir(workspace, "demo"))}, servers["plugin:demo:local"].Args)
+
+	installedManifest, err := Load(workspace)
+	require.NoError(t, err)
+	require.Len(t, installedManifest, 1)
+	require.Equal(t, "Installed", installedManifest[0].Name)
+	require.False(t, installedManifest[0].Session)
+}
+
+func TestLoadWithDirsRejectsInvalidSessionPlugin(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "plugin.json"), []byte(`{"id":"demo","tools":[{"name":"broken","permission":"root"}]}`), 0o644))
+
+	_, err := LoadWithDirs(t.TempDir(), []string{root})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "session plugin")
+	require.Contains(t, err.Error(), "unknown tool permission")
+}
+
 func TestValidatePluginManifestRejectsEmptyLifecycleCommands(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "source")
 	require.NoError(t, os.MkdirAll(source, 0o755))

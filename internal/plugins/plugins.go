@@ -39,6 +39,8 @@ type Manifest struct {
 	Path        string                            `json:"path,omitempty"`
 	Root        string                            `json:"root,omitempty"`
 	Enabled     bool                              `json:"enabled"`
+	Session     bool                              `json:"session,omitempty"`
+	DataPath    string                            `json:"data_path,omitempty"`
 }
 
 // LifecycleConfig declares plugin lifecycle commands without executing them.
@@ -157,13 +159,21 @@ type rawManifest struct {
 }
 
 func Load(workspace string) ([]Manifest, error) {
+	return LoadWithDirs(workspace, nil)
+}
+
+// LoadWithDirs loads installed plugins plus session-scoped plugin directories.
+// A session plugin replaces an installed plugin with the same id without
+// changing the workspace installation.
+func LoadWithDirs(workspace string, pluginDirs []string) ([]Manifest, error) {
 	root := Root(workspace)
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []Manifest{}, nil
+			entries = nil
+		} else {
+			return nil, err
 		}
-		return nil, err
 	}
 	manifests := []Manifest{}
 	for _, entry := range entries {
@@ -181,6 +191,45 @@ func Load(workspace string) ([]Manifest, error) {
 			manifest.ID = entry.Name()
 		}
 		manifests = append(manifests, manifest)
+	}
+	for _, source := range pluginDirs {
+		source = strings.TrimSpace(source)
+		if source == "" {
+			continue
+		}
+		dir, _, err := pluginManifestSource(source)
+		if err != nil {
+			return nil, fmt.Errorf("session plugin %q: %w", source, err)
+		}
+		dir, err = filepath.Abs(dir)
+		if err != nil {
+			return nil, fmt.Errorf("session plugin %q: %w", source, err)
+		}
+		validation, err := Validate(dir)
+		if err != nil {
+			return nil, fmt.Errorf("session plugin %q: %w", source, err)
+		}
+		if !validation.Success {
+			return nil, fmt.Errorf("session plugin %q: %w", source, validationFailure(validation))
+		}
+		manifest, err := LoadManifest(dir)
+		if err != nil {
+			return nil, fmt.Errorf("session plugin %q: %w", source, err)
+		}
+		manifest.Enabled = true
+		manifest.Session = true
+		manifest.DataPath = DataDir(workspace, manifest.ID)
+		replaced := false
+		for index := range manifests {
+			if strings.EqualFold(manifests[index].ID, manifest.ID) {
+				manifests[index] = manifest
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			manifests = append(manifests, manifest)
+		}
 	}
 	sort.Slice(manifests, func(i, j int) bool { return manifests[i].ID < manifests[j].ID })
 	return manifests, nil
@@ -803,6 +852,9 @@ func DataDir(workspace string, id string) string {
 }
 
 func DataDirForManifest(manifest Manifest) string {
+	if strings.TrimSpace(manifest.DataPath) != "" {
+		return manifest.DataPath
+	}
 	root := filepath.Clean(manifest.Root)
 	codogDir := filepath.Dir(filepath.Dir(root))
 	return filepath.Join(codogDir, "plugin-data", manifest.ID)

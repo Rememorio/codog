@@ -98,8 +98,14 @@ type root struct {
 }
 
 func Load(configHome, workspace string) ([]Command, error) {
+	manifests, _ := plugins.Load(workspace)
+	return LoadWithManifests(configHome, workspace, manifests)
+}
+
+// LoadWithManifests loads commands from a resolved runtime plugin set.
+func LoadWithManifests(configHome, workspace string, manifests []plugins.Manifest) ([]Command, error) {
 	var commands []Command
-	for _, root := range roots(configHome, workspace) {
+	for _, root := range rootsWithManifests(configHome, workspace, manifests) {
 		if _, err := os.Stat(root.path); err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -147,8 +153,14 @@ func Load(configHome, workspace string) ([]Command, error) {
 }
 
 func Sources(configHome, workspace string) []DiscoveryRoot {
+	manifests, _ := plugins.Load(workspace)
+	return SourcesWithManifests(configHome, workspace, manifests)
+}
+
+// SourcesWithManifests reports command roots for a resolved runtime plugin set.
+func SourcesWithManifests(configHome, workspace string, manifests []plugins.Manifest) []DiscoveryRoot {
 	out := []DiscoveryRoot{}
-	for _, root := range roots(configHome, workspace) {
+	for _, root := range rootsWithManifests(configHome, workspace, manifests) {
 		out = append(out, discoveryRoot(root))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -366,16 +378,20 @@ func commandVariablesWithSession(command Command, sessionID string) map[string]s
 }
 
 func roots(configHome, workspace string) []root {
+	manifests, err := plugins.Load(workspace)
+	if err != nil {
+		return rootsWithManifests(configHome, workspace, nil)
+	}
+	return rootsWithManifests(configHome, workspace, manifests)
+}
+
+func rootsWithManifests(configHome, workspace string, manifests []plugins.Manifest) []root {
 	out := []root{
 		{path: filepath.Join(configHome, "commands"), source: "user"},
 		{path: filepath.Join(workspace, ".claude", "commands"), source: "claude"},
 		{path: filepath.Join(workspace, ".codog", "commands"), source: "workspace"},
 	}
 	out = append(out, compatibilityRoots(workspace, false)...)
-	manifests, err := plugins.Load(workspace)
-	if err != nil {
-		return out
-	}
 	for _, manifest := range manifests {
 		out = append(out, commandRootsForPlugin(manifest)...)
 	}

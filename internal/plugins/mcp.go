@@ -13,6 +13,12 @@ func LoadMCPServers(workspace string) (map[string]config.MCPServerConfig, error)
 	if err != nil {
 		return nil, err
 	}
+	return LoadMCPServersFromManifests(manifests), nil
+}
+
+// LoadMCPServersFromManifests resolves MCP contributions from an already
+// resolved runtime plugin set.
+func LoadMCPServersFromManifests(manifests []Manifest) map[string]config.MCPServerConfig {
 	out := map[string]config.MCPServerConfig{}
 	for _, manifest := range manifests {
 		if !manifest.Enabled {
@@ -26,7 +32,7 @@ func LoadMCPServers(workspace string) (map[string]config.MCPServerConfig, error)
 			out[PluginMCPServerName(manifest.ID, name)] = resolvePluginMCPServer(manifest, server)
 		}
 	}
-	return out, nil
+	return out
 }
 
 func resolvePluginMCPServer(manifest Manifest, server config.MCPServerConfig) config.MCPServerConfig {

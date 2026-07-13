@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/stretchr/testify/require"
 )
 
@@ -62,4 +63,47 @@ Review with care.
 	require.Equal(t, "workspace", byName["reviewer"].Source)
 	require.Equal(t, []string{"grep"}, byName["reviewer"].Tools)
 	require.Equal(t, []string{".json", ".md", ".markdown"}, AcceptedFormats())
+}
+
+func TestParseInlineAndMergeDefinitions(t *testing.T) {
+	inline, err := ParseInline(`{
+		"reviewer":{"description":"CLI reviewer","prompt":"Review the requested change.","model":"glm52","tools":["read_file","grep"]},
+		"planner":{"description":"CLI planner","prompt":"Plan the work."}
+	}`)
+	require.NoError(t, err)
+	require.Len(t, inline, 2)
+	require.Equal(t, "planner", inline[0].Name)
+	require.Equal(t, "cli", inline[0].Source)
+	require.Equal(t, "--agents", inline[0].Path)
+	require.Equal(t, []string{"read_file", "grep"}, inline[1].Tools)
+
+	merged := Merge([]Definition{{Name: "Reviewer", Description: "file"}, {Name: "helper"}}, inline)
+	require.Len(t, merged, 3)
+	byName := map[string]Definition{}
+	for _, definition := range merged {
+		byName[definition.Name] = definition
+	}
+	require.Equal(t, "CLI reviewer", byName["reviewer"].Description)
+	require.Equal(t, "cli", byName["reviewer"].Source)
+
+	_, err = ParseInline(`[]`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "JSON object")
+	_, err = ParseInline(`{"reviewer":{"description":"missing prompt"}}`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires prompt")
+}
+
+func TestLoadWithManifestsIncludesSessionPluginAgents(t *testing.T) {
+	workspace := t.TempDir()
+	pluginRoot := filepath.Join(t.TempDir(), "plugin")
+	require.NoError(t, os.MkdirAll(filepath.Join(pluginRoot, "agents"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "agents", "reviewer.json"), []byte(`{"description":"Session reviewer","prompt":"Review carefully."}`), 0o644))
+	manifest := plugins.Manifest{ID: "session", Root: pluginRoot, Enabled: true, Session: true}
+
+	definitions, err := LoadWithManifests(workspace, []plugins.Manifest{manifest})
+	require.NoError(t, err)
+	require.Len(t, definitions, 1)
+	require.Equal(t, "session:reviewer", definitions[0].Name)
+	require.Equal(t, "plugin:session", definitions[0].Source)
 }

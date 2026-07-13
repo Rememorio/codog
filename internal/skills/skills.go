@@ -313,18 +313,38 @@ type root struct {
 }
 
 func Load(configHome, workspace string) ([]Skill, error) {
-	return load(configHome, workspace, nil)
+	manifests, _ := plugins.Load(workspace)
+	return load(configHome, workspace, nil, manifests)
 }
 
 func LoadForPaths(configHome, workspace string, paths []string) ([]Skill, error) {
-	return load(configHome, workspace, dynamicSkillRootsForPaths(workspace, paths))
+	manifests, _ := plugins.Load(workspace)
+	return load(configHome, workspace, dynamicSkillRootsForPaths(workspace, paths), manifests)
+}
+
+// LoadWithManifests loads skills from a resolved runtime plugin set.
+func LoadWithManifests(configHome, workspace string, manifests []plugins.Manifest) ([]Skill, error) {
+	return load(configHome, workspace, nil, manifests)
+}
+
+// LoadForPathsWithManifests adds path-contextual skills to a resolved runtime
+// plugin set.
+func LoadForPathsWithManifests(configHome, workspace string, paths []string, manifests []plugins.Manifest) ([]Skill, error) {
+	return load(configHome, workspace, dynamicSkillRootsForPaths(workspace, paths), manifests)
 }
 
 func ContextualForPaths(configHome, workspace string, paths []string) ([]Skill, error) {
+	manifests, _ := plugins.Load(workspace)
+	return ContextualForPathsWithManifests(configHome, workspace, paths, manifests)
+}
+
+// ContextualForPathsWithManifests resolves contextual skills from a runtime
+// plugin set.
+func ContextualForPathsWithManifests(configHome, workspace string, paths []string, manifests []plugins.Manifest) ([]Skill, error) {
 	if len(paths) == 0 {
 		return nil, nil
 	}
-	all, err := LoadForPaths(configHome, workspace, paths)
+	all, err := LoadForPathsWithManifests(configHome, workspace, paths, manifests)
 	if err != nil {
 		return nil, err
 	}
@@ -346,9 +366,9 @@ func ContextualForPaths(configHome, workspace string, paths []string) ([]Skill, 
 	return out, nil
 }
 
-func load(configHome, workspace string, extraRoots []root) ([]Skill, error) {
+func load(configHome, workspace string, extraRoots []root, manifests []plugins.Manifest) ([]Skill, error) {
 	out := Bundled()
-	for _, root := range append(roots(configHome, workspace), extraRoots...) {
+	for _, root := range append(rootsWithManifests(configHome, workspace, manifests), extraRoots...) {
 		if _, err := os.Stat(root.path); err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -494,6 +514,12 @@ func Bundled() []Skill {
 }
 
 func Sources(configHome, workspace string) []DiscoveryRoot {
+	manifests, _ := plugins.Load(workspace)
+	return SourcesWithManifests(configHome, workspace, manifests)
+}
+
+// SourcesWithManifests reports skill roots for a resolved runtime plugin set.
+func SourcesWithManifests(configHome, workspace string, manifests []plugins.Manifest) []DiscoveryRoot {
 	out := []DiscoveryRoot{{
 		Source: "bundled",
 		Label:  "Bundled skills",
@@ -501,7 +527,7 @@ func Sources(configHome, workspace string) []DiscoveryRoot {
 		Exists: true,
 		Origin: newOrigin(originSkillsDir, ""),
 	}}
-	for _, root := range roots(configHome, workspace) {
+	for _, root := range rootsWithManifests(configHome, workspace, manifests) {
 		out = append(out, discoveryRoot(root))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -609,6 +635,14 @@ func pluginIDFromSource(source string) string {
 }
 
 func roots(configHome, workspace string) []root {
+	manifests, err := plugins.Load(workspace)
+	if err != nil {
+		return rootsWithManifests(configHome, workspace, nil)
+	}
+	return rootsWithManifests(configHome, workspace, manifests)
+}
+
+func rootsWithManifests(configHome, workspace string, manifests []plugins.Manifest) []root {
 	out := []root{
 		skillRoot(filepath.Join(configHome, "skills"), "user"),
 		skillRoot(filepath.Join(workspace, ".codog", "skills"), "workspace"),
@@ -619,10 +653,6 @@ func roots(configHome, workspace string) []root {
 	}
 	out = append(out, compatibilityProjectRoots(workspace)...)
 	out = append(out, compatibilityConfigRoots(out)...)
-	manifests, err := plugins.Load(workspace)
-	if err != nil {
-		return out
-	}
 	for _, manifest := range manifests {
 		out = append(out, skillRootsForPlugin(manifest)...)
 	}

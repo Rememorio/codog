@@ -1346,6 +1346,8 @@ type MutationReport struct {
 type FlagOverrides struct {
 	ConfigPath                     string
 	Settings                       string
+	SettingSources                 []string
+	SettingSourcesSet              bool
 	CWD                            string
 	SessionID                      string
 	SessionName                    string
@@ -1355,6 +1357,9 @@ type FlagOverrides struct {
 	Prefill                        string
 	InitialPrompt                  string
 	InitialAttachments             []string
+	Agents                         string
+	PluginDirs                     []string
+	IDE                            bool
 	DeepLinkOrigin                 bool
 	DeepLinkRepo                   string
 	DeepLinkLastFetchMS            int64
@@ -1402,7 +1407,11 @@ func Load(overrides FlagOverrides) (Config, error) {
 		return Config{}, err
 	}
 
-	for _, path := range configPaths(cfg.ConfigHome, overrides.ConfigPath) {
+	paths, err := configPaths(cfg.ConfigHome, overrides.ConfigPath, overrides.SettingSources, overrides.SettingSourcesSet)
+	if err != nil {
+		return Config{}, err
+	}
+	for _, path := range paths {
 		if path == "" {
 			continue
 		}
@@ -1439,7 +1448,10 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 	if err != nil {
 		return Config{}, nil, err
 	}
-	paths := configPaths(cfg.ConfigHome, overrides.ConfigPath)
+	paths, err := configPaths(cfg.ConfigHome, overrides.ConfigPath, overrides.SettingSources, overrides.SettingSourcesSet)
+	if err != nil {
+		return Config{}, nil, err
+	}
 	for _, path := range paths {
 		if path == "" {
 			continue
@@ -1450,7 +1462,7 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 		}
 		merge(&cfg, next)
 	}
-	if overrides.ConfigPath == "" {
+	if overrides.ConfigPath == "" && settingSourceEnabled(overrides.SettingSources, overrides.SettingSourcesSet, "project") {
 		if err := applyProjectMCPJSON(&cfg, ".mcp.json"); err != nil {
 			return Config{}, paths, err
 		}
@@ -1483,7 +1495,7 @@ func InspectionPaths(overrides FlagOverrides) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return configPaths(cfg.ConfigHome, overrides.ConfigPath), nil
+	return configPaths(cfg.ConfigHome, overrides.ConfigPath, overrides.SettingSources, overrides.SettingSourcesSet)
 }
 
 func Default(overrides FlagOverrides) (Config, error) {
@@ -1639,23 +1651,79 @@ func finalizeConfig(cfg *Config) error {
 	return nil
 }
 
-func configPaths(home, explicit string) []string {
+func configPaths(home, explicit string, requestedSources []string, sourcesSet bool) ([]string, error) {
 	if explicit != "" {
-		return []string{explicit}
+		return []string{explicit}, nil
 	}
-	return []string{
-		filepath.Join(home, "config.json"),
-		filepath.Join(".claude", "settings.json"),
-		filepath.Join(".claude", "settings.local.json"),
-		filepath.Join(".omc", "settings.json"),
-		filepath.Join(".omc", "settings.local.json"),
-		filepath.Join(".omc", "config.json"),
-		filepath.Join(".claw", "settings.json"),
-		filepath.Join(".claw", "settings.local.json"),
-		filepath.Join(".claw", "config.json"),
-		".codog.json",
-		".codog.local.json",
+	sources, err := normalizeSettingSources(requestedSources, sourcesSet)
+	if err != nil {
+		return nil, err
 	}
+	paths := []string{}
+	for _, source := range sources {
+		switch source {
+		case "user":
+			paths = append(paths, filepath.Join(home, "config.json"))
+		case "project":
+			paths = append(paths,
+				filepath.Join(".claude", "settings.json"),
+				filepath.Join(".omc", "settings.json"),
+				filepath.Join(".omc", "config.json"),
+				filepath.Join(".claw", "settings.json"),
+				filepath.Join(".claw", "config.json"),
+				".codog.json",
+			)
+		case "local":
+			paths = append(paths,
+				filepath.Join(".claude", "settings.local.json"),
+				filepath.Join(".omc", "settings.local.json"),
+				filepath.Join(".claw", "settings.local.json"),
+				".codog.local.json",
+			)
+		}
+	}
+	return paths, nil
+}
+
+func normalizeSettingSources(requested []string, sourcesSet bool) ([]string, error) {
+	if !sourcesSet {
+		return []string{"user", "project", "local"}, nil
+	}
+	seen := map[string]bool{}
+	for _, raw := range requested {
+		for _, part := range strings.Split(raw, ",") {
+			source := strings.ToLower(strings.TrimSpace(part))
+			if source == "" {
+				continue
+			}
+			switch source {
+			case "user", "project", "local":
+				seen[source] = true
+			default:
+				return nil, fmt.Errorf("unsupported setting source %q; expected user, project, or local", source)
+			}
+		}
+	}
+	ordered := make([]string, 0, len(seen))
+	for _, source := range []string{"user", "project", "local"} {
+		if seen[source] {
+			ordered = append(ordered, source)
+		}
+	}
+	return ordered, nil
+}
+
+func settingSourceEnabled(requested []string, sourcesSet bool, target string) bool {
+	sources, err := normalizeSettingSources(requested, sourcesSet)
+	if err != nil {
+		return false
+	}
+	for _, source := range sources {
+		if source == target {
+			return true
+		}
+	}
+	return false
 }
 
 func readConfigFile(path string) (Config, error) {

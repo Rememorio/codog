@@ -151,6 +151,8 @@ type RegistryOptions struct {
 	RAGTopKMax       int
 	QuestionIn       io.Reader
 	QuestionOut      io.Writer
+	AgentDefinitions []agentdefs.Definition
+	PluginDirs       []string
 }
 
 var claudeToolAliases = map[string]string{
@@ -683,7 +685,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(ExitWorktreeTool{Workspace: workspace})
 	r.Register(EnterPlanModeTool{Workspace: workspace})
 	r.Register(ExitPlanModeTool{Workspace: workspace})
-	r.Register(AgentTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
+	r.Register(AgentTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable, Definitions: opts.AgentDefinitions, PluginDirs: opts.PluginDirs})
 	r.Register(CronCreateTool{ConfigHome: opts.ConfigHome})
 	r.Register(CronDeleteTool{ConfigHome: opts.ConfigHome})
 	r.Register(CronListTool{ConfigHome: opts.ConfigHome})
@@ -7080,10 +7082,12 @@ func (t ExitPlanModeTool) Execute(_ context.Context, input json.RawMessage) (str
 }
 
 type AgentTool struct {
-	Workspace  string
-	ConfigHome string
-	ConfigEnv  map[string]string
-	Executable string
+	Workspace   string
+	ConfigHome  string
+	ConfigEnv   map[string]string
+	Executable  string
+	Definitions []agentdefs.Definition
+	PluginDirs  []string
 }
 
 func (AgentTool) Definition() anthropic.ToolDefinition {
@@ -7130,7 +7134,7 @@ func (t AgentTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	if payload.Prompt == "" {
 		return "", errors.New("prompt is required")
 	}
-	def, found, err := findAgentDefinition(t.Workspace, payload.Name, payload.SubagentType)
+	def, found, err := findAgentDefinition(t.Workspace, t.Definitions, payload.Name, payload.SubagentType)
 	if err != nil {
 		return "", err
 	}
@@ -7154,7 +7158,7 @@ func (t AgentTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 			return "", err
 		}
 	}
-	command := buildAgentToolCommand(executable, def, payload.Description, payload.Prompt, payload.Model)
+	command := buildAgentToolCommandWithPluginDirs(executable, def, payload.Description, payload.Prompt, payload.Model, t.PluginDirs)
 	env, err := toolEnvironment(ctx, t.ConfigHome, t.ConfigEnv)
 	if err != nil {
 		return "", err
@@ -7182,10 +7186,14 @@ func (t AgentTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	}), nil
 }
 
-func findAgentDefinition(workspace string, name string, subagentType string) (agentdefs.Definition, bool, error) {
-	defs, err := agentdefs.Load(workspace)
-	if err != nil {
-		return agentdefs.Definition{}, false, err
+func findAgentDefinition(workspace string, definitions []agentdefs.Definition, name string, subagentType string) (agentdefs.Definition, bool, error) {
+	defs := definitions
+	if defs == nil {
+		var err error
+		defs, err = agentdefs.Load(workspace)
+		if err != nil {
+			return agentdefs.Definition{}, false, err
+		}
 	}
 	candidates := []string{strings.TrimSpace(name), strings.TrimSpace(subagentType)}
 	for _, candidate := range candidates {
@@ -7202,6 +7210,10 @@ func findAgentDefinition(workspace string, name string, subagentType string) (ag
 }
 
 func buildAgentToolCommand(executable string, def agentdefs.Definition, description string, prompt string, model string) string {
+	return buildAgentToolCommandWithPluginDirs(executable, def, description, prompt, model, nil)
+}
+
+func buildAgentToolCommandWithPluginDirs(executable string, def agentdefs.Definition, description string, prompt string, model string, pluginDirs []string) string {
 	parts := []string{}
 	if strings.TrimSpace(description) != "" {
 		parts = append(parts, "Task: "+strings.TrimSpace(description))
@@ -7213,6 +7225,14 @@ func buildAgentToolCommand(executable string, def agentdefs.Definition, descript
 	args := []string{shellQuoteToolArg(executable)}
 	if strings.TrimSpace(model) != "" {
 		args = append(args, "--model", shellQuoteToolArg(strings.TrimSpace(model)))
+	}
+	if len(def.Tools) > 0 {
+		args = append(args, "--tools", shellQuoteToolArg(strings.Join(def.Tools, ",")))
+	}
+	for _, dir := range pluginDirs {
+		if strings.TrimSpace(dir) != "" {
+			args = append(args, "--plugin-dir", shellQuoteToolArg(strings.TrimSpace(dir)))
+		}
 	}
 	args = append(args, "prompt", shellQuoteToolArg(strings.Join(parts, "\n\n")))
 	return strings.Join(args, " ")

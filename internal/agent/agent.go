@@ -129,20 +129,126 @@ const maxDynamicSkillContextPaths = 64
 var resolveExecutablePath = os.Executable
 
 type App struct {
-	Config     config.Config
-	Client     *anthropic.Client
-	Tools      *tools.Registry
-	Sessions   *session.Store
-	Workspace  string
-	Executable string
-	Out        io.Writer
-	Err        io.Writer
-	In         io.Reader
+	Config           config.Config
+	Client           *anthropic.Client
+	Tools            *tools.Registry
+	Sessions         *session.Store
+	Workspace        string
+	Executable       string
+	Out              io.Writer
+	Err              io.Writer
+	In               io.Reader
+	PluginManifests  []plugins.Manifest
+	AgentDefinitions []agentdefs.Definition
+	InlineAgents     []agentdefs.Definition
+	PluginDirs       []string
+	ActiveIDE        *bridge.EditorState
 
 	ConfigLoadError     string
 	ConfigLoadErrorKind string
 	mcpToolsLoaded      bool
 	dynamicSkillPaths   []string
+}
+
+func (a *App) runtimePluginManifests() ([]plugins.Manifest, error) {
+	if a.PluginManifests != nil {
+		return append([]plugins.Manifest(nil), a.PluginManifests...), nil
+	}
+	return plugins.Load(a.Workspace)
+}
+
+func sessionPluginDirs(manifests []plugins.Manifest) []string {
+	dirs := make([]string, 0, len(manifests))
+	seen := map[string]struct{}{}
+	for _, manifest := range manifests {
+		if !manifest.Session {
+			continue
+		}
+		dir := filepath.Clean(strings.TrimSpace(manifest.Root))
+		if dir == "." || dir == "" {
+			continue
+		}
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+		dirs = append(dirs, dir)
+	}
+	return dirs
+}
+
+func (a *App) runtimeAgentDefinitions() ([]agentdefs.Definition, error) {
+	if a.AgentDefinitions != nil {
+		return append([]agentdefs.Definition(nil), a.AgentDefinitions...), nil
+	}
+	manifests, err := a.runtimePluginManifests()
+	if err != nil {
+		return nil, err
+	}
+	return agentdefs.LoadWithManifests(a.Workspace, manifests)
+}
+
+func (a *App) runtimeSkills() ([]skills.Skill, error) {
+	manifests, err := a.runtimePluginManifests()
+	if err != nil {
+		return nil, err
+	}
+	return skills.LoadWithManifests(a.Config.ConfigHome, a.Workspace, manifests)
+}
+
+func (a *App) runtimeCustomCommands() ([]customcommands.Command, error) {
+	manifests, err := a.runtimePluginManifests()
+	if err != nil {
+		return nil, err
+	}
+	return customcommands.LoadWithManifests(a.Config.ConfigHome, a.Workspace, manifests)
+}
+
+func (a *App) findRuntimeSkill(name string) (skills.Skill, error) {
+	all, err := a.runtimeSkills()
+	if err != nil {
+		return skills.Skill{}, err
+	}
+	for _, skill := range all {
+		if skill.Active && strings.EqualFold(strings.TrimSpace(skill.Name), strings.TrimSpace(name)) {
+			return skill, nil
+		}
+	}
+	return skills.Skill{}, fmt.Errorf("%w: %s", skills.ErrNotFound, strings.TrimSpace(name))
+}
+
+func (a *App) findRuntimeCustomCommand(name string) (customcommands.Command, error) {
+	all, err := a.runtimeCustomCommands()
+	if err != nil {
+		return customcommands.Command{}, err
+	}
+	target := strings.TrimSpace(strings.TrimPrefix(name, "/"))
+	target = strings.TrimSuffix(target, ".md")
+	target = strings.ReplaceAll(filepath.ToSlash(target), "/", ":")
+	for _, command := range all {
+		if command.Active && strings.EqualFold(strings.TrimSpace(command.Name), target) {
+			return command, nil
+		}
+	}
+	return customcommands.Command{}, fmt.Errorf("%w: %s", customcommands.ErrNotFound, target)
+}
+
+func (a *App) runtimeSkillSources() []skills.DiscoveryRoot {
+	manifests, _ := a.runtimePluginManifests()
+	return skills.SourcesWithManifests(a.Config.ConfigHome, a.Workspace, manifests)
+}
+
+func (a *App) runtimeCustomCommandSources() []customcommands.DiscoveryRoot {
+	manifests, _ := a.runtimePluginManifests()
+	return customcommands.SourcesWithManifests(a.Config.ConfigHome, a.Workspace, manifests)
+}
+
+func (a *App) runtimeContextualSkills(paths []string) ([]skills.Skill, error) {
+	manifests, err := a.runtimePluginManifests()
+	if err != nil {
+		return nil, err
+	}
+	return skills.ContextualForPathsWithManifests(a.Config.ConfigHome, a.Workspace, paths, manifests)
 }
 
 func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrides) error {
@@ -396,10 +502,24 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err := renderBroadCWDGuard(os.Stdout, command, rest, workspace, overrides.AllowBroadCWD, requestedOutputFormat(originalArgs)); err != nil {
 		return err
 	}
-	if err := applyPluginHookConfigs(&cfg, workspace); err != nil {
+	pluginManifests, err := plugins.LoadWithDirs(workspace, overrides.PluginDirs)
+	if err != nil {
+		return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+	}
+	pluginDirs := sessionPluginDirs(pluginManifests)
+	fileAgentDefinitions, err := agentdefs.LoadWithManifests(workspace, pluginManifests)
+	if err != nil {
+		return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+	}
+	inlineAgentDefinitions, err := agentdefs.ParseInline(overrides.Agents)
+	if err != nil {
+		return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+	}
+	agentDefinitions := agentdefs.Merge(fileAgentDefinitions, inlineAgentDefinitions)
+	if err := applyPluginHookConfigsFromManifests(&cfg, pluginManifests); err != nil {
 		return err
 	}
-	if err := applyPluginMCPServers(&cfg, workspace); err != nil {
+	if err := applyPluginMCPServersFromManifests(&cfg, pluginManifests); err != nil {
 		return err
 	}
 	additionalDirs, err := pathscope.EffectiveDirs(workspace, cfg.AdditionalDirs)
@@ -412,16 +532,27 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	}
 	executable, _ := resolveExecutablePath()
 	format := requestedOutputFormat(originalArgs)
+	registryOptions := toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr, executable, agentDefinitions)
+	registryOptions.PluginDirs = append([]string(nil), pluginDirs...)
 	app := &App{
-		Config:     cfg,
-		Client:     anthropicClientFromConfig(cfg),
-		Tools:      tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr, executable)),
-		Sessions:   sessionStore,
-		Workspace:  workspace,
-		Executable: executable,
-		Out:        os.Stdout,
-		Err:        os.Stderr,
-		In:         os.Stdin,
+		Config:           cfg,
+		Client:           anthropicClientFromConfig(cfg),
+		Tools:            tools.NewRegistryWithOptions(workspace, registryOptions),
+		Sessions:         sessionStore,
+		Workspace:        workspace,
+		Executable:       executable,
+		Out:              os.Stdout,
+		Err:              os.Stderr,
+		In:               os.Stdin,
+		PluginManifests:  pluginManifests,
+		AgentDefinitions: agentDefinitions,
+		InlineAgents:     inlineAgentDefinitions,
+		PluginDirs:       append([]string(nil), pluginDirs...),
+	}
+	if overrides.IDE {
+		if err := app.connectActiveIDE(); err != nil {
+			return renderCLIErrorWhenStructured(os.Stdout, err, format)
+		}
 	}
 	if err := renderDebugStartup(os.Stderr, cfg, command, rest, workspace, overrides, format); err != nil {
 		return renderCLIErrorWhenStructured(os.Stdout, err, format)
@@ -1674,10 +1805,18 @@ func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
 }
 
 func applyPluginHookConfigs(cfg *config.Config, workspace string) error {
+	manifests, err := plugins.Load(workspace)
+	if err != nil {
+		return err
+	}
+	return applyPluginHookConfigsFromManifests(cfg, manifests)
+}
+
+func applyPluginHookConfigsFromManifests(cfg *config.Config, manifests []plugins.Manifest) error {
 	if cfg.EffectiveAllowManagedHooksOnly() {
 		cfg.Hooks = config.HookConfig{}
 	}
-	files, err := plugins.LoadHookConfigs(workspace)
+	files, err := plugins.LoadHookConfigsFromManifests(manifests)
 	if err != nil {
 		return err
 	}
@@ -1688,10 +1827,15 @@ func applyPluginHookConfigs(cfg *config.Config, workspace string) error {
 }
 
 func applyPluginMCPServers(cfg *config.Config, workspace string) error {
-	servers, err := plugins.LoadMCPServers(workspace)
+	manifests, err := plugins.Load(workspace)
 	if err != nil {
 		return err
 	}
+	return applyPluginMCPServersFromManifests(cfg, manifests)
+}
+
+func applyPluginMCPServersFromManifests(cfg *config.Config, manifests []plugins.Manifest) error {
+	servers := plugins.LoadMCPServersFromManifests(manifests)
 	if len(servers) == 0 {
 		return nil
 	}
@@ -1746,12 +1890,12 @@ func anthropicClientFromConfig(cfg config.Config) *anthropic.Client {
 	return anthropic.NewWithOptions(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicClientOptionsFromConfig(cfg))
 }
 
-func toolRegistryOptionsFromConfig(cfg config.Config, additionalDirs []string, questionIn io.Reader, questionOut io.Writer, executable string) tools.RegistryOptions {
+func toolRegistryOptionsFromConfig(cfg config.Config, additionalDirs []string, questionIn io.Reader, questionOut io.Writer, executable string, agentDefinitions ...[]agentdefs.Definition) tools.RegistryOptions {
 	var ragTimeout time.Duration
 	if cfg.RAGTimeoutSeconds > 0 {
 		ragTimeout = time.Duration(cfg.RAGTimeoutSeconds) * time.Second
 	}
-	return tools.RegistryOptions{
+	options := tools.RegistryOptions{
 		SandboxStrategy:  cfg.Future.SandboxStrategy,
 		Sandbox:          cfg.Future.Sandbox,
 		AdditionalDirs:   additionalDirs,
@@ -1769,6 +1913,10 @@ func toolRegistryOptionsFromConfig(cfg config.Config, additionalDirs []string, q
 		QuestionIn:       questionIn,
 		QuestionOut:      questionOut,
 	}
+	if len(agentDefinitions) > 0 {
+		options.AgentDefinitions = append([]agentdefs.Definition(nil), agentDefinitions[0]...)
+	}
+	return options
 }
 
 func (a *App) Remote(args []string) error {
@@ -4148,6 +4296,49 @@ func (a *App) IDE(args []string) error {
 	}
 	renderIDEReport(a.Out, report)
 	return nil
+}
+
+func (a *App) connectActiveIDE() error {
+	server := bridge.Server{
+		Sessions:   a.Sessions,
+		Version:    version,
+		Workspace:  a.Workspace,
+		ConfigHome: a.Config.ConfigHome,
+		TrustToken: a.Config.Future.EditorBridgeToken,
+	}
+	state, err := server.EditorState()
+	if err != nil {
+		return ideConnectionError{Kind: "ide_bridge_state_unavailable", ExpectedWorkspace: a.Workspace, Err: err}
+	}
+	if state.Identity == nil || !state.Identity.Trusted || strings.TrimSpace(state.Identity.Editor) == "" {
+		return ideConnectionError{Kind: "ide_bridge_unavailable", ExpectedWorkspace: a.Workspace}
+	}
+	if !sameFilesystemPath(state.Identity.Workspace, a.Workspace) {
+		return ideConnectionError{
+			Kind:              "ide_workspace_mismatch",
+			ExpectedWorkspace: a.Workspace,
+			ActualWorkspace:   state.Identity.Workspace,
+		}
+	}
+	a.ActiveIDE = &state
+	return nil
+}
+
+func sameFilesystemPath(left string, right string) bool {
+	leftAbs, leftErr := filepath.Abs(strings.TrimSpace(left))
+	rightAbs, rightErr := filepath.Abs(strings.TrimSpace(right))
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	leftResolved, leftResolveErr := filepath.EvalSymlinks(leftAbs)
+	if leftResolveErr == nil {
+		leftAbs = leftResolved
+	}
+	rightResolved, rightResolveErr := filepath.EvalSymlinks(rightAbs)
+	if rightResolveErr == nil {
+		rightAbs = rightResolved
+	}
+	return filepath.Clean(leftAbs) == filepath.Clean(rightAbs)
 }
 
 type bridgeKickRequest struct {
@@ -7859,7 +8050,7 @@ func parseBackgroundPruneArgs(args []string) (background.PruneOptions, error) {
 }
 
 func (a *App) RegisterPluginTools() error {
-	manifests, err := plugins.Load(a.Workspace)
+	manifests, err := a.runtimePluginManifests()
 	if err != nil {
 		return err
 	}
@@ -7928,7 +8119,11 @@ func (a *App) ReloadPluginsWithFormat(args []string, defaultFormat string) error
 	if err != nil {
 		return err
 	}
-	manifests, err := plugins.Load(a.Workspace)
+	manifests, err := plugins.LoadWithDirs(a.Workspace, a.PluginDirs)
+	if err != nil {
+		return err
+	}
+	fileAgentDefinitions, err := agentdefs.LoadWithManifests(a.Workspace, manifests)
 	if err != nil {
 		return err
 	}
@@ -7938,8 +8133,14 @@ func (a *App) ReloadPluginsWithFormat(args []string, defaultFormat string) error
 	}
 	oldRegistry := a.Tools
 	oldMCPLoaded := a.mcpToolsLoaded
+	oldManifests := a.PluginManifests
+	oldAgentDefinitions := a.AgentDefinitions
+	a.PluginManifests = manifests
+	a.AgentDefinitions = agentdefs.Merge(fileAgentDefinitions, a.InlineAgents)
 	nextRegistry, err := a.newToolRegistry()
 	if err != nil {
+		a.PluginManifests = oldManifests
+		a.AgentDefinitions = oldAgentDefinitions
 		return err
 	}
 	a.Tools = nextRegistry
@@ -7947,6 +8148,8 @@ func (a *App) ReloadPluginsWithFormat(args []string, defaultFormat string) error
 	if err := a.RegisterPluginTools(); err != nil {
 		a.Tools = oldRegistry
 		a.mcpToolsLoaded = oldMCPLoaded
+		a.PluginManifests = oldManifests
+		a.AgentDefinitions = oldAgentDefinitions
 		return err
 	}
 	report := buildReloadPluginsReport(a.Workspace, manifests, before, len(a.Tools.Infos()), oldMCPLoaded)
@@ -7976,7 +8179,9 @@ func (a *App) newToolRegistry() (*tools.Registry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return tools.NewRegistryWithOptions(a.Workspace, toolRegistryOptionsFromConfig(a.Config, additionalDirs, questionIn, questionOut, executable)), nil
+	options := toolRegistryOptionsFromConfig(a.Config, additionalDirs, questionIn, questionOut, executable, a.AgentDefinitions)
+	options.PluginDirs = append([]string(nil), a.PluginDirs...)
+	return tools.NewRegistryWithOptions(a.Workspace, options), nil
 }
 
 const reloadPluginsUsage = "codog reload-plugins [reload|refresh] [--json|--output-format text|json]"
@@ -8211,7 +8416,7 @@ type agentRunPruneReport struct {
 }
 
 func (a *App) listAgents(format string, filter string) error {
-	defs, err := agentdefs.Load(a.Workspace)
+	defs, err := a.runtimeAgentDefinitions()
 	if err != nil {
 		return err
 	}
@@ -8236,7 +8441,7 @@ func (a *App) listAgents(format string, filter string) error {
 }
 
 func (a *App) showAgent(name string, format string) error {
-	defs, err := agentdefs.Load(a.Workspace)
+	defs, err := a.runtimeAgentDefinitions()
 	if err != nil {
 		return err
 	}
@@ -9106,7 +9311,7 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 	if err != nil {
 		return err
 	}
-	defs, err := agentdefs.Load(a.Workspace)
+	defs, err := a.runtimeAgentDefinitions()
 	if err != nil {
 		return err
 	}
@@ -9141,7 +9346,7 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 			return err
 		}
 	}
-	command := buildAgentCommand(exe, *selected, req.Prompt)
+	command := buildAgentCommandWithPluginDirs(exe, *selected, req.Prompt, a.PluginDirs)
 	sessionID, err := a.sessionIDFromOverrides(overrides)
 	if err != nil {
 		if allocation != nil {
@@ -9366,10 +9571,22 @@ func parseAgentRunHeartbeatArgs(args []string) (string, background.LaneHeartbeat
 }
 
 func buildAgentCommand(exe string, def agentdefs.Definition, prompt string) string {
+	return buildAgentCommandWithPluginDirs(exe, def, prompt, nil)
+}
+
+func buildAgentCommandWithPluginDirs(exe string, def agentdefs.Definition, prompt string, pluginDirs []string) string {
 	combined := strings.TrimSpace(strings.Join([]string{def.Prompt, prompt}, "\n\n"))
 	args := []string{shellQuote(exe)}
 	if def.Model != "" {
 		args = append(args, "--model", shellQuote(def.Model))
+	}
+	if len(def.Tools) > 0 {
+		args = append(args, "--tools", shellQuote(strings.Join(def.Tools, ",")))
+	}
+	for _, dir := range pluginDirs {
+		if strings.TrimSpace(dir) != "" {
+			args = append(args, "--plugin-dir", shellQuote(strings.TrimSpace(dir)))
+		}
 	}
 	args = append(args, "prompt", shellQuote(combined))
 	return strings.Join(args, " ")
@@ -9584,7 +9801,7 @@ func validatePluginSource(source string) plugins.ValidationResult {
 }
 
 func (a *App) listPlugins(format string) error {
-	manifests, err := plugins.Load(a.Workspace)
+	manifests, err := a.runtimePluginManifests()
 	if err != nil {
 		return err
 	}
@@ -9851,7 +10068,7 @@ func (a *App) Marketplace(args []string) error {
 var errPluginNotFound = errors.New("plugin not found")
 
 func (a *App) findPlugin(id string) (plugins.Manifest, error) {
-	manifests, err := plugins.Load(a.Workspace)
+	manifests, err := a.runtimePluginManifests()
 	if err != nil {
 		return plugins.Manifest{}, err
 	}
@@ -9954,7 +10171,7 @@ type pluginDegradedMode struct {
 }
 
 func (a *App) pluginHealthReport(action string) pluginHealthReport {
-	manifests, err := plugins.Load(a.Workspace)
+	manifests, err := a.runtimePluginManifests()
 	report := pluginHealthReport{
 		Kind:       "plugin_health",
 		Action:     normalizePluginHealthAction(action),
@@ -10326,7 +10543,7 @@ func (a *App) buildPluginLifecycleRunReport(ctx context.Context, req pluginLifec
 		PluginID:  req.PluginID,
 		TimeoutMS: req.TimeoutMS,
 	}
-	manifests, err := plugins.Load(a.Workspace)
+	manifests, err := a.runtimePluginManifests()
 	if err != nil {
 		report.Status = "failed"
 		report.Message = err.Error()
@@ -10799,7 +11016,7 @@ func renderMarketplaceSources(out io.Writer, report marketplaceSourcesReport, fo
 }
 
 func (a *App) marketplaceSettings(format string) error {
-	manifests, err := plugins.Load(a.Workspace)
+	manifests, err := a.runtimePluginManifests()
 	if err != nil {
 		return err
 	}
@@ -16169,7 +16386,9 @@ func (a *App) refreshBuiltinToolScope() error {
 	if err != nil {
 		return err
 	}
-	a.Tools.UpdateBuiltinScope(a.Workspace, toolRegistryOptionsFromConfig(a.Config, additionalDirs, questionIn, questionOut, executable))
+	options := toolRegistryOptionsFromConfig(a.Config, additionalDirs, questionIn, questionOut, executable, a.AgentDefinitions)
+	options.PluginDirs = append([]string(nil), a.PluginDirs...)
+	a.Tools.UpdateBuiltinScope(a.Workspace, options)
 	return nil
 }
 
@@ -25645,7 +25864,7 @@ func (a *App) buildBootstrapPlanReport(ctx context.Context) bootstrapPlanReport 
 
 	pluginStatus := "ready"
 	pluginEvidence := map[string]any{}
-	if manifests, err := plugins.Load(a.Workspace); err != nil {
+	if manifests, err := a.runtimePluginManifests(); err != nil {
 		pluginStatus = "warn"
 		pluginEvidence["error"] = err.Error()
 	} else {
@@ -26428,7 +26647,7 @@ func (a *App) prefetchMCPValidation() (prefetchTaskResult, error) {
 }
 
 func (a *App) prefetchPluginScan() (prefetchTaskResult, error) {
-	manifests, err := plugins.Load(a.Workspace)
+	manifests, err := a.runtimePluginManifests()
 	if err != nil {
 		return prefetchTaskResult{}, err
 	}
@@ -28080,7 +28299,7 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 	hookValidation := buildHookValidation(runtimeHooks)
 	installedPluginCount := 0
 	pluginLoadError := ""
-	if manifests, err := plugins.Load(a.Workspace); err == nil {
+	if manifests, err := a.runtimePluginManifests(); err == nil {
 		installedPluginCount = len(manifests)
 	} else {
 		pluginLoadError = err.Error()
@@ -28666,6 +28885,7 @@ func (a *App) capabilitiesReport() capabilitiesReport {
 	localResources := mcpserver.LocalResources(a.mcpServerOptions())
 	localTemplates := mcpserver.LocalResourceTemplates()
 	localPrompts := mcpserver.LocalPrompts()
+	pluginManifests, _ := a.runtimePluginManifests()
 	return capabilitiesReport{
 		Kind:                    "capabilities",
 		Action:                  "show",
@@ -28703,9 +28923,10 @@ func (a *App) capabilitiesReport() capabilitiesReport {
 			RemoteEnabled:     a.Config.Future.RemoteEnabled,
 		}),
 		Orchestration: orchestrationparity.Build(orchestrationparity.Options{
-			ConfigHome: a.Config.ConfigHome,
-			Workspace:  a.Workspace,
-			MCPServers: a.Config.MCPServers,
+			ConfigHome:      a.Config.ConfigHome,
+			Workspace:       a.Workspace,
+			MCPServers:      a.Config.MCPServers,
+			PluginManifests: pluginManifests,
 		}),
 		Release: releaseparity.Build(releaseparity.Options{
 			SandboxStrategy:           a.Config.Future.SandboxStrategy,
@@ -30057,6 +30278,31 @@ type invalidCWDError struct {
 	Err  error
 }
 
+type ideConnectionError struct {
+	Kind              string
+	ExpectedWorkspace string
+	ActualWorkspace   string
+	Err               error
+}
+
+func (e ideConnectionError) Error() string {
+	switch e.Kind {
+	case "ide_bridge_state_unavailable":
+		if e.Err != nil {
+			return fmt.Sprintf("--ide could not read local editor bridge state: %v", e.Err)
+		}
+		return "--ide could not read local editor bridge state"
+	case "ide_workspace_mismatch":
+		return fmt.Sprintf("--ide editor workspace %q does not match active workspace %q", e.ActualWorkspace, e.ExpectedWorkspace)
+	default:
+		return "--ide requires one trusted local editor bridge; identify an editor through `codog bridge serve` first"
+	}
+}
+
+func (e ideConnectionError) Unwrap() error {
+	return e.Err
+}
+
 func (e invalidCWDError) Error() string {
 	path := strings.TrimSpace(e.Path)
 	if path == "" {
@@ -30849,6 +31095,28 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Path:      path,
 		})
 	}
+	var ideErr ideConnectionError
+	if errors.As(err, &ideErr) {
+		kind := strings.TrimSpace(ideErr.Kind)
+		if kind == "" {
+			kind = "ide_bridge_unavailable"
+		}
+		hint := "Start the local editor bridge and identify a trusted editor before using --ide."
+		if kind == "ide_workspace_mismatch" {
+			hint = "Identify the editor again from the active workspace, or run Codog from the editor workspace."
+		}
+		return finish(cliErrorReport{
+			Kind:              kind,
+			ErrorKind:         kind,
+			Status:            "error",
+			Command:           "ide",
+			Action:            "connect",
+			Message:           ideErr.Error(),
+			Hint:              hint,
+			ExpectedWorkspace: strings.TrimSpace(ideErr.ExpectedWorkspace),
+			ActualWorkspace:   strings.TrimSpace(ideErr.ActualWorkspace),
+		})
+	}
 	var toolErr toolNameError
 	if errors.As(err, &toolErr) {
 		argument := strings.TrimSpace(toolErr.Argument)
@@ -31073,6 +31341,9 @@ func classifyCLIErrorEnvelopeKind(err error, report cliErrorReport) string {
 	case "invalid_permission_mode":
 		return "policy"
 	}
+	if strings.HasPrefix(errorKind, "ide_") {
+		return "ide"
+	}
 	if strings.HasPrefix(errorKind, "unsupported_") ||
 		strings.HasPrefix(errorKind, "unknown_") ||
 		strings.HasSuffix(errorKind, "_not_found") ||
@@ -31142,6 +31413,8 @@ func cliErrorOperation(err error, report cliErrorReport, kind string) string {
 		return firstNonEmpty(report.Command, "deliver")
 	case "policy":
 		return firstNonEmpty(report.Command, report.Option, "evaluate_policy")
+	case "ide":
+		return "connect_editor_bridge"
 	case "usage":
 		return "parse_args"
 	case "runtime":
@@ -31235,7 +31508,7 @@ func cliErrorRetryable(err error, kind string, errno string) bool {
 	switch kind {
 	case "filesystem":
 		return errno == "ENOENT"
-	case "mcp", "delivery":
+	case "mcp", "delivery", "ide":
 		return true
 	case "runtime":
 		return errors.Is(err, os.ErrClosed)
@@ -31268,7 +31541,7 @@ func normalizeDirectSlashInvocation(out io.Writer, command string, args []string
 }
 
 func (a *App) runDirectCustomSlash(ctx context.Context, command string, args []string, overrides config.FlagOverrides, format string) (bool, error) {
-	custom, err := customcommands.Find(a.Config.ConfigHome, a.Workspace, command)
+	custom, err := a.findRuntimeCustomCommand(command)
 	if err != nil {
 		if errors.Is(err, customcommands.ErrNotFound) {
 			return false, nil
@@ -34295,7 +34568,11 @@ _codog_completion() {
       COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
       return 0
       ;;
-    --config|--settings|--cwd|-C|--directory|--output)
+    --setting-sources)
+      COMPREPLY=( $(compgen -W "user project local user,project user,project,local" -- "$cur") )
+      return 0
+      ;;
+    --config|--settings|--cwd|-C|--directory|--plugin-dir|--output)
       compopt -o default 2>/dev/null
       return 0
       ;;
@@ -34330,6 +34607,16 @@ _codog() {
     return
   fi
 
+  if [[ ${words[CURRENT-1]} == --setting-sources ]]; then
+    _values 'source' user project local
+    return
+  fi
+
+  if [[ ${words[CURRENT-1]} == --config || ${words[CURRENT-1]} == --settings || ${words[CURRENT-1]} == --cwd || ${words[CURRENT-1]} == -C || ${words[CURRENT-1]} == --directory || ${words[CURRENT-1]} == --plugin-dir ]]; then
+    _files
+    return
+  fi
+
   _files
 }
 
@@ -34342,6 +34629,10 @@ func fishCompletionScript(commands string) string {
 complete -c codog -f -n '__fish_use_subcommand' -a %q
 complete -c codog -f -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish'
 complete -c codog -l output -r -d 'Write completion script to a file'
+complete -c codog -l agents -r -d 'Define session agents as JSON'
+complete -c codog -l plugin-dir -r -d 'Load a plugin directory for this session'
+complete -c codog -l setting-sources -r -a 'user project local' -d 'Select configuration sources'
+complete -c codog -l ide -d 'Connect to the active local editor bridge'
 `, commands)
 }
 
@@ -37169,7 +37460,7 @@ func (a *App) expandSkillInvocationWithSkill(input string, sessionID string) (st
 	if len(fields) == 0 {
 		return input, nil
 	}
-	skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, fields[0])
+	skill, err := a.findRuntimeSkill(fields[0])
 	if err != nil {
 		return input, nil
 	}
@@ -39586,7 +39877,7 @@ func (a *App) handleSkillSlash(ctx context.Context, line string, sess *session.S
 	}
 	name := strings.TrimPrefix(fields[0], "/")
 	name = strings.ReplaceAll(name, "/", ":")
-	skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, name)
+	skill, err := a.findRuntimeSkill(name)
 	if err != nil {
 		if errors.Is(err, skills.ErrNotFound) {
 			return false
@@ -39610,7 +39901,7 @@ func (a *App) handleCustomSlash(ctx context.Context, line string, sess *session.
 	if len(fields) == 0 {
 		return false
 	}
-	command, err := customcommands.Find(a.Config.ConfigHome, a.Workspace, fields[0])
+	command, err := a.findRuntimeCustomCommand(fields[0])
 	if err != nil {
 		if errors.Is(err, customcommands.ErrNotFound) {
 			return false
@@ -51254,7 +51545,7 @@ func (a *App) Skills(args []string) error {
 				Usage:   "codog skills show NAME [--json|--output-format text|json]",
 			}, format)
 		}
-		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
+		skill, err := a.findRuntimeSkill(remaining[0])
 		if err != nil {
 			return renderSkillLookupError(a.Out, "show", remaining[0], err, format)
 		}
@@ -51275,7 +51566,7 @@ func (a *App) Skills(args []string) error {
 		if len(remaining) < 1 {
 			return renderMissingActionArgument(a.Out, "skills", "invoke", "skill_name", "skills invoke requires a skill name", "Usage: codog skills invoke NAME [ARGS...] [--json|--output-format text|json]. Run `codog skills list` to see available skills.", format)
 		}
-		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
+		skill, err := a.findRuntimeSkill(remaining[0])
 		if err != nil {
 			return renderSkillLookupError(a.Out, "invoke", remaining[0], err, format)
 		}
@@ -51571,7 +51862,7 @@ func (a *App) skillActivation(action string, args []string) error {
 	switch req.Action {
 	case "enable":
 		for _, name := range req.Names {
-			skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, name)
+			skill, err := a.findRuntimeSkill(name)
 			if err != nil {
 				return renderSkillLookupError(a.Out, "enable", name, err, req.Format)
 			}
@@ -51587,7 +51878,7 @@ func (a *App) skillActivation(action string, args []string) error {
 		var removed []string
 		for _, name := range req.Names {
 			removeName := name
-			if skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, name); err == nil {
+			if skill, err := a.findRuntimeSkill(name); err == nil {
 				removeName = skill.Name
 			}
 			var changed bool
@@ -51701,7 +51992,7 @@ func skillActivationUsage(action string) string {
 }
 
 func (a *App) buildSkillActivationStatus(req skillActivationRequest) (skillActivationReport, error) {
-	all, err := skills.Load(a.Config.ConfigHome, a.Workspace)
+	all, err := a.runtimeSkills()
 	if err != nil {
 		return skillActivationReport{}, err
 	}
@@ -51853,11 +52144,11 @@ func (a *App) skillAudit(args []string) error {
 	if err != nil {
 		return err
 	}
-	all, err := skills.Load(a.Config.ConfigHome, a.Workspace)
+	all, err := a.runtimeSkills()
 	if err != nil {
 		return err
 	}
-	roots := skills.Sources(a.Config.ConfigHome, a.Workspace)
+	roots := a.runtimeSkillSources()
 	drifts := skills.MetadataDrifts(all)
 	enabled := normalizeEnabledSkillNames(a.Config.EnabledSkills)
 	available := activeSkillNames(all)
@@ -52080,7 +52371,7 @@ func (a *App) listSkillsWithAction(args []string, action string, query string) e
 	if strings.TrimSpace(query) != "" {
 		filter = strings.TrimSpace(query)
 	}
-	all, err := skills.Load(a.Config.ConfigHome, a.Workspace)
+	all, err := a.runtimeSkills()
 	if err != nil {
 		return err
 	}
@@ -52147,7 +52438,7 @@ func (a *App) skillSources(args []string) error {
 	if err != nil {
 		return err
 	}
-	roots := skills.Sources(a.Config.ConfigHome, a.Workspace)
+	roots := a.runtimeSkillSources()
 	if format == "json" {
 		data, _ := json.MarshalIndent(map[string]any{
 			"kind":       "skills",
@@ -52256,7 +52547,7 @@ func (a *App) Commands(args []string) error {
 				Usage:   "codog commands show [NAME] [--json|--output-format text|json]",
 			}, format)
 		}
-		command, err := customcommands.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
+		command, err := a.findRuntimeCustomCommand(remaining[0])
 		if err != nil {
 			return err
 		}
@@ -52277,7 +52568,7 @@ func (a *App) Commands(args []string) error {
 		if len(remaining) < 1 {
 			return renderMissingActionArgument(a.Out, "commands", "run", "command_name", "commands run requires a command name", "Usage: codog commands run NAME [ARGS...] [--json|--output-format text|json]. Run `codog commands list` to see available commands.", format)
 		}
-		command, err := customcommands.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
+		command, err := a.findRuntimeCustomCommand(remaining[0])
 		if err != nil {
 			return err
 		}
@@ -52610,7 +52901,7 @@ func (a *App) renderCommandsList(format string) error {
 }
 
 func (a *App) renderCommandsListWithAction(format string, action string, query string) error {
-	all, err := customcommands.Load(a.Config.ConfigHome, a.Workspace)
+	all, err := a.runtimeCustomCommands()
 	if err != nil {
 		return err
 	}
@@ -52699,11 +52990,11 @@ func (a *App) commandAudit(args []string) error {
 	if err != nil {
 		return err
 	}
-	all, err := customcommands.Load(a.Config.ConfigHome, a.Workspace)
+	all, err := a.runtimeCustomCommands()
 	if err != nil {
 		return err
 	}
-	roots := customcommands.Sources(a.Config.ConfigHome, a.Workspace)
+	roots := a.runtimeCustomCommandSources()
 	activeCount := 0
 	var frontmatterErrors []customcommands.Command
 	for _, command := range all {
@@ -52765,7 +53056,7 @@ func (a *App) commandSources(args []string) error {
 	if err != nil {
 		return err
 	}
-	roots := customcommands.Sources(a.Config.ConfigHome, a.Workspace)
+	roots := a.runtimeCustomCommandSources()
 	if format == "json" {
 		data, _ := json.MarshalIndent(map[string]any{
 			"kind":       "commands",
@@ -54614,7 +54905,9 @@ func (a *App) mcpServe(ctx context.Context, args []string) error {
 func (a *App) mcpRegistry() *tools.Registry {
 	registry := a.Tools
 	if registry == nil {
-		registry = tools.NewRegistryWithOptions(a.Workspace, toolRegistryOptionsFromConfig(a.Config, a.Config.AdditionalDirs, nil, nil, a.Executable))
+		options := toolRegistryOptionsFromConfig(a.Config, a.Config.AdditionalDirs, nil, nil, a.Executable, a.AgentDefinitions)
+		options.PluginDirs = append([]string(nil), a.PluginDirs...)
+		registry = tools.NewRegistryWithOptions(a.Workspace, options)
 	}
 	return registry
 }
@@ -59281,6 +59574,10 @@ func (a *App) systemPromptForInput(input string) string {
 		builder.WriteString("\n\n")
 		builder.WriteString(rendered)
 	}
+	if rendered := a.activeIDEPrompt(); rendered != "" {
+		builder.WriteString("\n\n")
+		builder.WriteString(rendered)
+	}
 	if language := normalizeConfiguredLanguage(a.Config.Language); language != "" {
 		builder.WriteString("\n\n<codog_interface_language>")
 		builder.WriteString(html.EscapeString(language))
@@ -59296,7 +59593,7 @@ func (a *App) systemPromptForInput(input string) string {
 	}
 	includedSkills := map[string]bool{}
 	for _, name := range a.Config.EnabledSkills {
-		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, name)
+		skill, err := a.findRuntimeSkill(name)
 		if err != nil {
 			continue
 		}
@@ -59340,6 +59637,46 @@ func (a *App) systemPromptForInput(input string) string {
 		builder.WriteString("\n\n")
 		builder.WriteString(rendered)
 	}
+	return builder.String()
+}
+
+func (a *App) activeIDEPrompt() string {
+	if a.ActiveIDE == nil || a.ActiveIDE.Identity == nil {
+		return ""
+	}
+	state := a.ActiveIDE
+	var builder strings.Builder
+	builder.WriteString("<active_editor>\n")
+	builder.WriteString("Editor: ")
+	builder.WriteString(html.EscapeString(state.Identity.Editor))
+	if state.Identity.Version != "" {
+		builder.WriteString(" ")
+		builder.WriteString(html.EscapeString(state.Identity.Version))
+	}
+	builder.WriteString("\n")
+	if state.OpenFile != nil {
+		builder.WriteString("Open file: ")
+		builder.WriteString(html.EscapeString(state.OpenFile.Path))
+		builder.WriteString("\n")
+	}
+	if state.Selection != nil {
+		builder.WriteString(fmt.Sprintf("Selection: %s:%d:%d-%d:%d\n",
+			html.EscapeString(state.Selection.Path),
+			state.Selection.StartLine,
+			state.Selection.StartColumn,
+			state.Selection.EndLine,
+			state.Selection.EndColumn,
+		))
+		if text := strings.TrimSpace(state.Selection.Text); text != "" {
+			if len(text) > 8192 {
+				text = text[:8192] + "\n... (truncated)"
+			}
+			builder.WriteString("Selected text:\n")
+			builder.WriteString(html.EscapeString(text))
+			builder.WriteString("\n")
+		}
+	}
+	builder.WriteString("</active_editor>")
 	return builder.String()
 }
 
@@ -59396,7 +59733,7 @@ func (a *App) pathMatchedSkills(input string) []skills.Skill {
 	if len(paths) == 0 {
 		return nil
 	}
-	contextual, err := skills.ContextualForPaths(a.Config.ConfigHome, a.Workspace, paths)
+	contextual, err := a.runtimeContextualSkills(paths)
 	if err != nil {
 		return nil
 	}
@@ -59447,7 +59784,7 @@ func (a *App) slashCompletionCandidates(activeSessionID string) []string {
 
 func (a *App) customSlashCompletionCandidates() []string {
 	candidates := []string{}
-	if commands, err := customcommands.Load(a.Config.ConfigHome, a.Workspace); err == nil {
+	if commands, err := a.runtimeCustomCommands(); err == nil {
 		for _, command := range commands {
 			if !command.Active {
 				continue
@@ -59455,7 +59792,7 @@ func (a *App) customSlashCompletionCandidates() []string {
 			candidates = append(candidates, "/"+strings.ReplaceAll(command.Name, ":", "/")+" ")
 		}
 	}
-	if loadedSkills, err := skills.Load(a.Config.ConfigHome, a.Workspace); err == nil {
+	if loadedSkills, err := a.runtimeSkills(); err == nil {
 		for _, skill := range loadedSkills {
 			if !skill.Active || !skill.UserInvocable {
 				continue
@@ -59674,7 +60011,7 @@ func (a *App) runtimeSlashHelpEntries() []runtimeSlashHelpEntry {
 		}
 		entries = append(entries, runtimeSlashHelpEntry{Usage: usage, Description: description})
 	}
-	if commands, err := customcommands.Load(a.Config.ConfigHome, a.Workspace); err == nil {
+	if commands, err := a.runtimeCustomCommands(); err == nil {
 		for _, command := range commands {
 			if !command.Active {
 				continue
@@ -59686,7 +60023,7 @@ func (a *App) runtimeSlashHelpEntries() []runtimeSlashHelpEntry {
 			add(command.Name, command.ArgumentHint, description)
 		}
 	}
-	if loadedSkills, err := skills.Load(a.Config.ConfigHome, a.Workspace); err == nil {
+	if loadedSkills, err := a.runtimeSkills(); err == nil {
 		for _, skill := range loadedSkills {
 			if !skill.Active || !skill.UserInvocable {
 				continue
@@ -59756,6 +60093,34 @@ func (v *appendStringFlag) String() string {
 	return strings.Join(*v, ",")
 }
 
+type trackedStringListFlag struct {
+	values *[]string
+	set    *bool
+}
+
+func (f trackedStringListFlag) Set(value string) error {
+	if f.set != nil {
+		*f.set = true
+	}
+	if f.values == nil {
+		return nil
+	}
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			*f.values = append(*f.values, part)
+		}
+	}
+	return nil
+}
+
+func (f trackedStringListFlag) String() string {
+	if f.values == nil {
+		return ""
+	}
+	return strings.Join(*f.values, ",")
+}
+
 type toolSelectionFlag struct {
 	values *[]string
 	set    *bool
@@ -59819,6 +60184,7 @@ func (f optionalFloatFlag) String() string {
 func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides, string, []string, error) {
 	args = normalizeOptionalFromPRFlag(args)
 	args = normalizeVariadicAddDirFlag(args)
+	args = normalizeVariadicPluginDirFlag(args)
 	if missing, ok := missingToolFlagArgument(args); ok {
 		return base, "", nil, missing
 	}
@@ -59842,11 +60208,15 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	disallowedTools := stringListFlag(base.DisallowedTools)
 	additionalDirs := stringListFlag(base.AdditionalDirs)
 	mcpConfigs := appendStringFlag(base.MCPConfigs)
+	pluginDirs := appendStringFlag(base.PluginDirs)
+	settingSources := append([]string(nil), base.SettingSources...)
+	settingSourcesFlag := trackedStringListFlag{values: &settingSources, set: &base.SettingSourcesSet}
 	toolNames := append([]string(nil), base.ToolNames...)
 	toolSelection := toolSelectionFlag{values: &toolNames, set: &base.ToolNamesSet}
 	promptAttachments := stringListFlag{}
 	flags.StringVar(&base.ConfigPath, "config", base.ConfigPath, "config path")
 	flags.StringVar(&base.Settings, "settings", base.Settings, "load additional settings from a JSON file or JSON object")
+	flags.Var(settingSourcesFlag, "setting-sources", "configuration sources: user, project, local")
 	flags.StringVar(&base.CWD, "cwd", base.CWD, "run as if Codog was started in this directory")
 	flags.StringVar(&base.CWD, "C", base.CWD, "alias for --cwd")
 	flags.StringVar(&base.CWD, "directory", base.CWD, "alias for --cwd")
@@ -59866,6 +60236,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.FromPR, "from-pr", base.FromPR, "resume a session linked to a pull request")
 	flags.StringVar(&base.ResumeSessionAt, "resume-session-at", base.ResumeSessionAt, "resume up to an assistant message id")
 	flags.StringVar(&base.Prefill, "prefill", base.Prefill, "pre-fill the next interactive input")
+	flags.StringVar(&base.Agents, "agents", base.Agents, "JSON object defining session agents")
+	flags.Var(&pluginDirs, "plugin-dir", "load a plugin directory for this session; repeatable")
+	flags.BoolVar(&base.IDE, "ide", base.IDE, "connect to the active local editor bridge")
 	flags.BoolVar(&base.DeepLinkOrigin, "deep-link-origin", base.DeepLinkOrigin, "signal launch from a deep link")
 	flags.StringVar(&base.DeepLinkRepo, "deep-link-repo", base.DeepLinkRepo, "repo slug resolved by a deep link")
 	flags.StringVar(&deepLinkLastFetch, "deep-link-last-fetch", deepLinkLastFetch, "deep link fetch timestamp in epoch milliseconds")
@@ -59925,6 +60298,8 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	base.DisallowedTools = []string(disallowedTools)
 	base.AdditionalDirs = []string(additionalDirs)
 	base.MCPConfigs = []string(mcpConfigs)
+	base.PluginDirs = []string(pluginDirs)
+	base.SettingSources = settingSources
 	base.ToolNames = append([]string(nil), toolNames...)
 	if fetched, err := strconv.ParseInt(strings.TrimSpace(deepLinkLastFetch), 10, 64); err == nil && fetched > 0 {
 		base.DeepLinkLastFetchMS = fetched
@@ -60242,6 +60617,33 @@ func normalizeVariadicAddDirFlag(args []string) []string {
 	return normalized
 }
 
+func normalizeVariadicPluginDirFlag(args []string) []string {
+	normalized := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg != "--plugin-dir" && arg != "-plugin-dir" {
+			normalized = append(normalized, arg)
+			continue
+		}
+		normalized = append(normalized, arg)
+		index++
+		if index >= len(args) || strings.HasPrefix(strings.TrimSpace(args[index]), "-") || looksLikeCommandName(args[index]) {
+			index--
+			continue
+		}
+		normalized = append(normalized, args[index])
+		for index+1 < len(args) {
+			next := strings.TrimSpace(args[index+1])
+			if next == "" || strings.HasPrefix(next, "-") || looksLikeCommandName(next) {
+				break
+			}
+			normalized = append(normalized, "--plugin-dir", args[index+1])
+			index++
+		}
+	}
+	return normalized
+}
+
 func looksLikeFromPRValue(value string) bool {
 	value = strings.TrimSpace(value)
 	if value == "" || strings.HasPrefix(value, "-") || looksLikeCommandName(value) {
@@ -60348,6 +60750,8 @@ func duplicateTrackedGlobalFlagKey(arg string) (string, bool) {
 		return "--resume-session-at", true
 	case "--debug-file", "-debug-file":
 		return "--debug-file", true
+	case "--agents", "-agents":
+		return "--agents", true
 	case "--max-budget-usd", "-max-budget-usd":
 		return "--max-budget-usd", true
 	case "--output-format", "-output-format", "-o", "--o", "--json", "-json":
@@ -60379,6 +60783,8 @@ func duplicateFlagUsage(flag string) string {
 		return "codog --resume ID --resume-session-at MESSAGE_ID prompt TEXT"
 	case "--debug-file":
 		return "codog --debug-file debug.log COMMAND"
+	case "--agents":
+		return "codog --agents JSON COMMAND"
 	case "--max-budget-usd":
 		return "codog -p --max-budget-usd 1.50 TEXT"
 	default:
@@ -60388,12 +60794,12 @@ func duplicateFlagUsage(flag string) string {
 
 func globalFlagConsumesNext(arg string) bool {
 	switch arg {
-	case "--config", "-config", "--settings", "-settings", "--cwd", "-cwd", "-C", "--C", "--directory", "-directory",
+	case "--config", "-config", "--settings", "-settings", "--setting-sources", "-setting-sources", "--cwd", "-cwd", "-C", "--C", "--directory", "-directory",
 		"--model", "-model", "--fallback-model", "-fallback-model", "--thinking", "-thinking", "--base-url", "-base-url", "--system-prompt", "-system-prompt",
 		"--system-prompt-file", "-system-prompt-file", "--append-system-prompt", "-append-system-prompt",
 		"--append-system-prompt-file", "-append-system-prompt-file", "--session", "-session",
 		"--session-id", "-session-id", "--name", "-name", "--resume", "-resume", "-r",
-		"--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo",
+		"--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--agents", "-agents", "--plugin-dir", "-plugin-dir", "--deep-link-repo", "-deep-link-repo",
 		"--deep-link-last-fetch", "-deep-link-last-fetch", "--debug-file", "-debug-file", "--output-format", "-output-format", "-o", "--o",
 		"--input-format", "-input-format", "--json-schema", "-json-schema",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
@@ -60433,7 +60839,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--settings", "-settings", "--cwd", "-C", "--directory", "--model", "--fallback-model", "-fallback-model", "--thinking", "-thinking", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--debug-file", "-debug-file", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--add-dir", "-add-dir", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--max-budget-usd", "-max-budget-usd", "--temperature":
+	case "--config", "--settings", "-settings", "--setting-sources", "-setting-sources", "--cwd", "-C", "--directory", "--model", "--fallback-model", "-fallback-model", "--thinking", "-thinking", "--base-url", "--system-prompt", "--system-prompt-file", "--append-system-prompt", "--append-system-prompt-file", "--session", "--session-id", "-session-id", "--name", "-name", "--resume", "-r", "--from-pr", "-from-pr", "--resume-session-at", "-resume-session-at", "--prefill", "-prefill", "--agents", "-agents", "--plugin-dir", "-plugin-dir", "--deep-link-repo", "-deep-link-repo", "--deep-link-last-fetch", "-deep-link-last-fetch", "--debug-file", "-debug-file", "--output-format", "-o", "--input-format", "-input-format", "--json-schema", "-json-schema", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--add-dir", "-add-dir", "--tools", "--mcp-config", "-mcp-config", "--max-turns", "--max-tokens", "--max-budget-usd", "-max-budget-usd", "--temperature":
 		return true
 	default:
 		return false
@@ -62378,6 +62784,10 @@ Options:
   --mcp-config path|json              Merge MCP configuration; repeatable.
   --strict-mcp-config                 Ignore configured MCP servers not passed explicitly.
   --settings path|json                Load additional settings.
+  --setting-sources sources           Load user, project, and/or local settings layers.
+  --agents json                       Define session-only agents as a JSON object.
+  --plugin-dir path                   Load a plugin directory for this session; repeatable.
+  --ide                               Require and use the active local editor bridge.
   --config path                       Use a specific Codog config file.
   --cwd path, -C path                 Run from another working directory.
   --session-id id                     Select a session id.

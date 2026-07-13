@@ -741,6 +741,10 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, helpOutput, "--fallback-model name")
 	require.Contains(t, helpOutput, "--thinking enabled|adaptive|disabled")
 	require.Contains(t, helpOutput, "--include-partial-messages")
+	require.Contains(t, helpOutput, "--setting-sources sources")
+	require.Contains(t, helpOutput, "--agents json")
+	require.Contains(t, helpOutput, "--plugin-dir path")
+	require.Contains(t, helpOutput, "--ide")
 	require.Contains(t, helpOutput, "<cc-url|cc+unix-url>")
 	require.Contains(t, helpOutput, "CODOG_EXTRA_BODY")
 	require.NotContains(t, helpOutput, "Resume-safe commands:")
@@ -10354,6 +10358,24 @@ func TestACPServeExposesBackgroundControls(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
 	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	backgroundStore := background.NewStore(configHome)
+	t.Cleanup(func() {
+		require.Eventually(t, func() bool {
+			tasks, err := backgroundStore.List()
+			if err != nil {
+				return false
+			}
+			active := false
+			for _, task := range tasks {
+				if !background.IsActiveStatus(task.Status) {
+					continue
+				}
+				active = true
+				_, _ = backgroundStore.Stop(task.ID)
+			}
+			return !active
+		}, 2*time.Second, 20*time.Millisecond)
+	})
 	now := time.Now().UTC().Truncate(time.Second)
 	oldCompleted := now.Add(-48 * time.Hour)
 	bgDir := filepath.Join(configHome, "background")
@@ -10410,7 +10432,7 @@ func TestACPServeExposesBackgroundControls(t *testing.T) {
 	require.Equal(t, "terminal", runTask["kind"])
 	require.Equal(t, "ide-session", runTask["session_id"])
 	require.Eventually(t, func() bool {
-		logs, err := background.NewStore(configHome).Logs(taskID, 4096)
+		logs, err := backgroundStore.Logs(taskID, 4096)
 		return err == nil && strings.Contains(logs, "acp-bg")
 	}, 2*time.Second, 50*time.Millisecond)
 
@@ -11187,6 +11209,33 @@ func TestParseFlagsTreatsFreeTextAsInteractiveInitialPrompt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "statsu", command)
 	require.Equal(t, []string{"--json"}, rest)
+}
+
+func TestParseFlagsSupportsSessionRuntimeOverrides(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{
+		"--agents", `{"reviewer":{"description":"Reviews","prompt":"Review."}}`,
+		"--plugin-dir", "./plugin-one",
+		"--plugin-dir", "./plugin-two",
+		"--setting-sources", "project,local",
+		"--ide",
+		"status",
+	}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "status", command)
+	require.Empty(t, rest)
+	require.Contains(t, overrides.Agents, "reviewer")
+	require.Equal(t, []string{"./plugin-one", "./plugin-two"}, overrides.PluginDirs)
+	require.Equal(t, []string{"project", "local"}, overrides.SettingSources)
+	require.True(t, overrides.SettingSourcesSet)
+	require.True(t, overrides.IDE)
+
+	overrides, command, rest, err = parseFlags([]string{
+		"--plugin-dir", "./plugin-one", "./plugin-two", "status",
+	}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "status", command)
+	require.Empty(t, rest)
+	require.Equal(t, []string{"./plugin-one", "./plugin-two"}, overrides.PluginDirs)
 }
 
 func TestParseFlagsRejectsInteractivePromptOutputAndPrefillConflicts(t *testing.T) {
@@ -18244,7 +18293,18 @@ func TestShellCompletionBypassesConfigLoad(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, "complete -c codog")
 	require.Contains(t, out, "__fish_seen_subcommand_from completion")
+	require.Contains(t, out, "-l agents")
+	require.Contains(t, out, "-l plugin-dir")
+	require.Contains(t, out, "-l setting-sources")
+	require.Contains(t, out, "-l ide")
 	require.NotContains(t, out, "config_load_failed")
+
+	for _, shell := range []string{"bash", "zsh"} {
+		script, scriptErr := shellCompletionScript(shell)
+		require.NoError(t, scriptErr)
+		require.Contains(t, script, "--plugin-dir")
+		require.Contains(t, script, "--setting-sources")
+	}
 }
 
 func TestStatusIncludesBranchFreshness(t *testing.T) {
@@ -27702,6 +27762,13 @@ func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
 		Out:       &out,
 		Err:       io.Discard,
 	}
+	require.NoError(t, app.connectActiveIDE())
+	require.NotNil(t, app.ActiveIDE)
+	prompt := app.systemPrompt()
+	require.Contains(t, prompt, "<active_editor>")
+	require.Contains(t, prompt, "Editor: VS Code 1.0")
+	require.Contains(t, prompt, "Open file: main.go")
+	require.Contains(t, prompt, "func main() {}")
 
 	require.NoError(t, app.IDE([]string{"--json"}))
 	require.Contains(t, out.String(), `"kind": "ide"`)
@@ -27828,6 +27895,45 @@ func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
 	require.NoError(t, app.BridgeKick([]string{"clear", "--json"}))
 	require.Contains(t, out.String(), `"cleared": true`)
 	require.NoFileExists(t, filepath.Join(configHome, "bridge", "faults.json"))
+}
+
+func TestConnectActiveIDERequiresTrustedEditor(t *testing.T) {
+	configHome := t.TempDir()
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: t.TempDir(),
+	}
+
+	err := app.connectActiveIDE()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires one trusted local editor bridge")
+	var connectionErr ideConnectionError
+	require.ErrorAs(t, err, &connectionErr)
+	require.Equal(t, "ide_bridge_unavailable", connectionErr.Kind)
+	report := buildCLIErrorReport(err)
+	require.Equal(t, "ide_bridge_unavailable", report.ErrorKind)
+	require.Equal(t, "ide", report.Error.Kind)
+	require.Equal(t, "connect_editor_bridge", report.Error.Operation)
+	require.True(t, report.Error.Retryable)
+
+	statePath := filepath.Join(configHome, "bridge", "editor-state.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(statePath), 0o755))
+	data, err := json.Marshal(bridge.EditorState{Identity: &bridge.EditorIdentity{
+		Editor:    "VS Code",
+		Workspace: t.TempDir(),
+		Trusted:   true,
+	}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(statePath, data, 0o644))
+	err = app.connectActiveIDE()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "does not match active workspace")
+	require.ErrorAs(t, err, &connectionErr)
+	require.Equal(t, "ide_workspace_mismatch", connectionErr.Kind)
+	report = buildCLIErrorReport(err)
+	require.Equal(t, "ide_workspace_mismatch", report.ErrorKind)
+	require.Equal(t, app.Workspace, report.ExpectedWorkspace)
+	require.Equal(t, connectionErr.ActualWorkspace, report.ActualWorkspace)
 }
 
 func TestBriefCommandUsesToolPayloadAndSlash(t *testing.T) {
@@ -30813,12 +30919,96 @@ func TestBuildAgentCommandQuotesPrompt(t *testing.T) {
 		Name:   "reviewer",
 		Model:  "mock-model",
 		Prompt: "review carefully",
+		Tools:  []string{"read_file", "grep"},
 	}, "check '$HOME'")
 
 	require.Contains(t, command, "'/tmp/codog'")
 	require.Contains(t, command, "--model 'mock-model'")
+	require.Contains(t, command, "--tools 'read_file,grep'")
 	require.Contains(t, command, "prompt 'review carefully")
 	require.Contains(t, command, "'\"'\"'$HOME'\"'\"'")
+}
+
+func TestSessionRuntimeOverridesLoadAgentsAndPluginSurfaces(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "missing.json")
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "agents"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "agents", "reviewer.json"), []byte(`{"name":"reviewer","description":"file reviewer","prompt":"file prompt"}`), 0o644))
+
+	pluginRoot := filepath.Join(t.TempDir(), "session-plugin")
+	for _, dir := range []string{"commands", filepath.Join("skills", "review"), "agents", "hooks"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(pluginRoot, dir), 0o755))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "plugin.json"), []byte(`{
+		"id":"session",
+		"name":"Session Plugin",
+		"version":"1.0.0",
+		"description":"Session-only test plugin",
+		"tools":[{"name":"session_tool","description":"Session tool","command":"printf","args":["ok"],"permission":"read-only"}],
+		"commands":["commands"],
+		"skills":["skills"],
+		"agents":["agents"],
+		"hooks":["hooks/hooks.json"],
+		"mcp_servers":{"local":{"command":"cat"}}
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "commands", "hello.md"), []byte("Say hello from the session plugin.\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "skills", "review", "SKILL.md"), []byte("---\nname: review\ndescription: Review from the session plugin\n---\nReview carefully.\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "agents", "helper.json"), []byte(`{"description":"Session helper","prompt":"Help with the task.","tools":["read_file"]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "hooks", "hooks.json"), []byte(`{"pre_tool_use":["echo session-hook"]}`), 0o644))
+
+	inlineAgents := `{"reviewer":{"description":"CLI reviewer","prompt":"CLI prompt","model":"glm52","tools":["read_file","grep"]}}`
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--cwd", workspace,
+			"--agents", inlineAgents,
+			"--plugin-dir", pluginRoot,
+			"agents", "list", "--json",
+		}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var agents agentsListReport
+	require.NoError(t, json.Unmarshal([]byte(out), &agents))
+	require.Equal(t, 2, agents.Count)
+	require.True(t, agentDefinitionExists(agents.Agents, "reviewer", "cli"))
+	require.True(t, agentDefinitionExists(agents.Agents, "session:helper", "plugin:session"))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--cwd", workspace,
+			"--plugin-dir", pluginRoot,
+			"capabilities", "--json",
+		}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"name": "session_tool"`)
+
+	for _, check := range []struct {
+		args     []string
+		contains string
+	}{
+		{args: []string{"commands", "list", "--json"}, contains: `"name": "session:hello"`},
+		{args: []string{"skills", "list", "--json"}, contains: `"name": "session:review"`},
+		{args: []string{"mcp", "list", "--json"}, contains: `"plugin:session:local"`},
+	} {
+		out, err = captureStdout(t, func() error {
+			args := []string{"--config", configPath, "--cwd", workspace, "--plugin-dir", pluginRoot}
+			return RunCLI(context.Background(), append(args, check.args...), config.FlagOverrides{})
+		})
+		require.NoError(t, err)
+		require.Contains(t, out, check.contains)
+	}
+	require.NoDirExists(t, filepath.Join(workspace, ".codog", "plugins", "session"))
+}
+
+func agentDefinitionExists(definitions []agentdefs.Definition, name string, source string) bool {
+	for _, definition := range definitions {
+		if definition.Name == name && definition.Source == source {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAgentsCommandAcceptsOutputFormatFlags(t *testing.T) {

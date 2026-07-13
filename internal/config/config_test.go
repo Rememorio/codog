@@ -981,6 +981,52 @@ func TestInspectionPathsDoesNotReadExplicitConfig(t *testing.T) {
 	require.Equal(t, []string{configPath}, paths)
 }
 
+func TestSettingSourcesSelectLayersAndPreservePrecedence(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	require.NoError(t, os.Chdir(workspace))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "config.json"), []byte(`{"model":"user-model"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.json"), []byte(`{"model":"project-model"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.local.json"), []byte(`{"model":"local-model"}`), 0o644))
+
+	for _, tc := range []struct {
+		name    string
+		sources []string
+		model   string
+		paths   []string
+	}{
+		{name: "user", sources: []string{"user"}, model: "user-model", paths: []string{filepath.Join(configHome, "config.json")}},
+		{name: "project", sources: []string{"project"}, model: "project-model"},
+		{name: "local", sources: []string{"local"}, model: "local-model"},
+		{name: "all reordered", sources: []string{"local, user", "project"}, model: "local-model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, paths, err := LoadForInspection(FlagOverrides{SettingSources: tc.sources, SettingSourcesSet: true})
+			require.NoError(t, err)
+			require.Equal(t, tc.model, cfg.Model)
+			if tc.paths != nil {
+				require.Equal(t, tc.paths, paths)
+			}
+		})
+	}
+
+	cfg, paths, err := LoadForInspection(FlagOverrides{SettingSourcesSet: true})
+	require.NoError(t, err)
+	require.Empty(t, paths)
+	require.Equal(t, DefaultModel, cfg.Model)
+}
+
+func TestSettingSourcesRejectUnknownSource(t *testing.T) {
+	_, _, err := LoadForInspection(FlagOverrides{SettingSources: []string{"project,remote"}, SettingSourcesSet: true})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unsupported setting source "remote"`)
+}
+
 func TestLoadRateLimitEnvOverrides(t *testing.T) {
 	t.Setenv("CODOG_RATE_LIMIT_MAX_RETRIES", "5")
 	t.Setenv("CODOG_RATE_LIMIT_INITIAL_BACKOFF_MS", "100")

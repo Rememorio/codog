@@ -21,6 +21,12 @@ func LoadHookConfigs(workspace string) ([]HookConfigFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	return LoadHookConfigsFromManifests(manifests)
+}
+
+// LoadHookConfigsFromManifests loads hook contributions from an already
+// resolved runtime plugin set.
+func LoadHookConfigsFromManifests(manifests []Manifest) ([]HookConfigFile, error) {
 	var out []HookConfigFile
 	for _, manifest := range manifests {
 		if !manifest.Enabled {

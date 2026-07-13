@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
@@ -3732,6 +3733,19 @@ func TestAgentToolLaunchesBackgroundAgent(t *testing.T) {
 		logs, err := store.Logs(payload.Task.ID, 4096)
 		return err == nil && strings.Contains(logs, "agent-model") && strings.Contains(logs, "Base review instructions") && strings.Contains(logs, "check auth flow")
 	}, 20*time.Second, 50*time.Millisecond)
+}
+
+func TestBuildAgentToolCommandPreservesDefinitionScope(t *testing.T) {
+	command := buildAgentToolCommandWithPluginDirs("/tmp/codog", agentdefs.Definition{
+		Prompt: "Review carefully.",
+		Tools:  []string{"read_file", "grep"},
+	}, "review", "check auth", "glm52", []string{"./plugin one", "./plugin-two"})
+
+	require.Contains(t, command, "--model 'glm52'")
+	require.Contains(t, command, "--tools 'read_file,grep'")
+	require.Contains(t, command, "--plugin-dir './plugin one'")
+	require.Contains(t, command, "--plugin-dir './plugin-two'")
+	require.Contains(t, command, "Review carefully.")
 }
 
 func TestCronToolsCreateListAndDeleteEntries(t *testing.T) {
