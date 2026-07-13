@@ -437,14 +437,8 @@ func TestEscapeClearsComposerBeforeExit(t *testing.T) {
 
 	require.Nil(t, cmd)
 	require.Empty(t, m.textarea.Value())
-	require.Equal(t, "input cleared", m.status)
+	require.Equal(t, "input cleared · press esc again to exit", m.status)
 	require.Contains(t, m.View(), "Esc again to exit")
-
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = updated.(model)
-	require.Nil(t, cmd)
-	require.Equal(t, "press esc again to exit", m.status)
-	require.Contains(t, m.View(), "Esc again exit")
 
 	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	require.NotNil(t, cmd)
@@ -467,12 +461,19 @@ func TestEscapeExitPendingResetsAfterTyping(t *testing.T) {
 	require.Equal(t, "x", m.textarea.Value())
 }
 
-func TestControlCStillExitsImmediately(t *testing.T) {
+func TestControlCClearsComposerThenExitsOnSecondPress(t *testing.T) {
 	ta := newPromptTextarea("draft prompt")
 	m := newModel(context.Background(), ta, nil, nil)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(model)
+	require.Nil(t, cmd)
+	require.Empty(t, m.textarea.Value())
+	require.True(t, m.exitPending)
+	require.Equal(t, "ctrl+c", m.exitKey)
+	require.Contains(t, m.View(), "Ctrl+C again to exit")
 
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	require.NotNil(t, cmd)
 	_, ok := cmd().(tea.QuitMsg)
 	require.True(t, ok)
@@ -497,11 +498,70 @@ func TestDefaultTUIWelcomeMatchesInteractiveAgentWorkflow(t *testing.T) {
 
 	require.Contains(t, preview.View, "codog")
 	require.Contains(t, preview.View, "Interactive coding agent ready.")
-	require.Contains(t, preview.View, "mention @files")
+	require.Contains(t, preview.View, "Mention @files")
 	require.Contains(t, preview.View, "run !shell commands")
-	require.Contains(t, preview.View, "Enter sends")
-	require.Contains(t, preview.View, "Shift+Enter inserts a newline")
-	require.Contains(t, preview.View, "Ask codog to inspect, edit, test, or explain this repository...")
+	require.Contains(t, preview.View, "Ask codog...")
+}
+
+func TestInlinePreviewUsesCompactComposerAndFooter(t *testing.T) {
+	preview := PreviewInlineWithCandidates("", nil, 100, 24, false, false)
+
+	require.Contains(t, preview.View, "codog")
+	require.Contains(t, preview.View, "❯")
+	require.NotContains(t, preview.View, " composer ")
+	require.NotContains(t, preview.View, "Enter send")
+	require.Less(t, strings.Count(preview.View, "\n"), 10)
+}
+
+func TestInlineViewFitsNarrowTerminalWidth(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, nil)
+	m.inline = true
+	m.currentModel = "openai/model-with-a-long-name"
+	m.runtimeBadges = []string{"thinking: extended"}
+	m.layout(30, 12)
+
+	for _, line := range strings.Split(m.View(), "\n") {
+		require.LessOrEqual(t, lipgloss.Width(line), 30, line)
+	}
+}
+
+func TestInlineShellFlushesCompletedTranscriptToScrollback(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, []transcriptEntry{{Role: "system", Text: "ready marker"}})
+	m.inline = true
+	m.prepareInlineTranscript()
+
+	require.Contains(t, m.initialPrint, "ready marker")
+	require.NotContains(t, m.View(), "ready marker")
+
+	m.transcript = append(m.transcript,
+		transcriptEntry{Role: "user", Text: "prompt marker"},
+		transcriptEntry{Role: "assistant", Text: "answer marker"},
+	)
+	m.refreshViewport()
+	require.Contains(t, m.View(), "prompt marker")
+	require.Contains(t, m.View(), "answer marker")
+
+	cmd := m.flushInlineTranscript()
+	require.NotNil(t, cmd)
+	require.Equal(t, len(m.transcript), m.printedEntries)
+	require.NotContains(t, m.View(), "prompt marker")
+	require.NotContains(t, m.View(), "answer marker")
+}
+
+func TestInlineTranscriptModeCanInspectPrintedHistory(t *testing.T) {
+	ta := newPromptTextarea("")
+	m := newModel(context.Background(), ta, nil, []transcriptEntry{{Role: "assistant", Text: "printed answer"}})
+	m.inline = true
+	m.prepareInlineTranscript()
+	require.NotContains(t, m.View(), "printed answer")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = updated.(model)
+
+	require.True(t, m.transcriptMode)
+	require.Contains(t, m.View(), "printed answer")
 }
 
 func TestHelpPanelDescribesCoreInteractiveInputs(t *testing.T) {
@@ -742,7 +802,8 @@ func TestPromptTextareaUsesPrefill(t *testing.T) {
 
 	require.Equal(t, "review this diff", ta.Value())
 	require.Equal(t, 16000, ta.CharLimit)
-	require.Equal(t, "Ask codog to inspect, edit, test, or explain this repository...", ta.Placeholder)
+	require.Equal(t, "Ask codog...", ta.Placeholder)
+	require.False(t, ta.ShowLineNumbers)
 }
 
 func TestInitialPromptStartsFirstTurnWithAttachments(t *testing.T) {
@@ -3249,8 +3310,8 @@ func TestLongErrorTranscriptWrapsInViewport(t *testing.T) {
 	m = updated.(model)
 	view := m.View()
 
-	require.Contains(t, view, "provider returned an empty")
-	require.Contains(t, view, "error body")
+	require.Contains(t, view, "provider returned an")
+	require.Contains(t, view, "empty error body")
 	require.Contains(t, view, "models show MODEL")
 	require.Contains(t, view, "codog providers status")
 }

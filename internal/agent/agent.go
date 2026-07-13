@@ -37515,7 +37515,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 	a.writeWorkerState("tui", "idle", sess, "")
 	entries := []tui.Entry{{
 		Role: "system",
-		Text: fmt.Sprintf("Session %s is ready. Enter sends, Alt+Enter inserts a newline, /help opens local help.", sess.ID),
+		Text: fmt.Sprintf("Session %s", sess.ID),
 	}}
 	if banner := buildDeepLinkBanner(a.Workspace, overrides, time.Now()); banner != "" {
 		entries = append(entries, tui.Entry{Role: "system", Text: banner})
@@ -61544,7 +61544,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"tui",
 			"tui",
 			"codog [flags] tui",
-			"TUI\n\nUsage:\n  codog [flags] tui\n  codog [flags]\n\nStarts the full-screen Bubble Tea agent session. Enter sends the prompt, Alt+Enter or Ctrl+J inserts a newline, slash commands run inside the active session, and JSONL resume state is preserved.\n",
+			"TUI\n\nUsage:\n  codog [flags] tui\n  codog [flags]\n\nStarts the inline Bubble Tea agent session and keeps completed turns in terminal scrollback. Enter sends the prompt, Alt+Enter or Ctrl+J inserts a newline, slash commands run inside the active session, and JSONL resume state is preserved.\n",
 			[]string{"session_id", "message", "tool_calls", "usage"},
 			[]string{"ok", "error"},
 		), true

@@ -23,7 +23,7 @@ type Result struct {
 	Attachments []string
 }
 
-// Entry is one transcript item rendered by the full-screen TUI shell.
+// Entry is one transcript item rendered by the interactive TUI shell.
 type Entry struct {
 	Role string
 	Text string
@@ -97,7 +97,7 @@ type RuntimeControlResult struct {
 	Badges []string
 }
 
-// ShellOptions configures the full-screen TUI shell.
+// ShellOptions configures the interactive TUI shell.
 type ShellOptions struct {
 	Candidates                []string
 	FileCandidates            []string
@@ -139,6 +139,9 @@ type ShellOptions struct {
 	Keybindings               map[string][]string
 	ContextKeybindings        map[string]map[string][]string
 	CycleMode                 func() string
+	// FullScreen opts into the alternate-screen renderer. The default inline
+	// renderer keeps completed conversation turns in terminal scrollback.
+	FullScreen bool
 }
 
 // Preview captures a deterministic TUI model state for tests and parity
@@ -284,6 +287,10 @@ type model struct {
 	diffFileSelected          int
 	diffDetail                bool
 	exitPending               bool
+	exitKey                   string
+	inline                    bool
+	printedEntries            int
+	initialPrint              string
 	stashedPrompt             *composerStash
 	searchOpen                bool
 	searchHits                []string
@@ -313,6 +320,7 @@ func PromptWithCandidates(candidates []string) (Result, error) {
 func PromptWithCandidatesPrefill(candidates []string, prefill string) (Result, error) {
 	ta := newPromptTextarea(prefill)
 	m := newModel(context.Background(), ta, candidates, nil)
+	m.inline = false
 	final, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	if err != nil {
 		return Result{}, err
@@ -326,8 +334,19 @@ func PromptWithCandidatesPrefill(candidates []string, prefill string) (Result, e
 // PreviewWithCandidates renders the Bubble Tea prompt model after applying
 // optional input, window sizing, tab completion, and submission.
 func PreviewWithCandidates(input string, candidates []string, width int, height int, complete bool, submit bool) Preview {
+	return previewWithCandidates(input, candidates, width, height, complete, submit, false)
+}
+
+// PreviewInlineWithCandidates renders the default inline shell presentation
+// without starting a terminal program.
+func PreviewInlineWithCandidates(input string, candidates []string, width int, height int, complete bool, submit bool) Preview {
+	return previewWithCandidates(input, candidates, width, height, complete, submit, true)
+}
+
+func previewWithCandidates(input string, candidates []string, width int, height int, complete bool, submit bool, inline bool) Preview {
 	ta := newPromptTextarea(input)
 	m := newModel(context.Background(), ta, candidates, nil)
+	m.inline = inline
 	m.refreshCompletionMenu()
 	if width > 0 || height > 0 {
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -1615,7 +1634,14 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.initialPrompt = strings.TrimSpace(options.InitialPrompt)
 	m.attachments = append([]string(nil), options.InitialAttachments...)
 	m.setHistory(options.History)
-	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	if options.FullScreen {
+		m.inline = false
+		_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+		return err
+	}
+	m.inline = true
+	m.prepareInlineTranscript()
+	_, err := tea.NewProgram(m).Run()
 	return err
 }
 
@@ -1643,10 +1669,12 @@ func newModel(ctx context.Context, ta textarea.Model, candidates []string, entri
 
 func newPromptTextarea(input string) textarea.Model {
 	ta := textarea.New()
-	ta.Placeholder = "Ask codog to inspect, edit, test, or explain this repository..."
+	ta.Placeholder = "Ask codog..."
+	ta.Prompt = "❯ "
+	ta.ShowLineNumbers = false
 	ta.Focus()
 	ta.SetWidth(80)
-	ta.SetHeight(8)
+	ta.SetHeight(1)
 	ta.CharLimit = 16000
 	ta.SetValue(input)
 	return ta
@@ -1657,23 +1685,24 @@ func defaultTranscriptEntries() []transcriptEntry {
 		{
 			Role: "system",
 			Text: strings.Join([]string{
-				"codog",
 				"Interactive coding agent ready.",
-				"",
-				"Start with a task, paste context, mention @files, run !shell commands, or type /help.",
-				"Enter sends. Shift+Enter inserts a newline. Esc clears panels or exits after a second press.",
+				"Mention @files, run !shell commands, or type /help.",
 			}, "\n"),
 		},
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	if m.initialPrompt == "" {
-		return textarea.Blink
+	commands := []tea.Cmd{}
+	if strings.TrimSpace(m.initialPrint) != "" {
+		commands = append(commands, tea.Println(m.initialPrint))
 	}
-	return tea.Batch(textarea.Blink, func() tea.Msg {
-		return initialPromptMsg{Value: m.initialPrompt}
-	})
+	if m.initialPrompt != "" {
+		commands = append(commands, func() tea.Msg {
+			return initialPromptMsg{Value: m.initialPrompt}
+		})
+	}
+	return tea.Batch(textarea.Blink, sequenceCommands(commands...))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1714,19 +1743,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refreshViewport()
 		m.viewport.GotoBottom()
+		flushCmd := m.flushInlineTranscript()
 		if len(m.queuedPrompts) > 0 && msg.Err == nil && !msg.Interrupted {
 			next := m.queuedPrompts[0]
 			m.queuedPrompts = append([]string(nil), m.queuedPrompts[1:]...)
-			return m.startInput(next)
+			nextModel, nextCmd := m.startInput(next)
+			return nextModel, sequenceCommands(flushCmd, nextCmd)
 		}
-		return m, nil
+		return m, flushCmd
 	case externalEditorDoneMsg:
 		if msg.Err != nil {
 			m.status = "editor error"
 			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
 			m.refreshViewport()
 			m.viewport.GotoBottom()
-			return m, nil
+			return m, m.flushInlineTranscript()
 		}
 		m.pushComposerUndo()
 		m.textarea.SetValue(msg.Text)
@@ -1743,14 +1774,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
 			m.refreshViewport()
 			m.viewport.GotoBottom()
-			return m, nil
+			return m, m.flushInlineTranscript()
 		}
 		if msg.Content.Text == "" && msg.Content.AttachmentPath == "" {
 			m.status = "paste empty"
 			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: "Clipboard is empty."})
 			m.refreshViewport()
 			m.viewport.GotoBottom()
-			return m, nil
+			return m, m.flushInlineTranscript()
 		}
 		return m.insertPasteContent(msg.Content)
 	case backgroundDoneMsg:
@@ -1772,7 +1803,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.refreshViewport()
 			m.viewport.GotoBottom()
-			return m, nil
+			return m, m.flushInlineTranscript()
 		}
 		m.textarea.SetValue("")
 		m.matches = nil
@@ -1788,14 +1819,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: msg.Output})
 		m.refreshViewport()
 		m.viewport.GotoBottom()
-		return m, nil
+		return m, m.flushInlineTranscript()
 	case taskBoardDoneMsg:
 		if msg.Err != nil {
 			m.status = "tasks error"
 			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
 			m.refreshViewport()
 			m.viewport.GotoBottom()
-			return m, nil
+			return m, m.flushInlineTranscript()
 		}
 		output := strings.TrimSpace(msg.Output)
 		if output == "" {
@@ -1805,7 +1836,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: output})
 		m.refreshViewport()
 		m.viewport.GotoBottom()
-		return m, nil
+		return m, m.flushInlineTranscript()
 	case todoListDoneMsg:
 		m.todosLoading = false
 		if msg.Err != nil {
@@ -1823,10 +1854,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.transcript = append(m.transcript, transcriptEntry{Role: "error", Text: msg.Err.Error()})
 			m.refreshViewport()
 			m.viewport.GotoBottom()
-			return m, nil
+			return m, m.flushInlineTranscript()
 		}
 		m.applyRuntimeControlResult(msg.Result)
-		return m, nil
+		return m, m.flushInlineTranscript()
 	case turnStreamMsg:
 		m.appendStreamDelta(msg.Role, msg.Delta)
 		if strings.EqualFold(msg.Role, "permission") {
@@ -2057,8 +2088,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ctrlXChord = false
 			return m.handleDefaultCtrlXChord(msg)
 		}
-		if msg.String() != "esc" {
-			m.exitPending = false
+		key := msg.String()
+		if m.exitPending && key != m.exitKey {
+			m.clearExitPending()
 		}
 		if next, handled, cmd := m.handleBoundTUIAction(msg); handled {
 			return next, cmd
@@ -2073,7 +2105,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.interruptBackground()
 				return m, nil
 			}
-			return m, tea.Quit
+			if m.exitPending && m.exitKey == "ctrl+c" {
+				return m, tea.Quit
+			}
+			if strings.TrimSpace(m.textarea.Value()) != "" {
+				m.pushComposerUndo()
+				m.textarea.SetValue("")
+				m.matches = nil
+				m.selected = 0
+				m.commandArgumentHint = ""
+				m.inlineGhostText = ""
+				m.historyPos = -1
+				m.armExit("ctrl+c", "input cleared · press ctrl+c again to exit")
+				return m, nil
+			}
+			m.armExit("ctrl+c", "press ctrl+c again to exit")
+			return m, nil
 		case "esc":
 			if m.shouldEnterVimNormalMode() {
 				m.vimNormal = true
@@ -2081,7 +2128,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selected = 0
 				m.commandArgumentHint = ""
 				m.inlineGhostText = ""
-				m.exitPending = false
+				m.clearExitPending()
 				m.status = "vim normal"
 				return m, nil
 			}
@@ -2102,22 +2149,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selected = 0
 				m.commandArgumentHint = ""
 				m.inlineGhostText = ""
-				m.exitPending = false
+				m.clearExitPending()
 				m.status = m.mode()
 				return m, nil
 			}
 			if m.searchOpen {
-				m.exitPending = false
+				m.clearExitPending()
 				m.closeHistorySearch(false)
 				return m, nil
 			}
 			if m.todosOpen {
-				m.exitPending = false
+				m.clearExitPending()
 				m.closeTodos()
 				return m, nil
 			}
 			if m.helpOpen {
-				m.exitPending = false
+				m.clearExitPending()
 				m.helpOpen = false
 				m.status = "ready"
 				m.refreshViewport()
@@ -2131,15 +2178,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.commandArgumentHint = ""
 				m.inlineGhostText = ""
 				m.historyPos = -1
-				m.exitPending = false
-				m.status = "input cleared"
+				m.armExit("esc", "input cleared · press esc again to exit")
 				return m, nil
 			}
-			if m.exitPending {
+			if m.exitPending && m.exitKey == "esc" {
 				return m, tea.Quit
 			}
-			m.exitPending = true
-			m.status = "press esc again to exit"
+			m.armExit("esc", "press esc again to exit")
 			return m, nil
 		case "ctrl+d":
 			if !m.busy && !m.searchOpen && !m.quickOpen && !m.globalSearch && !m.todosOpen && !m.modelPicker && !m.messageActions && !m.helpOpen && strings.TrimSpace(m.textarea.Value()) == "" {
@@ -2150,6 +2195,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.clearScreen()
+			if m.inline {
+				return m, tea.ClearScreen
+			}
 			return m, nil
 		case "ctrl+v":
 			if m.paste == nil || m.busy || m.backgrounding || m.awaitingPermission || m.awaitingQuestion {
@@ -2569,9 +2617,21 @@ func (m model) View() string {
 	barWidth := max(3, m.width)
 	barContentWidth := barWidth - 2
 	title := headerStyle().Width(barWidth).Render(truncateFooterLine(m.headerText(), barContentWidth))
+	if m.inline {
+		title = inlineHeaderStyle().Render(truncateFooterLine(m.headerText(), barContentWidth))
+	}
 	body := m.viewport.View()
-	composerTitle := panelTitleStyle().Render(" composer ")
-	composer := composerTitle + "\n" + m.textarea.View()
+	if m.inline {
+		body = compactViewportView(body)
+	}
+	composerTextarea := m.textarea
+	if m.inline {
+		composerTextarea.SetHeight(m.inlineComposerHeight())
+	}
+	composer := composerTextarea.View()
+	if !m.inline {
+		composer = panelTitleStyle().Render(" composer ") + "\n" + composer
+	}
 	if m.commandArgumentHint != "" || m.inlineGhostText != "" {
 		composer += "\n" + renderCommandAssist(m.commandArgumentHint, m.inlineGhostText)
 	}
@@ -2613,15 +2673,28 @@ func (m model) View() string {
 	}
 	statusText := fitFooterText(m.promptFooterText(barWidth), barContentWidth)
 	status := statusStyle().Width(barWidth).Render(statusText)
-	return strings.Join([]string{title, body, composer, status}, "\n")
+	if m.inline {
+		statusText = fitFooterText(m.inlineFooterText(barWidth), barContentWidth)
+		status = inlineStatusStyle().Render(statusText)
+	}
+	parts := []string{title}
+	if body != "" {
+		parts = append(parts, body)
+	}
+	parts = append(parts, composer, status)
+	return strings.Join(parts, "\n")
 }
 
 func (m model) headerText() string {
+	prefix := "Codog TUI"
+	if m.inline {
+		prefix = "codog"
+	}
 	badges := m.runtimeStatusBadges()
 	if len(badges) == 0 {
-		return "Codog TUI"
+		return prefix
 	}
-	title := "Codog TUI · " + strings.Join(badges, " · ")
+	title := prefix + " · " + strings.Join(badges, " · ")
 	width := m.width
 	if width <= 0 || len([]rune(title)) <= width {
 		return title
@@ -2631,6 +2704,44 @@ func (m model) headerText() string {
 		return string(runes[:width])
 	}
 	return string(runes[:width-3]) + "..."
+}
+
+func (m model) inlineComposerHeight() int {
+	value := m.textarea.Value()
+	if value == "" {
+		return 1
+	}
+	width := max(1, m.textarea.Width()-lipgloss.Width(m.textarea.Prompt))
+	height := 0
+	for _, line := range strings.Split(value, "\n") {
+		height += max(1, (lipgloss.Width(line)+width-1)/width)
+	}
+	return min(max(height, 1), 6)
+}
+
+func compactViewportView(view string) string {
+	return strings.TrimRight(view, " \n\r\t")
+}
+
+func (m model) inlineFooterText(width int) string {
+	status := strings.TrimSpace(m.status)
+	hints := m.promptFooterHints(width)
+	if m.exitPending {
+		return strings.Join(hints, " · ")
+	}
+	if status == "" || strings.EqualFold(status, "ready") {
+		if len(hints) == 0 {
+			return "ready"
+		}
+		return strings.Join(hints, " · ")
+	}
+	if mode := strings.TrimSpace(m.modeLabel); mode != "" {
+		status += " · " + mode
+	}
+	if len(hints) > 0 {
+		status += " · " + strings.Join(hints, " · ")
+	}
+	return status
 }
 
 type turnDoneMsg struct {
@@ -4310,13 +4421,24 @@ func (m *model) answerQuestion() {
 	m.viewport.GotoBottom()
 }
 
+func (m *model) armExit(key string, status string) {
+	m.exitPending = true
+	m.exitKey = key
+	m.status = status
+}
+
+func (m *model) clearExitPending() {
+	m.exitPending = false
+	m.exitKey = ""
+}
+
 func (m *model) clearScreen() {
 	m.helpOpen = false
 	m.matches = nil
 	m.selected = 0
 	m.commandArgumentHint = ""
 	m.inlineGhostText = ""
-	m.exitPending = false
+	m.clearExitPending()
 	m.searchOpen = false
 	m.searchHits = nil
 	m.searchPos = 0
@@ -4345,6 +4467,10 @@ func (m *model) clearScreen() {
 	m.messageActions = false
 	m.messageActionTarget = 0
 	m.messageActionSelected = 0
+	if m.inline {
+		m.printedEntries = 0
+		m.initialPrint = ""
+	}
 	m.transcript = []transcriptEntry{{Role: "system", Text: "Screen cleared."}}
 	m.status = "cleared"
 	m.refreshViewport()
@@ -5270,7 +5396,7 @@ func indexOfModelOption(options []string, current string) int {
 func renderModelPicker(options []string, current string, selected int, width int) string {
 	limit := 120
 	if width > 0 {
-		limit = max(40, width-8)
+		limit = max(12, width-8)
 	}
 	lines := []string{completionTitleStyle().Render(" model picker ")}
 	if len(options) == 0 {
@@ -5610,7 +5736,7 @@ func quoteMessageText(text string) string {
 func renderMessageActions(entry transcriptEntry, selected int, width int, targetPos int, targetCount int) string {
 	limit := 120
 	if width > 0 {
-		limit = max(40, width-8)
+		limit = max(12, width-8)
 	}
 	role := strings.TrimSpace(entry.Role)
 	if role == "" {
@@ -5664,7 +5790,7 @@ func renderQuickOpen(matches []string, selected int, query string, width int, pr
 	}
 	limit := 120
 	if width > 0 {
-		limit = max(40, width-8)
+		limit = max(12, width-8)
 	}
 	for index, match := range matches {
 		prefix := "  "
@@ -5692,7 +5818,7 @@ func renderQuickOpen(matches []string, selected int, query string, width int, pr
 func renderTodosPanel(items []TodoItem, loading bool, errText string, width int) string {
 	limit := 120
 	if width > 0 {
-		limit = max(40, width-8)
+		limit = max(12, width-8)
 	}
 	title := " tasks "
 	if len(items) > 0 {
@@ -5804,7 +5930,7 @@ func renderGlobalSearch(matches []globalSearchMatch, selected int, query string,
 	}
 	limit := 120
 	if width > 0 {
-		limit = max(40, width-8)
+		limit = max(12, width-8)
 	}
 	for index, match := range matches {
 		prefix := "  "
@@ -6033,7 +6159,7 @@ func renderAttachmentPanel(attachments []string, selected int, width int) string
 	selected = clampIndex(selected, len(attachments))
 	limit := 100
 	if width > 0 {
-		limit = max(40, width-8)
+		limit = max(12, width-8)
 	}
 	lines := []string{completionTitleStyle().Render(fmt.Sprintf(" attachments %d/%d ", selected+1, len(attachments)))}
 	for index, attachment := range attachments {
@@ -6058,7 +6184,7 @@ func renderDiffDialog(sources []DiffSource, sourceIndex int, fileIndex int, deta
 	source := sources[sourceIndex]
 	limit := 100
 	if width > 0 {
-		limit = max(40, width-8)
+		limit = max(12, width-8)
 	}
 	title := fmt.Sprintf(" diff %d/%d: %s ", sourceIndex+1, len(sources), source.Name)
 	lines := []string{completionTitleStyle().Render(title)}
@@ -6323,16 +6449,14 @@ func (m model) promptFooterHints(width int) []string {
 		add("@ for files")
 		return trimFooterHints(hints, width)
 	}
-	if status == "press esc again to exit" {
-		add("Esc again exit")
+	if m.exitPending {
+		exitLabel := "Esc"
+		if m.exitKey == "ctrl+c" {
+			exitLabel = "Ctrl+C"
+		}
+		add(exitLabel + " again to exit")
 		add("type to continue")
-		add("Ctrl+C exits immediately")
-		return trimFooterHints(hints, width)
-	}
-	if status == "input cleared" {
-		add("Esc again to exit")
 		add("Ctrl+_ undo")
-		add("? for shortcuts")
 		return trimFooterHints(hints, width)
 	}
 	if status == "bash" || isBashModeInput(m.textarea.Value()) {
@@ -6958,13 +7082,23 @@ func (m *model) layout(width int, height int) {
 	}
 	m.width = width
 	m.height = height
-	m.textarea.SetWidth(max(40, width-4))
-	m.textarea.SetHeight(4)
-	viewportHeight := height - 9
+	minimumWidth := 40
+	if m.inline {
+		minimumWidth = 8
+	}
+	m.textarea.SetWidth(max(minimumWidth, width-4))
+	composerHeight := 4
+	reservedHeight := 9
+	if m.inline {
+		composerHeight = 1
+		reservedHeight = 5
+	}
+	m.textarea.SetHeight(composerHeight)
+	viewportHeight := height - reservedHeight
 	if viewportHeight < 6 {
 		viewportHeight = 6
 	}
-	m.viewport.Width = max(40, width)
+	m.viewport.Width = max(minimumWidth, width)
 	m.viewport.Height = viewportHeight
 	m.refreshViewport()
 }
@@ -6975,10 +7109,65 @@ func (m *model) refreshViewport() {
 		return
 	}
 	lines := []string{}
-	for index, entry := range m.transcript {
-		lines = append(lines, renderTranscriptEntry(entry, max(40, m.viewport.Width-2), index, len(m.transcript), m.transcriptMode))
+	start := 0
+	if m.inline && !m.transcriptMode {
+		start = min(max(m.printedEntries, 0), len(m.transcript))
+	}
+	for index, entry := range m.transcript[start:] {
+		index += start
+		lines = append(lines, renderTranscriptEntry(entry, max(8, m.viewport.Width-2), index, len(m.transcript), m.transcriptMode))
 	}
 	m.viewport.SetContent(strings.Join(lines, "\n\n"))
+}
+
+func (m *model) prepareInlineTranscript() {
+	if !m.inline || len(m.transcript) == 0 {
+		return
+	}
+	m.initialPrint = m.renderTranscriptRange(0, len(m.transcript))
+	m.printedEntries = len(m.transcript)
+	m.refreshViewport()
+}
+
+func (m *model) flushInlineTranscript() tea.Cmd {
+	if !m.inline || m.printedEntries >= len(m.transcript) {
+		return nil
+	}
+	content := m.renderTranscriptRange(m.printedEntries, len(m.transcript))
+	m.printedEntries = len(m.transcript)
+	m.refreshViewport()
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+	return tea.Println(content)
+}
+
+func (m model) renderTranscriptRange(start int, end int) string {
+	start = min(max(start, 0), len(m.transcript))
+	end = min(max(end, start), len(m.transcript))
+	width := max(8, m.viewport.Width-2)
+	entries := make([]string, 0, end-start)
+	for index := start; index < end; index++ {
+		entries = append(entries, renderTranscriptEntry(m.transcript[index], width, index, len(m.transcript), m.transcriptMode))
+	}
+	return strings.Join(entries, "\n\n")
+}
+
+func sequenceCommands(commands ...tea.Cmd) tea.Cmd {
+	filtered := make([]tea.Cmd, 0, len(commands))
+	for _, command := range commands {
+		if command != nil {
+			filtered = append(filtered, command)
+		}
+	}
+	switch len(filtered) {
+	case 0:
+		return nil
+	case 1:
+		return filtered[0]
+	default:
+		return tea.Sequence(filtered...)
+	}
 }
 
 func (m model) mode() string {
@@ -7067,7 +7256,11 @@ func renderTranscriptEntry(entry transcriptEntry, width int, index int, total in
 		if text == "" {
 			text = "(empty)"
 		}
-		return roleStyle(role).Render(role) + "\n" + wrapTranscriptText(text, width)
+		marker := transcriptRoleMarker(role)
+		prefix := roleStyle(role).Render(marker)
+		contentWidth := max(4, width-lipgloss.Width(marker)-1)
+		wrapped := strings.ReplaceAll(wrapTranscriptText(text, contentWidth), "\n", "\n  ")
+		return prefix + " " + wrapped
 	}
 	text := entry.Text
 	if text == "" {
@@ -7075,6 +7268,23 @@ func renderTranscriptEntry(entry transcriptEntry, width int, index int, total in
 	}
 	header := fmt.Sprintf("%03d/%03d %s · %d %s · %d %s", index+1, max(1, total), role, transcriptLineCount(text), plural("line", transcriptLineCount(text)), len([]rune(text)), plural("char", len([]rune(text))))
 	return roleStyle(role).Render(header) + "\n" + wrapTranscriptText(text, width)
+}
+
+func transcriptRoleMarker(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "assistant":
+		return "●"
+	case "user":
+		return "❯"
+	case "tool":
+		return "●"
+	case "permission", "question":
+		return "◆"
+	case "error":
+		return "!"
+	default:
+		return "·"
+	}
 }
 
 func transcriptLineCount(text string) int {
@@ -7210,7 +7420,7 @@ func helpPanel(candidates []string, width int) string {
 			sections = append(sections, "  "+candidate)
 		}
 	}
-	return lipgloss.NewStyle().Width(max(40, width-2)).Render(strings.Join(sections, "\n"))
+	return lipgloss.NewStyle().Width(max(10, width-2)).Render(strings.Join(sections, "\n"))
 }
 
 func isREPLExitInput(value string) bool {
@@ -7226,8 +7436,16 @@ func headerStyle() lipgloss.Style {
 	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("62")).Padding(0, 1)
 }
 
+func inlineHeaderStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).PaddingLeft(2)
+}
+
 func statusStyle() lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Background(lipgloss.Color("238")).Padding(0, 1)
+}
+
+func inlineStatusStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("244")).PaddingLeft(2)
 }
 
 func panelTitleStyle() lipgloss.Style {

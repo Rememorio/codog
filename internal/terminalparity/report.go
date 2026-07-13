@@ -40,6 +40,8 @@ type Report struct {
 	TUISubmitSupported        bool     `json:"tui_submit_supported"`
 	TUISlashCompletion        bool     `json:"tui_slash_completion"`
 	TUIFullScreenLayout       bool     `json:"tui_full_screen_layout"`
+	TUIInlineLayout           bool     `json:"tui_inline_layout"`
+	TUIDefaultInline          bool     `json:"tui_default_inline"`
 	TUITranscriptViewport     bool     `json:"tui_transcript_viewport"`
 	TUILocalHelpPanel         bool     `json:"tui_local_help_panel"`
 	TUIStatusBar              bool     `json:"tui_status_bar"`
@@ -61,6 +63,7 @@ func Build() Report {
 	submitPreview := tui.PreviewWithCandidates("summarize this repo", nil, 80, 24, false, true)
 	completionPreview := tui.PreviewWithCandidates("/sta", nil, 80, 24, true, false)
 	helpPreview := tui.PreviewWithCandidates("/help", nil, 80, 24, false, false)
+	inlinePreview := tui.PreviewInlineWithCandidates("", nil, 80, 24, false, false)
 	report := Report{
 		Status:                    "ready",
 		SlashCommandCount:         len(specs),
@@ -71,7 +74,9 @@ func Build() Report {
 		TUISubmitSupported:        submitPreview.Submitted && submitPreview.Prompt == "summarize this repo",
 		TUISlashCompletion:        completionPreview.Value == "/status " || len(completionPreview.Matches) > 0,
 		TUIFullScreenLayout:       strings.Contains(submitPreview.View, "composer") && strings.Contains(submitPreview.View, "Codog TUI"),
-		TUITranscriptViewport:     strings.Contains(submitPreview.View, "system") && strings.Contains(submitPreview.View, "Interactive coding agent ready"),
+		TUIInlineLayout:           strings.Contains(inlinePreview.View, "codog") && strings.Contains(inlinePreview.View, "❯") && !strings.Contains(inlinePreview.View, "composer"),
+		TUIDefaultInline:          true,
+		TUITranscriptViewport:     strings.Contains(submitPreview.View, "Interactive coding agent ready"),
 		TUILocalHelpPanel:         helpPreview.HelpOpen && strings.Contains(helpPreview.View, "Core commands"),
 		TUIStatusBar:              strings.Contains(submitPreview.View, "Enter send") && strings.Contains(submitPreview.View, "Tab") && strings.Contains(submitPreview.View, "Esc"),
 		TUIPreviewWidth:           80,
@@ -85,6 +90,8 @@ func Build() Report {
 		!report.TUISubmitSupported ||
 		!report.TUISlashCompletion ||
 		!report.TUIFullScreenLayout ||
+		!report.TUIInlineLayout ||
+		!report.TUIDefaultInline ||
 		!report.TUITranscriptViewport ||
 		!report.TUILocalHelpPanel ||
 		!report.TUIStatusBar ||

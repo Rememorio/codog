@@ -18,6 +18,8 @@ func TestBuildReportsReadyInteractiveSurface(t *testing.T) {
 	require.True(t, report.TUISubmitSupported)
 	require.True(t, report.TUISlashCompletion)
 	require.True(t, report.TUIFullScreenLayout)
+	require.True(t, report.TUIInlineLayout)
+	require.True(t, report.TUIDefaultInline)
 	require.True(t, report.TUITranscriptViewport)
 	require.True(t, report.TUILocalHelpPanel)
 	require.True(t, report.TUIStatusBar)

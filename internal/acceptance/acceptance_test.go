@@ -47,7 +47,7 @@ func TestRealBinaryHelpAfterGlobalFlagsShortCircuits(t *testing.T) {
 	require.NotContains(t, result.Combined(), "missing_credentials")
 }
 
-func TestRealBinaryTUIHelpDescribesFullScreenDefaults(t *testing.T) {
+func TestRealBinaryTUIHelpDescribesInlineDefaults(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()
 	configHome := t.TempDir()
@@ -56,7 +56,8 @@ func TestRealBinaryTUIHelpDescribesFullScreenDefaults(t *testing.T) {
 		result := runCodog(t, bin, workspace, configHome, nil, args...)
 
 		require.Equal(t, 0, result.Code, result.Combined())
-		require.Contains(t, result.Stdout, "full-screen Bubble Tea agent session")
+		require.Contains(t, result.Stdout, "inline Bubble Tea agent session")
+		require.Contains(t, result.Stdout, "terminal scrollback")
 		require.Contains(t, result.Stdout, "Enter sends the prompt")
 		require.Contains(t, result.Stdout, "codog [flags]")
 		require.NotContains(t, result.Stdout, "Ctrl+S")
@@ -72,7 +73,7 @@ func TestRealBinaryTUIHandlesLocalSlashCommandsWithTTY(t *testing.T) {
 	output := runExpectCodog(t, bin, workspace, configHome, nil, `
 set timeout 20
 spawn -noecho $env(CODOG_TEST_BIN) --model glm52 tui
-expect "Codog TUI"
+expect "codog"
 send "/help\r"
 expect "Common workflows"
 send "\033"
@@ -85,6 +86,7 @@ expect eof
 
 	require.Contains(t, output, "Common workflows")
 	require.Contains(t, output, "Tools")
+	require.NotContains(t, output, "\x1b[?1049h")
 }
 
 func TestRealBinaryTUIShowsSlashSuggestionsWithTTY(t *testing.T) {
@@ -95,7 +97,7 @@ func TestRealBinaryTUIShowsSlashSuggestionsWithTTY(t *testing.T) {
 	output := runExpectCodog(t, bin, workspace, configHome, nil, `
 set timeout 20
 spawn -noecho $env(CODOG_TEST_BIN) --model glm52 tui
-expect "Codog TUI"
+expect "codog"
 send "/stat\t"
 expect "suggestions"
 expect "/status"
@@ -104,7 +106,7 @@ expect "/statusline"
 send "\033"
 expect eof
 spawn -noecho $env(CODOG_TEST_BIN) --model glm52 tui
-expect "Codog TUI"
+expect "codog"
 send "/doct\t"
 expect "/doctor "
 send "\033"
@@ -136,7 +138,7 @@ func TestRealBinaryTUISearchesPromptHistoryWithTTY(t *testing.T) {
 	output := runExpectCodog(t, bin, workspace, configHome, extraEnv, `
 set timeout 20
 spawn -noecho $env(CODOG_TEST_BIN) --session `+sessionID+` --model claude-sonnet-4-5 tui
-expect "Codog TUI"
+expect "codog"
 send "\022"
 expect "history"
 expect "history recall marker"
@@ -166,7 +168,7 @@ func TestRealBinaryTUIShowsProviderErrorsWithTTY(t *testing.T) {
 	}, `
 set timeout 20
 spawn -noecho $env(CODOG_TEST_BIN) --model glm52 tui
-expect "Codog TUI"
+expect "codog"
 send "trigger provider error\r"
 expect "provider returned an empty"
 expect "error body"
@@ -194,7 +196,7 @@ func TestRealBinaryTUIEscInterruptsRunningTurnWithTTY(t *testing.T) {
 	}, `
 set timeout 20
 spawn -noecho $env(CODOG_TEST_BIN) --model claude-sonnet-4-5 tui
-expect "Codog TUI"
+expect "codog"
 send "start a long running turn\r"
 expect "running"
 send "\033"
@@ -224,7 +226,7 @@ func TestRealBinaryTUIExitCancelsRunningTurnWithoutQueueing(t *testing.T) {
 	}, `
 set timeout 20
 spawn -noecho $env(CODOG_TEST_BIN) --model claude-sonnet-4-5 tui
-expect "Codog TUI"
+expect "codog"
 send "start a turn then exit\r"
 expect "running"
 send "/exit\r"
@@ -267,7 +269,7 @@ func TestRealBinaryTUIRendersStreamingDeltaBeforeTurnDoneWithTTY(t *testing.T) {
 	}, `
 set timeout 20
 spawn -noecho $env(CODOG_TEST_BIN) --model claude-sonnet-4-5 tui
-expect "Codog TUI"
+expect "codog"
 send "show streaming before done\r"
 expect "streaming early marker"
 send "\033"
@@ -301,7 +303,7 @@ func TestRealBinaryTUIShowsToolResultsWithTTY(t *testing.T) {
 	}, `
 set timeout 30
 spawn -noecho $env(CODOG_TEST_BIN) --permission-mode allow --model claude-sonnet-4-5 tui
-expect "Codog TUI"
+expect "codog"
 send "exercise visible tui tools\r"
 expect "Tools"
 expect "bash running"
@@ -344,11 +346,10 @@ func TestRealBinaryTUISubmitsCtrlJMultilinePromptWithTTY(t *testing.T) {
 	}, `
 set timeout 30
 spawn -noecho $env(CODOG_TEST_BIN) --model claude-sonnet-4-5 tui
-expect "Codog TUI"
+expect "codog"
 send "first line"
 send "\012"
 send "second line\r"
-expect "assistant"
 expect "multiline prompt ok"
 send "/exit\r"
 expect eof
@@ -643,7 +644,7 @@ func TestRealBinaryTUIPermissionEventsWithTTY(t *testing.T) {
 	}, `
 set timeout 30
 spawn -noecho $env(CODOG_TEST_BIN) --permission-mode workspace-write --model claude-sonnet-4-5 tui
-expect "Codog TUI"
+expect "codog"
 send "permission tui smoke\r"
 expect "Permission"
 expect "bash requires"
@@ -692,7 +693,7 @@ func TestRealBinaryTUIAskUserQuestionWithTTY(t *testing.T) {
 	}, `
 set timeout 30
 spawn -noecho $env(CODOG_TEST_BIN) --permission-mode allow --model claude-sonnet-4-5 tui
-expect "Codog TUI"
+expect "codog"
 send "question tui smoke\r"
 expect "Pick a TUI lane"
 expect "2. beta"
@@ -744,7 +745,7 @@ func TestRealBinaryTUIQueuesPromptWhileBusyWithTTY(t *testing.T) {
 	}, `
 set timeout 20
 spawn -noecho $env(CODOG_TEST_BIN) --permission-mode allow --model claude-sonnet-4-5 tui
-expect "Codog TUI"
+expect "codog"
 send "first queued prompt\r"
 expect "running"
 send "second queued prompt\r"
@@ -754,6 +755,8 @@ expect "Queued prompt 2"
 expect "first queued done"
 expect "second queued done"
 expect "third queued done"
+send "\003"
+expect "press ctrl+c again to exit"
 send "\003"
 expect {
   eof {}
@@ -799,7 +802,7 @@ func TestRealBinaryTUICyclesModeBeforeTurnWithTTY(t *testing.T) {
 set timeout 10
 spawn -noecho $env(CODOG_TEST_BIN) --permission-mode read-only --model claude-sonnet-4-5 tui
 expect {
-  "Codog TUI" {}
+  "codog" {}
   timeout { exit 1 }
 }
 send "\033\[Z"
@@ -817,6 +820,8 @@ expect {
   "mode cycle final ok" {}
   timeout { exit 1 }
 }
+send "\003"
+expect "press ctrl+c again to exit"
 send "\003"
 expect {
   eof {}
