@@ -5,11 +5,9 @@ gocognit|internal/agent/agent.go|parseRemoteEnvArgs|39
 gocognit|internal/agent/agent.go|parseRemoteSetupArgs|49
 gocognit|internal/agent/agent.go|parseSSHArgs|46
 gocognit|internal/agent/agent.go|parseServerArgs|57
-gocognit|internal/agent/auth.go|(*App).Hooks|55
 gocognit|internal/agent/auth.go|(*App).OAuth|47
 gocognit|internal/agent/auth.go|(*App).oauthBrowser|49
 gocognit|internal/agent/auth.go|(*App).oauthDevice|49
-gocognit|internal/agent/auth.go|parseHooksArgs|129
 gocognit|internal/agent/auth.go|parseProfileArgs|32
 gocognit|internal/agent/auth.go|parseProviderCommandArgs|47
 gocognit|internal/agent/auth.go|setProviderConfig|31

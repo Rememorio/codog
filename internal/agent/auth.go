@@ -12,7 +12,6 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -2938,343 +2937,13 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 	}
 	switch req.Action {
 	case "list":
-		report := hooksListReport{
-			Kind:                       "hooks",
-			Action:                     "list",
-			Status:                     hooksStatus(a.Config),
-			Disabled:                   a.Config.EffectiveDisableAllHooks(),
-			ManagedOnly:                a.Config.EffectiveAllowManagedHooksOnly(),
-			PreToolUse:                 append([]string(nil), a.Config.Hooks.PreToolUse...),
-			PostToolUse:                append([]string(nil), a.Config.Hooks.PostToolUse...),
-			PostToolUseFailure:         append([]string(nil), a.Config.Hooks.PostToolUseFailure...),
-			PermissionRequest:          append([]string(nil), a.Config.Hooks.PermissionRequest...),
-			PermissionDenied:           append([]string(nil), a.Config.Hooks.PermissionDenied...),
-			UserPromptSubmit:           append([]string(nil), a.Config.Hooks.UserPromptSubmit...),
-			SessionStart:               append([]string(nil), a.Config.Hooks.SessionStart...),
-			SessionEnd:                 append([]string(nil), a.Config.Hooks.SessionEnd...),
-			Setup:                      append([]string(nil), a.Config.Hooks.Setup...),
-			Stop:                       append([]string(nil), a.Config.Hooks.Stop...),
-			StopFailure:                append([]string(nil), a.Config.Hooks.StopFailure...),
-			PreCompact:                 append([]string(nil), a.Config.Hooks.PreCompact...),
-			PostCompact:                append([]string(nil), a.Config.Hooks.PostCompact...),
-			Notification:               append([]string(nil), a.Config.Hooks.Notification...),
-			SubagentStart:              append([]string(nil), a.Config.Hooks.SubagentStart...),
-			SubagentStop:               append([]string(nil), a.Config.Hooks.SubagentStop...),
-			WorktreeCreate:             append([]string(nil), a.Config.Hooks.WorktreeCreate...),
-			WorktreeRemove:             append([]string(nil), a.Config.Hooks.WorktreeRemove...),
-			CwdChanged:                 append([]string(nil), a.Config.Hooks.CwdChanged...),
-			TaskCreated:                append([]string(nil), a.Config.Hooks.TaskCreated...),
-			TaskCompleted:              append([]string(nil), a.Config.Hooks.TaskCompleted...),
-			InstructionsLoaded:         append([]string(nil), a.Config.Hooks.InstructionsLoaded...),
-			FileChanged:                append([]string(nil), a.Config.Hooks.FileChanged...),
-			PreToolUseCommands:         hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
-			PostToolUseCommands:        hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
-			PostToolUseFailureCommands: hookCommandsForList(a.Config.Hooks.PostToolUseFailureCommands, a.Config.Hooks.PostToolUseFailure),
-			PermissionRequestCommands:  hookCommandsForList(a.Config.Hooks.PermissionRequestCommands, a.Config.Hooks.PermissionRequest),
-			PermissionDeniedCommands:   hookCommandsForList(a.Config.Hooks.PermissionDeniedCommands, a.Config.Hooks.PermissionDenied),
-			UserPromptSubmitCommands:   hookCommandsForList(a.Config.Hooks.UserPromptSubmitCommands, a.Config.Hooks.UserPromptSubmit),
-			SessionStartCommands:       hookCommandsForList(a.Config.Hooks.SessionStartCommands, a.Config.Hooks.SessionStart),
-			SessionEndCommands:         hookCommandsForList(a.Config.Hooks.SessionEndCommands, a.Config.Hooks.SessionEnd),
-			SetupCommands:              hookCommandsForList(a.Config.Hooks.SetupCommands, a.Config.Hooks.Setup),
-			StopCommands:               hookCommandsForList(a.Config.Hooks.StopCommands, a.Config.Hooks.Stop),
-			StopFailureCommands:        hookCommandsForList(a.Config.Hooks.StopFailureCommands, a.Config.Hooks.StopFailure),
-			PreCompactCommands:         hookCommandsForList(a.Config.Hooks.PreCompactCommands, a.Config.Hooks.PreCompact),
-			PostCompactCommands:        hookCommandsForList(a.Config.Hooks.PostCompactCommands, a.Config.Hooks.PostCompact),
-			NotificationCommands:       hookCommandsForList(a.Config.Hooks.NotificationCommands, a.Config.Hooks.Notification),
-			SubagentStartCommands:      hookCommandsForList(a.Config.Hooks.SubagentStartCommands, a.Config.Hooks.SubagentStart),
-			SubagentStopCommands:       hookCommandsForList(a.Config.Hooks.SubagentStopCommands, a.Config.Hooks.SubagentStop),
-			WorktreeCreateCommands:     hookCommandsForList(a.Config.Hooks.WorktreeCreateCommands, a.Config.Hooks.WorktreeCreate),
-			WorktreeRemoveCommands:     hookCommandsForList(a.Config.Hooks.WorktreeRemoveCommands, a.Config.Hooks.WorktreeRemove),
-			CwdChangedCommands:         hookCommandsForList(a.Config.Hooks.CwdChangedCommands, a.Config.Hooks.CwdChanged),
-			TaskCreatedCommands:        hookCommandsForList(a.Config.Hooks.TaskCreatedCommands, a.Config.Hooks.TaskCreated),
-			TaskCompletedCommands:      hookCommandsForList(a.Config.Hooks.TaskCompletedCommands, a.Config.Hooks.TaskCompleted),
-			InstructionsLoadedCommands: hookCommandsForList(a.Config.Hooks.InstructionsLoadedCommands, a.Config.Hooks.InstructionsLoaded),
-			FileChangedCommands:        hookCommandsForList(a.Config.Hooks.FileChangedCommands, a.Config.Hooks.FileChanged),
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		renderHooksList(a.Out, report)
-		return nil
+		return a.hooksList(req)
 	case "watch-paths":
-		report, err := a.runHooksWatchPaths(ctx, req)
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-		} else {
-			renderHooksWatchPaths(a.Out, report)
-		}
-		return err
+		return a.hooksWatchPaths(ctx, req)
 	case "health":
-		payload := hooksPayloadForHealth(req)
-		matched := hooks.HooksForPayload(a.Config.Hooks, payload)
-		report := buildHooksHealthReport(a.Config, a.Workspace, payload, matched)
-		if a.Config.EffectiveDisableAllHooks() {
-			report.Status = "disabled"
-			report.Disabled = true
-			report.MatchedCount = 0
-			report.Matched = nil
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		renderHooksHealth(a.Out, report)
-		return nil
+		return a.hooksHealth(req)
 	case "run":
-		payload := hooks.Payload{
-			Event:            req.Event,
-			Tool:             req.Tool,
-			ToolName:         req.Tool,
-			ToolInput:        json.RawMessage(req.Input),
-			Input:            req.Input,
-			Output:           req.Output,
-			IsError:          req.IsError,
-			Reason:           req.Reason,
-			Message:          req.Input,
-			Title:            req.Title,
-			NotificationType: req.NotificationType,
-			AgentID:          req.AgentID,
-			AgentType:        req.AgentType,
-			TranscriptPath:   req.TranscriptPath,
-			LastAssistant:    req.LastAssistant,
-			WorktreeID:       req.WorktreeID,
-			WorktreePath:     req.WorktreePath,
-			Ref:              req.Ref,
-			OldCWD:           req.OldCWD,
-			NewCWD:           req.NewCWD,
-			TaskID:           req.TaskID,
-			TaskKind:         req.TaskKind,
-			TaskStatus:       req.TaskStatus,
-			FilePath:         req.FilePath,
-			Operation:        req.Operation,
-			MemoryType:       req.MemoryType,
-			LoadReason:       req.LoadReason,
-			Globs:            append([]string(nil), req.Globs...),
-			TriggerFilePath:  req.TriggerFilePath,
-			ParentFilePath:   req.ParentFilePath,
-			StopHookActive:   req.StopHookActive,
-		}
-		if req.Event == "notification" {
-			payload.NotificationType = firstNonEmpty(req.NotificationType, req.Tool, "generic")
-			payload.Tool = payload.NotificationType
-			payload.Message = req.Input
-			payload.AgentID = ""
-			payload.AgentType = ""
-			payload.TranscriptPath = ""
-			payload.LastAssistant = ""
-			payload.StopHookActive = false
-			payload.Reason = ""
-			payload.ToolName = ""
-			payload.ToolInput = nil
-		} else if req.Event == "subagent_start" || req.Event == "subagent_stop" {
-			payload.AgentType = firstNonEmpty(req.AgentType, req.Tool, "general")
-			payload.Tool = payload.AgentType
-			payload.Input = req.Input
-			payload.Message = ""
-			payload.Title = ""
-			payload.NotificationType = ""
-			payload.Reason = ""
-			payload.ToolName = ""
-			payload.ToolInput = nil
-		} else if req.Event == "permission_request" || req.Event == "permission_denied" {
-			payload.ToolName = req.Tool
-			payload.Tool = req.Tool
-			payload.Message = ""
-			payload.Title = ""
-			payload.NotificationType = ""
-			payload.AgentID = ""
-			payload.AgentType = ""
-			payload.TranscriptPath = ""
-			payload.LastAssistant = ""
-			payload.StopHookActive = false
-		} else if req.Event == "session_end" || req.Event == "setup" {
-			payload.Tool = ""
-			payload.Message = ""
-			payload.Title = ""
-			payload.NotificationType = ""
-			payload.AgentID = ""
-			payload.AgentType = ""
-			payload.TranscriptPath = ""
-			payload.LastAssistant = ""
-			payload.StopHookActive = false
-			payload.ToolName = ""
-			payload.ToolInput = nil
-			if req.Event == "setup" {
-				payload.Reason = ""
-			}
-		} else if req.Event == "stop_failure" {
-			payload.Tool = ""
-			payload.Message = ""
-			payload.Title = ""
-			payload.NotificationType = ""
-			payload.AgentID = ""
-			payload.AgentType = ""
-			payload.TranscriptPath = ""
-			payload.LastAssistant = ""
-			payload.StopHookActive = false
-			payload.ToolName = ""
-			payload.ToolInput = nil
-			payload.IsError = true
-		} else if req.Event == "worktree_create" || req.Event == "worktree_remove" {
-			payload.WorktreeID = firstNonEmpty(req.WorktreeID, req.Tool)
-			payload.Tool = payload.WorktreeID
-			payload.Message = ""
-			payload.Title = ""
-			payload.NotificationType = ""
-			payload.AgentID = ""
-			payload.AgentType = ""
-			payload.TranscriptPath = ""
-			payload.LastAssistant = ""
-			payload.StopHookActive = false
-			payload.ToolName = ""
-			payload.ToolInput = nil
-			if req.Event == "worktree_create" {
-				payload.Reason = ""
-			}
-		} else if req.Event == "cwd_changed" {
-			payload.OldCWD = req.OldCWD
-			payload.NewCWD = firstNonEmpty(req.NewCWD, req.Tool)
-			payload.Tool = payload.NewCWD
-			payload.Message = ""
-			payload.Title = ""
-			payload.NotificationType = ""
-			payload.AgentID = ""
-			payload.AgentType = ""
-			payload.TranscriptPath = ""
-			payload.LastAssistant = ""
-			payload.StopHookActive = false
-			payload.ToolName = ""
-			payload.ToolInput = nil
-			payload.Reason = ""
-		} else if req.Event == "task_created" || req.Event == "task_completed" {
-			payload.TaskID = firstNonEmpty(req.TaskID, req.Tool)
-			payload.TaskKind = firstNonEmpty(req.TaskKind, req.AgentType, "background")
-			payload.Tool = firstNonEmpty(payload.TaskKind, payload.TaskID)
-			payload.Message = ""
-			payload.Title = ""
-			payload.NotificationType = ""
-			payload.AgentID = ""
-			payload.AgentType = ""
-			payload.TranscriptPath = ""
-			payload.LastAssistant = ""
-			payload.StopHookActive = false
-			payload.ToolName = ""
-			payload.ToolInput = nil
-			if req.Event == "task_created" {
-				payload.Reason = ""
-			}
-		} else if req.Event == "file_changed" {
-			payload.Operation = firstNonEmpty(req.Operation, req.Tool, "write_file")
-			payload.Tool = payload.Operation
-			payload.ToolName = payload.Operation
-			payload.FilePath = req.FilePath
-			payload.Message = ""
-			payload.Title = ""
-			payload.NotificationType = ""
-			payload.AgentID = ""
-			payload.AgentType = ""
-			payload.TranscriptPath = ""
-			payload.LastAssistant = ""
-			payload.StopHookActive = false
-			payload.Reason = ""
-		} else if req.Event == "instructions_loaded" {
-			payload.LoadReason = firstNonEmpty(req.LoadReason, req.Tool, "session_start")
-			payload.Tool = payload.LoadReason
-			payload.FilePath = req.FilePath
-			payload.MemoryType = firstNonEmpty(req.MemoryType, "Project")
-			payload.Globs = append([]string(nil), req.Globs...)
-			payload.TriggerFilePath = req.TriggerFilePath
-			payload.ParentFilePath = req.ParentFilePath
-			payload.Message = ""
-			payload.Title = ""
-			payload.NotificationType = ""
-			payload.AgentID = ""
-			payload.AgentType = ""
-			payload.TranscriptPath = ""
-			payload.LastAssistant = ""
-			payload.StopHookActive = false
-			payload.Reason = ""
-			payload.ToolName = ""
-			payload.ToolInput = nil
-		} else {
-			payload.Message = ""
-			payload.Title = ""
-			payload.NotificationType = ""
-			payload.AgentID = ""
-			payload.AgentType = ""
-			payload.TranscriptPath = ""
-			payload.LastAssistant = ""
-			payload.StopHookActive = false
-			payload.Reason = ""
-			payload.ToolName = ""
-			payload.ToolInput = nil
-			payload.WorktreeID = ""
-			payload.WorktreePath = ""
-			payload.Ref = ""
-			payload.OldCWD = ""
-			payload.NewCWD = ""
-			payload.TaskID = ""
-			payload.TaskKind = ""
-			payload.TaskStatus = ""
-			payload.FilePath = ""
-			payload.Operation = ""
-			payload.MemoryType = ""
-			payload.LoadReason = ""
-			payload.Globs = nil
-			payload.TriggerFilePath = ""
-			payload.ParentFilePath = ""
-		}
-		if req.Event != "worktree_create" && req.Event != "worktree_remove" {
-			payload.WorktreeID = ""
-			payload.WorktreePath = ""
-			payload.Ref = ""
-		}
-		if req.Event != "cwd_changed" {
-			payload.OldCWD = ""
-			payload.NewCWD = ""
-		}
-		if req.Event != "task_created" && req.Event != "task_completed" {
-			payload.TaskID = ""
-			payload.TaskKind = ""
-			payload.TaskStatus = ""
-		}
-		if req.Event != "file_changed" && req.Event != "instructions_loaded" {
-			payload.FilePath = ""
-		}
-		if req.Event != "file_changed" {
-			payload.Operation = ""
-		}
-		if req.Event != "instructions_loaded" {
-			payload.MemoryType = ""
-			payload.LoadReason = ""
-			payload.Globs = nil
-			payload.TriggerFilePath = ""
-			payload.ParentFilePath = ""
-		}
-		hookList := hooks.HooksForPayload(a.Config.Hooks, payload)
-		timeout := time.Duration(req.TimeoutMS) * time.Millisecond
-		runner := hooks.Runner{
-			Config:                 a.Config.Hooks,
-			Workspace:              a.Workspace,
-			ConfigHome:             a.Config.ConfigHome,
-			Timeout:                timeout,
-			Disabled:               a.Config.EffectiveDisableAllHooks(),
-			AllowedHTTPHookURLs:    a.Config.AllowedHTTPHookURLs,
-			HTTPHookAllowedEnvVars: a.Config.HTTPHookAllowedEnvVars,
-			PromptRunner:           a.hookPromptRunner(a.effectiveConfig()),
-		}
-		report, runErr := runner.RunHooks(ctx, hookList, payload)
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-		} else {
-			renderHooksRun(a.Out, report)
-		}
-		return runErr
+		return a.hooksRun(ctx, req)
 	default:
 		return unexpectedExtraArgsError{
 			Command: "hooks",
@@ -3284,40 +2953,125 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 	}
 }
 
-func hooksPayloadForHealth(req hooksRequest) hooks.Payload {
-	payload := hooks.Payload{
-		Event:            req.Event,
-		Tool:             req.Tool,
-		ToolName:         req.Tool,
-		ToolInput:        json.RawMessage(req.Input),
-		Input:            req.Input,
-		Output:           req.Output,
-		IsError:          req.IsError,
-		Reason:           req.Reason,
-		Message:          req.Input,
-		Title:            req.Title,
-		NotificationType: req.NotificationType,
-		AgentID:          req.AgentID,
-		AgentType:        req.AgentType,
-		TranscriptPath:   req.TranscriptPath,
-		LastAssistant:    req.LastAssistant,
-		WorktreeID:       req.WorktreeID,
-		WorktreePath:     req.WorktreePath,
-		Ref:              req.Ref,
-		OldCWD:           req.OldCWD,
-		NewCWD:           req.NewCWD,
-		TaskID:           req.TaskID,
-		TaskKind:         req.TaskKind,
-		TaskStatus:       req.TaskStatus,
-		FilePath:         req.FilePath,
-		Operation:        req.Operation,
-		MemoryType:       req.MemoryType,
-		LoadReason:       req.LoadReason,
-		Globs:            append([]string(nil), req.Globs...),
-		TriggerFilePath:  req.TriggerFilePath,
-		ParentFilePath:   req.ParentFilePath,
-		StopHookActive:   req.StopHookActive,
+func (a *App) hooksList(req hooksRequest) error {
+	report := hooksListReport{
+		Kind:                       "hooks",
+		Action:                     "list",
+		Status:                     hooksStatus(a.Config),
+		Disabled:                   a.Config.EffectiveDisableAllHooks(),
+		ManagedOnly:                a.Config.EffectiveAllowManagedHooksOnly(),
+		PreToolUse:                 append([]string(nil), a.Config.Hooks.PreToolUse...),
+		PostToolUse:                append([]string(nil), a.Config.Hooks.PostToolUse...),
+		PostToolUseFailure:         append([]string(nil), a.Config.Hooks.PostToolUseFailure...),
+		PermissionRequest:          append([]string(nil), a.Config.Hooks.PermissionRequest...),
+		PermissionDenied:           append([]string(nil), a.Config.Hooks.PermissionDenied...),
+		UserPromptSubmit:           append([]string(nil), a.Config.Hooks.UserPromptSubmit...),
+		SessionStart:               append([]string(nil), a.Config.Hooks.SessionStart...),
+		SessionEnd:                 append([]string(nil), a.Config.Hooks.SessionEnd...),
+		Setup:                      append([]string(nil), a.Config.Hooks.Setup...),
+		Stop:                       append([]string(nil), a.Config.Hooks.Stop...),
+		StopFailure:                append([]string(nil), a.Config.Hooks.StopFailure...),
+		PreCompact:                 append([]string(nil), a.Config.Hooks.PreCompact...),
+		PostCompact:                append([]string(nil), a.Config.Hooks.PostCompact...),
+		Notification:               append([]string(nil), a.Config.Hooks.Notification...),
+		SubagentStart:              append([]string(nil), a.Config.Hooks.SubagentStart...),
+		SubagentStop:               append([]string(nil), a.Config.Hooks.SubagentStop...),
+		WorktreeCreate:             append([]string(nil), a.Config.Hooks.WorktreeCreate...),
+		WorktreeRemove:             append([]string(nil), a.Config.Hooks.WorktreeRemove...),
+		CwdChanged:                 append([]string(nil), a.Config.Hooks.CwdChanged...),
+		TaskCreated:                append([]string(nil), a.Config.Hooks.TaskCreated...),
+		TaskCompleted:              append([]string(nil), a.Config.Hooks.TaskCompleted...),
+		InstructionsLoaded:         append([]string(nil), a.Config.Hooks.InstructionsLoaded...),
+		FileChanged:                append([]string(nil), a.Config.Hooks.FileChanged...),
+		PreToolUseCommands:         hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
+		PostToolUseCommands:        hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
+		PostToolUseFailureCommands: hookCommandsForList(a.Config.Hooks.PostToolUseFailureCommands, a.Config.Hooks.PostToolUseFailure),
+		PermissionRequestCommands:  hookCommandsForList(a.Config.Hooks.PermissionRequestCommands, a.Config.Hooks.PermissionRequest),
+		PermissionDeniedCommands:   hookCommandsForList(a.Config.Hooks.PermissionDeniedCommands, a.Config.Hooks.PermissionDenied),
+		UserPromptSubmitCommands:   hookCommandsForList(a.Config.Hooks.UserPromptSubmitCommands, a.Config.Hooks.UserPromptSubmit),
+		SessionStartCommands:       hookCommandsForList(a.Config.Hooks.SessionStartCommands, a.Config.Hooks.SessionStart),
+		SessionEndCommands:         hookCommandsForList(a.Config.Hooks.SessionEndCommands, a.Config.Hooks.SessionEnd),
+		SetupCommands:              hookCommandsForList(a.Config.Hooks.SetupCommands, a.Config.Hooks.Setup),
+		StopCommands:               hookCommandsForList(a.Config.Hooks.StopCommands, a.Config.Hooks.Stop),
+		StopFailureCommands:        hookCommandsForList(a.Config.Hooks.StopFailureCommands, a.Config.Hooks.StopFailure),
+		PreCompactCommands:         hookCommandsForList(a.Config.Hooks.PreCompactCommands, a.Config.Hooks.PreCompact),
+		PostCompactCommands:        hookCommandsForList(a.Config.Hooks.PostCompactCommands, a.Config.Hooks.PostCompact),
+		NotificationCommands:       hookCommandsForList(a.Config.Hooks.NotificationCommands, a.Config.Hooks.Notification),
+		SubagentStartCommands:      hookCommandsForList(a.Config.Hooks.SubagentStartCommands, a.Config.Hooks.SubagentStart),
+		SubagentStopCommands:       hookCommandsForList(a.Config.Hooks.SubagentStopCommands, a.Config.Hooks.SubagentStop),
+		WorktreeCreateCommands:     hookCommandsForList(a.Config.Hooks.WorktreeCreateCommands, a.Config.Hooks.WorktreeCreate),
+		WorktreeRemoveCommands:     hookCommandsForList(a.Config.Hooks.WorktreeRemoveCommands, a.Config.Hooks.WorktreeRemove),
+		CwdChangedCommands:         hookCommandsForList(a.Config.Hooks.CwdChangedCommands, a.Config.Hooks.CwdChanged),
+		TaskCreatedCommands:        hookCommandsForList(a.Config.Hooks.TaskCreatedCommands, a.Config.Hooks.TaskCreated),
+		TaskCompletedCommands:      hookCommandsForList(a.Config.Hooks.TaskCompletedCommands, a.Config.Hooks.TaskCompleted),
+		InstructionsLoadedCommands: hookCommandsForList(a.Config.Hooks.InstructionsLoadedCommands, a.Config.Hooks.InstructionsLoaded),
+		FileChangedCommands:        hookCommandsForList(a.Config.Hooks.FileChangedCommands, a.Config.Hooks.FileChanged),
 	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderHooksList(a.Out, report)
+	return nil
+}
+
+func (a *App) hooksWatchPaths(ctx context.Context, req hooksRequest) error {
+	report, err := a.runHooksWatchPaths(ctx, req)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+	} else {
+		renderHooksWatchPaths(a.Out, report)
+	}
+	return err
+}
+
+func (a *App) hooksHealth(req hooksRequest) error {
+	payload := hooksPayloadForHealth(req)
+	matched := hooks.HooksForPayload(a.Config.Hooks, payload)
+	report := buildHooksHealthReport(a.Config, a.Workspace, payload, matched)
+	if a.Config.EffectiveDisableAllHooks() {
+		report.Status = "disabled"
+		report.Disabled = true
+		report.MatchedCount = 0
+		report.Matched = nil
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderHooksHealth(a.Out, report)
+	return nil
+}
+
+func (a *App) hooksRun(ctx context.Context, req hooksRequest) error {
+	payload := hooksPayloadForRun(req)
+	hookList := hooks.HooksForPayload(a.Config.Hooks, payload)
+	timeout := time.Duration(req.TimeoutMS) * time.Millisecond
+	runner := hooks.Runner{
+		Config:                 a.Config.Hooks,
+		Workspace:              a.Workspace,
+		ConfigHome:             a.Config.ConfigHome,
+		Timeout:                timeout,
+		Disabled:               a.Config.EffectiveDisableAllHooks(),
+		AllowedHTTPHookURLs:    a.Config.AllowedHTTPHookURLs,
+		HTTPHookAllowedEnvVars: a.Config.HTTPHookAllowedEnvVars,
+		PromptRunner:           a.hookPromptRunner(a.effectiveConfig()),
+	}
+	report, runErr := runner.RunHooks(ctx, hookList, payload)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+	} else {
+		renderHooksRun(a.Out, report)
+	}
+	return runErr
+}
+
+func hooksPayloadForHealth(req hooksRequest) hooks.Payload {
+	payload := hooksPayloadFromRequest(req)
 	switch req.Event {
 	case "notification":
 		payload.NotificationType = firstNonEmpty(req.NotificationType, req.Tool, "generic")
@@ -3507,335 +3261,7 @@ func renderHooksHealth(out io.Writer, report hooksHealthReport) {
 }
 
 func parseHooksArgs(args []string) (hooksRequest, error) {
-	req := hooksRequest{Format: "text", Action: "list", Event: "pre_tool_use", Tool: "bash", Input: `{}`, TimeoutMS: 30000}
-	var positionals []string
-	toolSet := false
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks output format is required")
-			}
-			req.Format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--session":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks session is required")
-			}
-			req.SessionID = args[i]
-		case strings.HasPrefix(arg, "--session="):
-			req.SessionID = strings.TrimPrefix(arg, "--session=")
-		case arg == "--tool":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks tool is required")
-			}
-			req.Tool = args[i]
-			toolSet = true
-		case strings.HasPrefix(arg, "--tool="):
-			req.Tool = strings.TrimPrefix(arg, "--tool=")
-			toolSet = true
-		case arg == "--input":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks input is required")
-			}
-			req.Input = args[i]
-		case strings.HasPrefix(arg, "--input="):
-			req.Input = strings.TrimPrefix(arg, "--input=")
-		case arg == "--output":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks output is required")
-			}
-			req.Output = args[i]
-		case strings.HasPrefix(arg, "--output="):
-			req.Output = strings.TrimPrefix(arg, "--output=")
-		case arg == "--notification-type":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks notification type is required")
-			}
-			req.NotificationType = args[i]
-		case strings.HasPrefix(arg, "--notification-type="):
-			req.NotificationType = strings.TrimPrefix(arg, "--notification-type=")
-		case arg == "--title":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks title is required")
-			}
-			req.Title = args[i]
-		case strings.HasPrefix(arg, "--title="):
-			req.Title = strings.TrimPrefix(arg, "--title=")
-		case arg == "--agent-id":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks agent id is required")
-			}
-			req.AgentID = args[i]
-		case strings.HasPrefix(arg, "--agent-id="):
-			req.AgentID = strings.TrimPrefix(arg, "--agent-id=")
-		case arg == "--agent-type":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks agent type is required")
-			}
-			req.AgentType = args[i]
-		case strings.HasPrefix(arg, "--agent-type="):
-			req.AgentType = strings.TrimPrefix(arg, "--agent-type=")
-		case arg == "--agent-transcript-path":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks agent transcript path is required")
-			}
-			req.TranscriptPath = args[i]
-		case strings.HasPrefix(arg, "--agent-transcript-path="):
-			req.TranscriptPath = strings.TrimPrefix(arg, "--agent-transcript-path=")
-		case arg == "--last-assistant-message":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks last assistant message is required")
-			}
-			req.LastAssistant = args[i]
-		case strings.HasPrefix(arg, "--last-assistant-message="):
-			req.LastAssistant = strings.TrimPrefix(arg, "--last-assistant-message=")
-		case arg == "--worktree-id":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks worktree id is required")
-			}
-			req.WorktreeID = args[i]
-		case strings.HasPrefix(arg, "--worktree-id="):
-			req.WorktreeID = strings.TrimPrefix(arg, "--worktree-id=")
-		case arg == "--worktree-path":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks worktree path is required")
-			}
-			req.WorktreePath = args[i]
-		case strings.HasPrefix(arg, "--worktree-path="):
-			req.WorktreePath = strings.TrimPrefix(arg, "--worktree-path=")
-		case arg == "--ref":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks ref is required")
-			}
-			req.Ref = args[i]
-		case strings.HasPrefix(arg, "--ref="):
-			req.Ref = strings.TrimPrefix(arg, "--ref=")
-		case arg == "--old-cwd":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks old cwd is required")
-			}
-			req.OldCWD = args[i]
-		case strings.HasPrefix(arg, "--old-cwd="):
-			req.OldCWD = strings.TrimPrefix(arg, "--old-cwd=")
-		case arg == "--new-cwd":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks new cwd is required")
-			}
-			req.NewCWD = args[i]
-		case strings.HasPrefix(arg, "--new-cwd="):
-			req.NewCWD = strings.TrimPrefix(arg, "--new-cwd=")
-		case arg == "--path" || arg == "--file-path":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks file path is required")
-			}
-			req.FilePath = args[i]
-		case strings.HasPrefix(arg, "--path="):
-			req.FilePath = strings.TrimPrefix(arg, "--path=")
-		case strings.HasPrefix(arg, "--file-path="):
-			req.FilePath = strings.TrimPrefix(arg, "--file-path=")
-		case arg == "--operation":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks operation is required")
-			}
-			req.Operation = args[i]
-		case strings.HasPrefix(arg, "--operation="):
-			req.Operation = strings.TrimPrefix(arg, "--operation=")
-		case arg == "--memory-type":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks memory type is required")
-			}
-			req.MemoryType = args[i]
-		case strings.HasPrefix(arg, "--memory-type="):
-			req.MemoryType = strings.TrimPrefix(arg, "--memory-type=")
-		case arg == "--load-reason":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks load reason is required")
-			}
-			req.LoadReason = args[i]
-		case strings.HasPrefix(arg, "--load-reason="):
-			req.LoadReason = strings.TrimPrefix(arg, "--load-reason=")
-		case arg == "--glob":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks glob is required")
-			}
-			req.Globs = append(req.Globs, args[i])
-		case strings.HasPrefix(arg, "--glob="):
-			req.Globs = append(req.Globs, strings.TrimPrefix(arg, "--glob="))
-		case arg == "--trigger-file-path":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks trigger file path is required")
-			}
-			req.TriggerFilePath = args[i]
-		case strings.HasPrefix(arg, "--trigger-file-path="):
-			req.TriggerFilePath = strings.TrimPrefix(arg, "--trigger-file-path=")
-		case arg == "--parent-file-path":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks parent file path is required")
-			}
-			req.ParentFilePath = args[i]
-		case strings.HasPrefix(arg, "--parent-file-path="):
-			req.ParentFilePath = strings.TrimPrefix(arg, "--parent-file-path=")
-		case arg == "--task-id":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks task id is required")
-			}
-			req.TaskID = args[i]
-		case strings.HasPrefix(arg, "--task-id="):
-			req.TaskID = strings.TrimPrefix(arg, "--task-id=")
-		case arg == "--task-kind":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks task kind is required")
-			}
-			req.TaskKind = args[i]
-		case strings.HasPrefix(arg, "--task-kind="):
-			req.TaskKind = strings.TrimPrefix(arg, "--task-kind=")
-		case arg == "--task-status":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks task status is required")
-			}
-			req.TaskStatus = args[i]
-		case strings.HasPrefix(arg, "--task-status="):
-			req.TaskStatus = strings.TrimPrefix(arg, "--task-status=")
-		case arg == "--stop-hook-active":
-			req.StopHookActive = true
-		case arg == "--reason":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks reason is required")
-			}
-			req.Reason = args[i]
-		case strings.HasPrefix(arg, "--reason="):
-			req.Reason = strings.TrimPrefix(arg, "--reason=")
-		case arg == "--error":
-			req.IsError = true
-		case arg == "--timeout-ms":
-			i++
-			if i >= len(args) {
-				return req, errors.New("hooks timeout is required")
-			}
-			timeout, err := strconv.Atoi(args[i])
-			if err != nil || timeout < 0 {
-				return req, errors.New("hooks timeout must be a non-negative integer")
-			}
-			req.TimeoutMS = timeout
-		case strings.HasPrefix(arg, "--timeout-ms="):
-			timeout, err := strconv.Atoi(strings.TrimPrefix(arg, "--timeout-ms="))
-			if err != nil || timeout < 0 {
-				return req, errors.New("hooks timeout must be a non-negative integer")
-			}
-			req.TimeoutMS = timeout
-		default:
-			positionals = append(positionals, arg)
-		}
-	}
-	switch req.Format {
-	case "text", "json":
-	default:
-		return req, fmt.Errorf("unknown hooks output format %q", req.Format)
-	}
-	if len(positionals) == 0 {
-		return req, nil
-	}
-	action := strings.ToLower(positionals[0])
-	switch action {
-	case "list", "show":
-		req.Action = "list"
-	case "health", "status", "match", "matches", "diagnose":
-		req.Action = "health"
-		if len(positionals) > 1 {
-			event, err := normalizeHookEvent(positionals[1])
-			if err != nil {
-				return req, err
-			}
-			req.Event = event
-		}
-	case "run", "test":
-		req.Action = "run"
-		if len(positionals) > 1 {
-			event, err := normalizeHookEvent(positionals[1])
-			if err != nil {
-				return req, err
-			}
-			req.Event = event
-		}
-	case "watch-paths", "watchpaths", "watch":
-		req.Action = "watch-paths"
-		req.WatchAction = "list"
-		if len(positionals) > 1 {
-			switch strings.ToLower(strings.TrimSpace(positionals[1])) {
-			case "", "list", "show":
-				req.WatchAction = "list"
-			case "check", "scan":
-				req.WatchAction = "check"
-			default:
-				return req, unknownActionError{
-					Command:     "hooks watch-paths",
-					Action:      positionals[1],
-					Expected:    append([]string(nil), hooksWatchPathsActionCandidates...),
-					Suggestions: toolnames.Suggestions(positionals[1], hooksWatchPathsActionCandidates, 4),
-					Usage:       "codog hooks watch-paths [list|show|check|scan] [SESSION_ID] [--json|--output-format text|json]",
-				}
-			}
-		}
-		if len(positionals) > 2 {
-			req.SessionID = positionals[2]
-		}
-	default:
-		return req, unknownActionError{
-			Command:     "hooks",
-			Action:      positionals[0],
-			Expected:    append([]string(nil), hooksActionCandidates...),
-			Suggestions: toolnames.Suggestions(positionals[0], hooksActionCandidates, 4),
-			Usage:       hooksUsage,
-		}
-	}
-	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact" || req.Event == "post_compact" || req.Event == "notification" || req.Event == "subagent_start" || req.Event == "subagent_stop" || req.Event == "file_changed" || req.Event == "instructions_loaded") {
-		req.Tool = ""
-	}
-	if req.Event == "notification" && strings.TrimSpace(req.NotificationType) == "" && strings.TrimSpace(req.Tool) != "" {
-		req.NotificationType = req.Tool
-	}
-	if (req.Event == "subagent_start" || req.Event == "subagent_stop") && strings.TrimSpace(req.AgentType) == "" && strings.TrimSpace(req.Tool) != "" {
-		req.AgentType = req.Tool
-	}
-	if req.Event == "file_changed" && strings.TrimSpace(req.Operation) == "" && strings.TrimSpace(req.Tool) != "" {
-		req.Operation = req.Tool
-	}
-	if req.Event == "instructions_loaded" && strings.TrimSpace(req.LoadReason) == "" && strings.TrimSpace(req.Tool) != "" {
-		req.LoadReason = req.Tool
-	}
-	return req, nil
+	return newHooksArgParser().parse(args)
 }
 
 func normalizeHookEvent(value string) (string, error) {
