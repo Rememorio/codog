@@ -2,7 +2,6 @@ gocognit|internal/agent/acp.go|(*App).serveACP|338
 gocognit|internal/agent/acp.go|renderMemoryCommand|42
 gocognit|internal/agent/agent.go|(*App).RemoteEnv|35
 gocognit|internal/agent/agent.go|(*App).RemoteSetup|43
-gocognit|internal/agent/agent.go|RunCLI|405
 gocognit|internal/agent/agent.go|parseRemoteEnvArgs|39
 gocognit|internal/agent/agent.go|parseRemoteSetupArgs|49
 gocognit|internal/agent/agent.go|parseSSHArgs|46

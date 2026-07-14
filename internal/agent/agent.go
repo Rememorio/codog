@@ -175,318 +175,435 @@ func (a *App) runtimeContextualSkills(paths []string) ([]skills.Skill, error) {
 	return skills.ContextualForPathsWithManifests(a.Config.ConfigHome, a.Workspace, paths, manifests)
 }
 
+type cliRun struct {
+	ctx           context.Context
+	args          []string
+	originalArgs  []string
+	baseOverrides config.FlagOverrides
+	overrides     config.FlagOverrides
+	command       string
+	rest          []string
+	cfg           config.Config
+	workspace     string
+	format        string
+	app           *App
+}
+
 func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrides) error {
-	originalArgs := append([]string(nil), args...)
-	args = normalizeDirectConnectInvocation(args)
-	if len(args) > 0 {
-		switch args[0] {
-		case "--help", "-h":
-			return renderHelpCommand(os.Stdout, args[1:])
-		case "--version", "-v":
-			workspace, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			if err := renderVersion(os.Stdout, workspace, args[1:]); err != nil {
-				return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
-			}
-			return nil
-		case "--acp", "-acp":
-			if acpHelpRequested(args[1:]) {
-				return renderCommandHelpTopic(os.Stdout, "acp", commandHelpArgsWithoutHelp(args[1:]), requestedOutputFormat(originalArgs))
-			}
-			if !acpServeRequested(args[1:]) {
-				return renderACPStatus(os.Stdout, args[1:])
-			}
-			args = append([]string{"acp"}, args[1:]...)
-		}
+	run := &cliRun{
+		ctx:           ctx,
+		args:          append([]string(nil), args...),
+		originalArgs:  append([]string(nil), args...),
+		baseOverrides: baseOverrides,
+		format:        requestedOutputFormat(args),
 	}
-	if handled, err := renderGlobalResumeHelp(os.Stdout, args); handled {
+	if handled, err := run.prepareInvocation(); handled {
 		return err
 	}
-	if acpArgs, ok, err := parseACPGlobalInvocation(args); ok || err != nil {
-		if err != nil {
-			return err
-		}
-		if acpHelpRequested(acpArgs) {
-			return renderCommandHelpTopic(os.Stdout, "acp", commandHelpArgsWithoutHelp(acpArgs), requestedOutputFormat(originalArgs))
-		}
-		if acpServeRequested(acpArgs) {
-			args = append([]string{"acp"}, acpArgs...)
-		} else {
-			return renderACPStatus(os.Stdout, acpArgs)
-		}
-	}
-	if len(args) == 1 && args[0] == "-v" {
-		args = []string{"version"}
-	}
-	overrides, command, rest, err := parseFlags(args, baseOverrides)
+	restoreCWD, err := applyGlobalCWD(run.overrides.CWD)
 	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return renderHelpCommand(os.Stdout, nil)
-		}
-		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
-	}
-	restoreCWD, err := applyGlobalCWD(overrides.CWD)
-	if err != nil {
-		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
+		return renderCLIError(os.Stdout, err, run.format)
 	}
 	defer restoreCWD()
-	if command == "" && hasExplicitEmptyPositional(originalArgs) {
-		return renderEmptyPrompt(os.Stdout, requestedOutputFormat(originalArgs))
+
+	earlyHandlers := []func() (bool, error){
+		run.handleBasicCommand,
+		run.handleInspectionCommand,
+		run.handleLocalCommand,
+		run.prepareInteractiveWorkspace,
 	}
-	if command == "help" || command == "--help" || command == "-h" {
-		return renderHelpCommand(os.Stdout, rest)
+	for _, handle := range earlyHandlers {
+		if handled, err := handle(); handled {
+			return err
+		}
 	}
-	if command == "version" || command == "--version" || command == "-v" {
+	if err := run.loadConfig(); err != nil {
+		return err
+	}
+	if err := run.buildApp(); err != nil {
+		return err
+	}
+	if handled, err := run.prepareRuntime(); handled {
+		return err
+	}
+	if handled, err := run.normalizeSlash(); handled {
+		return err
+	}
+	return dispatchCLICommand(run.ctx, run.app, run.command, run.rest, run.overrides, run.originalArgs, run.format, run.renderStructured)
+}
+
+func (r *cliRun) prepareInvocation() (bool, error) {
+	r.args = normalizeDirectConnectInvocation(r.args)
+	if handled, err := r.handleDirectGlobalFlag(); handled {
+		return true, err
+	}
+	if handled, err := renderGlobalResumeHelp(os.Stdout, r.args); handled {
+		return true, err
+	}
+	if handled, err := r.handleGlobalACPInvocation(); handled {
+		return true, err
+	}
+	if len(r.args) == 1 && r.args[0] == "-v" {
+		r.args = []string{"version"}
+	}
+	overrides, command, rest, err := parseFlags(r.args, r.baseOverrides)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return true, renderHelpCommand(os.Stdout, nil)
+		}
+		return true, renderCLIError(os.Stdout, err, r.format)
+	}
+	r.overrides, r.command, r.rest = overrides, command, rest
+	return false, nil
+}
+
+func (r *cliRun) handleDirectGlobalFlag() (bool, error) {
+	if len(r.args) == 0 {
+		return false, nil
+	}
+	switch r.args[0] {
+	case "--help", "-h":
+		return true, renderHelpCommand(os.Stdout, r.args[1:])
+	case "--version", "-v":
 		workspace, err := os.Getwd()
 		if err != nil {
-			return err
+			return true, err
 		}
-		if err := renderVersion(os.Stdout, workspace, rest); err != nil {
-			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+		if err := renderVersion(os.Stdout, workspace, r.args[1:]); err != nil {
+			return true, renderCLIErrorWhenStructured(os.Stdout, err, r.format)
 		}
-		return nil
+		return true, nil
+	case "--acp", "-acp":
+		if acpHelpRequested(r.args[1:]) {
+			return true, renderCommandHelpTopic(os.Stdout, "acp", commandHelpArgsWithoutHelp(r.args[1:]), r.format)
+		}
+		if !acpServeRequested(r.args[1:]) {
+			return true, renderACPStatus(os.Stdout, r.args[1:])
+		}
+		r.args = append([]string{"acp"}, r.args[1:]...)
 	}
-	if command == "acp" {
-		if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
-			return err
-		}
-		if !acpServeRequested(rest) {
-			return renderACPStatus(os.Stdout, rest)
-		}
+	return false, nil
+}
+
+func (r *cliRun) handleGlobalACPInvocation() (bool, error) {
+	acpArgs, ok, err := parseACPGlobalInvocation(r.args)
+	if !ok && err == nil {
+		return false, nil
 	}
-	if command == "config" || command == "settings" {
-		if command == "settings" && positionalHelpSubcommand(rest) {
-			return renderCommandHelpTopic(os.Stdout, "settings", argsWithoutHelpSubcommand(rest), requestedOutputFormat(originalArgs))
-		}
-		if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
-			return err
-		}
-		if handled, err := renderConfigValidateWithoutLoadedConfig(os.Stdout, rest, overrides); handled {
-			return err
-		}
-		cfg, paths, err := config.LoadForInspection(overrides)
+	if err != nil {
+		return true, err
+	}
+	if acpHelpRequested(acpArgs) {
+		return true, renderCommandHelpTopic(os.Stdout, "acp", commandHelpArgsWithoutHelp(acpArgs), r.format)
+	}
+	if !acpServeRequested(acpArgs) {
+		return true, renderACPStatus(os.Stdout, acpArgs)
+	}
+	r.args = append([]string{"acp"}, acpArgs...)
+	return false, nil
+}
+
+func (r *cliRun) handleBasicCommand() (bool, error) {
+	switch {
+	case r.command == "" && hasExplicitEmptyPositional(r.originalArgs):
+		return true, renderEmptyPrompt(os.Stdout, r.format)
+	case r.command == "help" || r.command == "--help" || r.command == "-h":
+		return true, renderHelpCommand(os.Stdout, r.rest)
+	case r.command == "version" || r.command == "--version" || r.command == "-v":
+		workspace, err := os.Getwd()
 		if err != nil {
-			if config.IsDiagnosticLoadError(err) {
-				return renderConfigWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
-			}
-			return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
+			return true, err
 		}
-		cfg = redactedConfig(cfg)
-		return renderConfigInspection(os.Stdout, cfg, paths, rest)
+		if err := renderVersion(os.Stdout, workspace, r.rest); err != nil {
+			return true, renderCLIErrorWhenStructured(os.Stdout, err, r.format)
+		}
+		return true, nil
+	case r.command == "acp":
+		if handled, err := renderCommandHelpRequest(os.Stdout, r.command, r.rest, r.format); handled {
+			return true, err
+		}
+		if !acpServeRequested(r.rest) {
+			return true, renderACPStatus(os.Stdout, r.rest)
+		}
 	}
-	if command == "providers" {
-		cfg, paths, err := config.LoadForInspection(overrides)
-		if err != nil {
-			if config.IsDiagnosticLoadError(err) {
-				return renderProvidersWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
-			}
-			return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
-		}
-		applyStoredOAuthToken(&cfg, time.Now().UTC())
-		if err := renderProvidersCommand(os.Stdout, cfg, paths, rest); err != nil {
-			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
-		}
-		return nil
+	return false, nil
+}
+
+func (r *cliRun) handleInspectionCommand() (bool, error) {
+	switch r.command {
+	case "config", "settings":
+		return true, r.runConfigInspection()
+	case "providers":
+		return true, r.runProvidersInspection()
+	default:
+		return false, nil
 	}
-	helpCommand := command
-	if strings.HasPrefix(command, "/") && strings.TrimSpace(overrides.Resume) == "" {
-		if mapped := slashCommandName(command); mapped != "" {
+}
+
+func (r *cliRun) runConfigInspection() error {
+	if r.command == "settings" && positionalHelpSubcommand(r.rest) {
+		return renderCommandHelpTopic(os.Stdout, "settings", argsWithoutHelpSubcommand(r.rest), r.format)
+	}
+	if handled, err := renderCommandHelpRequest(os.Stdout, r.command, r.rest, r.format); handled {
+		return err
+	}
+	if handled, err := renderConfigValidateWithoutLoadedConfig(os.Stdout, r.rest, r.overrides); handled {
+		return err
+	}
+	cfg, paths, err := config.LoadForInspection(r.overrides)
+	if err != nil {
+		if config.IsDiagnosticLoadError(err) {
+			return renderConfigWithConfigLoadError(os.Stdout, r.command, r.rest, r.overrides, r.originalArgs, err)
+		}
+		return renderCLIError(os.Stdout, err, r.format)
+	}
+	return renderConfigInspection(os.Stdout, redactedConfig(cfg), paths, r.rest)
+}
+
+func (r *cliRun) runProvidersInspection() error {
+	cfg, paths, err := config.LoadForInspection(r.overrides)
+	if err != nil {
+		if config.IsDiagnosticLoadError(err) {
+			return renderProvidersWithConfigLoadError(os.Stdout, r.command, r.rest, r.overrides, r.originalArgs, err)
+		}
+		return renderCLIError(os.Stdout, err, r.format)
+	}
+	applyStoredOAuthToken(&cfg, time.Now().UTC())
+	if err := renderProvidersCommand(os.Stdout, cfg, paths, r.rest); err != nil {
+		return renderCLIErrorWhenStructured(os.Stdout, err, r.format)
+	}
+	return nil
+}
+
+func (r *cliRun) handleLocalCommand() (bool, error) {
+	if handled, err := r.runCommandGuards(); handled {
+		return true, err
+	}
+	switch r.command {
+	case "mock-server":
+		return true, r.runMockServer()
+	case "self-test", "mock-parity", "parity":
+		return true, r.runParity()
+	case "completion":
+		if shellCompletionRequested(r.rest) || shellCompletionOutputFlagPresent(r.rest) {
+			return true, renderShellCompletionCommand(os.Stdout, r.rest)
+		}
+	case "init":
+		return true, r.runProjectInit()
+	case "state":
+		return true, r.runWorkerState()
+	case "memory":
+		return true, r.runMemory()
+	case "enterprise":
+		if len(r.rest) > 0 && r.rest[0] == "verify" {
+			err := enterpriseVerify(os.Stdout, stripEnterpriseOutputFormatFlags(r.rest))
+			return true, renderCLIErrorWhenStructured(os.Stdout, err, r.format)
+		}
+	}
+	return false, nil
+}
+
+func (r *cliRun) runCommandGuards() (bool, error) {
+	helpCommand := r.command
+	if strings.HasPrefix(r.command, "/") && strings.TrimSpace(r.overrides.Resume) == "" {
+		if mapped := slashCommandName(r.command); mapped != "" {
 			helpCommand = mapped
 		}
 	}
-	if handled, err := renderCommandHelpRequest(os.Stdout, helpCommand, rest, requestedOutputFormat(originalArgs)); handled {
-		return err
+	if handled, err := renderCommandHelpRequest(os.Stdout, helpCommand, r.rest, r.format); handled {
+		return true, err
 	}
-	if handled, err := renderGlobalResumeArgumentGuard(os.Stdout, command, rest, overrides, requestedOutputFormat(originalArgs)); handled {
-		return err
+	if handled, err := renderGlobalResumeArgumentGuard(os.Stdout, r.command, r.rest, r.overrides, r.format); handled {
+		return true, err
 	}
-	if handled, err := renderLocalRouteGuard(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
-		return err
+	if handled, err := renderLocalRouteGuard(os.Stdout, r.command, r.rest, r.format); handled {
+		return true, err
 	}
-	if command == "mock-server" {
-		addr := ":8089"
-		if len(rest) > 0 {
-			addr = rest[0]
-		}
-		fmt.Fprintf(os.Stderr, "mock Anthropic-compatible server listening on %s\n", addr)
-		return http.ListenAndServe(addr, mockanthropic.Server{Text: "mock response from codog"}.Handler())
-	}
-	if command == "self-test" || command == "mock-parity" || command == "parity" {
-		defaultFormat := "text"
-		if command == "self-test" {
-			defaultFormat = "json"
-		}
-		if err := runMockParityCommand(ctx, os.Stdout, rest, requestedOutputFormat(originalArgs), defaultFormat); err != nil {
-			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
-		}
-		return nil
-	}
-	if command == "completion" && (shellCompletionRequested(rest) || shellCompletionOutputFlagPresent(rest)) {
-		if err := renderShellCompletionCommand(os.Stdout, rest); err != nil {
-			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
-		}
-		return nil
-	}
-	if command == "init" {
-		workspace, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		if err := initProject(os.Stdout, workspace, rest, func(report projectinit.Report) error {
-			cfg, _, err := config.LoadForInspection(overrides)
-			if err != nil {
-				return nil
-			}
-			return runSetupHookPayload(ctx, hooks.Runner{
-				Config:                 cfg.Hooks,
-				Workspace:              workspace,
-				ConfigHome:             cfg.ConfigHome,
-				Disabled:               cfg.EffectiveDisableAllHooks(),
-				AllowedHTTPHookURLs:    cfg.AllowedHTTPHookURLs,
-				HTTPHookAllowedEnvVars: cfg.HTTPHookAllowedEnvVars,
-			}, workspace, "init", report.Status)
-		}); err != nil {
-			return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
-		}
-		return nil
-	}
-	if command == "state" {
-		workspace, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		if err := renderWorkerState(os.Stdout, workspace, rest); err != nil {
-			var exitErr *ExitError
-			if errors.As(err, &exitErr) {
-				return err
-			}
-			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
-		}
-		return nil
-	}
-	if command == "memory" {
-		workspace, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		rulesImport := memory.RulesImportOptions{}
-		if cfg, err := config.Load(baseOverrides); err == nil {
-			rulesImport = memoryRulesImportOptionsFromConfig(cfg)
-		}
-		return renderMemoryCommand(os.Stdout, workspace, rulesImport, rest)
-	}
-	if command == "enterprise" && len(rest) > 0 && rest[0] == "verify" {
-		if err := enterpriseVerify(os.Stdout, stripEnterpriseOutputFormatFlags(rest)); err != nil {
-			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
-		}
-		return nil
-	}
-	if interactiveWorkspaceCommand(command) {
-		workspace, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		if err := renderBroadCWDGuard(os.Stdout, command, rest, workspace, overrides.AllowBroadCWD, requestedOutputFormat(originalArgs)); err != nil {
-			return err
-		}
-		proceed, err := confirmInteractiveWorkspaceTrust(ctx, workspace, overrides)
-		if err != nil {
-			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
-		}
-		if !proceed {
-			return nil
-		}
-		proceed, err = configureInteractiveTheme(ctx, overrides)
-		if err != nil {
-			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
-		}
-		if !proceed {
-			return nil
-		}
-	}
+	return false, nil
+}
 
-	cfg, err := config.Load(overrides)
+func (r *cliRun) runMockServer() error {
+	addr := ":8089"
+	if len(r.rest) > 0 {
+		addr = r.rest[0]
+	}
+	fmt.Fprintf(os.Stderr, "mock Anthropic-compatible server listening on %s\n", addr)
+	return http.ListenAndServe(addr, mockanthropic.Server{Text: "mock response from codog"}.Handler())
+}
+
+func (r *cliRun) runParity() error {
+	defaultFormat := "text"
+	if r.command == "self-test" {
+		defaultFormat = "json"
+	}
+	if err := runMockParityCommand(r.ctx, os.Stdout, r.rest, r.format, defaultFormat); err != nil {
+		return renderCLIErrorWhenStructured(os.Stdout, err, r.format)
+	}
+	return nil
+}
+
+func (r *cliRun) runProjectInit() error {
+	workspace, err := os.Getwd()
 	if err != nil {
-		if config.IsDiagnosticLoadError(err) && isConfigCommand(command) {
-			return renderConfigWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
+		return err
+	}
+	err = initProject(os.Stdout, workspace, r.rest, func(report projectinit.Report) error {
+		cfg, _, err := config.LoadForInspection(r.overrides)
+		if err != nil {
+			return nil
 		}
-		if config.IsDiagnosticLoadError(err) && isMCPCommand(command) {
-			return renderMCPWithConfigLoadError(os.Stdout, command, rest, originalArgs, err)
+		return runSetupHookPayload(r.ctx, hooks.Runner{
+			Config:                 cfg.Hooks,
+			Workspace:              workspace,
+			ConfigHome:             cfg.ConfigHome,
+			Disabled:               cfg.EffectiveDisableAllHooks(),
+			AllowedHTTPHookURLs:    cfg.AllowedHTTPHookURLs,
+			HTTPHookAllowedEnvVars: cfg.HTTPHookAllowedEnvVars,
+		}, workspace, "init", report.Status)
+	})
+	if err != nil {
+		return renderCLIError(os.Stdout, err, r.format)
+	}
+	return nil
+}
+
+func (r *cliRun) runWorkerState() error {
+	workspace, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if err := renderWorkerState(os.Stdout, workspace, r.rest); err != nil {
+		var exitErr *ExitError
+		if errors.As(err, &exitErr) {
+			return err
 		}
-		if config.IsDiagnosticLoadError(err) && isPluginsCommand(command) {
-			return renderPluginsWithConfigLoadError(os.Stdout, command, rest, originalArgs, err)
-		}
-		if config.IsDiagnosticLoadError(err) && isProvidersCommand(command) {
-			return renderProvidersWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
-		}
-		if config.IsDiagnosticLoadError(err) && isStatusCommand(command) {
-			return renderStatusWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
-		}
-		if config.IsDiagnosticLoadError(err) && isBootstrapPlanCommand(command) {
-			return renderBootstrapPlanWithConfigLoadError(os.Stdout, rest, overrides, originalArgs, err)
-		}
-		if config.IsDiagnosticLoadError(err) && isDeferredInitCommand(command) {
-			return renderDeferredInitWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
-		}
-		if config.IsDiagnosticLoadError(err) && isPrefetchCommand(command) {
-			return renderPrefetchWithConfigLoadError(os.Stdout, rest, overrides, originalArgs, err)
-		}
-		if config.IsDiagnosticLoadError(err) && isCapabilitiesCommand(command) {
-			return renderCapabilitiesWithConfigLoadError(os.Stdout, rest, overrides, originalArgs)
-		}
-		if config.IsDiagnosticLoadError(err) && isDoctorCommand(command) {
-			return renderDoctorWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
-		}
-		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
+		return renderCLIErrorWhenStructured(os.Stdout, err, r.format)
+	}
+	return nil
+}
+
+func (r *cliRun) runMemory() error {
+	workspace, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	rulesImport := memory.RulesImportOptions{}
+	if cfg, err := config.Load(r.baseOverrides); err == nil {
+		rulesImport = memoryRulesImportOptionsFromConfig(cfg)
+	}
+	return renderMemoryCommand(os.Stdout, workspace, rulesImport, r.rest)
+}
+
+func (r *cliRun) prepareInteractiveWorkspace() (bool, error) {
+	if !interactiveWorkspaceCommand(r.command) {
+		return false, nil
+	}
+	workspace, err := os.Getwd()
+	if err != nil {
+		return true, err
+	}
+	if err := renderBroadCWDGuard(os.Stdout, r.command, r.rest, workspace, r.overrides.AllowBroadCWD, r.format); err != nil {
+		return true, err
+	}
+	proceed, err := confirmInteractiveWorkspaceTrust(r.ctx, workspace, r.overrides)
+	if err != nil {
+		return true, renderCLIErrorWhenStructured(os.Stdout, err, r.format)
+	}
+	if !proceed {
+		return true, nil
+	}
+	proceed, err = configureInteractiveTheme(r.ctx, r.overrides)
+	if err != nil {
+		return true, renderCLIErrorWhenStructured(os.Stdout, err, r.format)
+	}
+	return !proceed, nil
+}
+
+func (r *cliRun) loadConfig() error {
+	cfg, err := config.Load(r.overrides)
+	if err != nil {
+		return r.renderConfigLoadError(err)
 	}
 	applyStoredOAuthToken(&cfg, time.Now().UTC())
 	workspace, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	if err := renderBroadCWDGuard(os.Stdout, command, rest, workspace, overrides.AllowBroadCWD, requestedOutputFormat(originalArgs)); err != nil {
+	if err := renderBroadCWDGuard(os.Stdout, r.command, r.rest, workspace, r.overrides.AllowBroadCWD, r.format); err != nil {
 		return err
 	}
-	pluginManifests, err := plugins.LoadWithDirs(workspace, overrides.PluginDirs)
+	r.cfg, r.workspace = cfg, workspace
+	return nil
+}
+
+func (r *cliRun) renderConfigLoadError(err error) error {
+	if !config.IsDiagnosticLoadError(err) {
+		return renderCLIError(os.Stdout, err, r.format)
+	}
+	switch {
+	case isConfigCommand(r.command):
+		return renderConfigWithConfigLoadError(os.Stdout, r.command, r.rest, r.overrides, r.originalArgs, err)
+	case isMCPCommand(r.command):
+		return renderMCPWithConfigLoadError(os.Stdout, r.command, r.rest, r.originalArgs, err)
+	case isPluginsCommand(r.command):
+		return renderPluginsWithConfigLoadError(os.Stdout, r.command, r.rest, r.originalArgs, err)
+	case isProvidersCommand(r.command):
+		return renderProvidersWithConfigLoadError(os.Stdout, r.command, r.rest, r.overrides, r.originalArgs, err)
+	case isStatusCommand(r.command):
+		return renderStatusWithConfigLoadError(os.Stdout, r.command, r.rest, r.overrides, r.originalArgs, err)
+	case isBootstrapPlanCommand(r.command):
+		return renderBootstrapPlanWithConfigLoadError(os.Stdout, r.rest, r.overrides, r.originalArgs, err)
+	case isDeferredInitCommand(r.command):
+		return renderDeferredInitWithConfigLoadError(os.Stdout, r.command, r.rest, r.overrides, r.originalArgs, err)
+	case isPrefetchCommand(r.command):
+		return renderPrefetchWithConfigLoadError(os.Stdout, r.rest, r.overrides, r.originalArgs, err)
+	case isCapabilitiesCommand(r.command):
+		return renderCapabilitiesWithConfigLoadError(os.Stdout, r.rest, r.overrides, r.originalArgs)
+	case isDoctorCommand(r.command):
+		return renderDoctorWithConfigLoadError(os.Stdout, r.command, r.rest, r.overrides, r.originalArgs, err)
+	default:
+		return renderCLIError(os.Stdout, err, r.format)
+	}
+}
+
+func (r *cliRun) buildApp() error {
+	pluginManifests, err := plugins.LoadWithDirs(r.workspace, r.overrides.PluginDirs)
 	if err != nil {
-		return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+		return renderCLIErrorWhenStructured(os.Stdout, err, r.format)
 	}
 	pluginDirs := sessionPluginDirs(pluginManifests)
-	fileAgentDefinitions, err := agentdefs.LoadWithManifests(workspace, pluginManifests)
+	fileAgentDefinitions, err := agentdefs.LoadWithManifests(r.workspace, pluginManifests)
 	if err != nil {
-		return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+		return renderCLIErrorWhenStructured(os.Stdout, err, r.format)
 	}
-	inlineAgentDefinitions, err := agentdefs.ParseInline(overrides.Agents)
+	inlineAgentDefinitions, err := agentdefs.ParseInline(r.overrides.Agents)
 	if err != nil {
-		return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+		return renderCLIErrorWhenStructured(os.Stdout, err, r.format)
 	}
 	agentDefinitions := agentdefs.Merge(fileAgentDefinitions, inlineAgentDefinitions)
-	if err := applyPluginHookConfigsFromManifests(&cfg, pluginManifests); err != nil {
+	if err := applyPluginHookConfigsFromManifests(&r.cfg, pluginManifests); err != nil {
 		return err
 	}
-	if err := applyPluginMCPServersFromManifests(&cfg, pluginManifests); err != nil {
+	if err := applyPluginMCPServersFromManifests(&r.cfg, pluginManifests); err != nil {
 		return err
 	}
-	additionalDirs, err := pathscope.EffectiveDirs(workspace, cfg.AdditionalDirs)
+	additionalDirs, err := pathscope.EffectiveDirs(r.workspace, r.cfg.AdditionalDirs)
 	if err != nil {
 		return err
 	}
-	sessionStore, err := session.NewWorkspaceStoreWithCleanup(cfg.ConfigHome, workspace, cfg.EffectiveCleanupPeriodDays())
+	sessionStore, err := session.NewWorkspaceStoreWithCleanup(r.cfg.ConfigHome, r.workspace, r.cfg.EffectiveCleanupPeriodDays())
 	if err != nil {
 		return err
 	}
 	executable, _ := resolveExecutablePath()
-	format := requestedOutputFormat(originalArgs)
-	registryOptions := toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr, executable, agentDefinitions)
+	registryOptions := toolRegistryOptionsFromConfig(r.cfg, additionalDirs, os.Stdin, os.Stderr, executable, agentDefinitions)
 	registryOptions.PluginDirs = append([]string(nil), pluginDirs...)
-	app := &App{
-		Config:           cfg,
-		Client:           anthropicClientFromConfig(cfg),
-		Tools:            tools.NewRegistryWithOptions(workspace, registryOptions),
+	r.app = &App{
+		Config:           r.cfg,
+		Client:           anthropicClientFromConfig(r.cfg),
+		Tools:            tools.NewRegistryWithOptions(r.workspace, registryOptions),
 		Sessions:         sessionStore,
-		Workspace:        workspace,
+		Workspace:        r.workspace,
 		Executable:       executable,
 		Out:              os.Stdout,
 		Err:              os.Stderr,
@@ -496,69 +613,137 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		InlineAgents:     inlineAgentDefinitions,
 		PluginDirs:       append([]string(nil), pluginDirs...),
 	}
-	if overrides.Resume == interactiveResumeValue {
-		if _, ok := terminalInput(app.In); !ok {
-			return renderInteractiveOnlyWithHint(app.Out, "resume", "--resume without a session id requires an interactive terminal", "Pass `--resume latest` or `--resume SESSION_ID` in non-interactive mode.", format)
-		}
-		sessions, err := app.Sessions.List()
-		if err != nil {
-			return renderCLIErrorWhenStructured(app.Out, err, format)
-		}
-		if len(sessions) == 0 {
-			return renderCLIError(app.Out, invalidFlagValueError{
-				Flag:    "--resume",
-				Message: "no saved sessions are available to resume",
-				Usage:   "codog [--resume latest|--resume SESSION_ID]",
-			}, format)
-		}
-		selected, err := tui.SelectSessionWithTheme(ctx, resumeSessionChoices(sessions), cfg.Theme)
-		if err != nil {
-			return renderCLIErrorWhenStructured(app.Out, err, format)
-		}
-		if selected == "" {
-			return nil
-		}
-		overrides.Resume = selected
+	return nil
+}
+
+func (r *cliRun) prepareRuntime() (bool, error) {
+	if handled, err := r.selectInteractiveResume(); handled {
+		return true, err
 	}
-	if overrides.IDE {
-		if err := app.connectActiveIDE(); err != nil {
-			return renderCLIErrorWhenStructured(os.Stdout, err, format)
+	if r.overrides.IDE {
+		if err := r.app.connectActiveIDE(); err != nil {
+			return true, renderCLIErrorWhenStructured(os.Stdout, err, r.format)
 		}
 	}
-	if err := renderDebugStartup(os.Stderr, cfg, command, rest, workspace, overrides, format); err != nil {
-		return renderCLIErrorWhenStructured(os.Stdout, err, format)
+	if err := renderDebugStartup(os.Stderr, r.cfg, r.command, r.rest, r.workspace, r.overrides, r.format); err != nil {
+		return true, renderCLIErrorWhenStructured(os.Stdout, err, r.format)
 	}
-	if err := app.RegisterPluginTools(); err != nil {
-		return err
+	if err := r.app.RegisterPluginTools(); err != nil {
+		return true, err
 	}
-	if err := app.validateGlobalToolRules(overrides, format); err != nil {
-		return err
+	if err := r.app.validateGlobalToolRules(r.overrides, r.format); err != nil {
+		return true, err
 	}
-	wrapStructured := func(err error) error {
-		if err != nil {
-			return renderCLIErrorWhenStructured(app.Out, err, format)
+	return false, nil
+}
+
+func (r *cliRun) selectInteractiveResume() (bool, error) {
+	if r.overrides.Resume != interactiveResumeValue {
+		return false, nil
+	}
+	if _, ok := terminalInput(r.app.In); !ok {
+		return true, renderInteractiveOnlyWithHint(r.app.Out, "resume", "--resume without a session id requires an interactive terminal", "Pass `--resume latest` or `--resume SESSION_ID` in non-interactive mode.", r.format)
+	}
+	sessions, err := r.app.Sessions.List()
+	if err != nil {
+		return true, renderCLIErrorWhenStructured(r.app.Out, err, r.format)
+	}
+	if len(sessions) == 0 {
+		return true, renderCLIError(r.app.Out, invalidFlagValueError{
+			Flag:    "--resume",
+			Message: "no saved sessions are available to resume",
+			Usage:   "codog [--resume latest|--resume SESSION_ID]",
+		}, r.format)
+	}
+	selected, err := tui.SelectSessionWithTheme(r.ctx, resumeSessionChoices(sessions), r.cfg.Theme)
+	if err != nil {
+		return true, renderCLIErrorWhenStructured(r.app.Out, err, r.format)
+	}
+	if selected == "" {
+		return true, nil
+	}
+	r.overrides.Resume = selected
+	return false, nil
+}
+
+func (r *cliRun) normalizeSlash() (bool, error) {
+	if !strings.HasPrefix(r.command, "/") {
+		return false, nil
+	}
+	if strings.TrimSpace(r.overrides.Resume) != "" {
+		return true, r.app.RunResumedSlash(r.ctx, r.command, r.rest, r.overrides, r.format)
+	}
+	if slashCommandName(r.command) == "" && !directSlashInteractiveOnly(r.command) {
+		if handled, err := r.app.runDirectCustomSlash(r.ctx, r.command, r.rest, r.overrides, r.format); handled {
+			return true, r.renderStructured(err)
 		}
+	}
+	command, rest, err := normalizeDirectSlashInvocation(os.Stdout, r.command, r.rest, r.format, r.app.customSlashCompletionCandidates())
+	if err != nil {
+		return true, err
+	}
+	r.command, r.rest = command, rest
+	if handled, err := renderCommandHelpRequest(os.Stdout, r.command, r.rest, r.format); handled {
+		return true, err
+	}
+	return false, nil
+}
+
+func (r *cliRun) renderStructured(err error) error {
+	if err == nil {
 		return nil
 	}
-	if strings.HasPrefix(command, "/") && strings.TrimSpace(overrides.Resume) != "" {
-		return app.RunResumedSlash(ctx, command, rest, overrides, format)
+	return renderCLIErrorWhenStructured(r.app.Out, err, r.format)
+}
+
+var errCLICommandNotHandled = errors.New("CLI command not handled")
+
+type cliCommandHandler func(context.Context, *App, string, []string, config.FlagOverrides, []string, string, func(error) error) error
+
+func dispatchCLICommand(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	handlers := []cliCommandHandler{
+		runCLIInteractionCommands,
+		runCLISessionsCommands,
+		runCLISessionWorkspaceCommands,
+		runCLIConfigurationCommands,
+		runCLIModelConfigurationCommands,
+		runCLIPreferenceCommands,
+		runCLIAccessibilityCommands,
+		runCLIExperienceCommands,
+		runCLIExtensionsCommands,
+		runCLIUsageCommands,
+		runCLIInsightCommands,
+		runCLILimitCommands,
+		runCLIParityCommands,
+		runCLIPlansCommands,
+		runCLIGitCommands,
+		runCLIReviewsCommands,
+		runCLIExecutionCommands,
+		runCLIPluginsAuthCommands,
+		runCLILifecycleCommands,
+		runCLIDiagnosticsCommands,
+		runCLIWorkspaceCommands,
+		runCLICodeIntelCommands,
+		runCLIRemoteCommands,
+		runCLIMaintenanceCommands,
 	}
-	if strings.HasPrefix(command, "/") {
-		if slashCommandName(command) == "" && !directSlashInteractiveOnly(command) {
-			if handled, err := app.runDirectCustomSlash(ctx, command, rest, overrides, format); handled {
-				return wrapStructured(err)
+	for _, handle := range handlers {
+		if err := handle(ctx, app, command, rest, overrides, originalArgs, format, wrapStructured); !errors.Is(err, errCLICommandNotHandled) {
+			return err
+		}
+	}
+	if command != "" {
+		if len(rest) == 0 {
+			if slashName := bareApprovalSlashName(command); slashName != "" {
+				return renderInteractiveOnlySlash(os.Stdout, slashName, requestedOutputFormat(originalArgs))
 			}
 		}
-		mappedCommand, mappedRest, err := normalizeDirectSlashInvocation(os.Stdout, command, rest, format, app.customSlashCompletionCandidates())
-		if err != nil {
-			return err
-		}
-		command, rest = mappedCommand, mappedRest
-		if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, format); handled {
-			return err
-		}
+		return renderCommandNotFound(os.Stdout, command, rest, requestedOutputFormat(originalArgs))
 	}
+	return app.REPL(ctx, overrides)
+}
 
+func runCLIInteractionCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
 	switch command {
 	case "help":
 		return renderHelpCommand(app.Out, rest)
@@ -584,55 +769,76 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "tui":
 		return app.TUI(ctx, overrides)
 	case "prompt":
-		req, err := parsePromptArgs(rest)
+		return runCLIPromptCommand(ctx, app, rest, overrides, originalArgs)
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIPromptCommand(ctx context.Context, app *App, args []string, overrides config.FlagOverrides, originalArgs []string) error {
+	req, err := parsePromptArgs(args)
+	if err != nil {
+		return renderCLIError(app.Out, err, requestedOutputFormat(originalArgs))
+	}
+	input, replayMessages, err := readCLIPromptInput(app, req)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(input) == "" {
+		if req.Compact {
+			return renderCompactPromptMissingArgument(app.Out, req.Format)
+		}
+		return renderMissingPrompt(app.Out, req.Format)
+	}
+	verboseOutput := req.Verbose || overrides.Verbose
+	includePartialMessages := req.IncludePartialMessages || overrides.IncludePartialMessages || (verboseOutput && req.Format == "stream-json")
+	if (req.IncludePartialMessages || overrides.IncludePartialMessages) && req.Format != "stream-json" {
+		return renderCLIError(app.Out, invalidFlagValueError{
+			Flag:    "--include-partial-messages",
+			Value:   req.Format,
+			Message: "--include-partial-messages requires --output-format=stream-json",
+			Usage:   "codog -p --output-format stream-json --include-partial-messages \"<prompt>\"",
+		}, req.Format)
+	}
+	promptOverrides := overrides
+	if req.MaxBudgetUSD != nil {
+		promptOverrides.MaxBudgetUSD = req.MaxBudgetUSD
+	}
+	options := turnOptions{
+		Attachments:            req.Attachments,
+		ReplayUserMessages:     replayMessages,
+		JSONSchema:             req.JSONSchema,
+		IncludePartialMessages: includePartialMessages,
+		Verbose:                verboseOutput,
+	}
+	return app.promptWithOutputOptions(ctx, input, promptOverrides, req.Format, req.Compact, options)
+}
+
+func readCLIPromptInput(app *App, req promptCLIRequest) (string, []promptStreamJSONReplayMessage, error) {
+	if req.InputFormat == "stream-json" {
+		streamInput, err := readPromptStreamJSONInputState(app.In)
 		if err != nil {
-			return renderCLIError(app.Out, err, requestedOutputFormat(originalArgs))
+			return "", nil, renderCLIError(app.Out, err, req.Format)
 		}
-		input := req.Prompt
-		streamReplayMessages := []promptStreamJSONReplayMessage{}
-		if req.InputFormat == "stream-json" {
-			streamInput, err := readPromptStreamJSONInputState(app.In)
-			if err != nil {
-				return renderCLIError(app.Out, err, req.Format)
-			}
-			input = mergePromptWithStdin(input, streamInput.Prompt)
-			if req.ReplayUserMessages {
-				streamReplayMessages = streamInput.ReplayMessages
-			}
-		} else if !req.PromptProvided {
-			data, err := readPromptInput(app.In)
-			if err != nil {
-				return err
-			}
-			input = strings.TrimSpace(string(data))
-		} else if req.UseStdin {
-			data, err := readPromptInput(app.In)
-			if err != nil {
-				return err
-			}
-			input = mergePromptWithStdin(input, string(data))
+		replayMessages := []promptStreamJSONReplayMessage(nil)
+		if req.ReplayUserMessages {
+			replayMessages = streamInput.ReplayMessages
 		}
-		if strings.TrimSpace(input) == "" {
-			if req.Compact {
-				return renderCompactPromptMissingArgument(app.Out, req.Format)
-			}
-			return renderMissingPrompt(app.Out, req.Format)
-		}
-		verboseOutput := req.Verbose || overrides.Verbose
-		includePartialMessages := req.IncludePartialMessages || overrides.IncludePartialMessages || (verboseOutput && req.Format == "stream-json")
-		if (req.IncludePartialMessages || overrides.IncludePartialMessages) && req.Format != "stream-json" {
-			return renderCLIError(app.Out, invalidFlagValueError{
-				Flag:    "--include-partial-messages",
-				Value:   req.Format,
-				Message: "--include-partial-messages requires --output-format=stream-json",
-				Usage:   "codog -p --output-format stream-json --include-partial-messages \"<prompt>\"",
-			}, req.Format)
-		}
-		promptOverrides := overrides
-		if req.MaxBudgetUSD != nil {
-			promptOverrides.MaxBudgetUSD = req.MaxBudgetUSD
-		}
-		return app.promptWithOutputOptions(ctx, input, promptOverrides, req.Format, req.Compact, turnOptions{Attachments: req.Attachments, ReplayUserMessages: streamReplayMessages, JSONSchema: req.JSONSchema, IncludePartialMessages: includePartialMessages, Verbose: verboseOutput})
+		return mergePromptWithStdin(req.Prompt, streamInput.Prompt), replayMessages, nil
+	}
+	if !req.PromptProvided {
+		data, err := readPromptInput(app.In)
+		return strings.TrimSpace(string(data)), nil, err
+	}
+	if req.UseStdin {
+		data, err := readPromptInput(app.In)
+		return mergePromptWithStdin(req.Prompt, string(data)), nil, err
+	}
+	return req.Prompt, nil, nil
+}
+
+func runCLISessionsCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "acp":
 		return wrapStructured(app.ACP(ctx, rest))
 	case "btw":
@@ -656,6 +862,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.GenerateSessionName(rest, overrides))
 	case "rename":
 		return wrapStructured(app.Rename(rest, overrides))
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLISessionWorkspaceCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "history", "prompt-history":
 		return wrapStructured(app.History(rest, overrides))
 	case "summary":
@@ -676,6 +889,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.WorkspaceCommand(rest))
 	case "scope", "safer-scope":
 		return wrapStructured(app.Scope(rest))
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIConfigurationCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "output-style":
 		if err := app.OutputStyle(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -706,6 +926,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIModelConfigurationCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "open":
 		if err := app.Open(ctx, rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -736,6 +963,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIPreferenceCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "budget":
 		if err := app.Budget(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -763,6 +997,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return nil
 	case "allowed-tools":
 		return wrapStructured(app.AllowedTools(rest))
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIAccessibilityCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "language":
 		if err := app.Language(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -798,6 +1039,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIExperienceCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "voice":
 		if err := app.Voice(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -840,6 +1088,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIExtensionsCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "skill", "skills":
 		if err := app.Skills(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -872,6 +1127,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIUsageCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "cost", "tokens":
 		if err := app.UsageOverview(command, rest, overrides); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -897,6 +1159,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIInsightCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "bookmarks":
 		if err := app.Bookmarks(rest, overrides); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -922,6 +1191,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLILimitCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "compact":
 		if err := app.Compact(rest, overrides); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -950,6 +1226,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIParityCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "rate-limit":
 		if err := app.RateLimit(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -975,6 +1258,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIPlansCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "mock-parity", "parity", "self-test":
 		if err := app.MockParity(ctx, rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -1001,6 +1291,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.Pin(rest, overrides))
 	case "unpin":
 		return wrapStructured(app.Unpin(rest, overrides))
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIGitCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "git":
 		if err := app.Git(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -1033,6 +1330,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.Changelog(rest))
 	case "release-notes":
 		return wrapStructured(app.ReleaseNotes(rest))
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIReviewsCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "review", "ultrareview":
 		return wrapStructured(app.Review(rest))
 	case "reviewRemote", "review-remote":
@@ -1060,6 +1364,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.Passes(passesArgs))
 	case "issue":
 		return wrapStructured(app.IssueDraft(rest, overrides))
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIExecutionCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "run":
 		return wrapStructured(app.RunCommand(ctx, rest))
 	case "node", "python":
@@ -1094,6 +1405,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.AgentsWithOverrides(rest, overrides))
 	case "subagent":
 		return wrapStructured(app.Subagent(rest, overrides))
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIPluginsAuthCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "reload-plugins":
 		return wrapStructured(app.ReloadPluginsWithFormat(rest, format))
 	case "plugin", "plugins", "marketplace":
@@ -1114,12 +1432,26 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLILifecycleCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "exit", "quit":
 		return wrapStructured(app.ExitCompatibility(rest))
 	case "good-claude":
 		return wrapStructured(app.GoodClaude(rest))
 	case "brief":
 		return wrapStructured(app.BriefWithFormat(rest, format))
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIDiagnosticsCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "bootstrap-plan":
 		return wrapStructured(app.BootstrapPlan(rest))
 	case "prefetch":
@@ -1146,6 +1478,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.SecurityReview(rest))
 	case "bughunter":
 		return wrapStructured(app.Bughunter(rest))
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIWorkspaceCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "init":
 		return wrapStructured(app.Init(rest))
 	case "init-verifiers":
@@ -1179,6 +1518,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return nil
 	case "heapdump":
 		return wrapStructured(app.HeapDump(rest))
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLICodeIntelCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "symbols":
 		return wrapStructured(app.Symbols(rest))
 	case "diagnostics":
@@ -1203,6 +1549,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.CodeIntel(append([]string{"notebook-read"}, rest...)))
 	case "notebook-edit":
 		return wrapStructured(app.CodeIntel(append([]string{"notebook-edit"}, rest...)))
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIRemoteCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "remote":
 		return wrapStructured(app.Remote(rest))
 	case "remote-env":
@@ -1221,6 +1574,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.Mobile(append([]string{command}, rest...), overrides))
 	case "ide":
 		return wrapStructured(app.IDE(rest))
+	default:
+		return errCLICommandNotHandled
+	}
+}
+
+func runCLIMaintenanceCommands(ctx context.Context, app *App, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, format string, wrapStructured func(error) error) error {
+	switch command {
 	case "debug-tool-call":
 		return wrapStructured(app.DebugToolCall(ctx, rest, overrides))
 	case "updater":
@@ -1259,15 +1619,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "tool-details":
 		return wrapStructured(app.ToolDetailsWithFormat(rest, format))
 	default:
-		if command != "" {
-			if len(rest) == 0 {
-				if slashName := bareApprovalSlashName(command); slashName != "" {
-					return renderInteractiveOnlySlash(os.Stdout, slashName, requestedOutputFormat(originalArgs))
-				}
-			}
-			return renderCommandNotFound(os.Stdout, command, rest, requestedOutputFormat(originalArgs))
-		}
-		return app.REPL(ctx, overrides)
+		return errCLICommandNotHandled
 	}
 }
 
