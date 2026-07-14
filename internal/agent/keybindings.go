@@ -3222,123 +3222,113 @@ func (a *App) Passes(args []string) error {
 
 func parsePassesArgs(args []string) (passesRequest, error) {
 	req := passesRequest{Action: "open", Format: "text", Target: "user", Open: true, BaseURL: "https://api.anthropic.com", Campaign: "claude_code_guest_pass", SaveURL: true, SaveCache: true, TimeoutMS: 5000}
-	var rest []string
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		case arg == "--open":
-			req.Open = true
-		case arg == "--no-open":
-			req.Open = false
-		case arg == "--docs":
-			req.Docs = true
-		case arg == "--referral-url":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
-			}
-			req.ReferralURL = args[index]
-		case strings.HasPrefix(arg, "--referral-url="):
-			req.ReferralURL = strings.TrimPrefix(arg, "--referral-url=")
-		case arg == "--org" || arg == "--organization" || arg == "--organization-uuid":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
-			}
-			req.OrgUUID = strings.TrimSpace(args[index])
-		case strings.HasPrefix(arg, "--org="):
-			req.OrgUUID = strings.TrimSpace(strings.TrimPrefix(arg, "--org="))
-		case strings.HasPrefix(arg, "--organization="):
-			req.OrgUUID = strings.TrimSpace(strings.TrimPrefix(arg, "--organization="))
-		case strings.HasPrefix(arg, "--organization-uuid="):
-			req.OrgUUID = strings.TrimSpace(strings.TrimPrefix(arg, "--organization-uuid="))
-		case arg == "--token" || arg == "--auth-token":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
-			}
-			req.Token = strings.TrimSpace(args[index])
-		case strings.HasPrefix(arg, "--token="):
-			req.Token = strings.TrimSpace(strings.TrimPrefix(arg, "--token="))
-		case strings.HasPrefix(arg, "--auth-token="):
-			req.Token = strings.TrimSpace(strings.TrimPrefix(arg, "--auth-token="))
-		case arg == "--base-url":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
-			}
-			req.BaseURL = strings.TrimSpace(args[index])
-		case strings.HasPrefix(arg, "--base-url="):
-			req.BaseURL = strings.TrimSpace(strings.TrimPrefix(arg, "--base-url="))
-		case arg == "--campaign":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
-			}
-			req.Campaign = strings.TrimSpace(args[index])
-		case strings.HasPrefix(arg, "--campaign="):
-			req.Campaign = strings.TrimSpace(strings.TrimPrefix(arg, "--campaign="))
-		case arg == "--redemptions":
-			req.Redemptions = true
-		case arg == "--save-url":
-			req.SaveURL = true
-		case arg == "--no-save-url":
-			req.SaveURL = false
-		case arg == "--save-cache":
-			req.SaveCache = true
-		case arg == "--no-save-cache":
-			req.SaveCache = false
-		case arg == "--timeout-ms":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "passes", Flag: arg, Usage: passesUsage}
-			}
-			timeoutMS, err := strconv.Atoi(args[index])
-			if err != nil {
-				return req, fmt.Errorf("passes timeout-ms must be an integer: %w", err)
-			}
-			req.TimeoutMS = timeoutMS
-		case strings.HasPrefix(arg, "--timeout-ms="):
-			timeoutMS, err := strconv.Atoi(strings.TrimPrefix(arg, "--timeout-ms="))
-			if err != nil {
-				return req, fmt.Errorf("passes timeout-ms must be an integer: %w", err)
-			}
-			req.TimeoutMS = timeoutMS
-		default:
-			rest = append(rest, arg)
-		}
+	rest, err := parsePassesOptions(args, &req)
+	if err != nil {
+		return req, err
 	}
 	normalizedFormat, err := normalizeOutputFormat("passes", req.Format, []string{"text", "json"})
 	if err != nil {
 		return req, err
 	}
 	req.Format = normalizedFormat
+	return applyPassesAction(req, rest)
+}
+
+func parsePassesOptions(args []string, req *passesRequest) ([]string, error) {
+	options := passesValueOptions(req)
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch arg {
+		case "--json":
+			req.Format = "json"
+			continue
+		case "--open":
+			req.Open = true
+			continue
+		case "--no-open":
+			req.Open = false
+			continue
+		case "--docs":
+			req.Docs = true
+			continue
+		case "--redemptions":
+			req.Redemptions = true
+			continue
+		case "--save-url":
+			req.SaveURL = true
+			continue
+		case "--no-save-url":
+			req.SaveURL = false
+			continue
+		case "--save-cache":
+			req.SaveCache = true
+			continue
+		case "--no-save-cache":
+			req.SaveCache = false
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, options)
+		if err != nil {
+			return nil, err
+		}
+		if !handled {
+			rest = append(rest, arg)
+		}
+	}
+	return rest, nil
+}
+
+func passesValueOptions(req *passesRequest) map[string]valueOption {
+	options := map[string]valueOption{}
+	addPassesStringOption(options, "--output-format", &req.Format, false)
+	options["-o"] = options["--output-format"]
+	addPassesStringOption(options, "--target", &req.Target, false)
+	addPassesStringOption(options, "--path", &req.Path, false)
+	addPassesStringOption(options, "--referral-url", &req.ReferralURL, false)
+	addPassesStringOption(options, "--org", &req.OrgUUID, true)
+	options["--organization"] = options["--org"]
+	options["--organization-uuid"] = options["--org"]
+	addPassesStringOption(options, "--token", &req.Token, true)
+	options["--auth-token"] = options["--token"]
+	addPassesStringOption(options, "--base-url", &req.BaseURL, true)
+	addPassesStringOption(options, "--campaign", &req.Campaign, true)
+	options["--timeout-ms"] = valueOption{
+		missing:            passesMissingValue,
+		rejectOutputFormat: true,
+		set:                func(value string) error { return setPassesTimeout(req, value) },
+	}
+	return options
+}
+
+func addPassesStringOption(options map[string]valueOption, name string, target *string, trim bool) {
+	options[name] = valueOption{
+		missing:            passesMissingValue,
+		rejectOutputFormat: name != "--output-format",
+		set: func(value string) error {
+			if trim {
+				value = strings.TrimSpace(value)
+			}
+			*target = value
+			return nil
+		},
+	}
+}
+
+func passesMissingValue(flag string) error {
+	return missingFlagValueError{Command: "passes", Flag: flag, Usage: passesUsage}
+}
+
+func setPassesTimeout(req *passesRequest, raw string) error {
+	timeoutMS, err := strconv.Atoi(raw)
+	if err != nil {
+		return fmt.Errorf("passes timeout-ms must be an integer: %w", err)
+	}
+	req.TimeoutMS = timeoutMS
+	return nil
+}
+
+func applyPassesAction(req passesRequest, rest []string) (passesRequest, error) {
 	if len(rest) == 0 {
 		return req, nil
 	}

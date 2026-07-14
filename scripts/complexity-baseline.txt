@@ -32,12 +32,10 @@ gocognit|internal/agent/git.go|renderReportSchemaReport|34
 gocognit|internal/agent/hooks.go|(*App).Voice|38
 gocognit|internal/agent/hooks.go|parseEffortArgs|33
 gocognit|internal/agent/hooks.go|parsePrivacyArgs|58
-gocognit|internal/agent/hooks.go|parseSpeakArgs|72
 gocognit|internal/agent/hooks.go|parseThemeArgs|33
 gocognit|internal/agent/hooks.go|parseVoiceArgs|47
 gocognit|internal/agent/keybindings.go|(*App).Passes|55
 gocognit|internal/agent/keybindings.go|parseCommitPushPRArgs|32
-gocognit|internal/agent/keybindings.go|parsePassesArgs|62
 gocognit|internal/agent/limits.go|(*App).openSession|34
 gocognit|internal/agent/limits.go|parseAntTraceArgs|41
 gocognit|internal/agent/limits.go|parseMockLimitsArgs|42

@@ -2270,120 +2270,85 @@ func parseSpeakArgs(args []string, overrides config.FlagOverrides) (speakRequest
 	if overrides.SessionID != "" {
 		req.SessionID = overrides.SessionID
 	}
-	var rest []string
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, errors.New("speak output format is required")
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if index >= len(args) {
-				return req, errors.New("speak target is required")
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) {
-				return req, errors.New("speak config path is required")
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		case arg == "--command":
-			index++
-			if index >= len(args) {
-				return req, errors.New("speech command is required")
-			}
-			req.Command = args[index]
-		case strings.HasPrefix(arg, "--command="):
-			req.Command = strings.TrimPrefix(arg, "--command=")
-		case arg == "--input" || arg == "--text" || arg == "--stdin":
-			index++
-			if index >= len(args) {
-				return req, errors.New("speak input is required")
-			}
-			req.Input = args[index]
-		case strings.HasPrefix(arg, "--input="):
-			req.Input = strings.TrimPrefix(arg, "--input=")
-		case strings.HasPrefix(arg, "--text="):
-			req.Input = strings.TrimPrefix(arg, "--text=")
-		case strings.HasPrefix(arg, "--stdin="):
-			req.Input = strings.TrimPrefix(arg, "--stdin=")
-		case arg == "--session":
-			index++
-			if index >= len(args) {
-				return req, errors.New("speak session is required")
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--session="):
-			req.SessionID = strings.TrimPrefix(arg, "--session=")
-		case arg == "--resume":
-			index++
-			if index >= len(args) {
-				return req, errors.New("speak resume session is required")
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--resume="):
-			req.SessionID = strings.TrimPrefix(arg, "--resume=")
-		case arg == "--nth":
-			index++
-			if index >= len(args) {
-				return req, errors.New("speak response index is required")
-			}
-			nth, err := strconv.Atoi(args[index])
-			if err != nil || nth < 1 {
-				return req, errors.New("speak response index must be greater than zero")
-			}
-			req.Nth = nth
-		case strings.HasPrefix(arg, "--nth="):
-			nth, err := strconv.Atoi(strings.TrimPrefix(arg, "--nth="))
-			if err != nil || nth < 1 {
-				return req, errors.New("speak response index must be greater than zero")
-			}
-			req.Nth = nth
-		case arg == "--timeout-ms":
-			index++
-			if index >= len(args) {
-				return req, errors.New("speak timeout is required")
-			}
-			timeout, err := strconv.Atoi(args[index])
-			if err != nil || timeout < 0 {
-				return req, errors.New("speak timeout must be a non-negative integer")
-			}
-			req.TimeoutMS = timeout
-		case strings.HasPrefix(arg, "--timeout-ms="):
-			timeout, err := strconv.Atoi(strings.TrimPrefix(arg, "--timeout-ms="))
-			if err != nil || timeout < 0 {
-				return req, errors.New("speak timeout must be a non-negative integer")
-			}
-			req.TimeoutMS = timeout
-		default:
-			rest = append(rest, arg)
-		}
+	rest, err := parseSpeakOptions(args, &req)
+	if err != nil {
+		return req, err
 	}
 	if err := validateTextOrJSON(req.Format, "speak"); err != nil {
 		return req, err
 	}
+	return applySpeakAction(req, rest)
+}
+
+func parseSpeakOptions(args []string, req *speakRequest) ([]string, error) {
+	options := speakValueOptions(req)
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		if args[index] == "--json" {
+			req.Format = "json"
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, options)
+		if err != nil {
+			return nil, err
+		}
+		if !handled {
+			rest = append(rest, args[index])
+		}
+	}
+	return rest, nil
+}
+
+func speakValueOptions(req *speakRequest) map[string]valueOption {
+	options := map[string]valueOption{
+		"--output-format": stringValueOption(&req.Format, "speak output format is required"),
+		"--target":        stringValueOption(&req.Target, "speak target is required"),
+		"--path":          stringValueOption(&req.Path, "speak config path is required"),
+		"--command":       stringValueOption(&req.Command, "speech command is required"),
+		"--input":         stringValueOption(&req.Input, "speak input is required"),
+		"--session":       stringValueOption(&req.SessionID, "speak session is required"),
+		"--resume":        stringValueOption(&req.SessionID, "speak resume session is required"),
+		"--nth": {
+			missing: func(string) error { return errors.New("speak response index is required") },
+			set:     func(value string) error { return setSpeakNth(req, value) },
+		},
+		"--timeout-ms": {
+			missing: func(string) error { return errors.New("speak timeout is required") },
+			set:     func(value string) error { return setSpeakTimeout(req, value) },
+		},
+	}
+	options["-o"] = options["--output-format"]
+	options["--text"] = options["--input"]
+	options["--stdin"] = options["--input"]
+	return options
+}
+
+func setSpeakNth(req *speakRequest, raw string) error {
+	nth, err := strconv.Atoi(raw)
+	if err != nil || nth < 1 {
+		return errors.New("speak response index must be greater than zero")
+	}
+	req.Nth = nth
+	return nil
+}
+
+func setSpeakTimeout(req *speakRequest, raw string) error {
+	timeout, err := strconv.Atoi(raw)
+	if err != nil || timeout < 0 {
+		return errors.New("speak timeout must be a non-negative integer")
+	}
+	req.TimeoutMS = timeout
+	return nil
+}
+
+func applySpeakAction(req speakRequest, rest []string) (speakRequest, error) {
 	if len(rest) == 0 {
 		return req, nil
 	}
 	switch strings.ToLower(rest[0]) {
 	case "status", "show":
 		req.Action = "status"
-		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected speak argument %q", rest[1])
-		}
+		return rejectSpeakExtras(req, rest[1:])
 	case "set-command", "command":
 		req.Action = "set-command"
 		if req.Command == "" && len(rest) > 1 {
@@ -2391,14 +2356,10 @@ func parseSpeakArgs(args []string, overrides config.FlagOverrides) (speakRequest
 		}
 	case "clear-command":
 		req.Action = "clear-command"
-		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected speak argument %q", rest[1])
-		}
+		return rejectSpeakExtras(req, rest[1:])
 	case "clear", "reset", "unset":
 		req.Action = "clear"
-		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected speak argument %q", rest[1])
-		}
+		return rejectSpeakExtras(req, rest[1:])
 	case "test", "run":
 		req.Action = "test"
 		if req.Input == "" && len(rest) > 1 {
@@ -2411,15 +2372,20 @@ func parseSpeakArgs(args []string, overrides config.FlagOverrides) (speakRequest
 		}
 	case "last", "latest":
 		req.Action = "speak"
-		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected speak argument %q", rest[1])
-		}
+		return rejectSpeakExtras(req, rest[1:])
 	default:
 		if req.Input != "" {
 			return req, fmt.Errorf("unexpected speak argument %q", rest[0])
 		}
 		req.Action = "speak"
 		req.Input = strings.Join(rest, " ")
+	}
+	return req, nil
+}
+
+func rejectSpeakExtras(req speakRequest, extras []string) (speakRequest, error) {
+	if len(extras) > 0 {
+		return req, fmt.Errorf("unexpected speak argument %q", extras[0])
 	}
 	return req, nil
 }
