@@ -412,104 +412,13 @@ func (a *App) Templates(args []string) error {
 	case "sources":
 		return a.templateSources(rest)
 	case "show":
-		format, remaining, err := parseTemplateOutputArgs("templates show", rest)
-		if err != nil {
-			return err
-		}
-		if len(remaining) == 0 {
-			return a.renderTemplatesList(format)
-		}
-		if len(remaining) > 1 {
-			return renderCLIError(a.Out, unexpectedExtraArgsError{
-				Command: "templates show",
-				Args:    append([]string(nil), remaining[1:]...),
-				Usage:   "codog templates show [NAME] [--json|--output-format text|json]",
-			}, format)
-		}
-		tmpl, err := prompttemplates.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
-		if err != nil {
-			return err
-		}
-		if format == "json" {
-			data, _ := json.MarshalIndent(tmpl, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		fmt.Fprint(a.Out, tmpl.Body)
-		if !strings.HasSuffix(tmpl.Body, "\n") {
-			fmt.Fprintln(a.Out)
-		}
+		return a.templateShow(rest)
 	case "apply":
-		req, err := parseTemplateApplyArgs(rest)
-		if err != nil {
-			if errors.Is(err, errTemplateApplyMissingName) {
-				return renderMissingActionArgument(a.Out, "templates", "apply", "template_name", "templates apply requires a template name", "Usage: codog templates apply NAME [--var key=value] [--json|--output-format text|json]. Run `codog templates list` to see available templates.", req.Format)
-			}
-			return err
-		}
-		tmpl, err := prompttemplates.Find(a.Config.ConfigHome, a.Workspace, req.Name)
-		if err != nil {
-			return err
-		}
-		rendered, err := prompttemplates.Render(tmpl, req.Vars)
-		if err != nil {
-			return err
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(map[string]any{"kind": "template_apply", "template": rendered}, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		fmt.Fprint(a.Out, rendered.Rendered)
-		if !strings.HasSuffix(rendered.Rendered, "\n") {
-			fmt.Fprintln(a.Out)
-		}
+		return a.templateApply(rest)
 	case "install":
-		req, err := parseTemplateInstallArgs(rest)
-		if err != nil {
-			if errors.Is(err, errTemplateInstallMissingSource) {
-				return renderTemplateInstallMissingSource(a.Out, req.Format)
-			}
-			return err
-		}
-		targetRoot, targetLabel, err := a.templateTargetRoot(req.Target)
-		if err != nil {
-			return err
-		}
-		report, err := prompttemplates.Install(req.Source, targetRoot, req.Name, targetLabel)
-		if err != nil {
-			return renderTemplateLookupError(a.Out, "install", req.Source, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		fmt.Fprintln(a.Out, "Template Installed")
-		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
-		fmt.Fprintf(a.Out, "  Target           %s\n", report.Target)
-		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
+		return a.templateInstall(rest)
 	case "uninstall":
-		req, err := parseTemplateUninstallArgs(rest)
-		if err != nil {
-			if errors.Is(err, errTemplateUninstallMissingName) {
-				return renderMissingActionArgument(a.Out, "templates", "uninstall", "template_name", "templates uninstall requires a template name", "Usage: codog templates uninstall NAME [--project|--user] [--json|--output-format text|json]. Run `codog templates list` to see installed templates.", req.Format)
-			}
-			return err
-		}
-		roots := a.templateUninstallRoots(req.Target)
-		report, err := prompttemplates.Uninstall(req.Name, roots)
-		if err != nil {
-			return renderTemplateLookupError(a.Out, "uninstall", req.Name, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		fmt.Fprintln(a.Out, "Template Uninstalled")
-		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
-		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
+		return a.templateUninstall(rest)
 	default:
 		_, format, err := stripJSONOnlyOutputFormat("templates", rest)
 		if err != nil {
@@ -517,6 +426,114 @@ func (a *App) Templates(args []string) error {
 		}
 		return renderUnsupportedTemplatesAction(a.Out, action, format)
 	}
+}
+
+func (a *App) templateShow(args []string) error {
+	format, remaining, err := parseTemplateOutputArgs("templates show", args)
+	if err != nil {
+		return err
+	}
+	if len(remaining) == 0 {
+		return a.renderTemplatesList(format)
+	}
+	if len(remaining) > 1 {
+		return renderCLIError(a.Out, unexpectedExtraArgsError{
+			Command: "templates show", Args: append([]string(nil), remaining[1:]...),
+			Usage: "codog templates show [NAME] [--json|--output-format text|json]",
+		}, format)
+	}
+	tmpl, err := prompttemplates.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(tmpl, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprint(a.Out, tmpl.Body)
+	if !strings.HasSuffix(tmpl.Body, "\n") {
+		fmt.Fprintln(a.Out)
+	}
+	return nil
+}
+
+func (a *App) templateApply(args []string) error {
+	req, err := parseTemplateApplyArgs(args)
+	if err != nil {
+		if errors.Is(err, errTemplateApplyMissingName) {
+			return renderMissingActionArgument(a.Out, "templates", "apply", "template_name", "templates apply requires a template name", "Usage: codog templates apply NAME [--var key=value] [--json|--output-format text|json]. Run `codog templates list` to see available templates.", req.Format)
+		}
+		return err
+	}
+	tmpl, err := prompttemplates.Find(a.Config.ConfigHome, a.Workspace, req.Name)
+	if err != nil {
+		return err
+	}
+	rendered, err := prompttemplates.Render(tmpl, req.Vars)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(map[string]any{"kind": "template_apply", "template": rendered}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprint(a.Out, rendered.Rendered)
+	if !strings.HasSuffix(rendered.Rendered, "\n") {
+		fmt.Fprintln(a.Out)
+	}
+	return nil
+}
+
+func (a *App) templateInstall(args []string) error {
+	req, err := parseTemplateInstallArgs(args)
+	if err != nil {
+		if errors.Is(err, errTemplateInstallMissingSource) {
+			return renderTemplateInstallMissingSource(a.Out, req.Format)
+		}
+		return err
+	}
+	targetRoot, targetLabel, err := a.templateTargetRoot(req.Target)
+	if err != nil {
+		return err
+	}
+	report, err := prompttemplates.Install(req.Source, targetRoot, req.Name, targetLabel)
+	if err != nil {
+		return renderTemplateLookupError(a.Out, "install", req.Source, err, req.Format)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, "Template Installed")
+	fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
+	fmt.Fprintf(a.Out, "  Target           %s\n", report.Target)
+	fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
+	return nil
+}
+
+func (a *App) templateUninstall(args []string) error {
+	req, err := parseTemplateUninstallArgs(args)
+	if err != nil {
+		if errors.Is(err, errTemplateUninstallMissingName) {
+			return renderMissingActionArgument(a.Out, "templates", "uninstall", "template_name", "templates uninstall requires a template name", "Usage: codog templates uninstall NAME [--project|--user] [--json|--output-format text|json]. Run `codog templates list` to see installed templates.", req.Format)
+		}
+		return err
+	}
+	report, err := prompttemplates.Uninstall(req.Name, a.templateUninstallRoots(req.Target))
+	if err != nil {
+		return renderTemplateLookupError(a.Out, "uninstall", req.Name, err, req.Format)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, "Template Uninstalled")
+	fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
+	fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
 	return nil
 }
 
@@ -1065,6 +1082,10 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	case "remove", "delete", "rm":
 		return a.mcpRemove(args[1:], format)
 	}
+	return a.mcpRemote(ctx, args, requestedArgs, format)
+}
+
+func (a *App) mcpRemote(ctx context.Context, args, requestedArgs []string, format string) error {
 	if !mcpRemoteAction(args[0]) {
 		verb := strings.TrimSpace(firstNonEmpty(firstArg(requestedArgs), args[0]))
 		return renderMCPUnsupportedAction(a.Out, format, strings.Join(requestedArgs, " "), unknownMCPActionHint(verb))
@@ -1111,6 +1132,10 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 			Usage:            mcpRemoteUsage(args[0]),
 		})
 	}
+	return a.mcpServerAction(ctx, args, requestedArgs, serverName, server, format)
+}
+
+func (a *App) mcpServerAction(ctx context.Context, args, requestedArgs []string, serverName string, server config.MCPServerConfig, format string) error {
 	var payload any
 	switch args[0] {
 	case "tools":

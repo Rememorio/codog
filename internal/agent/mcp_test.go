@@ -3016,6 +3016,43 @@ func TestTemplatesInstallAndUninstall(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(workspace, ".codog", "templates", "brief.md"))
 }
 
+func TestTemplateRouterBoundaries(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	templateRoot := filepath.Join(configHome, "templates")
+	require.NoError(t, os.MkdirAll(templateRoot, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(templateRoot, "review.md"), []byte("Review {{target}}."), 0o644))
+	source := filepath.Join(t.TempDir(), "brief.md")
+	require.NoError(t, os.WriteFile(source, []byte("Brief {{topic}}."), 0o644))
+
+	var out bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: configHome}, Workspace: workspace, Out: &out, Err: io.Discard}
+
+	require.NoError(t, app.Templates([]string{"show", "review", "--json"}))
+	require.Contains(t, out.String(), `"name": "review"`)
+	out.Reset()
+
+	err := app.Templates([]string{"show", "review", "extra", "--json"})
+	require.Error(t, err)
+	require.Contains(t, out.String(), "unexpected_extra_args")
+	out.Reset()
+
+	require.Error(t, app.Templates([]string{"show", "missing"}))
+	require.Error(t, app.Templates([]string{"show", "review", "--output-format", "yaml"}))
+	require.Error(t, app.Templates([]string{"apply", "review", "--var", "invalid"}))
+	require.Error(t, app.Templates([]string{"apply", "missing", "target=test"}))
+	require.Error(t, app.Templates([]string{"install", source, "--target", "invalid"}))
+	require.Error(t, app.Templates([]string{"install", source, "--output-format", "yaml"}))
+
+	require.NoError(t, app.Templates([]string{"install", source}))
+	require.Contains(t, out.String(), "Template Installed")
+	out.Reset()
+	require.NoError(t, app.Templates([]string{"uninstall", "brief"}))
+	require.Contains(t, out.String(), "Template Uninstalled")
+	require.Error(t, app.Templates([]string{"uninstall", "missing"}))
+	require.Error(t, app.Templates([]string{"uninstall", "brief", "--output-format", "yaml"}))
+}
+
 func templateReportEntry(all []prompttemplates.Template, name string, source string) prompttemplates.Template {
 	for _, tmpl := range all {
 		if tmpl.Name == name && tmpl.Source == source {
