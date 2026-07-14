@@ -505,8 +505,8 @@ func budgetLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if initial.Kind != "budget" || initial.Action != "show" || initial.MaxTokens != 4096 || initial.MaxTurns != 8 {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial budget report: %#v", initial)
+	if err := verifyInitialBudgetReport(initial); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	setOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "budget", "use", "--path", configPath, "--max-tokens", "8192", "--max-turns", "12")
@@ -517,8 +517,8 @@ func budgetLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if setReport.Action != "set" || setReport.MaxTokens != 8192 || setReport.MaxTurns != 12 || setReport.Previous == nil || setReport.Previous.MaxTokens != 4096 || setReport.Previous.MaxTurns != 8 {
-		return localScenarioResult{}, fmt.Errorf("unexpected set budget report: %#v", setReport)
+	if err := verifySetBudgetReport(setReport); err != nil {
+		return localScenarioResult{}, err
 	}
 	if err := verifyHarnessFileContainsAny(configPath, `"max_tokens": 8192`, `"max_tokens":8192`); err != nil {
 		return localScenarioResult{}, err
@@ -555,8 +555,8 @@ func budgetLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if reset.Action != "reset" || reset.MaxTokens != 4096 || reset.MaxTurns != 8 || reset.Previous == nil || reset.Previous.MaxTokens != 8192 || reset.Previous.MaxTurns != 12 {
-		return localScenarioResult{}, fmt.Errorf("unexpected reset budget report: %#v", reset)
+	if err := verifyResetBudgetReport(reset); err != nil {
+		return localScenarioResult{}, err
 	}
 	if err := verifyHarnessFileOmits(configPath, `"max_tokens"`, `"max_turns"`); err != nil {
 		return localScenarioResult{}, err
@@ -587,6 +587,27 @@ func budgetLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 		RequestCount: 5,
 		MessageCount: 1,
 	}, nil
+}
+
+func verifyInitialBudgetReport(report budgetHarnessReport) error {
+	if report.Kind != "budget" || report.Action != "show" || report.MaxTokens != 4096 || report.MaxTurns != 8 {
+		return fmt.Errorf("unexpected initial budget report: %#v", report)
+	}
+	return nil
+}
+
+func verifySetBudgetReport(report budgetHarnessReport) error {
+	if report.Action != "set" || report.MaxTokens != 8192 || report.MaxTurns != 12 || report.Previous == nil || report.Previous.MaxTokens != 4096 || report.Previous.MaxTurns != 8 {
+		return fmt.Errorf("unexpected set budget report: %#v", report)
+	}
+	return nil
+}
+
+func verifyResetBudgetReport(report budgetHarnessReport) error {
+	if report.Action != "reset" || report.MaxTokens != 4096 || report.MaxTurns != 8 || report.Previous == nil || report.Previous.MaxTokens != 8192 || report.Previous.MaxTurns != 12 {
+		return fmt.Errorf("unexpected reset budget report: %#v", report)
+	}
+	return nil
 }
 
 func authCredentialsScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
@@ -714,35 +735,9 @@ func outputStyleLifecycleScenarioRunLocal(_ context.Context, workspace string) (
 }
 
 func diagnosticsStatusScenarioRunLocal(_ context.Context, workspace string) (localScenarioResult, error) {
-	configHome := filepath.Join(workspace, ".codog")
-	if err := os.MkdirAll(configHome, 0o755); err != nil {
+	configHome, profilePath, err := setupDiagnosticsWorkspace(workspace)
+	if err != nil {
 		return localScenarioResult{}, err
-	}
-	profilePath := filepath.Join(workspace, ".zshrc")
-	if err := os.WriteFile(profilePath, []byte("# shell profile\n"), 0o644); err != nil {
-		return localScenarioResult{}, err
-	}
-	if err := runHarnessGit(workspace, "init", "-q", "-b", "main"); err != nil {
-		return localScenarioResult{}, err
-	}
-	for _, args := range [][]string{
-		{"config", "user.email", "codog@example.test"},
-		{"config", "user.name", "Codog Test"},
-	} {
-		if err := runHarnessGit(workspace, args...); err != nil {
-			return localScenarioResult{}, err
-		}
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("diagnostics parity\n"), 0o644); err != nil {
-		return localScenarioResult{}, err
-	}
-	for _, args := range [][]string{
-		{"add", "README.md"},
-		{"commit", "-q", "-m", "chore: diagnostics parity"},
-	} {
-		if err := runHarnessGit(workspace, args...); err != nil {
-			return localScenarioResult{}, err
-		}
 	}
 
 	permissionRules := config.PermissionRules{
@@ -826,29 +821,9 @@ func diagnosticsStatusScenarioRunLocal(_ context.Context, workspace string) (loc
 		SandboxDefault: "seatbelt",
 		SandboxOK:      true,
 	})
-	if doctorReport.Kind != "doctor" || doctorReport.Action != "doctor" {
-		return localScenarioResult{}, fmt.Errorf("unexpected doctor report identity: %#v", doctorReport)
-	}
-	for _, expected := range []string{"auth", "config home", "workspace", "permissions", "tools", "hooks", "sandbox"} {
-		if !slices.Contains(doctorReport.CheckNames, expected) {
-			return localScenarioResult{}, fmt.Errorf("doctor report missing %q check: %#v", expected, doctorReport.CheckNames)
-		}
-	}
-	if doctorReport.Summary.Total != len(doctorReport.Checks) || doctorReport.Summary.Total == 0 {
-		return localScenarioResult{}, fmt.Errorf("unexpected doctor check summary: %#v", doctorReport.Summary)
-	}
-	var gitCheck doctor.Check
-	for _, check := range doctorReport.Checks {
-		if check.Name == "Git" {
-			gitCheck = check
-			break
-		}
-	}
-	gitIdentity, _ := gitCheck.Data["identity"].(gitops.Identity)
-	gitFreshness, _ := gitCheck.Data["freshness"].(gitops.BranchFreshness)
-	gitBaseCommit, _ := gitCheck.Data["base_commit"].(gitops.BaseCommitCheck)
-	if gitIdentity.HeadSHA == "" || gitFreshness.Status == "" || gitBaseCommit.Status == "" {
-		return localScenarioResult{}, fmt.Errorf("doctor git check missing structured data: %#v", gitCheck.Data)
+	gitIdentity, gitFreshness, gitBaseCommit, err := verifyDiagnosticsDoctorReport(doctorReport)
+	if err != nil {
+		return localScenarioResult{}, err
 	}
 
 	terminalStatus, err := terminalsetup.Run(terminalsetup.Options{
@@ -939,6 +914,68 @@ func diagnosticsStatusScenarioRunLocal(_ context.Context, workspace string) (loc
 		RequestCount: 3,
 		MessageCount: 1,
 	}, nil
+}
+
+func setupDiagnosticsWorkspace(workspace string) (string, string, error) {
+	configHome := filepath.Join(workspace, ".codog")
+	if err := os.MkdirAll(configHome, 0o755); err != nil {
+		return "", "", err
+	}
+	profilePath := filepath.Join(workspace, ".zshrc")
+	if err := os.WriteFile(profilePath, []byte("# shell profile\n"), 0o644); err != nil {
+		return "", "", err
+	}
+	if err := runHarnessGit(workspace, "init", "-q", "-b", "main"); err != nil {
+		return "", "", err
+	}
+	for _, args := range [][]string{
+		{"config", "user.email", "codog@example.test"},
+		{"config", "user.name", "Codog Test"},
+	} {
+		if err := runHarnessGit(workspace, args...); err != nil {
+			return "", "", err
+		}
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("diagnostics parity\n"), 0o644); err != nil {
+		return "", "", err
+	}
+	for _, args := range [][]string{
+		{"add", "README.md"},
+		{"commit", "-q", "-m", "chore: diagnostics parity"},
+	} {
+		if err := runHarnessGit(workspace, args...); err != nil {
+			return "", "", err
+		}
+	}
+	return configHome, profilePath, nil
+}
+
+func verifyDiagnosticsDoctorReport(report doctor.Report) (gitops.Identity, gitops.BranchFreshness, gitops.BaseCommitCheck, error) {
+	if report.Kind != "doctor" || report.Action != "doctor" {
+		return gitops.Identity{}, gitops.BranchFreshness{}, gitops.BaseCommitCheck{}, fmt.Errorf("unexpected doctor report identity: %#v", report)
+	}
+	for _, expected := range []string{"auth", "config home", "workspace", "permissions", "tools", "hooks", "sandbox"} {
+		if !slices.Contains(report.CheckNames, expected) {
+			return gitops.Identity{}, gitops.BranchFreshness{}, gitops.BaseCommitCheck{}, fmt.Errorf("doctor report missing %q check: %#v", expected, report.CheckNames)
+		}
+	}
+	if report.Summary.Total != len(report.Checks) || report.Summary.Total == 0 {
+		return gitops.Identity{}, gitops.BranchFreshness{}, gitops.BaseCommitCheck{}, fmt.Errorf("unexpected doctor check summary: %#v", report.Summary)
+	}
+	var gitCheck doctor.Check
+	for _, check := range report.Checks {
+		if check.Name == "Git" {
+			gitCheck = check
+			break
+		}
+	}
+	identity, _ := gitCheck.Data["identity"].(gitops.Identity)
+	freshness, _ := gitCheck.Data["freshness"].(gitops.BranchFreshness)
+	baseCommit, _ := gitCheck.Data["base_commit"].(gitops.BaseCommitCheck)
+	if identity.HeadSHA == "" || freshness.Status == "" || baseCommit.Status == "" {
+		return gitops.Identity{}, gitops.BranchFreshness{}, gitops.BaseCommitCheck{}, fmt.Errorf("doctor git check missing structured data: %#v", gitCheck.Data)
+	}
+	return identity, freshness, baseCommit, nil
 }
 
 func statuslineCLIScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {

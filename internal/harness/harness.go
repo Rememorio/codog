@@ -1423,6 +1423,15 @@ func harnessContainsAny(value string, candidates ...string) bool {
 	return false
 }
 
+func verifyHarnessChecks(label, output string, checks ...bool) error {
+	for _, check := range checks {
+		if !check {
+			return fmt.Errorf("unexpected %s: %s", label, output)
+		}
+	}
+	return nil
+}
+
 func decodeHarnessOutput(target any, execute func() (string, error)) (string, error) {
 	output, err := execute()
 	if err != nil {
@@ -1445,6 +1454,17 @@ func verifyHarnessFileContainsAny(path string, expected ...string) error {
 		}
 	}
 	return fmt.Errorf("%s does not contain any expected value", path)
+}
+
+func verifyHarnessFileContainsAll(path string, expected ...string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !harnessContainsAll(string(data), expected...) {
+		return fmt.Errorf("%s does not contain all expected values", path)
+	}
+	return nil
 }
 
 func verifyHarnessFileOmits(path string, values ...string) error {

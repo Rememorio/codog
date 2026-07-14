@@ -1260,6 +1260,150 @@ func policyUpdateSandboxScenarioRunLocal(ctx context.Context, workspace string) 
 		return localScenarioResult{}, fmt.Errorf("unexpected audit events: %#v", auditEvents)
 	}
 
+	sandboxReport, err := runPolicySandboxPhase(workspace)
+	if err != nil {
+		return localScenarioResult{}, err
+	}
+
+	updaterReport, err := runSignedUpdaterPhase(ctx, workspace)
+	if err != nil {
+		return localScenarioResult{}, err
+	}
+
+	report := map[string]any{
+		"kind": "policy_update_sandbox",
+		"policy": map[string]any{
+			"actions": []string{string(policyEval.Actions[0].Kind)},
+			"rule":    policyEval.Events[0].RuleID,
+		},
+		"audit": map[string]any{
+			"events":  len(auditEvents),
+			"allowed": *auditEvents[0].Allowed,
+		},
+		"sandbox": sandboxReport,
+		"updater": updaterReport,
+	}
+	data, err := json.Marshal(report)
+	if err != nil {
+		return localScenarioResult{}, err
+	}
+	return localScenarioResult{
+		Output:       string(data),
+		FinalMessage: "policy update sandbox harness ok",
+		RequestCount: 5,
+		MessageCount: 1,
+	}, nil
+}
+
+type signedUpdaterHarnessServer struct {
+	artifactPayload []byte
+	artifactSHA     [sha256.Size]byte
+	privateKey      ed25519.PrivateKey
+	baseURL         string
+}
+
+// ServeHTTP serves the signed manifest and artifact used by the updater scenario.
+func (s *signedUpdaterHarnessServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/manifest.json":
+		s.serveManifest(w)
+	case "/codog-test":
+		_, _ = w.Write(s.artifactPayload)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *signedUpdaterHarnessServer) serveManifest(w http.ResponseWriter) {
+	manifest := updater.Manifest{
+		Version:   "0.2.0",
+		Downloads: map[string]string{"test": s.baseURL + "/codog-test"},
+		Checksums: map[string]string{
+			"test": "sha256:" + hex.EncodeToString(s.artifactSHA[:]),
+		},
+	}
+	payload, err := json.Marshal(manifest)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(s.privateKey, payload))
+	if err := json.NewEncoder(w).Encode(manifest); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func runSignedUpdaterPhase(ctx context.Context, workspace string) (map[string]any, error) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		return nil, err
+	}
+	serverState := &signedUpdaterHarnessServer{
+		artifactPayload: []byte("#!/bin/sh\nprintf codog-updated\n"),
+		privateKey:      privateKey,
+	}
+	serverState.artifactSHA = sha256.Sum256(serverState.artifactPayload)
+	server := httptest.NewServer(serverState)
+	serverState.baseURL = server.URL
+	defer server.Close()
+
+	publicKeyValue := base64.StdEncoding.EncodeToString(publicKey)
+	check, err := updater.CheckSigned(ctx, "0.1.0", server.URL+"/manifest.json", publicKeyValue)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyHarnessChecks("signed update check", fmt.Sprintf("%#v", check),
+		check.UpdateAvailable,
+		check.SignatureValid,
+		check.LatestVersion == "0.2.0",
+	); err != nil {
+		return nil, err
+	}
+	download, err := updater.DownloadSigned(ctx, server.URL+"/manifest.json", "test", filepath.Join(workspace, "downloads"), publicKeyValue)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyHarnessChecks("signed download", fmt.Sprintf("%#v", download),
+		download.Verified,
+		download.SHA256 == hex.EncodeToString(serverState.artifactSHA[:]),
+	); err != nil {
+		return nil, err
+	}
+	target := filepath.Join(workspace, "bin", "codog")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(target, []byte("old-codog"), 0o755); err != nil {
+		return nil, err
+	}
+	install, err := updater.Install(download.Path, target)
+	if err != nil {
+		return nil, err
+	}
+	if !install.Installed || install.BackupPath == "" {
+		return nil, fmt.Errorf("unexpected install result: %#v", install)
+	}
+	rollback, err := updater.Rollback(target)
+	if err != nil {
+		return nil, err
+	}
+	restored, err := os.ReadFile(target)
+	if err != nil {
+		return nil, err
+	}
+	if !rollback.RolledBack || string(restored) != "old-codog" {
+		return nil, fmt.Errorf("unexpected rollback result: %#v restored=%q", rollback, restored)
+	}
+	return map[string]any{
+		"latest_version":    check.LatestVersion,
+		"signature_valid":   check.SignatureValid,
+		"download_verified": download.Verified,
+		"installed":         install.Installed,
+		"rolled_back":       rollback.RolledBack,
+	}, nil
+}
+
+func runPolicySandboxPhase(workspace string) (map[string]any, error) {
 	network := true
 	logsDir := filepath.Join(workspace, "logs")
 	detected := sandbox.Status{
@@ -1274,139 +1418,41 @@ func policyUpdateSandboxScenarioRunLocal(ctx context.Context, workspace string) 
 			{Name: "unshare", Available: true},
 		},
 	}
-	sandboxStatus, effective, err := sandbox.ResolveSandboxExecutionStatusFor("detect", workspace, sandbox.SandboxRequestOptions{
+	status, effective, err := sandbox.ResolveSandboxExecutionStatusFor("detect", workspace, sandbox.SandboxRequestOptions{
 		NetworkIsolation: &network,
 		FilesystemMode:   sandbox.FilesystemIsolationAllowList,
 		AllowedMounts:    []string{logsDir},
 	}, detected)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
-	if effective != "bwrap" || !sandboxStatus.Active || !sandboxStatus.NetworkActive || !sandboxStatus.FilesystemActive || sandboxStatus.ResolutionStatus != "enabled" {
-		return localScenarioResult{}, fmt.Errorf("unexpected sandbox status: %#v effective=%q", sandboxStatus, effective)
+	if err := verifyHarnessChecks("sandbox status", fmt.Sprintf("%#v effective=%q", status, effective),
+		effective == "bwrap",
+		status.Active,
+		status.NetworkActive,
+		status.FilesystemActive,
+		status.ResolutionStatus == "enabled",
+		slices.Contains(status.AllowedMounts, logsDir),
+	); err != nil {
+		return nil, err
 	}
-	if !slices.Contains(sandboxStatus.AllowedMounts, logsDir) {
-		return localScenarioResult{}, fmt.Errorf("sandbox allowed mounts missing logs dir: %v", sandboxStatus.AllowedMounts)
-	}
-	sandboxName, sandboxArgs, err := sandbox.BuildShellCommandWithStatus(effective, workspace, "printf policy-sandbox", sandboxStatus)
+	name, args, err := sandbox.BuildShellCommandWithStatus(effective, workspace, "printf policy-sandbox", status)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
-	if sandboxName != "bwrap" || !slices.Contains(sandboxArgs, "--unshare-net") || !slices.Contains(sandboxArgs, logsDir) {
-		return localScenarioResult{}, fmt.Errorf("unexpected sandbox command: %s %v", sandboxName, sandboxArgs)
+	if err := verifyHarnessChecks("sandbox command", fmt.Sprintf("%s %v", name, args),
+		name == "bwrap",
+		slices.Contains(args, "--unshare-net"),
+		slices.Contains(args, logsDir),
+	); err != nil {
+		return nil, err
 	}
-
-	publicKey, privateKey, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	artifactPayload := []byte("#!/bin/sh\nprintf codog-updated\n")
-	artifactSHA := sha256.Sum256(artifactPayload)
-	var serverURL string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/manifest.json":
-			manifest := updater.Manifest{
-				Version: "0.2.0",
-				Downloads: map[string]string{
-					"test": serverURL + "/codog-test",
-				},
-				Checksums: map[string]string{
-					"test": "sha256:" + hex.EncodeToString(artifactSHA[:]),
-				},
-			}
-			payload, err := json.Marshal(manifest)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))
-			if err := json.NewEncoder(w).Encode(manifest); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-			}
-		case "/codog-test":
-			_, _ = w.Write(artifactPayload)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	serverURL = server.URL
-	defer server.Close()
-	publicKeyValue := base64.StdEncoding.EncodeToString(publicKey)
-	check, err := updater.CheckSigned(ctx, "0.1.0", server.URL+"/manifest.json", publicKeyValue)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !check.UpdateAvailable || !check.SignatureValid || check.LatestVersion != "0.2.0" {
-		return localScenarioResult{}, fmt.Errorf("unexpected signed update check: %#v", check)
-	}
-	download, err := updater.DownloadSigned(ctx, server.URL+"/manifest.json", "test", filepath.Join(workspace, "downloads"), publicKeyValue)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !download.Verified || download.SHA256 != hex.EncodeToString(artifactSHA[:]) {
-		return localScenarioResult{}, fmt.Errorf("unexpected signed download: %#v", download)
-	}
-	target := filepath.Join(workspace, "bin", "codog")
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return localScenarioResult{}, err
-	}
-	if err := os.WriteFile(target, []byte("old-codog"), 0o755); err != nil {
-		return localScenarioResult{}, err
-	}
-	install, err := updater.Install(download.Path, target)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !install.Installed || install.BackupPath == "" {
-		return localScenarioResult{}, fmt.Errorf("unexpected install result: %#v", install)
-	}
-	rollback, err := updater.Rollback(target)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	restored, err := os.ReadFile(target)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !rollback.RolledBack || string(restored) != "old-codog" {
-		return localScenarioResult{}, fmt.Errorf("unexpected rollback result: %#v restored=%q", rollback, restored)
-	}
-
-	report := map[string]any{
-		"kind": "policy_update_sandbox",
-		"policy": map[string]any{
-			"actions": []string{string(policyEval.Actions[0].Kind)},
-			"rule":    policyEval.Events[0].RuleID,
-		},
-		"audit": map[string]any{
-			"events":  len(auditEvents),
-			"allowed": *auditEvents[0].Allowed,
-		},
-		"sandbox": map[string]any{
-			"strategy":          sandboxStatus.Strategy,
-			"active":            sandboxStatus.Active,
-			"network_active":    sandboxStatus.NetworkActive,
-			"filesystem_active": sandboxStatus.FilesystemActive,
-			"command":           sandboxName,
-		},
-		"updater": map[string]any{
-			"latest_version":    check.LatestVersion,
-			"signature_valid":   check.SignatureValid,
-			"download_verified": download.Verified,
-			"installed":         install.Installed,
-			"rolled_back":       rollback.RolledBack,
-		},
-	}
-	data, err := json.Marshal(report)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	return localScenarioResult{
-		Output:       string(data),
-		FinalMessage: "policy update sandbox harness ok",
-		RequestCount: 5,
-		MessageCount: 1,
+	return map[string]any{
+		"strategy":          status.Strategy,
+		"active":            status.Active,
+		"network_active":    status.NetworkActive,
+		"filesystem_active": status.FilesystemActive,
+		"command":           name,
 	}, nil
 }
 
@@ -1443,11 +1489,20 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if staleEval.Kind != "policy_evaluation" || len(staleEval.Actions) != 3 || staleEval.Actions[0].Kind != "merge_forward" || staleEval.Actions[0].RecoveryScenario != "stale_branch" || !slices.Contains(staleEval.Actions[0].Commands, "branch_freshness") || staleEval.Actions[1].Kind != "closeout_lane" || staleEval.Actions[2].Kind != "cleanup_session" {
+	if len(staleEval.Actions) != 3 || len(staleEval.Events) != 3 {
 		return localScenarioResult{}, fmt.Errorf("unexpected stale policy evaluation: %s", staleOut)
 	}
-	if len(staleEval.Events) != 3 || staleEval.Events[0].RuleID != "stale-branch-merge-forward" || staleEval.Events[1].RuleID != "lane-completed-closeout" {
-		return localScenarioResult{}, fmt.Errorf("unexpected stale policy events: %s", staleOut)
+	if err := verifyHarnessChecks("stale policy evaluation", staleOut,
+		staleEval.Kind == "policy_evaluation",
+		staleEval.Actions[0].Kind == "merge_forward",
+		staleEval.Actions[0].RecoveryScenario == "stale_branch",
+		slices.Contains(staleEval.Actions[0].Commands, "branch_freshness"),
+		staleEval.Actions[1].Kind == "closeout_lane",
+		staleEval.Actions[2].Kind == "cleanup_session",
+		staleEval.Events[0].RuleID == "stale-branch-merge-forward",
+		staleEval.Events[1].RuleID == "lane-completed-closeout",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var escalateEval struct {
@@ -1470,8 +1525,14 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if len(escalateEval.Actions) != 1 || escalateEval.Actions[0].Kind != "escalate" || len(escalateEval.Events) != 1 || escalateEval.Events[0].Kind != "escalate" {
+	if len(escalateEval.Actions) != 1 || len(escalateEval.Events) != 1 {
 		return localScenarioResult{}, fmt.Errorf("unexpected escalation policy evaluation: %s", escalateOut)
+	}
+	if err := verifyHarnessChecks("escalation policy evaluation", escalateOut,
+		escalateEval.Actions[0].Kind == "escalate",
+		escalateEval.Events[0].Kind == "escalate",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var blocked struct {
@@ -1501,8 +1562,20 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if blocked.BlockedHandoff.Kind != "policy_blocked_handoff" || blocked.BlockedHandoff.Status != "blocked_by_policy" || blocked.BlockedHandoff.Reason != "main_push_forbidden" || blocked.BlockedHandoff.PolicySource != "AGENTS.md" || blocked.BlockedHandoff.ActorScope != "automation" || blocked.BlockedHandoff.TechnicalFailure || len(blocked.BlockedHandoff.Fallback) != 2 || blocked.BlockedHandoff.Fallback[0].Kind != "create_branch" || blocked.BlockedHandoff.Fallback[1].Kind != "open_pr" {
+	if len(blocked.BlockedHandoff.Fallback) != 2 {
 		return localScenarioResult{}, fmt.Errorf("unexpected policy-blocked handoff: %s", blockedOut)
+	}
+	if err := verifyHarnessChecks("policy-blocked handoff", blockedOut,
+		blocked.BlockedHandoff.Kind == "policy_blocked_handoff",
+		blocked.BlockedHandoff.Status == "blocked_by_policy",
+		blocked.BlockedHandoff.Reason == "main_push_forbidden",
+		blocked.BlockedHandoff.PolicySource == "AGENTS.md",
+		blocked.BlockedHandoff.ActorScope == "automation",
+		!blocked.BlockedHandoff.TechnicalFailure,
+		blocked.BlockedHandoff.Fallback[0].Kind == "create_branch",
+		blocked.BlockedHandoff.Fallback[1].Kind == "open_pr",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	scope := `"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main","commit":"abc123"}`
@@ -1528,27 +1601,19 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if pending.Kind != "approval_token" || pending.Action != "pending" || pending.Status != "ok" || pending.Grant.Token != "tok-main" || pending.Grant.Status != "approval_pending" {
-		return localScenarioResult{}, fmt.Errorf("unexpected approval pending output: %s", pendingOut)
-	}
-
-	var pendingVerify struct {
-		Status    string `json:"status"`
-		ErrorKind string `json:"error_kind"`
-	}
-	pendingVerifyOut, err := decodeHarnessOutput(&pendingVerify, func() (string, error) {
-		return registry.Execute(ctx, "approval_token", json.RawMessage(`{
-				"action": "verify",
-				"token": "tok-main",
-				`+scope+`,
-				"executing_actor": "release-bot"
-			}`), nil)
-	})
-	if err != nil {
+	if err := verifyHarnessChecks("approval pending output", pendingOut,
+		pending.Kind == "approval_token",
+		pending.Action == "pending",
+		pending.Status == "ok",
+		pending.Grant.Token == "tok-main",
+		pending.Grant.Status == "approval_pending",
+	); err != nil {
 		return localScenarioResult{}, err
 	}
-	if pendingVerify.Status != "denied" || pendingVerify.ErrorKind != "approval_pending" {
-		return localScenarioResult{}, fmt.Errorf("unexpected pending verify output: %s", pendingVerifyOut)
+
+	pendingVerifyError, err := runPendingApprovalVerification(ctx, registry, scope)
+	if err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var grant struct {
@@ -1579,8 +1644,18 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if grant.Kind != "approval_token" || grant.Action != "approve" || grant.Status != "ok" || grant.Grant.Token != "tok-main" || grant.Grant.ReplayPreventionNonce == "" || grant.Grant.Status != "approval_granted" || grant.Grant.ApprovingActor != "owner" || grant.Grant.ApprovedExecutor != "release-bot" || grant.Grant.MaxUses != 1 {
-		return localScenarioResult{}, fmt.Errorf("unexpected approval approve output: %s", grantOut)
+	if err := verifyHarnessChecks("approval approve output", grantOut,
+		grant.Kind == "approval_token",
+		grant.Action == "approve",
+		grant.Status == "ok",
+		grant.Grant.Token == "tok-main",
+		grant.Grant.ReplayPreventionNonce != "",
+		grant.Grant.Status == "approval_granted",
+		grant.Grant.ApprovingActor == "owner",
+		grant.Grant.ApprovedExecutor == "release-bot",
+		grant.Grant.MaxUses == 1,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var verify struct {
@@ -1613,8 +1688,25 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if verify.Status != "ok" || verify.Audit.Kind != "approval_token_audit" || verify.Audit.Token != "tok-main" || verify.Audit.ReplayPreventionNonce != grant.Grant.ReplayPreventionNonce || verify.Audit.Scope.Commit != "abc123" || verify.Audit.RequestingActor != "release-lead" || verify.Audit.ExecutingActor != "release-bot" || verify.Audit.ExecutionMode != "delegated_execution" || verify.Audit.Status != "approval_granted" || !verify.Audit.DelegatedExecution || len(verify.Audit.DelegationChain) != 4 || verify.Audit.DelegationChain[1].Actor != "orchestrator" || verify.Audit.DelegationChain[2].Actor != "release-lead" || verify.Audit.DelegationChain[3].Actor != "release-bot" {
+	if len(verify.Audit.DelegationChain) != 4 {
 		return localScenarioResult{}, fmt.Errorf("unexpected approval verify output: %s", verifyOut)
+	}
+	if err := verifyHarnessChecks("approval verify output", verifyOut,
+		verify.Status == "ok",
+		verify.Audit.Kind == "approval_token_audit",
+		verify.Audit.Token == "tok-main",
+		verify.Audit.ReplayPreventionNonce == grant.Grant.ReplayPreventionNonce,
+		verify.Audit.Scope.Commit == "abc123",
+		verify.Audit.RequestingActor == "release-lead",
+		verify.Audit.ExecutingActor == "release-bot",
+		verify.Audit.ExecutionMode == "delegated_execution",
+		verify.Audit.Status == "approval_granted",
+		verify.Audit.DelegatedExecution,
+		verify.Audit.DelegationChain[1].Actor == "orchestrator",
+		verify.Audit.DelegationChain[2].Actor == "release-lead",
+		verify.Audit.DelegationChain[3].Actor == "release-bot",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var consume struct {
@@ -1639,23 +1731,9 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 		return localScenarioResult{}, fmt.Errorf("unexpected approval consume output: %s", consumeOut)
 	}
 
-	var replay struct {
-		Status    string `json:"status"`
-		ErrorKind string `json:"error_kind"`
-	}
-	replayOut, err := decodeHarnessOutput(&replay, func() (string, error) {
-		return registry.Execute(ctx, "approval_token", json.RawMessage(`{
-				"action": "consume",
-				"token": "tok-main",
-				`+scope+`,
-				"executing_actor": "release-bot"
-			}`), nil)
-	})
+	replayError, err := runConsumedApprovalReplay(ctx, registry, scope)
 	if err != nil {
 		return localScenarioResult{}, err
-	}
-	if replay.Status != "denied" || replay.ErrorKind != "approval_already_consumed" {
-		return localScenarioResult{}, fmt.Errorf("unexpected approval replay output: %s", replayOut)
 	}
 
 	var list struct {
@@ -1680,8 +1758,22 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if list.Status != "ok" || list.Ledger.Kind != "approval_token_ledger" || len(list.Ledger.Grants) != 1 || list.Ledger.Grants[0].Token != "tok-main" || list.Ledger.Grants[0].ReplayPreventionNonce != grant.Grant.ReplayPreventionNonce || list.Ledger.Grants[0].Status != "approval_consumed" || list.Ledger.Grants[0].State != "consumed" || list.Ledger.Grants[0].Usable || list.Ledger.Grants[0].Uses != 1 || list.Ledger.Grants[0].RemainingUses != 0 || list.Ledger.Grants[0].LastAuditErrorKind != "approval_already_consumed" {
+	if len(list.Ledger.Grants) != 1 {
 		return localScenarioResult{}, fmt.Errorf("unexpected approval token ledger output: %s", listOut)
+	}
+	if err := verifyHarnessChecks("approval token ledger output", listOut,
+		list.Status == "ok",
+		list.Ledger.Kind == "approval_token_ledger",
+		list.Ledger.Grants[0].Token == "tok-main",
+		list.Ledger.Grants[0].ReplayPreventionNonce == grant.Grant.ReplayPreventionNonce,
+		list.Ledger.Grants[0].Status == "approval_consumed",
+		list.Ledger.Grants[0].State == "consumed",
+		!list.Ledger.Grants[0].Usable,
+		list.Ledger.Grants[0].Uses == 1,
+		list.Ledger.Grants[0].RemainingUses == 0,
+		list.Ledger.Grants[0].LastAuditErrorKind == "approval_already_consumed",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	report := map[string]any{
@@ -1702,11 +1794,11 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 			"executing_actor":      verify.Audit.ExecutingActor,
 			"execution_mode":       verify.Audit.ExecutionMode,
 			"pending":              pending.Grant.Status,
-			"pending_verify_error": pendingVerify.ErrorKind,
+			"pending_verify_error": pendingVerifyError,
 			"verified":             verify.Audit.Status,
 			"delegated":            verify.Audit.DelegatedExecution,
 			"consumed":             consume.Audit.Status,
-			"replay_error":         replay.ErrorKind,
+			"replay_error":         replayError,
 			"ledger_status":        list.Ledger.Grants[0].Status,
 			"ledger_state":         list.Ledger.Grants[0].State,
 			"ledger_usable":        list.Ledger.Grants[0].Usable,
@@ -1738,6 +1830,50 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 			"approval_token",
 		},
 	}, nil
+}
+
+func runPendingApprovalVerification(ctx context.Context, registry *tools.Registry, scope string) (string, error) {
+	var report struct {
+		Status    string `json:"status"`
+		ErrorKind string `json:"error_kind"`
+	}
+	output, err := decodeHarnessOutput(&report, func() (string, error) {
+		return registry.Execute(ctx, "approval_token", json.RawMessage(`{
+				"action": "verify",
+				"token": "tok-main",
+				`+scope+`,
+				"executing_actor": "release-bot"
+			}`), nil)
+	})
+	if err != nil {
+		return "", err
+	}
+	if report.Status != "denied" || report.ErrorKind != "approval_pending" {
+		return "", fmt.Errorf("unexpected pending verify output: %s", output)
+	}
+	return report.ErrorKind, nil
+}
+
+func runConsumedApprovalReplay(ctx context.Context, registry *tools.Registry, scope string) (string, error) {
+	var report struct {
+		Status    string `json:"status"`
+		ErrorKind string `json:"error_kind"`
+	}
+	output, err := decodeHarnessOutput(&report, func() (string, error) {
+		return registry.Execute(ctx, "approval_token", json.RawMessage(`{
+				"action": "consume",
+				"token": "tok-main",
+				`+scope+`,
+				"executing_actor": "release-bot"
+			}`), nil)
+	})
+	if err != nil {
+		return "", err
+	}
+	if report.Status != "denied" || report.ErrorKind != "approval_already_consumed" {
+		return "", fmt.Errorf("unexpected approval replay output: %s", output)
+	}
+	return report.ErrorKind, nil
 }
 
 func notebookReadEditScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {

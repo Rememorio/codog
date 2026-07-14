@@ -803,178 +803,20 @@ func lspCLIMetadataScenarioRunLocal(ctx context.Context, workspace string) (loca
 func taskLifecycleScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
 	configHome := filepath.Join(workspace, "config-home")
 	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
-
-	var created struct {
-		TaskID string          `json:"task_id"`
-		Kind   string          `json:"kind"`
-		Task   background.Task `json:"task"`
+	taskReport, err := runTaskLifecyclePrimary(ctx, registry)
+	if err != nil {
+		return localScenarioResult{}, err
 	}
-	createOut, err := decodeHarnessOutput(&created, func() (string, error) {
-		return registry.Execute(ctx, "TaskCreateTool", json.RawMessage(`{
-				"command": "printf task-output",
-				"kind": "parity",
-				"session_id": "session-task"
-			}`), nil)
+	stoppedReport, err := runTaskLifecycleStop(ctx, registry)
+	if err != nil {
+		return localScenarioResult{}, err
+	}
+
+	data, err := json.Marshal(map[string]any{
+		"kind":    "task_lifecycle",
+		"task":    taskReport,
+		"stopped": stoppedReport,
 	})
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if created.TaskID == "" || created.Task.ID != created.TaskID || created.Kind != "parity" {
-		return localScenarioResult{}, fmt.Errorf("unexpected task create output: %s", createOut)
-	}
-
-	var status struct {
-		TaskID string `json:"task_id"`
-		Kind   string `json:"kind"`
-	}
-	statusOut, err := decodeHarnessOutput(&status, func() (string, error) {
-		return registry.Execute(ctx, "task_status", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, created.TaskID)), nil)
-	})
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if status.TaskID != created.TaskID || status.Kind != "parity" {
-		return localScenarioResult{}, fmt.Errorf("unexpected task status output: %s", statusOut)
-	}
-
-	var output struct {
-		TaskID        string `json:"task_id"`
-		Status        string `json:"status"`
-		Stdout        string `json:"stdout"`
-		HasOutput     bool   `json:"has_output"`
-		RawOutputPath string `json:"rawOutputPath"`
-	}
-	outputOut, err := decodeHarnessOutput(&output, func() (string, error) {
-		return registry.Execute(ctx, "TaskOutputTool", json.RawMessage(fmt.Sprintf(`{
-				"task_id": %q,
-				"block": true,
-				"timeout_ms": 2000
-			}`, created.TaskID)), nil)
-	})
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if output.TaskID != created.TaskID || !output.HasOutput || output.Stdout != "task-output" {
-		return localScenarioResult{}, fmt.Errorf("unexpected task output: %s", outputOut)
-	}
-	if _, err := os.Stat(output.RawOutputPath); err != nil {
-		return localScenarioResult{}, fmt.Errorf("task raw output path missing: %w", err)
-	}
-
-	var updated struct {
-		TaskID       string `json:"task_id"`
-		MessageCount int    `json:"message_count"`
-		LastMessage  string `json:"last_message"`
-	}
-	updateOut, err := decodeHarnessOutput(&updated, func() (string, error) {
-		return registry.Execute(ctx, "task_update", json.RawMessage(fmt.Sprintf(`{
-				"task_id": %q,
-				"message": "review logs"
-			}`, created.TaskID)), nil)
-	})
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if updated.TaskID != created.TaskID || updated.MessageCount != 1 || updated.LastMessage != "review logs" {
-		return localScenarioResult{}, fmt.Errorf("unexpected task update output: %s", updateOut)
-	}
-
-	var fetched struct {
-		TaskID string `json:"task_id"`
-		Task   struct {
-			Messages []background.TaskMessage `json:"messages"`
-		} `json:"task"`
-	}
-	getOut, err := decodeHarnessOutput(&fetched, func() (string, error) {
-		return registry.Execute(ctx, "task_get", json.RawMessage(fmt.Sprintf(`{"id":%q}`, created.TaskID)), nil)
-	})
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if fetched.TaskID != created.TaskID || len(fetched.Task.Messages) != 1 || fetched.Task.Messages[0].Message != "review logs" {
-		return localScenarioResult{}, fmt.Errorf("unexpected task get output: %s", getOut)
-	}
-
-	var listed struct {
-		Total int `json:"total"`
-		Tasks []struct {
-			TaskID string `json:"task_id"`
-		} `json:"tasks"`
-	}
-	listOut, err := decodeHarnessOutput(&listed, func() (string, error) {
-		return registry.Execute(ctx, "task_list", json.RawMessage(`{"session_id":"session-task","kind":"parity"}`), nil)
-	})
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if listed.Total != 1 || len(listed.Tasks) != 1 || listed.Tasks[0].TaskID != created.TaskID {
-		return localScenarioResult{}, fmt.Errorf("unexpected task list output: %s", listOut)
-	}
-
-	var stopCreated struct {
-		TaskID string `json:"task_id"`
-	}
-	stopCreateOut, err := decodeHarnessOutput(&stopCreated, func() (string, error) {
-		return registry.Execute(ctx, "task_create", json.RawMessage(`{
-				"command": "printf task-stop-ready; sleep 5",
-				"kind": "parity",
-				"session_id": "session-task"
-			}`), nil)
-	})
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if stopCreated.TaskID == "" {
-		return localScenarioResult{}, fmt.Errorf("unexpected stoppable task output: %s", stopCreateOut)
-	}
-	defer func() {
-		_, _ = registry.Execute(ctx, "task_stop", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, stopCreated.TaskID)), nil)
-	}()
-
-	stopReadyOut, err := registry.Execute(ctx, "task_output", json.RawMessage(fmt.Sprintf(`{
-				"task_id": %q,
-				"block": true,
-				"timeout_ms": 2000
-			}`, stopCreated.TaskID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !strings.Contains(stopReadyOut, "task-stop-ready") {
-		return localScenarioResult{}, fmt.Errorf("stoppable task did not produce readiness output: %s", stopReadyOut)
-	}
-	var stopped struct {
-		TaskID      string `json:"task_id"`
-		Status      string `json:"status"`
-		Message     string `json:"message"`
-		Interrupted bool   `json:"interrupted"`
-	}
-	stopOut, err := decodeHarnessOutput(&stopped, func() (string, error) {
-		return registry.Execute(ctx, "TaskStopTool", json.RawMessage(fmt.Sprintf(`{"shell_id":%q}`, stopCreated.TaskID)), nil)
-	})
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if stopped.TaskID != stopCreated.TaskID || stopped.Status != "stopped" || stopped.Message != "Task stopped" {
-		return localScenarioResult{}, fmt.Errorf("unexpected task stop output: %s", stopOut)
-	}
-
-	report := map[string]any{
-		"kind": "task_lifecycle",
-		"task": map[string]any{
-			"id":           created.TaskID,
-			"status":       output.Status,
-			"stdout":       output.Stdout,
-			"message":      updated.LastMessage,
-			"listed_total": listed.Total,
-			"raw_output":   filepath.Base(output.RawOutputPath),
-		},
-		"stopped": map[string]any{
-			"id":          stopped.TaskID,
-			"status":      stopped.Status,
-			"interrupted": stopped.Interrupted,
-		},
-	}
-	data, err := json.Marshal(report)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
@@ -998,6 +840,205 @@ func taskLifecycleScenarioRunLocal(ctx context.Context, workspace string) (local
 	}, nil
 }
 
+func runTaskLifecyclePrimary(ctx context.Context, registry *tools.Registry) (map[string]any, error) {
+	var created struct {
+		TaskID string          `json:"task_id"`
+		Kind   string          `json:"kind"`
+		Task   background.Task `json:"task"`
+	}
+	createOut, err := decodeHarnessOutput(&created, func() (string, error) {
+		return registry.Execute(ctx, "TaskCreateTool", json.RawMessage(`{
+				"command": "printf task-output",
+				"kind": "parity",
+				"session_id": "session-task"
+			}`), nil)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if created.TaskID == "" || created.Task.ID != created.TaskID || created.Kind != "parity" {
+		return nil, fmt.Errorf("unexpected task create output: %s", createOut)
+	}
+
+	var status struct {
+		TaskID string `json:"task_id"`
+		Kind   string `json:"kind"`
+	}
+	statusOut, err := decodeHarnessOutput(&status, func() (string, error) {
+		return registry.Execute(ctx, "task_status", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, created.TaskID)), nil)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if status.TaskID != created.TaskID || status.Kind != "parity" {
+		return nil, fmt.Errorf("unexpected task status output: %s", statusOut)
+	}
+
+	var output struct {
+		TaskID        string `json:"task_id"`
+		Status        string `json:"status"`
+		Stdout        string `json:"stdout"`
+		HasOutput     bool   `json:"has_output"`
+		RawOutputPath string `json:"rawOutputPath"`
+	}
+	outputOut, err := decodeHarnessOutput(&output, func() (string, error) {
+		return registry.Execute(ctx, "TaskOutputTool", json.RawMessage(fmt.Sprintf(`{
+				"task_id": %q,
+				"block": true,
+				"timeout_ms": 2000
+			}`, created.TaskID)), nil)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if output.TaskID != created.TaskID || !output.HasOutput || output.Stdout != "task-output" {
+		return nil, fmt.Errorf("unexpected task output: %s", outputOut)
+	}
+	if _, err := os.Stat(output.RawOutputPath); err != nil {
+		return nil, fmt.Errorf("task raw output path missing: %w", err)
+	}
+
+	var updated struct {
+		TaskID       string `json:"task_id"`
+		MessageCount int    `json:"message_count"`
+		LastMessage  string `json:"last_message"`
+	}
+	updateOut, err := decodeHarnessOutput(&updated, func() (string, error) {
+		return registry.Execute(ctx, "task_update", json.RawMessage(fmt.Sprintf(`{
+				"task_id": %q,
+				"message": "review logs"
+			}`, created.TaskID)), nil)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if updated.TaskID != created.TaskID || updated.MessageCount != 1 || updated.LastMessage != "review logs" {
+		return nil, fmt.Errorf("unexpected task update output: %s", updateOut)
+	}
+
+	var fetched struct {
+		TaskID string `json:"task_id"`
+		Task   struct {
+			Messages []background.TaskMessage `json:"messages"`
+		} `json:"task"`
+	}
+	getOut, err := decodeHarnessOutput(&fetched, func() (string, error) {
+		return registry.Execute(ctx, "task_get", json.RawMessage(fmt.Sprintf(`{"id":%q}`, created.TaskID)), nil)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if fetched.TaskID != created.TaskID || len(fetched.Task.Messages) != 1 || fetched.Task.Messages[0].Message != "review logs" {
+		return nil, fmt.Errorf("unexpected task get output: %s", getOut)
+	}
+
+	var listed struct {
+		Total int `json:"total"`
+		Tasks []struct {
+			TaskID string `json:"task_id"`
+		} `json:"tasks"`
+	}
+	listOut, err := decodeHarnessOutput(&listed, func() (string, error) {
+		return registry.Execute(ctx, "task_list", json.RawMessage(`{"session_id":"session-task","kind":"parity"}`), nil)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if listed.Total != 1 || len(listed.Tasks) != 1 || listed.Tasks[0].TaskID != created.TaskID {
+		return nil, fmt.Errorf("unexpected task list output: %s", listOut)
+	}
+
+	return map[string]any{
+		"id":           created.TaskID,
+		"status":       output.Status,
+		"stdout":       output.Stdout,
+		"message":      updated.LastMessage,
+		"listed_total": listed.Total,
+		"raw_output":   filepath.Base(output.RawOutputPath),
+	}, nil
+}
+
+func runTaskLifecycleStop(ctx context.Context, registry *tools.Registry) (map[string]any, error) {
+	var stopCreated struct {
+		TaskID string `json:"task_id"`
+	}
+	stopCreateOut, err := decodeHarnessOutput(&stopCreated, func() (string, error) {
+		return registry.Execute(ctx, "task_create", json.RawMessage(`{
+				"command": "printf task-stop-ready; sleep 5",
+				"kind": "parity",
+				"session_id": "session-task"
+			}`), nil)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if stopCreated.TaskID == "" {
+		return nil, fmt.Errorf("unexpected stoppable task output: %s", stopCreateOut)
+	}
+	defer func() {
+		_, _ = registry.Execute(ctx, "task_stop", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, stopCreated.TaskID)), nil)
+	}()
+
+	stopReadyOut, err := registry.Execute(ctx, "task_output", json.RawMessage(fmt.Sprintf(`{
+				"task_id": %q,
+				"block": true,
+				"timeout_ms": 2000
+			}`, stopCreated.TaskID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.Contains(stopReadyOut, "task-stop-ready") {
+		return nil, fmt.Errorf("stoppable task did not produce readiness output: %s", stopReadyOut)
+	}
+	var stopped struct {
+		TaskID      string `json:"task_id"`
+		Status      string `json:"status"`
+		Message     string `json:"message"`
+		Interrupted bool   `json:"interrupted"`
+	}
+	stopOut, err := decodeHarnessOutput(&stopped, func() (string, error) {
+		return registry.Execute(ctx, "TaskStopTool", json.RawMessage(fmt.Sprintf(`{"shell_id":%q}`, stopCreated.TaskID)), nil)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if stopped.TaskID != stopCreated.TaskID || stopped.Status != "stopped" || stopped.Message != "Task stopped" {
+		return nil, fmt.Errorf("unexpected task stop output: %s", stopOut)
+	}
+
+	return map[string]any{
+		"id":          stopped.TaskID,
+		"status":      stopped.Status,
+		"interrupted": stopped.Interrupted,
+	}, nil
+}
+
+type taskPacketHarnessReport struct {
+	TaskID        string `json:"task_id"`
+	Status        string `json:"status"`
+	Description   string `json:"description"`
+	Prompt        string `json:"prompt"`
+	ResolvedScope struct {
+		Scope        string `json:"scope"`
+		Path         string `json:"path"`
+		AbsolutePath string `json:"absolute_path"`
+	} `json:"resolved_scope"`
+	TaskPacket struct {
+		Objective          string   `json:"objective"`
+		Scope              string   `json:"scope"`
+		ScopePath          string   `json:"scope_path"`
+		Repo               string   `json:"repo"`
+		Worktree           string   `json:"worktree"`
+		AcceptanceCriteria []string `json:"acceptance_criteria"`
+		Model              string   `json:"model"`
+		Provider           string   `json:"provider"`
+		PermissionProfile  string   `json:"permission_profile"`
+		ReportingTargets   []string `json:"reporting_targets"`
+		VerificationPlan   []string `json:"verification_plan"`
+	} `json:"task_packet"`
+	Task background.Task `json:"task"`
+}
+
 func taskPacketRoundtripScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
 	configHome := filepath.Join(workspace, "config-home")
 	moduleDir := filepath.Join(workspace, "internal", "taskpacket")
@@ -1016,31 +1057,7 @@ func taskPacketRoundtripScenarioRunLocal(ctx context.Context, workspace string) 
 		Executable: shim,
 	})
 
-	var created struct {
-		TaskID        string `json:"task_id"`
-		Status        string `json:"status"`
-		Description   string `json:"description"`
-		Prompt        string `json:"prompt"`
-		ResolvedScope struct {
-			Scope        string `json:"scope"`
-			Path         string `json:"path"`
-			AbsolutePath string `json:"absolute_path"`
-		} `json:"resolved_scope"`
-		TaskPacket struct {
-			Objective          string   `json:"objective"`
-			Scope              string   `json:"scope"`
-			ScopePath          string   `json:"scope_path"`
-			Repo               string   `json:"repo"`
-			Worktree           string   `json:"worktree"`
-			AcceptanceCriteria []string `json:"acceptance_criteria"`
-			Model              string   `json:"model"`
-			Provider           string   `json:"provider"`
-			PermissionProfile  string   `json:"permission_profile"`
-			ReportingTargets   []string `json:"reporting_targets"`
-			VerificationPlan   []string `json:"verification_plan"`
-		} `json:"task_packet"`
-		Task background.Task `json:"task"`
-	}
+	var created taskPacketHarnessReport
 	runOut, err := decodeHarnessOutput(&created, func() (string, error) {
 		return registry.Execute(ctx, "RunTaskPacketTool", json.RawMessage(`{
 				"objective": "Implement typed task packet parity",
@@ -1064,26 +1081,8 @@ func taskPacketRoundtripScenarioRunLocal(ctx context.Context, workspace string) 
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if created.TaskID == "" || created.Status != "running" || created.Description != "Implement typed task packet parity" {
-		return localScenarioResult{}, fmt.Errorf("unexpected task packet create output: %s", runOut)
-	}
-	if created.Task.Kind != "task_packet" || created.Task.ID != created.TaskID || len(created.Task.TaskPacket) == 0 {
-		return localScenarioResult{}, fmt.Errorf("task packet metadata was not persisted on task: %s", runOut)
-	}
-	if created.ResolvedScope.Scope != "module" || created.ResolvedScope.Path != "internal/taskpacket" || filepath.Clean(created.ResolvedScope.AbsolutePath) != filepath.Clean(moduleDir) {
-		return localScenarioResult{}, fmt.Errorf("unexpected task packet scope resolution: %s", runOut)
-	}
-	if created.TaskPacket.Objective != "Implement typed task packet parity" ||
-		created.TaskPacket.Scope != "module" ||
-		created.TaskPacket.Repo != "codog" ||
-		created.TaskPacket.Worktree != "reviewer" ||
-		created.TaskPacket.Model != "claude-test" ||
-		created.TaskPacket.Provider != "anthropic" ||
-		created.TaskPacket.PermissionProfile != "workspace-write" ||
-		!slices.Equal(created.TaskPacket.AcceptanceCriteria, []string{"packet validates", "packet persists"}) ||
-		!slices.Equal(created.TaskPacket.ReportingTargets, []string{"leader"}) ||
-		!slices.Equal(created.TaskPacket.VerificationPlan, []string{"go test ./internal/taskpacket"}) {
-		return localScenarioResult{}, fmt.Errorf("unexpected task packet payload: %s", runOut)
+	if err := verifyTaskPacketCreated(created, runOut, moduleDir); err != nil {
+		return localScenarioResult{}, err
 	}
 	var persisted map[string]any
 	if err := json.Unmarshal(created.Task.TaskPacket, &persisted); err != nil {
@@ -1167,6 +1166,36 @@ func taskPacketRoundtripScenarioRunLocal(ctx context.Context, workspace string) 
 	}, nil
 }
 
+func verifyTaskPacketCreated(created taskPacketHarnessReport, output, moduleDir string) error {
+	if created.TaskID == "" || created.Status != "running" || created.Description != "Implement typed task packet parity" {
+		return fmt.Errorf("unexpected task packet create output: %s", output)
+	}
+	if created.Task.Kind != "task_packet" || created.Task.ID != created.TaskID || len(created.Task.TaskPacket) == 0 {
+		return fmt.Errorf("task packet metadata was not persisted on task: %s", output)
+	}
+	if created.ResolvedScope.Scope != "module" || created.ResolvedScope.Path != "internal/taskpacket" || filepath.Clean(created.ResolvedScope.AbsolutePath) != filepath.Clean(moduleDir) {
+		return fmt.Errorf("unexpected task packet scope resolution: %s", output)
+	}
+	return verifyTaskPacketPayload(created, output)
+}
+
+func verifyTaskPacketPayload(created taskPacketHarnessReport, output string) error {
+	packet := created.TaskPacket
+	if packet.Objective != "Implement typed task packet parity" ||
+		packet.Scope != "module" ||
+		packet.Repo != "codog" ||
+		packet.Worktree != "reviewer" ||
+		packet.Model != "claude-test" ||
+		packet.Provider != "anthropic" ||
+		packet.PermissionProfile != "workspace-write" ||
+		!slices.Equal(packet.AcceptanceCriteria, []string{"packet validates", "packet persists"}) ||
+		!slices.Equal(packet.ReportingTargets, []string{"leader"}) ||
+		!slices.Equal(packet.VerificationPlan, []string{"go test ./internal/taskpacket"}) {
+		return fmt.Errorf("unexpected task packet payload: %s", output)
+	}
+	return nil
+}
+
 func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
 	configHome := filepath.Join(workspace, "config-home")
 	shim := filepath.Join(workspace, "team-shim")
@@ -1198,8 +1227,14 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if createdTeam.ID == "" || createdTeam.Name != "review" || createdTeam.TaskCount != 2 || len(createdTeam.TaskIDs) != 2 || createdTeam.Status != "running" {
-		return localScenarioResult{}, fmt.Errorf("unexpected team create output: %s", teamCreateOut)
+	if err := verifyHarnessChecks("team create output", teamCreateOut,
+		createdTeam.ID != "",
+		createdTeam.Name == "review",
+		createdTeam.TaskCount == 2,
+		len(createdTeam.TaskIDs) == 2,
+		createdTeam.Status == "running",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 	defer func() {
 		_, _ = registry.Execute(ctx, "team_delete", json.RawMessage(fmt.Sprintf(`{"team_id":%q}`, createdTeam.ID)), nil)
@@ -1227,8 +1262,16 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if listedTeams.Kind != "team_list" || listedTeams.Total != 1 || len(listedTeams.Teams) != 1 || listedTeams.Teams[0].ID != createdTeam.ID || len(listedTeams.Teams[0].TaskStatuses) != 2 {
+	if len(listedTeams.Teams) != 1 {
 		return localScenarioResult{}, fmt.Errorf("unexpected team list output: %s", teamListOut)
+	}
+	if err := verifyHarnessChecks("team list output", teamListOut,
+		listedTeams.Kind == "team_list",
+		listedTeams.Total == 1,
+		listedTeams.Teams[0].ID == createdTeam.ID,
+		len(listedTeams.Teams[0].TaskStatuses) == 2,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var fetchedTeam struct {
@@ -1246,8 +1289,16 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if fetchedTeam.Kind != "team" || fetchedTeam.ID != createdTeam.ID || fetchedTeam.TaskCount != 2 || len(fetchedTeam.Tasks) != 2 || fetchedTeam.Tasks[0].Description != "auth" {
+	if len(fetchedTeam.Tasks) != 2 {
 		return localScenarioResult{}, fmt.Errorf("unexpected team get output: %s", teamGetOut)
+	}
+	if err := verifyHarnessChecks("team get output", teamGetOut,
+		fetchedTeam.Kind == "team",
+		fetchedTeam.ID == createdTeam.ID,
+		fetchedTeam.TaskCount == 2,
+		fetchedTeam.Tasks[0].Description == "auth",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var deletedTeam struct {
@@ -1262,8 +1313,13 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if deletedTeam.ID != createdTeam.ID || deletedTeam.Status != "deleted" || deletedTeam.Message != "Team deleted" || len(deletedTeam.StoppedTasks) != 2 {
-		return localScenarioResult{}, fmt.Errorf("unexpected team delete output: %s", teamDeleteOut)
+	if err := verifyHarnessChecks("team delete output", teamDeleteOut,
+		deletedTeam.ID == createdTeam.ID,
+		deletedTeam.Status == "deleted",
+		deletedTeam.Message == "Team deleted",
+		len(deletedTeam.StoppedTasks) == 2,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var createdCron struct {
@@ -1283,8 +1339,14 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if createdCron.ID == "" || createdCron.Schedule != "0 9 * * 1" || createdCron.Prompt != "review weekly status" || createdCron.Description != "weekly review" || !createdCron.Enabled {
-		return localScenarioResult{}, fmt.Errorf("unexpected cron create output: %s", cronCreateOut)
+	if err := verifyHarnessChecks("cron create output", cronCreateOut,
+		createdCron.ID != "",
+		createdCron.Schedule == "0 9 * * 1",
+		createdCron.Prompt == "review weekly status",
+		createdCron.Description == "weekly review",
+		createdCron.Enabled,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var listedCrons struct {
@@ -1298,8 +1360,15 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if listedCrons.Count != 1 || len(listedCrons.Crons) != 1 || listedCrons.Crons[0].ID != createdCron.ID || listedCrons.Crons[0].Schedule != createdCron.Schedule {
+	if len(listedCrons.Crons) != 1 {
 		return localScenarioResult{}, fmt.Errorf("unexpected cron list output: %s", cronListOut)
+	}
+	if err := verifyHarnessChecks("cron list output", cronListOut,
+		listedCrons.Count == 1,
+		listedCrons.Crons[0].ID == createdCron.ID,
+		listedCrons.Crons[0].Schedule == createdCron.Schedule,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var deletedCron struct {
@@ -1313,8 +1382,12 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if deletedCron.ID != createdCron.ID || deletedCron.Status != "deleted" || deletedCron.Message != "Cron entry removed" {
-		return localScenarioResult{}, fmt.Errorf("unexpected cron delete output: %s", cronDeleteOut)
+	if err := verifyHarnessChecks("cron delete output", cronDeleteOut,
+		deletedCron.ID == createdCron.ID,
+		deletedCron.Status == "deleted",
+		deletedCron.Message == "Cron entry removed",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	report := map[string]any{
@@ -1384,8 +1457,14 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if created.WorkerID == "" || created.Status != "ready_for_prompt" || !created.ReadyForPrompt || created.AutoRecoverPromptMisdelivery || !slices.Equal(created.TrustedRoots, []string{"repo-default", "shared", "."}) {
-		return localScenarioResult{}, fmt.Errorf("unexpected worker create output: %s", createOut)
+	if err := verifyHarnessChecks("worker create output", createOut,
+		created.WorkerID != "",
+		created.Status == "ready_for_prompt",
+		created.ReadyForPrompt,
+		!created.AutoRecoverPromptMisdelivery,
+		slices.Equal(created.TrustedRoots, []string{"repo-default", "shared", "."}),
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 	defer func() {
 		_, _ = registry.Execute(ctx, "worker_terminate", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
@@ -1404,8 +1483,15 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if listed.Kind != "worker_list" || listed.Total != 1 || len(listed.Workers) != 1 || listed.Workers[0].WorkerID != created.WorkerID {
+	if len(listed.Workers) != 1 {
 		return localScenarioResult{}, fmt.Errorf("unexpected worker list output: %s", listOut)
+	}
+	if err := verifyHarnessChecks("worker list output", listOut,
+		listed.Kind == "worker_list",
+		listed.Total == 1,
+		listed.Workers[0].WorkerID == created.WorkerID,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var ready struct {
@@ -1419,8 +1505,12 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if ready.WorkerID != created.WorkerID || ready.Status != "ready_for_prompt" || !ready.ReadyForPrompt {
-		return localScenarioResult{}, fmt.Errorf("unexpected worker ready output: %s", readyOut)
+	if err := verifyHarnessChecks("worker ready output", readyOut,
+		ready.WorkerID == created.WorkerID,
+		ready.Status == "ready_for_prompt",
+		ready.ReadyForPrompt,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var observed struct {
@@ -1436,8 +1526,11 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if observed.Status != "trust_prompt" || observed.ReadyForPrompt {
-		return localScenarioResult{}, fmt.Errorf("unexpected worker observe output: %s", observeOut)
+	if err := verifyHarnessChecks("worker observe output", observeOut,
+		observed.Status == "trust_prompt",
+		!observed.ReadyForPrompt,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var resolved struct {
@@ -1451,8 +1544,12 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if resolved.Status != "ready_for_prompt" || !resolved.ReadyForPrompt || !resolved.TrustResolved {
-		return localScenarioResult{}, fmt.Errorf("unexpected worker trust resolution output: %s", resolveOut)
+	if err := verifyHarnessChecks("worker trust resolution output", resolveOut,
+		resolved.Status == "ready_for_prompt",
+		resolved.ReadyForPrompt,
+		resolved.TrustResolved,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var sent struct {
@@ -1480,8 +1577,13 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if sent.Status != "running" || sent.TaskID == "" || sent.TaskReceipt.Repo != "codog" || sent.TaskReceipt.ObjectivePreview != "implement worker tests" {
-		return localScenarioResult{}, fmt.Errorf("unexpected worker send output: %s", sendOut)
+	if err := verifyHarnessChecks("worker send output", sendOut,
+		sent.Status == "running",
+		sent.TaskID != "",
+		sent.TaskReceipt.Repo == "codog",
+		sent.TaskReceipt.ObjectivePreview == "implement worker tests",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 	if _, err := waitForBackgroundLogs(ctx, background.NewStore(configHome), sent.TaskID, "implement worker tests", 10*time.Second); err != nil {
 		return localScenarioResult{}, err
@@ -1499,8 +1601,13 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if fetched.WorkerID != created.WorkerID || fetched.Status != "running" || fetched.TaskID != sent.TaskID || fetched.TaskStatus == "" {
-		return localScenarioResult{}, fmt.Errorf("unexpected worker get output: %s", getOut)
+	if err := verifyHarnessChecks("worker get output", getOut,
+		fetched.WorkerID == created.WorkerID,
+		fetched.Status == "running",
+		fetched.TaskID == sent.TaskID,
+		fetched.TaskStatus != "",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var restarted struct {
@@ -1513,8 +1620,12 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if restarted.Status != "running" || restarted.TaskID == "" || restarted.TaskID == sent.TaskID {
-		return localScenarioResult{}, fmt.Errorf("unexpected worker restart output: %s", restartOut)
+	if err := verifyHarnessChecks("worker restart output", restartOut,
+		restarted.Status == "running",
+		restarted.TaskID != "",
+		restarted.TaskID != sent.TaskID,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var completed struct {
@@ -1555,8 +1666,12 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if timedOut.Status != "failed" || timedOut.LastError != "startup_no_evidence: trust_required" || timedOut.StartupNoEvidence.Classification != "trust_required" {
-		return localScenarioResult{}, fmt.Errorf("unexpected worker startup timeout output: %s", timeoutOut)
+	if err := verifyHarnessChecks("worker startup timeout output", timeoutOut,
+		timedOut.Status == "failed",
+		timedOut.LastError == "startup_no_evidence: trust_required",
+		timedOut.StartupNoEvidence.Classification == "trust_required",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var terminated struct {

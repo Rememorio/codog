@@ -120,6 +120,15 @@ type skillActivationHarnessReport struct {
 	Message             string   `json:"message,omitempty"`
 }
 
+func runSkillActivationCommand(ctx context.Context, workspace string, args ...string) (string, skillActivationHarnessReport, error) {
+	output, err := runHarnessCodog(ctx, workspace, args...)
+	if err != nil {
+		return output, skillActivationHarnessReport{}, err
+	}
+	report, err := decodeSkillActivationHarnessReport(output)
+	return output, report, err
+}
+
 func decodeSkillActivationHarnessReport(output string) (skillActivationHarnessReport, error) {
 	var report skillActivationHarnessReport
 	if err := json.Unmarshal([]byte(output), &report); err != nil {
@@ -604,37 +613,12 @@ Review skill body for $TARGET during ${CLAUDE_SESSION_ID}.`
 }
 
 func skillActivationScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
-	configHome := filepath.Join(workspace, "config-home")
-	skillDir := filepath.Join(workspace, ".codog", "skills", "review")
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		return localScenarioResult{}, err
-	}
-	skillDoc := `---
-name: review
-description: Review project changes.
-allowed-tools: read_file, grep
----
-# Review
-
-Review the requested change with repository context.
-`
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillDoc), 0o644); err != nil {
-		return localScenarioResult{}, err
-	}
-	configPath := filepath.Join(workspace, "codog-config.json")
-	configData, err := json.Marshal(map[string]any{"config_home": configHome})
+	configPath, err := setupSkillActivationFixture(workspace)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if err := os.WriteFile(configPath, configData, 0o644); err != nil {
-		return localScenarioResult{}, err
-	}
 
-	initialOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "skills", "status")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	initial, err := decodeSkillActivationHarnessReport(initialOut)
+	_, initial, err := runSkillActivationCommand(ctx, workspace, "--config", configPath, "--output-format", "json", "skills", "status")
 	if err != nil {
 		return localScenarioResult{}, err
 	}
@@ -645,11 +629,7 @@ Review the requested change with repository context.
 		return localScenarioResult{}, fmt.Errorf("expected at least one available skill in initial status")
 	}
 
-	enableOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "skills", "enable", "review", "--path", configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	enabled, err := decodeSkillActivationHarnessReport(enableOut)
+	_, enabled, err := runSkillActivationCommand(ctx, workspace, "--config", configPath, "--output-format", "json", "skills", "enable", "review", "--path", configPath)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
@@ -659,19 +639,11 @@ Review the requested change with repository context.
 	if enabled.Path == "" || !strings.HasSuffix(enabled.Path, "codog-config.json") {
 		return localScenarioResult{}, fmt.Errorf("unexpected skills enable path: %q", enabled.Path)
 	}
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
+	if err := verifyHarnessFileContainsAll(configPath, `"enabled_skills":`, `"review"`); err != nil {
 		return localScenarioResult{}, err
-	}
-	if !harnessContainsAll(string(configData), `"enabled_skills":`, `"review"`) {
-		return localScenarioResult{}, fmt.Errorf("enabled skills config did not persist review: %s", string(configData))
 	}
 
-	statusOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "skills", "status")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	status, err := decodeSkillActivationHarnessReport(statusOut)
+	_, status, err := runSkillActivationCommand(ctx, workspace, "--config", configPath, "--output-format", "json", "skills", "status")
 	if err != nil {
 		return localScenarioResult{}, err
 	}
@@ -687,23 +659,15 @@ Review the requested change with repository context.
 		return localScenarioResult{}, fmt.Errorf("skills status text missing expected values: %s", textOut)
 	}
 
-	disableOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "skills", "disable", "review", "--path", configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	disabled, err := decodeSkillActivationHarnessReport(disableOut)
+	_, disabled, err := runSkillActivationCommand(ctx, workspace, "--config", configPath, "--output-format", "json", "skills", "disable", "review", "--path", configPath)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if disabled.Action != "disable" || len(disabled.EnabledSkills) != 0 || !slices.Contains(disabled.Removed, "review") {
 		return localScenarioResult{}, fmt.Errorf("unexpected skills disable report: %#v", disabled)
 	}
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
+	if err := verifyHarnessFileOmits(configPath, `"enabled_skills"`); err != nil {
 		return localScenarioResult{}, err
-	}
-	if strings.Contains(string(configData), `"enabled_skills"`) {
-		return localScenarioResult{}, fmt.Errorf("enabled skills config still present after disable: %s", string(configData))
 	}
 
 	report := map[string]any{
@@ -716,9 +680,9 @@ Review the requested change with repository context.
 			"missing":          status.MissingSkills,
 			"removed":          disabled.Removed,
 			"final_enabled":    disabled.EnabledSkills,
-			"path_persisted":   enabled.Path != "" && strings.HasSuffix(enabled.Path, "codog-config.json"),
+			"path_persisted":   strings.HasSuffix(enabled.Path, "codog-config.json"),
 			"text_rendered":    strings.Contains(textOut, "Enabled skills   review"),
-			"config_unset":     !strings.Contains(string(configData), `"enabled_skills"`),
+			"config_unset":     true,
 			"status_message":   status.Message,
 			"disabled_message": disabled.Message,
 		},
@@ -735,23 +699,28 @@ Review the requested change with repository context.
 	}, nil
 }
 
+func setupSkillActivationFixture(workspace string) (string, error) {
+	skillDir := filepath.Join(workspace, ".codog", "skills", "review")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		return "", err
+	}
+	skillDoc := `---
+name: review
+description: Review project changes.
+allowed-tools: read_file, grep
+---
+# Review
+
+Review the requested change with repository context.
+`
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillDoc), 0o644); err != nil {
+		return "", err
+	}
+	return createHarnessConfigFile(workspace, "config-home", nil)
+}
+
 func onboardingBookmarksScenarioRunLocal(_ context.Context, workspace string) (localScenarioResult, error) {
-	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Harness\n"), 0o644); err != nil {
-		return localScenarioResult{}, err
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/onboarding\n\ngo 1.25\n"), 0o644); err != nil {
-		return localScenarioResult{}, err
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
-		return localScenarioResult{}, err
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "main_test.go"), []byte("package main\n\nimport \"testing\"\n\nfunc TestMain(t *testing.T) {}\n"), 0o644); err != nil {
-		return localScenarioResult{}, err
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Use focused changes.\n"), 0o644); err != nil {
-		return localScenarioResult{}, err
-	}
-	if err := os.Mkdir(filepath.Join(workspace, ".git"), 0o755); err != nil {
+	if err := setupOnboardingWorkspace(workspace); err != nil {
 		return localScenarioResult{}, err
 	}
 
@@ -849,16 +818,26 @@ func onboardingBookmarksScenarioRunLocal(_ context.Context, workspace string) (l
 	}, nil
 }
 
-func memoryLifecycleScenarioRunLocal(_ context.Context, workspace string) (localScenarioResult, error) {
-	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Prefer focused tests.\n"), 0o644); err != nil {
-		return localScenarioResult{}, err
+func setupOnboardingWorkspace(workspace string) error {
+	files := map[string]string{
+		"README.md":    "# Harness\n",
+		"go.mod":       "module example.test/onboarding\n\ngo 1.25\n",
+		"main.go":      "package main\n\nfunc main() {}\n",
+		"main_test.go": "package main\n\nimport \"testing\"\n\nfunc TestMain(t *testing.T) {}\n",
+		"AGENTS.md":    "Use focused changes.\n",
 	}
-	initial, err := memory.BuildReport(workspace)
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(workspace, name), []byte(content), 0o644); err != nil {
+			return err
+		}
+	}
+	return os.Mkdir(filepath.Join(workspace, ".git"), 0o755)
+}
+
+func memoryLifecycleScenarioRunLocal(_ context.Context, workspace string) (localScenarioResult, error) {
+	initial, err := setupMemoryLifecycle(workspace)
 	if err != nil {
 		return localScenarioResult{}, err
-	}
-	if initial.Kind != "memory" || initial.Action != "list" || initial.InstructionFiles != 1 || initial.Files[0].Name != "AGENTS.md" {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial memory report: %#v", initial)
 	}
 
 	appendReport, err := memory.Append(workspace, "Remember to cite verification commands.")
@@ -901,19 +880,9 @@ func memoryLifecycleScenarioRunLocal(_ context.Context, workspace string) (local
 		return localScenarioResult{}, fmt.Errorf("unexpected memory ensure report: %#v", ensured)
 	}
 
-	reset, err := memory.Reset(workspace, memory.ResetOptions{Target: "AGENTS.md", Confirm: true})
+	reset, err := resetMemoryLifecycle(workspace)
 	if err != nil {
 		return localScenarioResult{}, err
-	}
-	if reset.Kind != "memory" || reset.ResetCount != 1 || reset.Files[0].Name != "AGENTS.md" || reset.Files[0].BytesRemoved == 0 {
-		return localScenarioResult{}, fmt.Errorf("unexpected memory reset report: %#v", reset)
-	}
-	cleared, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md"))
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if len(cleared) != 0 {
-		return localScenarioResult{}, fmt.Errorf("expected AGENTS.md to be reset, got %q", string(cleared))
 	}
 
 	report := map[string]any{
@@ -958,6 +927,38 @@ func memoryLifecycleScenarioRunLocal(_ context.Context, workspace string) (local
 		RequestCount: 6,
 		MessageCount: 1,
 	}, nil
+}
+
+func setupMemoryLifecycle(workspace string) (memory.Report, error) {
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Prefer focused tests.\n"), 0o644); err != nil {
+		return memory.Report{}, err
+	}
+	report, err := memory.BuildReport(workspace)
+	if err != nil {
+		return memory.Report{}, err
+	}
+	if report.Kind != "memory" || report.Action != "list" || report.InstructionFiles != 1 || report.Files[0].Name != "AGENTS.md" {
+		return memory.Report{}, fmt.Errorf("unexpected initial memory report: %#v", report)
+	}
+	return report, nil
+}
+
+func resetMemoryLifecycle(workspace string) (memory.ResetReport, error) {
+	report, err := memory.Reset(workspace, memory.ResetOptions{Target: "AGENTS.md", Confirm: true})
+	if err != nil {
+		return memory.ResetReport{}, err
+	}
+	if report.Kind != "memory" || report.ResetCount != 1 || report.Files[0].Name != "AGENTS.md" || report.Files[0].BytesRemoved == 0 {
+		return memory.ResetReport{}, fmt.Errorf("unexpected memory reset report: %#v", report)
+	}
+	data, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md"))
+	if err != nil {
+		return memory.ResetReport{}, err
+	}
+	if len(data) != 0 {
+		return memory.ResetReport{}, fmt.Errorf("expected AGENTS.md to be reset, got %q", string(data))
+	}
+	return report, nil
 }
 
 func promptDirectoryReferenceScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {

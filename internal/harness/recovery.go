@@ -469,8 +469,16 @@ func recoveryLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if recipeReport.Kind != "recovery_recipe" || recipeReport.Recipe.ID != "stale_branch" || recipeReport.Recipe.MaxAttempts != 1 || len(recipeReport.Recipe.Steps) != 2 || recipeReport.Recipe.Steps[0].Kind != "merge_forward_branch" {
+	if len(recipeReport.Recipe.Steps) != 2 {
 		return localScenarioResult{}, fmt.Errorf("unexpected recovery recipe output: %s", recipeOut)
+	}
+	if err := verifyHarnessChecks("recovery recipe output", recipeOut,
+		recipeReport.Kind == "recovery_recipe",
+		recipeReport.Recipe.ID == "stale_branch",
+		recipeReport.Recipe.MaxAttempts == 1,
+		recipeReport.Recipe.Steps[0].Kind == "merge_forward_branch",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var initialStatus struct {
@@ -487,8 +495,13 @@ func recoveryLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if initialStatus.Kind != "recovery_status" || initialStatus.Status.Scenario != "stale_branch" || initialStatus.Status.Attempted || initialStatus.Status.AttemptsRemaining != 1 {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial recovery status output: %s", statusOut)
+	if err := verifyHarnessChecks("initial recovery status output", statusOut,
+		initialStatus.Kind == "recovery_status",
+		initialStatus.Status.Scenario == "stale_branch",
+		!initialStatus.Status.Attempted,
+		initialStatus.Status.AttemptsRemaining == 1,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var firstAttempt struct {
@@ -511,8 +524,18 @@ func recoveryLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if firstAttempt.Kind != "recovery_attempt" || firstAttempt.Result.Kind != "recovered" || firstAttempt.Result.StepsTaken != 2 || firstAttempt.Entry.State != "succeeded" || firstAttempt.Entry.AttemptCount != 1 || len(firstAttempt.Events) == 0 || firstAttempt.Events[len(firstAttempt.Events)-1].Type != "recovery.succeeded" {
+	if len(firstAttempt.Events) == 0 {
 		return localScenarioResult{}, fmt.Errorf("unexpected first recovery attempt output: %s", firstAttemptOut)
+	}
+	if err := verifyHarnessChecks("first recovery attempt output", firstAttemptOut,
+		firstAttempt.Kind == "recovery_attempt",
+		firstAttempt.Result.Kind == "recovered",
+		firstAttempt.Result.StepsTaken == 2,
+		firstAttempt.Entry.State == "succeeded",
+		firstAttempt.Entry.AttemptCount == 1,
+		firstAttempt.Events[len(firstAttempt.Events)-1].Type == "recovery.succeeded",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var secondAttempt struct {
@@ -534,8 +557,16 @@ func recoveryLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if secondAttempt.Result.Kind != "escalation_required" || secondAttempt.Entry.State != "exhausted" || !strings.Contains(secondAttempt.Entry.EscalationReason, "max recovery attempts") || len(secondAttempt.Events) == 0 || secondAttempt.Events[len(secondAttempt.Events)-1].Type != "recovery.escalated" {
+	if len(secondAttempt.Events) == 0 {
 		return localScenarioResult{}, fmt.Errorf("unexpected second recovery attempt output: %s", secondAttemptOut)
+	}
+	if err := verifyHarnessChecks("second recovery attempt output", secondAttemptOut,
+		secondAttempt.Result.Kind == "escalation_required",
+		secondAttempt.Entry.State == "exhausted",
+		strings.Contains(secondAttempt.Entry.EscalationReason, "max recovery attempts"),
+		secondAttempt.Events[len(secondAttempt.Events)-1].Type == "recovery.escalated",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var partialAttempt struct {
@@ -566,8 +597,18 @@ func recoveryLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if partialAttempt.Result.Kind != "partial_recovery" || partialAttempt.Entry.State != "failed" || partialAttempt.Entry.LastFailureSummary != "mcp still unhealthy" || len(partialAttempt.Result.Recovered) != 1 || partialAttempt.Result.Recovered[0].Kind != "restart_plugin" || len(partialAttempt.Result.Remaining) != 1 || partialAttempt.Result.Remaining[0].Kind != "retry_mcp_handshake" || len(partialAttempt.Events) == 0 || partialAttempt.Events[len(partialAttempt.Events)-1].Type != "recovery.failed" {
+	if len(partialAttempt.Result.Recovered) != 1 || len(partialAttempt.Result.Remaining) != 1 || len(partialAttempt.Events) == 0 {
 		return localScenarioResult{}, fmt.Errorf("unexpected partial recovery attempt output: %s", partialAttemptOut)
+	}
+	if err := verifyHarnessChecks("partial recovery attempt output", partialAttemptOut,
+		partialAttempt.Result.Kind == "partial_recovery",
+		partialAttempt.Entry.State == "failed",
+		partialAttempt.Entry.LastFailureSummary == "mcp still unhealthy",
+		partialAttempt.Result.Recovered[0].Kind == "restart_plugin",
+		partialAttempt.Result.Remaining[0].Kind == "retry_mcp_handshake",
+		partialAttempt.Events[len(partialAttempt.Events)-1].Type == "recovery.failed",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	var ledger struct {
@@ -617,11 +658,21 @@ func recoveryLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 			partialStatus = status
 		}
 	}
-	if !staleStatus.Attempted || staleStatus.State != "exhausted" || staleStatus.AttemptCount != 1 || !strings.Contains(staleStatus.EscalationReason, "max recovery attempts") {
-		return localScenarioResult{}, fmt.Errorf("unexpected stale branch ledger status: %#v", staleStatus)
+	if err := verifyHarnessChecks("stale branch ledger status", fmt.Sprintf("%#v", staleStatus),
+		staleStatus.Attempted,
+		staleStatus.State == "exhausted",
+		staleStatus.AttemptCount == 1,
+		strings.Contains(staleStatus.EscalationReason, "max recovery attempts"),
+	); err != nil {
+		return localScenarioResult{}, err
 	}
-	if !partialStatus.Attempted || partialStatus.State != "failed" || partialStatus.AttemptCount != 1 || partialStatus.LastFailureSummary != "mcp still unhealthy" {
-		return localScenarioResult{}, fmt.Errorf("unexpected partial plugin ledger status: %#v", partialStatus)
+	if err := verifyHarnessChecks("partial plugin ledger status", fmt.Sprintf("%#v", partialStatus),
+		partialStatus.Attempted,
+		partialStatus.State == "failed",
+		partialStatus.AttemptCount == 1,
+		partialStatus.LastFailureSummary == "mcp still unhealthy",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	report := map[string]any{
@@ -1077,17 +1128,60 @@ func reportBackpressureScenarioRunLocal(ctx context.Context, workspace string) (
 	projectedTopItems, _ := projectedPayload["top_items"].([]any)
 	schemaRegistry, _ := schema["registry"].(map[string]any)
 	schemaFields, _ := schemaRegistry["fields"].([]any)
-	if itemID == "" || firstSchemaVersion != "codog.reporting.report.v1" || compatibilityPolicy != "codog.reporting.compatibility.v1" || len(stableCore) == 0 || firstProjectionID == "" || len(firstNew) != 1 || secondUnchanged != 1 || !secondCollapsed || !secondNoChange || secondOutcome != "no_change" || secondTrigger != "nudge-cycle-1" || lastMeaningful == "" || staleCount != 1 || len(secondNegative) != 2 || negativeStatus != "not_observed_in_checked_scope" || negativeWindow != "2026-07-07T16:01:00Z/2026-07-07T16:02:00Z" || len(secondFieldDeltas) == 0 || secondDeltaState != "cleared" || len(invalidates) != 2 || thirdPriorityState != "changed" || !projectedDowngraded || !projectedRenderingChanged || !projectedSourceChanged || !projectedLatest || projectedStale || projectedSupersedes != firstProjectionID || projectedSourceHash == "" || projectedSourceHash != canonicalHash || projectedView != "delta_brief" || projectedVerbosity != "brief" || len(omittedFamilies) == 0 || projectedPayload["field_deltas"] == nil || projectedPayload["new_items"] != nil || projectedSummary["outcome"] == nil || len(projectedTopItems) != 0 || projectedCanonical["schema_compatibility"] == nil || len(schemaFields) != 2 || firstRootKind != "hypothesis" || thirdRootKind != "observed_fact" || thirdPromotedFrom != "hypothesis" || len(thirdChanged) != 1 || snapshotBody["schema_version"] != "codog.reporting.snapshot.v1" {
-		return localScenarioResult{}, fmt.Errorf("unexpected backpressure report: checks=%#v", map[string]any{
-			"item_id": itemID, "first_projection_id": firstProjectionID, "projected_downgraded": projectedDowngraded,
-			"rendering_changed": projectedRenderingChanged, "source_changed": projectedSourceChanged, "latest": projectedLatest,
-			"stale": projectedStale, "supersedes": projectedSupersedes, "source_hash": projectedSourceHash,
-			"canonical_hash": canonicalHash, "projected_view": projectedView, "projected_verbosity": projectedVerbosity,
-			"omitted": len(omittedFamilies), "has_field_deltas": projectedPayload["field_deltas"] != nil,
-			"has_new_items": projectedPayload["new_items"] != nil, "summary_outcome": projectedSummary["outcome"],
-			"top_items": len(projectedTopItems), "schema_fields": len(schemaFields), "third_changed": len(thirdChanged),
-			"snapshot_schema": snapshotBody["schema_version"],
-		})
+	if err := verifyHarnessChecks("backpressure report", fmt.Sprintf("checks=%#v", map[string]any{
+		"item_id": itemID, "first_projection_id": firstProjectionID, "projected_downgraded": projectedDowngraded,
+		"rendering_changed": projectedRenderingChanged, "source_changed": projectedSourceChanged, "latest": projectedLatest,
+		"stale": projectedStale, "supersedes": projectedSupersedes, "source_hash": projectedSourceHash,
+		"canonical_hash": canonicalHash, "projected_view": projectedView, "projected_verbosity": projectedVerbosity,
+		"omitted": len(omittedFamilies), "has_field_deltas": projectedPayload["field_deltas"] != nil,
+		"has_new_items": projectedPayload["new_items"] != nil, "summary_outcome": projectedSummary["outcome"],
+		"top_items": len(projectedTopItems), "schema_fields": len(schemaFields), "third_changed": len(thirdChanged),
+		"snapshot_schema": snapshotBody["schema_version"],
+	}),
+		itemID != "",
+		firstSchemaVersion == "codog.reporting.report.v1",
+		compatibilityPolicy == "codog.reporting.compatibility.v1",
+		len(stableCore) > 0,
+		firstProjectionID != "",
+		len(firstNew) == 1,
+		secondUnchanged == 1,
+		secondCollapsed,
+		secondNoChange,
+		secondOutcome == "no_change",
+		secondTrigger == "nudge-cycle-1",
+		lastMeaningful != "",
+		staleCount == 1,
+		len(secondNegative) == 2,
+		negativeStatus == "not_observed_in_checked_scope",
+		negativeWindow == "2026-07-07T16:01:00Z/2026-07-07T16:02:00Z",
+		len(secondFieldDeltas) > 0,
+		secondDeltaState == "cleared",
+		len(invalidates) == 2,
+		thirdPriorityState == "changed",
+		projectedDowngraded,
+		projectedRenderingChanged,
+		projectedSourceChanged,
+		projectedLatest,
+		!projectedStale,
+		projectedSupersedes == firstProjectionID,
+		projectedSourceHash != "",
+		projectedSourceHash == canonicalHash,
+		projectedView == "delta_brief",
+		projectedVerbosity == "brief",
+		len(omittedFamilies) > 0,
+		projectedPayload["field_deltas"] != nil,
+		projectedPayload["new_items"] == nil,
+		projectedSummary["outcome"] != nil,
+		len(projectedTopItems) == 0,
+		projectedCanonical["schema_compatibility"] != nil,
+		len(schemaFields) == 2,
+		firstRootKind == "hypothesis",
+		thirdRootKind == "observed_fact",
+		thirdPromotedFrom == "hypothesis",
+		len(thirdChanged) == 1,
+		snapshotBody["schema_version"] == "codog.reporting.snapshot.v1",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 	output := map[string]any{
 		"kind":             "report_backpressure_roundtrip",
@@ -1180,8 +1274,13 @@ func backgroundAgentRunScenarioRunLocal(ctx context.Context, workspace string) (
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if updatedTask.Heartbeat == nil || updatedTask.Heartbeat.Status != "working" {
+	if updatedTask.Heartbeat == nil {
 		return localScenarioResult{}, fmt.Errorf("background heartbeat was not persisted")
+	}
+	if err := verifyHarnessChecks("background heartbeat", fmt.Sprintf("%#v", updatedTask.Heartbeat),
+		updatedTask.Heartbeat.Status == "working",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	run, err := runStore.Save(agentruns.Run{
@@ -1198,42 +1297,47 @@ func backgroundAgentRunScenarioRunLocal(ctx context.Context, workspace string) (
 		return localScenarioResult{}, err
 	}
 	status := agentruns.StatusForTaskAt(taskStore, run, now, 30*time.Second)
-	if status.CurrentStatus != "running" || status.Freshness != background.LaneFreshnessHealthy || status.Health.State != "healthy" {
-		return localScenarioResult{}, fmt.Errorf("unexpected agent run status: %#v", status)
-	}
-	if status.Lifecycle.Terminal || status.Lifecycle.Reason != "active_status" {
-		return localScenarioResult{}, fmt.Errorf("unexpected active lifecycle: %#v", status.Lifecycle)
-	}
-	if status.Provenance.SourceKind != "healthcheck" || status.Provenance.Emitter != "codog-harness" {
-		return localScenarioResult{}, fmt.Errorf("unexpected provenance: %#v", status.Provenance)
-	}
-	if status.ScopeBinding.Owner != "reviewer" || status.ScopeBinding.WorkflowScope != "claw-code-dogfood" || !status.ScopeBinding.Actionable {
-		return localScenarioResult{}, fmt.Errorf("unexpected scope binding: %#v", status.ScopeBinding)
+	if err := verifyHarnessChecks("agent run status", fmt.Sprintf("%#v", status),
+		status.CurrentStatus == "running",
+		status.Freshness == background.LaneFreshnessHealthy,
+		status.Health.State == "healthy",
+		!status.Lifecycle.Terminal,
+		status.Lifecycle.Reason == "active_status",
+		status.Provenance.SourceKind == "healthcheck",
+		status.Provenance.Emitter == "codog-harness",
+		status.ScopeBinding.Owner == "reviewer",
+		status.ScopeBinding.WorkflowScope == "claw-code-dogfood",
+		status.ScopeBinding.Actionable,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 	agentBoard := agentruns.BuildBoard(taskStore, []agentruns.Run{run}, now, 30*time.Second)
-	if len(agentBoard.Active) != 1 || agentBoard.Active[0].Run.ID != run.ID || agentBoard.Active[0].Freshness != background.LaneFreshnessHealthy {
+	if len(agentBoard.Active) != 1 {
 		return localScenarioResult{}, fmt.Errorf("unexpected agent lane board: %#v", agentBoard)
+	}
+	if err := verifyHarnessChecks("agent lane board", fmt.Sprintf("%#v", agentBoard),
+		agentBoard.Active[0].Run.ID == run.ID,
+		agentBoard.Active[0].Freshness == background.LaneFreshnessHealthy,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 	taskBoard, err := taskStore.LaneBoardAt(now, 30*time.Second)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if len(taskBoard.Active) != 1 || taskBoard.Active[0].TaskID != task.ID || taskBoard.Active[0].Freshness != background.LaneFreshnessHealthy {
+	if len(taskBoard.Active) != 1 {
 		return localScenarioResult{}, fmt.Errorf("unexpected background lane board: %#v", taskBoard)
 	}
-
-	var events []background.WatchEvent
-	watchCtx, cancelWatch := context.WithTimeout(ctx, 2*time.Second)
-	err = taskStore.Watch(watchCtx, task.ID, background.WatchOptions{Interval: 20 * time.Millisecond, MaxEvents: 2}, func(event background.WatchEvent) error {
-		events = append(events, event)
-		return nil
-	})
-	cancelWatch()
-	if err != nil {
+	if err := verifyHarnessChecks("background lane board", fmt.Sprintf("%#v", taskBoard),
+		taskBoard.Active[0].TaskID == task.ID,
+		taskBoard.Active[0].Freshness == background.LaneFreshnessHealthy,
+	); err != nil {
 		return localScenarioResult{}, err
 	}
-	if len(events) != 2 || events[0].Type != "status" || events[1].Type != "log" || !strings.Contains(events[1].Data, "codog-bg-ready") {
-		return localScenarioResult{}, fmt.Errorf("unexpected background watch events: %#v", events)
+
+	events, err := watchBackgroundTaskEvents(ctx, taskStore, task.ID)
+	if err != nil {
+		return localScenarioResult{}, err
 	}
 
 	stopped, err := taskStore.Stop(task.ID)
@@ -1258,19 +1362,33 @@ func backgroundAgentRunScenarioRunLocal(ctx context.Context, workspace string) (
 		return localScenarioResult{}, err
 	}
 	stoppedStatus := agentruns.StatusForTaskAt(taskStore, run, now, 30*time.Second)
-	if !stoppedStatus.Lifecycle.Terminal || stoppedStatus.Lifecycle.TerminalStateUnknown || stoppedStatus.Health.State != "finished" {
-		return localScenarioResult{}, fmt.Errorf("unexpected stopped lifecycle: %#v", stoppedStatus)
+	if err := verifyHarnessChecks("stopped lifecycle", fmt.Sprintf("%#v", stoppedStatus),
+		stoppedStatus.Lifecycle.Terminal,
+		!stoppedStatus.Lifecycle.TerminalStateUnknown,
+		stoppedStatus.Health.State == "finished",
+	); err != nil {
+		return localScenarioResult{}, err
 	}
-	if stoppedStatus.TerminalOutcome == nil || stoppedStatus.TerminalOutcome.DuplicateCount < 1 {
+	if stoppedStatus.TerminalOutcome == nil {
 		return localScenarioResult{}, fmt.Errorf("missing terminal dedupe outcome: %#v", stoppedStatus.TerminalOutcome)
+	}
+	if err := verifyHarnessChecks("terminal dedupe outcome", fmt.Sprintf("%#v", stoppedStatus.TerminalOutcome),
+		stoppedStatus.TerminalOutcome.DuplicateCount >= 1,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 	restarted, err := taskStore.Restart(task.ID, workspace)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
 	defer func() { _, _ = taskStore.Stop(restarted.ID) }()
-	if restarted.RestartedFrom != task.ID || restarted.Kind != "agent" || restarted.AgentType != "reviewer" || restarted.SessionID != sessionID {
-		return localScenarioResult{}, fmt.Errorf("unexpected restarted task: %#v", restarted)
+	if err := verifyHarnessChecks("restarted task", fmt.Sprintf("%#v", restarted),
+		restarted.RestartedFrom == task.ID,
+		restarted.Kind == "agent",
+		restarted.AgentType == "reviewer",
+		restarted.SessionID == sessionID,
+	); err != nil {
+		return localScenarioResult{}, err
 	}
 	source, err := taskStore.Get(task.ID)
 	if err != nil {
@@ -1280,37 +1398,10 @@ func backgroundAgentRunScenarioRunLocal(ctx context.Context, workspace string) (
 		return localScenarioResult{}, fmt.Errorf("source task missing restarted_by link")
 	}
 
-	failing, err := taskStore.RunWithOptions("printf codog-bg-fail; exit 7", workspace, background.RunOptions{
-		Kind:      "agent",
-		AgentType: "fixer",
-		SessionID: sessionID,
-		Prompt:    "fix failure",
-		RestartPolicy: &background.RestartPolicy{
-			Enabled:     true,
-			Mode:        "on-failure",
-			MaxAttempts: 1,
-		},
-	})
+	supervisor, err := runBackgroundSupervisorPhase(ctx, taskStore, workspace, sessionID, now)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	failed, err := waitForBackgroundTask(ctx, taskStore, failing.ID, 2*time.Second, func(task background.Task) bool {
-		return task.Status == "failed" && task.ExitCode != nil && *task.ExitCode == 7
-	})
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if failed.RestartPolicy == nil || !failed.RestartPolicy.Enabled {
-		return localScenarioResult{}, fmt.Errorf("failing task lost restart policy")
-	}
-	supervised, err := taskStore.SuperviseOnce(now.Add(time.Minute))
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if len(supervised.Restarted) != 1 || supervised.Restarted[0].RestartedFrom != failing.ID || supervised.Restarted[0].RestartCount != 1 {
-		return localScenarioResult{}, fmt.Errorf("unexpected supervise result: %#v", supervised)
-	}
-	defer func() { _, _ = taskStore.Stop(supervised.Restarted[0].ID) }()
 
 	report := map[string]any{
 		"kind": "background_agent_run",
@@ -1341,10 +1432,10 @@ func backgroundAgentRunScenarioRunLocal(ctx context.Context, workspace string) (
 			"active_lanes":     len(agentBoard.Active),
 		},
 		"supervisor": map[string]any{
-			"failed_status":    failed.Status,
-			"failed_exit_code": *failed.ExitCode,
-			"restarted":        len(supervised.Restarted),
-			"restart_count":    supervised.Restarted[0].RestartCount,
+			"failed_status":    supervisor.failedStatus,
+			"failed_exit_code": supervisor.failedExitCode,
+			"restarted":        supervisor.restarted,
+			"restart_count":    supervisor.restartCount,
 		},
 	}
 	data, err := json.Marshal(report)
@@ -1357,6 +1448,81 @@ func backgroundAgentRunScenarioRunLocal(ctx context.Context, workspace string) (
 		RequestCount: 7,
 		MessageCount: 1,
 	}, nil
+}
+
+type backgroundSupervisorSummary struct {
+	failedStatus   string
+	failedExitCode int
+	restarted      int
+	restartCount   int
+}
+
+func runBackgroundSupervisorPhase(ctx context.Context, store background.Store, workspace, sessionID string, now time.Time) (backgroundSupervisorSummary, error) {
+	failing, err := store.RunWithOptions("printf codog-bg-fail; exit 7", workspace, background.RunOptions{
+		Kind:      "agent",
+		AgentType: "fixer",
+		SessionID: sessionID,
+		Prompt:    "fix failure",
+		RestartPolicy: &background.RestartPolicy{
+			Enabled:     true,
+			Mode:        "on-failure",
+			MaxAttempts: 1,
+		},
+	})
+	if err != nil {
+		return backgroundSupervisorSummary{}, err
+	}
+	failed, err := waitForBackgroundTask(ctx, store, failing.ID, 2*time.Second, func(task background.Task) bool {
+		return task.Status == "failed" && task.ExitCode != nil && *task.ExitCode == 7
+	})
+	if err != nil {
+		return backgroundSupervisorSummary{}, err
+	}
+	if failed.RestartPolicy == nil || !failed.RestartPolicy.Enabled {
+		return backgroundSupervisorSummary{}, fmt.Errorf("failing task lost restart policy")
+	}
+	supervised, err := store.SuperviseOnce(now.Add(time.Minute))
+	if err != nil {
+		return backgroundSupervisorSummary{}, err
+	}
+	if len(supervised.Restarted) != 1 {
+		return backgroundSupervisorSummary{}, fmt.Errorf("unexpected supervise result: %#v", supervised)
+	}
+	restarted := supervised.Restarted[0]
+	if restarted.RestartedFrom != failing.ID || restarted.RestartCount != 1 {
+		return backgroundSupervisorSummary{}, fmt.Errorf("unexpected supervise result: %#v", supervised)
+	}
+	defer func() { _, _ = store.Stop(restarted.ID) }()
+	return backgroundSupervisorSummary{
+		failedStatus:   failed.Status,
+		failedExitCode: *failed.ExitCode,
+		restarted:      len(supervised.Restarted),
+		restartCount:   restarted.RestartCount,
+	}, nil
+}
+
+func watchBackgroundTaskEvents(ctx context.Context, store background.Store, taskID string) ([]background.WatchEvent, error) {
+	var events []background.WatchEvent
+	watchCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	err := store.Watch(watchCtx, taskID, background.WatchOptions{Interval: 20 * time.Millisecond, MaxEvents: 2}, func(event background.WatchEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	if len(events) != 2 {
+		return nil, fmt.Errorf("unexpected background watch events: %#v", events)
+	}
+	if err := verifyHarnessChecks("background watch events", fmt.Sprintf("%#v", events),
+		events[0].Type == "status",
+		events[1].Type == "log",
+		strings.Contains(events[1].Data, "codog-bg-ready"),
+	); err != nil {
+		return nil, err
+	}
+	return events, nil
 }
 
 func sshPrintPlanScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
@@ -1489,90 +1655,25 @@ func remoteBridgeWorkspaceScenarioRunLocal(_ context.Context, workspace string) 
 	}.Handler())
 	defer server.Close()
 
-	authRequest := func(method, path, payload string) (int, string, error) {
-		var body io.Reader
-		if payload != "" {
-			body = strings.NewReader(payload)
-		}
-		req, err := http.NewRequest(method, server.URL+path, body)
-		if err != nil {
-			return 0, "", err
-		}
-		req.Header.Set("authorization", "Bearer secret-token")
-		if payload != "" {
-			req.Header.Set("content-type", "application/json")
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return 0, "", err
-		}
-		defer func() { _ = resp.Body.Close() }()
-		data, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return resp.StatusCode, "", err
-		}
-		return resp.StatusCode, string(data), nil
-	}
-	requireStatusContains := func(method, path, payload string, status int, contains ...string) (string, error) {
-		gotStatus, body, err := authRequest(method, path, payload)
-		if err != nil {
-			return "", err
-		}
-		if gotStatus != status {
-			return "", fmt.Errorf("%s %s returned %d: %s", method, path, gotStatus, body)
-		}
-		for _, expected := range contains {
-			if !strings.Contains(body, expected) {
-				return "", fmt.Errorf("%s %s response missing %s: %s", method, path, expected, body)
-			}
-		}
-		return body, nil
-	}
-
-	if _, err := requireStatusContains(http.MethodGet, "/workspace/info", "", http.StatusOK, `"name":"`); err != nil {
-		return localScenarioResult{}, err
-	}
-	if _, err := requireStatusContains(http.MethodGet, "/workspace/files?pattern=*.md", "", http.StatusOK, `"path":"README.md"`); err != nil {
-		return localScenarioResult{}, err
-	}
-	if _, err := requireStatusContains(http.MethodGet, "/workspace/search?query=remote&glob=*.md", "", http.StatusOK, `"text":"hello remote bridge"`); err != nil {
-		return localScenarioResult{}, err
-	}
-	if _, err := requireStatusContains(http.MethodPost, "/file/write", `{"path":"notes.txt","content":"hello world"}`, http.StatusOK, `"bytes":11`); err != nil {
-		return localScenarioResult{}, err
-	}
-	if _, err := requireStatusContains(http.MethodPost, "/file/edit", `{"path":"notes.txt","old_string":"world","new_string":"codog"}`, http.StatusOK, `"replacements":1`); err != nil {
-		return localScenarioResult{}, err
-	}
-	if _, err := requireStatusContains(http.MethodGet, "/file/read?path=notes.txt", "", http.StatusOK, `"content":"hello codog"`); err != nil {
-		return localScenarioResult{}, err
-	}
-	if _, err := requireStatusContains(http.MethodPost, "/file/diff", `{"path":"README.md","old_string":"hello remote bridge","new_string":"hello codog bridge"}`, http.StatusOK, `-hello remote bridge`, `+hello codog bridge`); err != nil {
-		return localScenarioResult{}, err
-	}
-	if _, err := requireStatusContains(http.MethodGet, "/file/read?path=../secret.txt", "", http.StatusBadRequest, `"error"`); err != nil {
-		return localScenarioResult{}, err
-	}
-	if _, err := requireStatusContains(http.MethodPost, "/sessions/session-bridge/messages", `{"role":"user","text":"hello remote session"}`, http.StatusOK, `"role":"user"`); err != nil {
-		return localScenarioResult{}, err
-	}
-	if _, err := requireStatusContains(http.MethodGet, "/sessions/session-bridge/history?limit=1", "", http.StatusOK, `"text":"hello remote session"`); err != nil {
-		return localScenarioResult{}, err
-	}
 	editorWorkspace := filepath.ToSlash(workspace)
-	if _, err := requireStatusContains(http.MethodPost, "/editor/identify", `{"editor":"VS Code","workspace":"`+editorWorkspace+`","token":"wrong"}`, http.StatusBadRequest, "token is invalid"); err != nil {
-		return localScenarioResult{}, err
-	}
-	if _, err := requireStatusContains(http.MethodPost, "/editor/identify", `{"editor":"VS Code","version":"1.0","workspace":"`+editorWorkspace+`","token":"editor-token"}`, http.StatusOK, `"editor":"VS Code"`, `"trusted":true`); err != nil {
-		return localScenarioResult{}, err
-	}
-	if _, err := requireStatusContains(http.MethodPost, "/editor/open", `{"path":"internal/main.go"}`, http.StatusOK, `"path":"internal/main.go"`); err != nil {
-		return localScenarioResult{}, err
-	}
-	if _, err := requireStatusContains(http.MethodPost, "/editor/selection", `{"start_line":1,"start_column":1,"end_line":1,"end_column":8}`, http.StatusOK, `"text":"package"`); err != nil {
-		return localScenarioResult{}, err
-	}
-	if _, err := requireStatusContains(http.MethodGet, "/editor/state", "", http.StatusOK, `"open_file":{"path":"internal/main.go"`, `"selection":{"path":"internal/main.go"`); err != nil {
+	client := remoteBridgeHarnessClient{baseURL: server.URL}
+	if err := client.runCases([]remoteBridgeHarnessCase{
+		{http.MethodGet, "/workspace/info", "", http.StatusOK, []string{`"name":"`}},
+		{http.MethodGet, "/workspace/files?pattern=*.md", "", http.StatusOK, []string{`"path":"README.md"`}},
+		{http.MethodGet, "/workspace/search?query=remote&glob=*.md", "", http.StatusOK, []string{`"text":"hello remote bridge"`}},
+		{http.MethodPost, "/file/write", `{"path":"notes.txt","content":"hello world"}`, http.StatusOK, []string{`"bytes":11`}},
+		{http.MethodPost, "/file/edit", `{"path":"notes.txt","old_string":"world","new_string":"codog"}`, http.StatusOK, []string{`"replacements":1`}},
+		{http.MethodGet, "/file/read?path=notes.txt", "", http.StatusOK, []string{`"content":"hello codog"`}},
+		{http.MethodPost, "/file/diff", `{"path":"README.md","old_string":"hello remote bridge","new_string":"hello codog bridge"}`, http.StatusOK, []string{`-hello remote bridge`, `+hello codog bridge`}},
+		{http.MethodGet, "/file/read?path=../secret.txt", "", http.StatusBadRequest, []string{`"error"`}},
+		{http.MethodPost, "/sessions/session-bridge/messages", `{"role":"user","text":"hello remote session"}`, http.StatusOK, []string{`"role":"user"`}},
+		{http.MethodGet, "/sessions/session-bridge/history?limit=1", "", http.StatusOK, []string{`"text":"hello remote session"`}},
+		{http.MethodPost, "/editor/identify", `{"editor":"VS Code","workspace":"` + editorWorkspace + `","token":"wrong"}`, http.StatusBadRequest, []string{"token is invalid"}},
+		{http.MethodPost, "/editor/identify", `{"editor":"VS Code","version":"1.0","workspace":"` + editorWorkspace + `","token":"editor-token"}`, http.StatusOK, []string{`"editor":"VS Code"`, `"trusted":true`}},
+		{http.MethodPost, "/editor/open", `{"path":"internal/main.go"}`, http.StatusOK, []string{`"path":"internal/main.go"`}},
+		{http.MethodPost, "/editor/selection", `{"start_line":1,"start_column":1,"end_line":1,"end_column":8}`, http.StatusOK, []string{`"text":"package"`}},
+		{http.MethodGet, "/editor/state", "", http.StatusOK, []string{`"open_file":{"path":"internal/main.go"`, `"selection":{"path":"internal/main.go"`}},
+	}); err != nil {
 		return localScenarioResult{}, err
 	}
 
@@ -1612,6 +1713,68 @@ func remoteBridgeWorkspaceScenarioRunLocal(_ context.Context, workspace string) 
 		RequestCount: 16,
 		MessageCount: 1,
 	}, nil
+}
+
+type remoteBridgeHarnessCase struct {
+	method   string
+	path     string
+	payload  string
+	status   int
+	contains []string
+}
+
+type remoteBridgeHarnessClient struct {
+	baseURL string
+}
+
+func (c remoteBridgeHarnessClient) runCases(cases []remoteBridgeHarnessCase) error {
+	for _, testCase := range cases {
+		if err := c.runCase(testCase); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c remoteBridgeHarnessClient) runCase(testCase remoteBridgeHarnessCase) error {
+	status, body, err := c.request(testCase.method, testCase.path, testCase.payload)
+	if err != nil {
+		return err
+	}
+	if status != testCase.status {
+		return fmt.Errorf("%s %s returned %d: %s", testCase.method, testCase.path, status, body)
+	}
+	for _, expected := range testCase.contains {
+		if !strings.Contains(body, expected) {
+			return fmt.Errorf("%s %s response missing %s: %s", testCase.method, testCase.path, expected, body)
+		}
+	}
+	return nil
+}
+
+func (c remoteBridgeHarnessClient) request(method, path, payload string) (int, string, error) {
+	var body io.Reader
+	if payload != "" {
+		body = strings.NewReader(payload)
+	}
+	req, err := http.NewRequest(method, c.baseURL+path, body)
+	if err != nil {
+		return 0, "", err
+	}
+	req.Header.Set("authorization", "Bearer secret-token")
+	if payload != "" {
+		req.Header.Set("content-type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, "", err
+	}
+	return resp.StatusCode, string(data), nil
 }
 
 func mcpLifecycleScenarioRunLocal(_ context.Context, workspace string) (localScenarioResult, error) {
@@ -1752,36 +1915,8 @@ func mcpAuthOAuthRefreshScenarioRunLocal(ctx context.Context, workspace string) 
 		}
 	}()
 
-	refreshSeen := false
-	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/oauth-authorization-server":
-			writeJSONBody(w, map[string]any{
-				"authorization_endpoint": "https://auth.example/authorize",
-				"token_endpoint":         "http://" + r.Host + "/token",
-			})
-		case "/token":
-			if err := r.ParseForm(); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			if r.Form.Get("grant_type") != "refresh_token" ||
-				r.Form.Get("refresh_token") != "old-refresh-token-secret" ||
-				r.Form.Get("client_id") != "client-harness" {
-				http.Error(w, "unexpected refresh request", http.StatusBadRequest)
-				return
-			}
-			refreshSeen = true
-			writeJSONBody(w, map[string]any{
-				"access_token":  "new-access-token-secret-1234",
-				"refresh_token": "new-refresh-token-secret-5678",
-				"token_type":    "Bearer",
-				"expires_in":    3600,
-			})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	authState := &oauthRefreshHarnessServer{}
+	authServer := httptest.NewServer(authState)
 	defer authServer.Close()
 
 	if _, err := oauth.SaveProviderProfile(ctx, configHome, "work", authServer.URL, "client-harness", []string{"profile"}); err != nil {
@@ -1797,43 +1932,7 @@ func mcpAuthOAuthRefreshScenarioRunLocal(ctx context.Context, workspace string) 
 		return localScenarioResult{}, err
 	}
 
-	mcpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var req map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		method, _ := req["method"].(string)
-		id := req["id"]
-		switch method {
-		case "initialize":
-			w.Header().Set("Mcp-Session-Id", "mcp-auth-session")
-			writeMCPHarnessResponse(w, id, map[string]any{
-				"protocolVersion": "2024-11-05",
-				"capabilities": map[string]any{
-					"tools":     map[string]any{},
-					"resources": map[string]any{},
-				},
-				"serverInfo": map[string]any{"name": "mcp-auth-harness", "version": "1.0.0"},
-			})
-		case "notifications/initialized":
-			w.WriteHeader(http.StatusAccepted)
-		case "tools/list":
-			writeMCPHarnessResponse(w, id, map[string]any{"tools": []map[string]any{{
-				"name":        "auth_echo",
-				"description": "MCP auth harness tool.",
-				"inputSchema": map[string]any{"type": "object"},
-			}}})
-		case "resources/list":
-			writeMCPHarnessResponse(w, id, map[string]any{"resources": []map[string]any{{"uri": "codog://auth", "name": "auth"}}})
-		default:
-			writeMCPHarnessError(w, id, "unsupported method: "+method)
-		}
-	}))
+	mcpServer := httptest.NewServer(mcpAuthHarnessServer{})
 	defer mcpServer.Close()
 
 	out, err := tools.MCPAuthTool{
@@ -1846,7 +1945,7 @@ func mcpAuthOAuthRefreshScenarioRunLocal(ctx context.Context, workspace string) 
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if !refreshSeen {
+	if !authState.refreshSeen {
 		return localScenarioResult{}, fmt.Errorf("OAuth refresh endpoint was not called")
 	}
 	for _, expected := range []string{`"server": "auth"`, `"status": "ok"`, `"tool_count": 1`, `"resource_count": 1`, `"oauth_profile": "work"`, `"profile_configured": true`, `"token_present": true`, `"ready": true`, `"refreshed": true`, `"command": "codog mcp tools auth"`} {
@@ -1874,6 +1973,86 @@ func mcpAuthOAuthRefreshScenarioRunLocal(ctx context.Context, workspace string) 
 		ToolUses:     []string{"mcp_auth"},
 		RequestCount: 1,
 	}, nil
+}
+
+type oauthRefreshHarnessServer struct {
+	refreshSeen bool
+}
+
+// ServeHTTP serves OAuth discovery and refresh endpoints for the MCP auth scenario.
+func (s *oauthRefreshHarnessServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/.well-known/oauth-authorization-server":
+		writeJSONBody(w, map[string]any{
+			"authorization_endpoint": "https://auth.example/authorize",
+			"token_endpoint":         "http://" + r.Host + "/token",
+		})
+	case "/token":
+		s.serveToken(w, r)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *oauthRefreshHarnessServer) serveToken(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if r.Form.Get("grant_type") != "refresh_token" ||
+		r.Form.Get("refresh_token") != "old-refresh-token-secret" ||
+		r.Form.Get("client_id") != "client-harness" {
+		http.Error(w, "unexpected refresh request", http.StatusBadRequest)
+		return
+	}
+	s.refreshSeen = true
+	writeJSONBody(w, map[string]any{
+		"access_token":  "new-access-token-secret-1234",
+		"refresh_token": "new-refresh-token-secret-5678",
+		"token_type":    "Bearer",
+		"expires_in":    3600,
+	})
+}
+
+type mcpAuthHarnessServer struct{}
+
+// ServeHTTP serves the MCP handshake used after the scenario refreshes its token.
+func (mcpAuthHarnessServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	method, _ := request["method"].(string)
+	id := request["id"]
+	switch method {
+	case "initialize":
+		w.Header().Set("Mcp-Session-Id", "mcp-auth-session")
+		writeMCPHarnessResponse(w, id, map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities": map[string]any{
+				"tools":     map[string]any{},
+				"resources": map[string]any{},
+			},
+			"serverInfo": map[string]any{"name": "mcp-auth-harness", "version": "1.0.0"},
+		})
+	case "notifications/initialized":
+		w.WriteHeader(http.StatusAccepted)
+	case "tools/list":
+		writeMCPHarnessResponse(w, id, map[string]any{"tools": []map[string]any{{
+			"name":        "auth_echo",
+			"description": "MCP auth harness tool.",
+			"inputSchema": map[string]any{"type": "object"},
+		}}})
+	case "resources/list":
+		writeMCPHarnessResponse(w, id, map[string]any{"resources": []map[string]any{{"uri": "codog://auth", "name": "auth"}}})
+	default:
+		writeMCPHarnessError(w, id, "unsupported method: "+method)
+	}
 }
 
 func mcpAuthRecoveryScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
