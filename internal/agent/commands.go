@@ -1083,49 +1083,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		})
 	}
 	if args[0] == "auth" {
-		req, err := parseMCPAuthArgs(args[1:])
-		if err != nil {
-			return err
-		}
-		now := time.Now().UTC()
-		if req.Server == "" {
-			if req.Clear {
-				return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(requestedArgs, " "), "server"))
-			}
-			payload := buildMCPAggregateAuthReport(ctx, a.Config.MCPServers, a.Config.ConfigHome, a.Config.OAuthProfile, now, req.Refresh)
-			data, _ := json.MarshalIndent(payload, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		serverName := req.Server
-		server, ok := a.Config.MCPServers[serverName]
-		if !ok {
-			return renderMCPRemoteActionError(a.Out, format, mcpRemoteActionErrorReport{
-				Kind:             "mcp",
-				Action:           args[0],
-				OK:               false,
-				Status:           "error",
-				ErrorKind:        "server_not_found",
-				RequestedAction:  strings.Join(requestedArgs, " "),
-				ServerName:       serverName,
-				AvailableServers: sortedMCPServerNames(a.Config.MCPServers),
-				Message:          fmt.Sprintf("MCP server %q is not configured.", serverName),
-				Hint:             "Run `codog mcp list` to see configured servers.",
-				Usage:            mcpRemoteUsage(args[0]),
-			})
-		}
-		result := mcp.InspectAuth(ctx, serverName, server)
-		var payload mcpauthdiag.Report
-		if req.Clear {
-			payload = mcpauthdiag.Clear(ctx, result, a.Config.ConfigHome, a.Config.OAuthProfile, now)
-		} else if req.Refresh {
-			payload = mcpauthdiag.Refresh(ctx, result, a.Config.ConfigHome, a.Config.OAuthProfile, now)
-		} else {
-			payload = mcpauthdiag.Build(result, a.Config.ConfigHome, a.Config.OAuthProfile, now)
-		}
-		data, _ := json.MarshalIndent(payload, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+		return a.mcpAuth(ctx, args[1:], requestedArgs, format)
 	}
 	if len(args) == 1 && mcpAggregateRemoteAction(args[0]) {
 		payload := buildMCPAggregateRemoteReport(ctx, canonicalMCPAggregateAction(args[0]), a.Config.MCPServers, a.Config.ConfigHome, a.Config.OAuthProfile)
@@ -1220,6 +1178,52 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+func (a *App) mcpAuth(ctx context.Context, args, requestedArgs []string, format string) error {
+	req, err := parseMCPAuthArgs(args)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if req.Server == "" {
+		return a.mcpAggregateAuth(ctx, req, requestedArgs, format, now)
+	}
+	server, ok := a.Config.MCPServers[req.Server]
+	if !ok {
+		return renderMCPRemoteActionError(a.Out, format, mcpRemoteActionErrorReport{
+			Kind: "mcp", Action: "auth", OK: false, Status: "error", ErrorKind: "server_not_found",
+			RequestedAction: strings.Join(requestedArgs, " "), ServerName: req.Server,
+			AvailableServers: sortedMCPServerNames(a.Config.MCPServers),
+			Message:          fmt.Sprintf("MCP server %q is not configured.", req.Server),
+			Hint:             "Run `codog mcp list` to see configured servers.", Usage: mcpRemoteUsage("auth"),
+		})
+	}
+	result := mcp.InspectAuth(ctx, req.Server, server)
+	payload := buildMCPAuthReport(ctx, req, result, a.Config.ConfigHome, a.Config.OAuthProfile, now)
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) mcpAggregateAuth(ctx context.Context, req mcpAuthRequest, requestedArgs []string, format string, now time.Time) error {
+	if req.Clear {
+		return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport("auth", strings.Join(requestedArgs, " "), "server"))
+	}
+	payload := buildMCPAggregateAuthReport(ctx, a.Config.MCPServers, a.Config.ConfigHome, a.Config.OAuthProfile, now, req.Refresh)
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func buildMCPAuthReport(ctx context.Context, req mcpAuthRequest, result mcp.AuthStatusResult, configHome, profile string, now time.Time) mcpauthdiag.Report {
+	if req.Clear {
+		return mcpauthdiag.Clear(ctx, result, configHome, profile, now)
+	}
+	if req.Refresh {
+		return mcpauthdiag.Refresh(ctx, result, configHome, profile, now)
+	}
+	return mcpauthdiag.Build(result, configHome, profile, now)
 }
 
 func firstArg(args []string) string {
