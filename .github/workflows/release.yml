@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v-prefixed tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    env:
+      TAG_NAME: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate tag input
+        shell: bash
+        run: |
+          case "${TAG_NAME}" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "release tag must look like v1.2.3" >&2; exit 2 ;;
+          esac
+
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ env.TAG_NAME }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run release gate
+        run: scripts/smoke.sh
+
+      - name: Build release artifacts
+        shell: bash
+        run: scripts/release.sh --version "${TAG_NAME#v}" --commit "${TAG_NAME}" --output-dir dist
+
+      - name: Preserve workflow artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: codog-${{ env.TAG_NAME }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        shell: bash
+        run: |
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            gh release upload "${TAG_NAME}" dist/* --clobber
+          else
+            gh release create "${TAG_NAME}" dist/* \
+              --verify-tag \
+              --title "Codog ${TAG_NAME}" \
+              --generate-notes \
+              --latest
+          fi
