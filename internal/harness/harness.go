@@ -6485,7 +6485,7 @@ func runHarnessCodogWithEnv(ctx context.Context, workspace string, extraEnv []st
 	if err != nil {
 		return "", err
 	}
-	commandArgs := append([]string{"run", "./cmd/codog", "--cwd", workspace}, args...)
+	commandArgs := append([]string{"run", ".", "--cwd", workspace}, args...)
 	cmd := exec.CommandContext(ctx, "go", commandArgs...)
 	cmd.Dir = root
 	if len(extraEnv) != 0 {

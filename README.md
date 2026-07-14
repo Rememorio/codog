@@ -28,7 +28,7 @@ extensions, enterprise admin backends, or proprietary account systems.
 Codog requires Go 1.26 or newer and at least one model credential.
 
 ```sh
-go install github.com/Rememorio/codog/cmd/codog@latest
+go install github.com/Rememorio/codog@latest
 export ANTHROPIC_API_KEY=<key>
 ```
 
@@ -227,7 +227,7 @@ for hostile repositories, untrusted commands, or adversarial prompts.
 
 | Path | Responsibility |
 | --- | --- |
-| `cmd/codog` | CLI entry point |
+| `main.go` | CLI entry point |
 | `internal/agent` | Command dispatch, runtime wiring, and the agent loop |
 | `internal/anthropic` | Anthropic-compatible client and message types |
 | `internal/tools` | Shell, file, search, git, and edit tools |
@@ -248,7 +248,7 @@ scripts/smoke.sh
 ```
 
 For narrower checks, run `go test ./...`, `go vet ./...`,
-`go build ./cmd/codog`, or `scripts/install.sh --bin-dir ./bin` directly.
+`go build .`, or `scripts/install.sh --bin-dir ./bin` directly.
 
 Keep changes portable. Avoid committing generated caches, API keys,
 machine-specific setup snippets, local absolute paths, or tool attribution text.

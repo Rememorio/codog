@@ -29,7 +29,7 @@ func TestCommandsHaveCommandDocs(t *testing.T) {
 	for _, cmd := range listCommandPackages(t, root) {
 		t.Run(cmd, func(t *testing.T) {
 			dir := filepath.Join(root, filepath.FromSlash(cmd))
-			requireCommandDoc(t, cmd, parsePackageFiles(t, dir))
+			requireCommandDoc(t, filepath.Base(dir), parsePackageFiles(t, dir))
 		})
 	}
 }
@@ -193,9 +193,21 @@ func listInternalPackages(t *testing.T, root string) []string {
 
 func listCommandPackages(t *testing.T, root string) []string {
 	t.Helper()
-	cmdRoot := filepath.Join(root, "cmd")
 	packages := []string{}
-	err := filepath.WalkDir(cmdRoot, func(path string, d fs.DirEntry, err error) error {
+	rootFiles, err := parsePackageFilesAllowEmpty(root)
+	require.NoError(t, err)
+	if len(rootFiles) > 0 && rootFiles[0].Name.Name == "main" {
+		packages = append(packages, ".")
+	}
+
+	cmdRoot := filepath.Join(root, "cmd")
+	if _, err := os.Stat(cmdRoot); os.IsNotExist(err) {
+		require.NotEmpty(t, packages)
+		return packages
+	} else {
+		require.NoError(t, err)
+	}
+	err = filepath.WalkDir(cmdRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

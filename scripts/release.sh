@@ -15,7 +15,7 @@ Options:
 
 Environment:
   CODOG_RELEASE_BRANCH  Branch recorded in build metadata. Defaults to main.
-  CODOG_BUILD_PACKAGE  Go package to build. Defaults to ./cmd/codog.
+  CODOG_BUILD_PACKAGE  Go package to build. Defaults to the module root.
 EOF
 }
 
@@ -103,7 +103,7 @@ trap cleanup EXIT
 
 build_date="$(git show -s --format=%cI "${commit_sha}")"
 branch="${CODOG_RELEASE_BRANCH:-main}"
-build_package="${CODOG_BUILD_PACKAGE:-./cmd/codog}"
+build_package="${CODOG_BUILD_PACKAGE:-.}"
 host_os="$(go env GOOS)"
 host_arch="$(go env GOARCH)"
 ldflags="-s -w"

@@ -8,7 +8,7 @@ Usage: scripts/smoke.sh [options]
 Runs the local release smoke gate used by CI:
   - go test ./...
   - go vet ./...
-  - go build ./cmd/codog
+  - go build .
   - source install smoke
   - contract artifact generation
 
@@ -87,7 +87,7 @@ step "go vet"
 go vet ./...
 
 step "go build"
-go build ./cmd/codog
+go build .
 
 install_dir="${artifact_dir}/bin"
 step "install smoke"

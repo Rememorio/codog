@@ -49,7 +49,7 @@ it:
 gh release view v0.1.0
 gh release download v0.1.0 --dir dist-verify
 (cd dist-verify && shasum -a 256 -c SHA256SUMS)
-GOBIN="$(mktemp -d)" go install github.com/Rememorio/codog/cmd/codog@v0.1.0
+GOBIN="$(mktemp -d)" go install github.com/Rememorio/codog@v0.1.0
 ```
 
 Run the native archive's `codog --version --json` and confirm its version and

@@ -1778,7 +1778,7 @@ func buildCodogBinary(t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/codog")
+	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Dir = root
 	var out bytes.Buffer
 	cmd.Stdout = &out

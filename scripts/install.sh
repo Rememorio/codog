@@ -106,7 +106,7 @@ target="${bin_dir}/codog"
 printf 'Building codog from %s\n' "${repo_root}"
 (
   cd "${repo_root}"
-  go build -trimpath -ldflags "${ldflags[*]}" -o "${tmp_binary}" ./cmd/codog
+  go build -trimpath -ldflags "${ldflags[*]}" -o "${tmp_binary}" .
 )
 
 install -m 0755 "${tmp_binary}" "${target}"
