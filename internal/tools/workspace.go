@@ -675,33 +675,116 @@ func (GrepTool) Definition() anthropic.ToolDefinition {
 
 func (GrepTool) Permission() Permission { return PermissionReadOnly }
 
+type grepInput struct {
+	Pattern        string `json:"pattern"`
+	Path           string `json:"path"`
+	Glob           string `json:"glob"`
+	OutputMode     string `json:"output_mode"`
+	Before         int    `json:"-B"`
+	After          int    `json:"-A"`
+	ContextShort   int    `json:"-C"`
+	Context        int    `json:"context"`
+	LineNumbers    *bool  `json:"-n"`
+	DashIgnoreCase bool   `json:"-i"`
+	IgnoreCase     bool   `json:"ignore_case"`
+	Type           string `json:"type"`
+	Limit          int    `json:"limit"`
+	HeadLimit      *int   `json:"head_limit"`
+	Offset         int    `json:"offset"`
+	Multiline      bool   `json:"multiline"`
+}
+
+type grepOptions struct {
+	root          string
+	walkRoot      string
+	glob          string
+	fileType      string
+	mode          string
+	limit         int
+	offset        int
+	beforeLines   int
+	afterLines    int
+	unlimited     bool
+	lineNumbers   bool
+	multiline     bool
+	respectIgnore bool
+	pattern       *regexp.Regexp
+}
+
+type grepSearch struct {
+	workspace        string
+	options          grepOptions
+	ignoreMatcher    *gitignore.Matcher
+	seenFiles        map[string]bool
+	counts           map[string]int
+	files            []string
+	contentFiles     map[string]bool
+	contentFilenames []string
+	contentLines     []string
+	matches          []map[string]any
+	seen             int
+	filesTruncated   bool
+	countTruncated   bool
+	contentTruncated bool
+}
+
 func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	started := time.Now()
-	var payload struct {
-		Pattern        string `json:"pattern"`
-		Path           string `json:"path"`
-		Glob           string `json:"glob"`
-		OutputMode     string `json:"output_mode"`
-		Before         int    `json:"-B"`
-		After          int    `json:"-A"`
-		ContextShort   int    `json:"-C"`
-		Context        int    `json:"context"`
-		LineNumbers    *bool  `json:"-n"`
-		DashIgnoreCase bool   `json:"-i"`
-		IgnoreCase     bool   `json:"ignore_case"`
-		Type           string `json:"type"`
-		Limit          int    `json:"limit"`
-		HeadLimit      *int   `json:"head_limit"`
-		Offset         int    `json:"offset"`
-		Multiline      bool   `json:"multiline"`
-	}
+	var payload grepInput
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	if payload.Pattern == "" {
-		return "", errors.New("pattern is required")
+	search, err := newGrepSearch(t, payload)
+	if err != nil {
+		return "", err
 	}
-	pattern := payload.Pattern
+	if err := search.run(); err != nil {
+		return "", err
+	}
+	return search.render(time.Since(started).Milliseconds())
+}
+
+func newGrepSearch(tool GrepTool, payload grepInput) (*grepSearch, error) {
+	pattern, err := compileGrepPattern(payload)
+	if err != nil {
+		return nil, err
+	}
+	root := tool.Workspace
+	if payload.Path != "" {
+		root, err = safePathInScope(tool.Workspace, tool.AdditionalDirs, payload.Path, false)
+		if err != nil {
+			return nil, err
+		}
+	}
+	mode := normalizeGrepOutputMode(payload.OutputMode)
+	if mode == "" {
+		return nil, suggestedValueError("unsupported grep output_mode", payload.OutputMode, grepOutputModeNames)
+	}
+	limit, unlimited := grepLimit(payload.HeadLimit, payload.Limit)
+	beforeLines, afterLines := grepContextLimits(payload)
+	lineNumbers := payload.LineNumbers == nil || *payload.LineNumbers
+	walkRoot := root
+	if payload.Glob != "" {
+		walkRoot = deriveGlobWalkRoot(root, payload.Glob)
+	}
+	return &grepSearch{
+		workspace: tool.Workspace,
+		options: grepOptions{
+			root: root, walkRoot: walkRoot, glob: payload.Glob, fileType: payload.Type,
+			mode: mode, limit: limit, offset: max(payload.Offset, 0), beforeLines: beforeLines,
+			afterLines: afterLines, unlimited: unlimited, lineNumbers: lineNumbers,
+			multiline: payload.Multiline, respectIgnore: tool.RespectGitignore, pattern: pattern,
+		},
+		seenFiles:    map[string]bool{},
+		counts:       map[string]int{},
+		contentFiles: map[string]bool{},
+	}, nil
+}
+
+func compileGrepPattern(payload grepInput) (*regexp.Regexp, error) {
+	if payload.Pattern == "" {
+		return nil, errors.New("pattern is required")
+	}
 	flags := ""
 	if payload.IgnoreCase || payload.DashIgnoreCase {
 		flags += "i"
@@ -709,26 +792,14 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	if payload.Multiline {
 		flags += "s"
 	}
+	pattern := payload.Pattern
 	if flags != "" {
 		pattern = "(?" + flags + ")" + pattern
 	}
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return "", err
-	}
-	root := t.Workspace
-	if payload.Path != "" {
-		root, err = safePathInScope(t.Workspace, t.AdditionalDirs, payload.Path, false)
-		if err != nil {
-			return "", err
-		}
-	}
-	mode := normalizeGrepOutputMode(payload.OutputMode)
-	if mode == "" {
-		return "", suggestedValueError("unsupported grep output_mode", payload.OutputMode, grepOutputModeNames)
-	}
-	limit, unlimited := grepLimit(payload.HeadLimit, payload.Limit)
-	offset := max(payload.Offset, 0)
+	return regexp.Compile(pattern)
+}
+
+func grepContextLimits(payload grepInput) (int, int) {
 	contextLines := max(payload.Context, 0)
 	if contextLines == 0 {
 		contextLines = max(payload.ContextShort, 0)
@@ -741,248 +812,242 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	if afterLines == 0 {
 		afterLines = contextLines
 	}
-	lineNumbers := true
-	if payload.LineNumbers != nil {
-		lineNumbers = *payload.LineNumbers
-	}
-	seenFiles := map[string]bool{}
-	counts := map[string]int{}
-	var files []string
-	contentFiles := map[string]bool{}
-	var contentFilenames []string
-	var contentLines []string
-	var matches []map[string]any
-	seen := 0
-	filesTruncated := false
-	countTruncated := false
-	contentTruncated := false
-	walkRoot := root
-	if payload.Glob != "" {
-		walkRoot = deriveGlobWalkRoot(root, payload.Glob)
-	}
-	var ignoreMatcher *gitignore.Matcher
-	if t.RespectGitignore {
-		ignoreMatcher, err = gitignore.New(t.Workspace)
+	return beforeLines, afterLines
+}
+
+func (s *grepSearch) run() error {
+	if s.options.respectIgnore {
+		matcher, err := gitignore.New(s.workspace)
 		if err != nil {
-			return "", err
+			return err
 		}
+		s.ignoreMatcher = matcher
 	}
-	err = filepath.WalkDir(walkRoot, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			if ignoredDir(entry.Name()) && path != root {
-				return filepath.SkipDir
-			}
-			if ignoreMatcher != nil && ignoreMatcher.Ignored(path, true) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if ignoreMatcher != nil && ignoreMatcher.Ignored(path, false) {
-			return nil
-		}
-		if payload.Glob != "" {
-			rel, _ := filepath.Rel(root, path)
-			if !globPatternMatches(payload.Glob, rel, filepath.Base(path)) {
-				return nil
-			}
-		}
-		if payload.Type != "" && !matchesGrepType(path, payload.Type) {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil || bytes.Contains(data[:min(len(data), 4096)], []byte{0}) {
-			return nil
-		}
-		if payload.Multiline {
-			display := displayPath(t.Workspace, path)
-			text := string(data)
-			locations := re.FindAllStringIndex(text, -1)
-			if len(locations) == 0 {
-				return nil
-			}
-			switch mode {
-			case "files_with_matches":
-				if !seenFiles[display] {
-					seenFiles[display] = true
-					if seen >= offset {
-						if !unlimited && len(files) >= limit {
-							filesTruncated = true
-							return filepath.SkipAll
-						}
-						files = append(files, display)
-					}
-					seen++
-				}
-				return nil
-			case "count":
-				if _, ok := counts[display]; !ok && !unlimited && len(counts) >= offset+limit {
-					countTruncated = true
-					return filepath.SkipAll
-				}
-				counts[display] += len(locations)
-				return nil
-			default:
-				lines := strings.Split(text, "\n")
-				lineStarts := grepLineStartOffsets(text)
-				for _, location := range locations {
-					if seen >= offset {
-						if !unlimited && len(matches) >= limit {
-							contentTruncated = true
-							return filepath.SkipAll
-						}
-						if !contentFiles[display] {
-							contentFiles[display] = true
-							contentFilenames = append(contentFilenames, display)
-						}
-						startLine := grepLineForOffset(lineStarts, location[0])
-						endLine := grepLineForOffset(lineStarts, max(location[1]-1, location[0]))
-						matchText := text[location[0]:location[1]]
-						match := map[string]any{"path": display, "line": startLine + 1, "end_line": endLine + 1, "text": matchText}
-						if beforeLines > 0 {
-							before := grepContextLines(lines, startLine-beforeLines, startLine)
-							match["before"] = before
-							for _, entry := range before {
-								contentLines = append(contentLines, formatGrepContentLine(display, entry.Line, entry.Text, lineNumbers))
-							}
-						}
-						for _, entry := range grepContextLines(lines, startLine, endLine+1) {
-							contentLines = append(contentLines, formatGrepContentLine(display, entry.Line, entry.Text, lineNumbers))
-						}
-						if afterLines > 0 {
-							after := grepContextLines(lines, endLine+1, endLine+afterLines+2)
-							match["after"] = after
-							for _, entry := range after {
-								contentLines = append(contentLines, formatGrepContentLine(display, entry.Line, entry.Text, lineNumbers))
-							}
-						}
-						matches = append(matches, match)
-					}
-					seen++
-				}
-				return nil
-			}
-		}
-		lines := strings.Split(string(data), "\n")
-		for i, line := range lines {
-			if re.MatchString(line) {
-				display := displayPath(t.Workspace, path)
-				switch mode {
-				case "files_with_matches":
-					if !seenFiles[display] {
-						seenFiles[display] = true
-						if seen >= offset {
-							if !unlimited && len(files) >= limit {
-								filesTruncated = true
-								return filepath.SkipAll
-							}
-							files = append(files, display)
-						}
-						seen++
-					}
-					return nil
-				case "count":
-					if _, ok := counts[display]; !ok && !unlimited && len(counts) >= offset+limit {
-						countTruncated = true
-						return filepath.SkipAll
-					}
-					counts[display]++
-				default:
-					if seen >= offset {
-						if !unlimited && len(matches) >= limit {
-							contentTruncated = true
-							return filepath.SkipAll
-						}
-						match := map[string]any{"path": display, "line": i + 1, "text": line}
-						if !contentFiles[display] {
-							contentFiles[display] = true
-							contentFilenames = append(contentFilenames, display)
-						}
-						if beforeLines > 0 {
-							before := grepContextLines(lines, i-beforeLines, i)
-							match["before"] = before
-							for _, entry := range before {
-								contentLines = append(contentLines, formatGrepContentLine(display, entry.Line, entry.Text, lineNumbers))
-							}
-						}
-						contentLines = append(contentLines, formatGrepContentLine(display, i+1, line, lineNumbers))
-						if afterLines > 0 {
-							after := grepContextLines(lines, i+1, i+afterLines+1)
-							match["after"] = after
-							for _, entry := range after {
-								contentLines = append(contentLines, formatGrepContentLine(display, entry.Line, entry.Text, lineNumbers))
-							}
-						}
-						matches = append(matches, match)
-					}
-					seen++
-				}
-			}
-		}
+	return filepath.WalkDir(s.options.walkRoot, s.visit)
+}
+
+func (s *grepSearch) visit(path string, entry os.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		return walkErr
+	}
+	if entry.IsDir() {
+		return s.visitDirectory(path, entry)
+	}
+	if !s.includesFile(path) {
 		return nil
-	})
-	if err != nil {
-		return "", err
 	}
-	durationMS := time.Since(started).Milliseconds()
-	switch mode {
+	data, err := os.ReadFile(path)
+	if err != nil || bytes.Contains(data[:min(len(data), 4096)], []byte{0}) {
+		return nil
+	}
+	if s.options.multiline {
+		return s.matchMultiline(path, string(data))
+	}
+	return s.matchLines(path, strings.Split(string(data), "\n"))
+}
+
+func (s *grepSearch) visitDirectory(path string, entry os.DirEntry) error {
+	if ignoredDir(entry.Name()) && path != s.options.root {
+		return filepath.SkipDir
+	}
+	if s.ignoreMatcher != nil && s.ignoreMatcher.Ignored(path, true) {
+		return filepath.SkipDir
+	}
+	return nil
+}
+
+func (s *grepSearch) includesFile(path string) bool {
+	if s.ignoreMatcher != nil && s.ignoreMatcher.Ignored(path, false) {
+		return false
+	}
+	if s.options.glob != "" {
+		rel, _ := filepath.Rel(s.options.root, path)
+		if !globPatternMatches(s.options.glob, rel, filepath.Base(path)) {
+			return false
+		}
+	}
+	return s.options.fileType == "" || matchesGrepType(path, s.options.fileType)
+}
+
+func (s *grepSearch) matchMultiline(path string, text string) error {
+	locations := s.options.pattern.FindAllStringIndex(text, -1)
+	if len(locations) == 0 {
+		return nil
+	}
+	display := displayPath(s.workspace, path)
+	switch s.options.mode {
 	case "files_with_matches":
-		sort.Strings(files)
+		return s.recordFile(display)
+	case "count":
+		return s.recordCount(display, len(locations))
+	}
+	lines := strings.Split(text, "\n")
+	lineStarts := grepLineStartOffsets(text)
+	for _, location := range locations {
+		startLine := grepLineForOffset(lineStarts, location[0])
+		endLine := grepLineForOffset(lineStarts, max(location[1]-1, location[0]))
+		if err := s.recordContent(display, lines, startLine, endLine, text[location[0]:location[1]]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *grepSearch) matchLines(path string, lines []string) error {
+	display := displayPath(s.workspace, path)
+	for index, line := range lines {
+		if !s.options.pattern.MatchString(line) {
+			continue
+		}
+		switch s.options.mode {
+		case "files_with_matches":
+			return s.recordFile(display)
+		case "count":
+			if err := s.recordCount(display, 1); err != nil {
+				return err
+			}
+		default:
+			if err := s.recordContent(display, lines, index, index, line); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *grepSearch) recordFile(path string) error {
+	if s.seenFiles[path] {
+		return nil
+	}
+	s.seenFiles[path] = true
+	defer func() { s.seen++ }()
+	if s.seen < s.options.offset {
+		return nil
+	}
+	if !s.options.unlimited && len(s.files) >= s.options.limit {
+		s.filesTruncated = true
+		return filepath.SkipAll
+	}
+	s.files = append(s.files, path)
+	return nil
+}
+
+func (s *grepSearch) recordCount(path string, count int) error {
+	if _, exists := s.counts[path]; !exists && !s.options.unlimited && len(s.counts) >= s.options.offset+s.options.limit {
+		s.countTruncated = true
+		return filepath.SkipAll
+	}
+	s.counts[path] += count
+	return nil
+}
+
+func (s *grepSearch) recordContent(path string, lines []string, startLine int, endLine int, text string) error {
+	defer func() { s.seen++ }()
+	if s.seen < s.options.offset {
+		return nil
+	}
+	if !s.options.unlimited && len(s.matches) >= s.options.limit {
+		s.contentTruncated = true
+		return filepath.SkipAll
+	}
+	s.recordContentFile(path)
+	match := map[string]any{"path": path, "line": startLine + 1, "text": text}
+	if s.options.multiline {
+		match["end_line"] = endLine + 1
+	}
+	if s.options.beforeLines > 0 {
+		before := grepContextLines(lines, startLine-s.options.beforeLines, startLine)
+		s.appendMatchContext(match, "before", path, before)
+	}
+	s.appendContentLines(path, grepContextLines(lines, startLine, endLine+1))
+	if s.options.afterLines > 0 {
+		afterEnd := endLine + s.options.afterLines + 1
+		if s.options.multiline {
+			afterEnd++
+		}
+		after := grepContextLines(lines, endLine+1, afterEnd)
+		s.appendMatchContext(match, "after", path, after)
+	}
+	s.matches = append(s.matches, match)
+	return nil
+}
+
+func (s *grepSearch) recordContentFile(path string) {
+	if s.contentFiles[path] {
+		return
+	}
+	s.contentFiles[path] = true
+	s.contentFilenames = append(s.contentFilenames, path)
+}
+
+func (s *grepSearch) appendMatchContext(match map[string]any, key string, path string, lines []grepContextLine) {
+	match[key] = lines
+	s.appendContentLines(path, lines)
+}
+
+func (s *grepSearch) appendContentLines(path string, lines []grepContextLine) {
+	for _, entry := range lines {
+		s.contentLines = append(s.contentLines, formatGrepContentLine(path, entry.Line, entry.Text, s.options.lineNumbers))
+	}
+}
+
+func (s *grepSearch) render(durationMS int64) (string, error) {
+	switch s.options.mode {
+	case "files_with_matches":
+		sort.Strings(s.files)
 		return pretty(map[string]any{
-			"output_mode":   mode,
-			"mode":          mode,
-			"files":         files,
-			"filenames":     files,
-			"num_files":     len(files),
-			"numFiles":      len(files),
+			"output_mode":   s.options.mode,
+			"mode":          s.options.mode,
+			"files":         s.files,
+			"filenames":     s.files,
+			"num_files":     len(s.files),
+			"numFiles":      len(s.files),
 			"content":       nil,
 			"numLines":      nil,
 			"numMatches":    nil,
-			"appliedLimit":  grepAppliedLimit(limit, unlimited),
-			"appliedOffset": offset,
+			"appliedLimit":  grepAppliedLimit(s.options.limit, s.options.unlimited),
+			"appliedOffset": s.options.offset,
 			"durationMs":    durationMS,
 			"duration_ms":   durationMS,
-			"truncated":     filesTruncated,
-			"offset":        offset,
+			"truncated":     s.filesTruncated,
+			"offset":        s.options.offset,
 		}), nil
 	case "count":
-		entries := grepCountEntries(counts, offset, limit)
+		entries := grepCountEntries(s.counts, s.options.offset, s.options.limit)
 		filenames := grepCountFilenames(entries)
-		totalMatches := grepCountTotal(counts)
+		totalMatches := grepCountTotal(s.counts)
 		return pretty(map[string]any{
-			"output_mode":   mode,
-			"mode":          mode,
+			"output_mode":   s.options.mode,
+			"mode":          s.options.mode,
 			"counts":        entries,
 			"filenames":     filenames,
 			"numFiles":      len(filenames),
 			"content":       nil,
 			"numLines":      nil,
 			"numMatches":    totalMatches,
-			"appliedLimit":  grepAppliedLimit(limit, unlimited),
-			"appliedOffset": offset,
+			"appliedLimit":  grepAppliedLimit(s.options.limit, s.options.unlimited),
+			"appliedOffset": s.options.offset,
 			"durationMs":    durationMS,
 			"duration_ms":   durationMS,
-			"truncated":     countTruncated,
-			"offset":        offset,
+			"truncated":     s.countTruncated,
+			"offset":        s.options.offset,
 		}), nil
 	default:
-		sort.Strings(contentFilenames)
+		sort.Strings(s.contentFilenames)
 		return pretty(map[string]any{
-			"output_mode":   mode,
-			"mode":          mode,
-			"matches":       matches,
-			"filenames":     contentFilenames,
-			"numFiles":      len(contentFilenames),
-			"content":       strings.Join(contentLines, "\n"),
-			"numLines":      len(contentLines),
-			"appliedLimit":  grepAppliedLimit(limit, unlimited),
-			"appliedOffset": offset,
+			"output_mode":   s.options.mode,
+			"mode":          s.options.mode,
+			"matches":       s.matches,
+			"filenames":     s.contentFilenames,
+			"numFiles":      len(s.contentFilenames),
+			"content":       strings.Join(s.contentLines, "\n"),
+			"numLines":      len(s.contentLines),
+			"appliedLimit":  grepAppliedLimit(s.options.limit, s.options.unlimited),
+			"appliedOffset": s.options.offset,
 			"durationMs":    durationMS,
 			"duration_ms":   durationMS,
-			"truncated":     contentTruncated,
-			"offset":        offset,
+			"truncated":     s.contentTruncated,
+			"offset":        s.options.offset,
 		}), nil
 	}
 }

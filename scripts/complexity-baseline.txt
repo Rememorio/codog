@@ -164,9 +164,7 @@ gocognit|internal/session/store.go|(*Store).removeSessionFiles|41
 gocognit|internal/skills/skills.go|load|45
 gocognit|internal/status/status.go|RenderText|45
 gocognit|internal/tools/mcp.go|(BashTool).Execute|37
-gocognit|internal/tools/remote.go|(LSPTool).Execute|341
 gocognit|internal/tools/tools.go|(*Prompter).Decide|51
-gocognit|internal/tools/workspace.go|(GrepTool).Execute|208
 gocognit|internal/tui/helpers.go|toolActivityOutputLines|39
 gocognit|internal/tui/input.go|(model).Update|452
 gocognit|internal/tui/input.go|(model).View|37
