@@ -3562,134 +3562,140 @@ func (a *App) CodeIntelLSP(args []string) error {
 	}
 	store := codeintel.NewLSPStore(a.Config.ConfigHome, a.Workspace)
 	if len(args) == 0 || args[0] == "list" {
-		statuses, err := store.List()
-		if err != nil {
-			return err
-		}
-		return renderCodeIntelLSPPayload(a.Out, format, codeIntelLSPListReport{
-			Kind:    "lsp_list",
-			Action:  "list",
-			Status:  "ok",
-			Count:   len(statuses),
-			Servers: statuses,
-			Message: lspListMessage(statuses),
-		})
+		return a.codeIntelLSPList(&store, format)
 	}
-	var payload any
-	switch args[0] {
+	payload, err := a.codeIntelLSPPayload(&store, args[0], args[1:])
+	if err != nil {
+		return err
+	}
+	return renderCodeIntelLSPPayload(a.Out, format, payload)
+}
+
+func (a *App) codeIntelLSPList(store *codeintel.LSPStore, format string) error {
+	statuses, err := store.List()
+	if err != nil {
+		return err
+	}
+	return renderCodeIntelLSPPayload(a.Out, format, codeIntelLSPListReport{
+		Kind:    "lsp_list",
+		Action:  "list",
+		Status:  "ok",
+		Count:   len(statuses),
+		Servers: statuses,
+		Message: lspListMessage(statuses),
+	})
+}
+
+func (a *App) codeIntelLSPPayload(store *codeintel.LSPStore, action string, args []string) (any, error) {
+	switch action {
 	case "actions", "capabilities":
 		actions := codeintel.SupportedLSPActions()
-		payload = codeIntelLSPActionsReport{
+		return codeIntelLSPActionsReport{
 			Kind:    "lsp_actions",
 			Action:  "actions",
 			Status:  "ok",
 			Count:   len(actions),
 			Actions: actions,
 			Message: "LSP query actions are resolved locally; start a language server before running `code-intel lsp query`.",
-		}
+		}, nil
 	case "discover":
 		candidates := codeintel.DefaultLSPCandidates()
-		payload = codeIntelLSPDiscoverReport{
+		return codeIntelLSPDiscoverReport{
 			Kind:       "lsp_discover",
 			Action:     "discover",
 			Status:     "ok",
 			Count:      len(candidates),
 			Candidates: candidates,
 			Message:    "Language-server candidates are discovered from common executable names on PATH.",
-		}
+		}, nil
 	case "start":
-		if len(args) < 2 {
-			return errors.New("usage: codog code-intel lsp start LANGUAGE [COMMAND...]")
+		if len(args) < 1 {
+			return nil, errors.New("usage: codog code-intel lsp start LANGUAGE [COMMAND...]")
 		}
-		status, err := store.Start(args[1], args[2:])
-		if err != nil {
-			return err
-		}
-		payload = status
+		return store.Start(args[0], args[1:])
 	case "status":
-		if len(args) < 2 {
-			return errors.New("usage: codog code-intel lsp status LANGUAGE")
+		if len(args) < 1 {
+			return nil, errors.New("usage: codog code-intel lsp status LANGUAGE")
 		}
-		status, err := store.Status(args[1])
-		if err != nil {
-			return err
-		}
-		payload = status
+		return store.Status(args[0])
 	case "query", "request":
-		write := false
-		codeActionTitle := ""
-		cleanArgs := []string{}
-		for index := 0; index < len(args); index++ {
-			arg := args[index]
-			switch {
-			case arg == "--write" || arg == "--apply":
-				write = true
-			case arg == "--preview" || arg == "--dry-run":
-				write = false
-			case arg == "--code-action-title" || arg == "--action-title":
-				index++
-				if index >= len(args) {
-					return errors.New("lsp query code action title is required")
-				}
-				codeActionTitle = args[index]
-			case strings.HasPrefix(arg, "--code-action-title="):
-				codeActionTitle = strings.TrimPrefix(arg, "--code-action-title=")
-			case strings.HasPrefix(arg, "--action-title="):
-				codeActionTitle = strings.TrimPrefix(arg, "--action-title=")
-			default:
-				cleanArgs = append(cleanArgs, arg)
-			}
-		}
-		args = cleanArgs
-		if len(args) < 4 {
-			return errors.New("usage: codog code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER [NEW_NAME]] [--write|--apply]")
-		}
-		line := 0
-		character := 0
-		newName := ""
-		if len(args) > 4 {
-			var err error
-			line, err = strconv.Atoi(args[4])
-			if err != nil {
-				return fmt.Errorf("lsp query line must be an integer")
-			}
-		}
-		if len(args) > 5 {
-			var err error
-			character, err = strconv.Atoi(args[5])
-			if err != nil {
-				return fmt.Errorf("lsp query character must be an integer")
-			}
-		}
-		if len(args) > 6 {
-			newName = args[6]
-		}
-		result, err := store.Query(context.Background(), args[1], codeintel.LSPQueryRequest{
-			Action:          args[2],
-			Path:            args[3],
-			Line:            line,
-			Character:       character,
-			NewName:         newName,
-			CodeActionTitle: codeActionTitle,
-			Apply:           write,
-		})
+		language, req, err := parseCodeIntelLSPQueryArgs(args)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		payload = result
+		return store.Query(context.Background(), language, req)
 	case "stop":
-		if len(args) < 2 {
-			return errors.New("usage: codog code-intel lsp stop LANGUAGE")
+		if len(args) < 1 {
+			return nil, errors.New("usage: codog code-intel lsp stop LANGUAGE")
 		}
-		status, err := store.Stop(args[1])
-		if err != nil {
-			return err
-		}
-		payload = status
+		return store.Stop(args[0])
 	default:
-		return unknownCodeIntelLSPActionError(args[0])
+		return nil, unknownCodeIntelLSPActionError(action)
 	}
-	return renderCodeIntelLSPPayload(a.Out, format, payload)
+}
+
+func parseCodeIntelLSPQueryArgs(args []string) (string, codeintel.LSPQueryRequest, error) {
+	req := codeintel.LSPQueryRequest{}
+	cleanArgs, err := consumeCodeIntelLSPQueryOptions(args, &req)
+	if err != nil {
+		return "", req, err
+	}
+	if len(cleanArgs) < 3 {
+		return "", req, errors.New("usage: codog code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER [NEW_NAME]] [--write|--apply]")
+	}
+	req.Action = cleanArgs[1]
+	req.Path = cleanArgs[2]
+	if err := setCodeIntelLSPQueryPosition(&req, cleanArgs); err != nil {
+		return "", req, err
+	}
+	if len(cleanArgs) > 5 {
+		req.NewName = cleanArgs[5]
+	}
+	return cleanArgs[0], req, nil
+}
+
+func consumeCodeIntelLSPQueryOptions(args []string, req *codeintel.LSPQueryRequest) ([]string, error) {
+	cleanArgs := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--write" || arg == "--apply":
+			req.Apply = true
+		case arg == "--preview" || arg == "--dry-run":
+			req.Apply = false
+		case arg == "--code-action-title" || arg == "--action-title":
+			index++
+			if index >= len(args) {
+				return nil, errors.New("lsp query code action title is required")
+			}
+			req.CodeActionTitle = args[index]
+		case strings.HasPrefix(arg, "--code-action-title="):
+			req.CodeActionTitle = strings.TrimPrefix(arg, "--code-action-title=")
+		case strings.HasPrefix(arg, "--action-title="):
+			req.CodeActionTitle = strings.TrimPrefix(arg, "--action-title=")
+		default:
+			cleanArgs = append(cleanArgs, arg)
+		}
+	}
+	return cleanArgs, nil
+}
+
+func setCodeIntelLSPQueryPosition(req *codeintel.LSPQueryRequest, args []string) error {
+	if len(args) > 3 {
+		line, err := strconv.Atoi(args[3])
+		if err != nil {
+			return errors.New("lsp query line must be an integer")
+		}
+		req.Line = line
+	}
+	if len(args) > 4 {
+		character, err := strconv.Atoi(args[4])
+		if err != nil {
+			return errors.New("lsp query character must be an integer")
+		}
+		req.Character = character
+	}
+	return nil
 }
 
 var codeIntelLSPActionCandidates = []string{

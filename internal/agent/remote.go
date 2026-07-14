@@ -1621,111 +1621,10 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		args = []string{"status"}
 	}
-	var payload any
 	action := strings.ToLower(strings.TrimSpace(args[0]))
-	switch action {
-	case "status", "show":
-		payload = a.updaterStatusReport(action)
-	case "check":
-		manifestURL := ""
-		if len(args) > 1 {
-			manifestURL = args[1]
-		} else {
-			manifestURL = strings.TrimSpace(a.Config.Future.UpdaterManifestURL)
-		}
-		if manifestURL == "" {
-			return requiredArgumentError{Command: "updater check", Argument: "URL", Usage: "codog updater check [URL] [PUBLIC_KEY]"}
-		}
-		var result updater.CheckResult
-		var err error
-		if len(args) > 2 {
-			result, err = updater.CheckSigned(ctx, version, manifestURL, args[2])
-		} else {
-			result, err = updater.Check(ctx, version, manifestURL)
-		}
-		if err != nil {
-			return err
-		}
-		payload = result
-	case "verify":
-		if len(args) < 3 {
-			return requiredArgumentError{Command: "updater verify", Argument: "URL PUBLIC_KEY", Usage: "codog updater verify URL PUBLIC_KEY"}
-		}
-		result, err := updater.CheckSigned(ctx, version, args[1], args[2])
-		if err != nil {
-			return err
-		}
-		payload = result
-	case "download":
-		manifestURL := ""
-		if len(args) > 1 {
-			manifestURL = args[1]
-		} else {
-			manifestURL = strings.TrimSpace(a.Config.Future.UpdaterManifestURL)
-		}
-		if manifestURL == "" {
-			return requiredArgumentError{Command: "updater download", Argument: "URL", Usage: "codog updater download [URL] [PLATFORM] [DEST] [PUBLIC_KEY]"}
-		}
-		platform := ""
-		if len(args) > 2 {
-			platform = args[2]
-		}
-		dest := filepath.Join(a.Config.ConfigHome, "updater")
-		if len(args) > 3 {
-			dest = args[3]
-		}
-		var result updater.DownloadResult
-		var err error
-		if len(args) > 4 {
-			result, err = updater.DownloadSigned(ctx, manifestURL, platform, dest, args[4])
-		} else {
-			result, err = updater.Download(ctx, manifestURL, platform, dest)
-		}
-		if err != nil {
-			return err
-		}
-		payload = result
-	case "install":
-		if len(args) < 2 {
-			return requiredArgumentError{Command: "updater install", Argument: "ARTIFACT", Usage: "codog updater install ARTIFACT [TARGET]"}
-		}
-		target := ""
-		if len(args) > 2 {
-			target = args[2]
-		} else {
-			exe, err := os.Executable()
-			if err != nil {
-				return err
-			}
-			target = exe
-		}
-		result, err := updater.Install(args[1], target)
-		if err != nil {
-			return err
-		}
-		payload = result
-	case "rollback":
-		target := ""
-		if len(args) > 1 {
-			target = args[1]
-		} else {
-			exe, err := os.Executable()
-			if err != nil {
-				return err
-			}
-			target = exe
-		}
-		result, err := updater.Rollback(target)
-		if err != nil {
-			return err
-		}
-		payload = result
-	default:
-		return unexpectedExtraArgsError{
-			Command: "updater",
-			Args:    []string{args[0]},
-			Usage:   "codog updater [status|check|verify|download|install|rollback] [ARGS...]",
-		}
+	payload, err := a.updaterPayload(ctx, action, args[1:])
+	if err != nil {
+		return err
 	}
 	report := updaterCommandReport{
 		Kind:          "updater",
@@ -1739,6 +1638,97 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 	data, _ := json.MarshalIndent(report, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+func (a *App) updaterPayload(ctx context.Context, action string, args []string) (any, error) {
+	switch action {
+	case "status", "show":
+		return a.updaterStatusReport(action), nil
+	case "check":
+		return a.updaterCheck(ctx, args)
+	case "verify":
+		return updaterVerify(ctx, args)
+	case "download":
+		return a.updaterDownload(ctx, args)
+	case "install":
+		return updaterInstall(args)
+	case "rollback":
+		return updaterRollback(args)
+	default:
+		return nil, unexpectedExtraArgsError{
+			Command: "updater",
+			Args:    []string{action},
+			Usage:   "codog updater [status|check|verify|download|install|rollback] [ARGS...]",
+		}
+	}
+}
+
+func (a *App) updaterCheck(ctx context.Context, args []string) (updater.CheckResult, error) {
+	manifestURL := a.updaterManifestURL(args)
+	if manifestURL == "" {
+		return updater.CheckResult{}, requiredArgumentError{Command: "updater check", Argument: "URL", Usage: "codog updater check [URL] [PUBLIC_KEY]"}
+	}
+	if len(args) > 1 {
+		return updater.CheckSigned(ctx, version, manifestURL, args[1])
+	}
+	return updater.Check(ctx, version, manifestURL)
+}
+
+func updaterVerify(ctx context.Context, args []string) (updater.CheckResult, error) {
+	if len(args) < 2 {
+		return updater.CheckResult{}, requiredArgumentError{Command: "updater verify", Argument: "URL PUBLIC_KEY", Usage: "codog updater verify URL PUBLIC_KEY"}
+	}
+	return updater.CheckSigned(ctx, version, args[0], args[1])
+}
+
+func (a *App) updaterDownload(ctx context.Context, args []string) (updater.DownloadResult, error) {
+	manifestURL := a.updaterManifestURL(args)
+	if manifestURL == "" {
+		return updater.DownloadResult{}, requiredArgumentError{Command: "updater download", Argument: "URL", Usage: "codog updater download [URL] [PLATFORM] [DEST] [PUBLIC_KEY]"}
+	}
+	platform := argumentAt(args, 1, "")
+	dest := argumentAt(args, 2, filepath.Join(a.Config.ConfigHome, "updater"))
+	if len(args) > 3 {
+		return updater.DownloadSigned(ctx, manifestURL, platform, dest, args[3])
+	}
+	return updater.Download(ctx, manifestURL, platform, dest)
+}
+
+func (a *App) updaterManifestURL(args []string) string {
+	return argumentAt(args, 0, strings.TrimSpace(a.Config.Future.UpdaterManifestURL))
+}
+
+func argumentAt(args []string, index int, fallback string) string {
+	if index < len(args) {
+		return args[index]
+	}
+	return fallback
+}
+
+func updaterInstall(args []string) (updater.InstallResult, error) {
+	if len(args) < 1 {
+		return updater.InstallResult{}, requiredArgumentError{Command: "updater install", Argument: "ARTIFACT", Usage: "codog updater install ARTIFACT [TARGET]"}
+	}
+	target, err := updaterTarget(args, 1)
+	if err != nil {
+		return updater.InstallResult{}, err
+	}
+	return updater.Install(args[0], target)
+}
+
+func updaterRollback(args []string) (updater.RollbackResult, error) {
+	target, err := updaterTarget(args, 0)
+	if err != nil {
+		return updater.RollbackResult{}, err
+	}
+	return updater.Rollback(target)
+}
+
+func updaterTarget(args []string, index int) (string, error) {
+	if index < len(args) {
+		return args[index], nil
+	}
+	return os.Executable()
 }
 
 type updaterCommandReport struct {

@@ -70,6 +70,33 @@ func TestInstallStatusDefaults(t *testing.T) {
 	require.Contains(t, report.Result.Updater.Commands, "install")
 }
 
+func TestUpdaterPayloadBoundaries(t *testing.T) {
+	app := &App{Config: config.Config{ConfigHome: t.TempDir()}}
+	payload, err := app.updaterPayload(context.Background(), "status", nil)
+	require.NoError(t, err)
+	require.IsType(t, updaterStatusReport{}, payload)
+
+	for _, test := range []struct {
+		name   string
+		action string
+		args   []string
+	}{
+		{name: "check missing URL", action: "check"},
+		{name: "verify missing key", action: "verify", args: []string{"https://example.com/manifest.json"}},
+		{name: "download missing URL", action: "download"},
+		{name: "install missing artifact", action: "install"},
+		{name: "unknown action", action: "unknown"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := app.updaterPayload(context.Background(), test.action, test.args)
+			require.Error(t, err)
+		})
+	}
+
+	require.Equal(t, "fallback", argumentAt(nil, 0, "fallback"))
+	require.Equal(t, "value", argumentAt([]string{"value"}, 0, "fallback"))
+}
+
 func TestUpdaterCheckUsesConfiguredManifestURL(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		require.NoError(t, json.NewEncoder(w).Encode(updater.Manifest{Version: "0.2.0"}))

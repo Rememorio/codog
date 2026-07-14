@@ -3962,56 +3962,67 @@ func (a *App) RemoteEnv(args []string) error {
 	switch req.Action {
 	case "show":
 	case "set":
-		path, err := a.preferenceConfigPath(req.Target, req.Path)
-		if err != nil {
+		if err := a.setRemoteEnv(&req); err != nil {
 			return err
 		}
-		if !req.SetEnabled && req.AuthToken == "" && !req.ClearToken && !req.SetLease {
-			return errors.New("remote-env set requires --enabled, --auth-token, --clear-auth-token, or --lease-seconds")
-		}
-		if req.SetEnabled {
-			if _, err := config.SetFileValue(path, "remote.enabled", req.Enabled); err != nil {
-				return err
-			}
-			a.Config.Future.RemoteEnabled = req.Enabled
-		}
-		if req.AuthToken != "" {
-			if _, err := config.SetFileValue(path, "remote.auth_token", req.AuthToken); err != nil {
-				return err
-			}
-			a.Config.Future.RemoteAuthToken = req.AuthToken
-		}
-		if req.ClearToken {
-			if _, err := config.UnsetFileValue(path, "remote.auth_token"); err != nil {
-				return err
-			}
-			if _, err := config.UnsetFileValue(path, legacyRemoteAuthTokenKey); err != nil {
-				return err
-			}
-			a.Config.Future.RemoteAuthToken = ""
-		}
-		if req.SetLease {
-			if _, err := config.SetFileValue(path, "remote.lease_seconds", req.LeaseSeconds); err != nil {
-				return err
-			}
-			a.Config.Future.RemoteLeaseSeconds = req.LeaseSeconds
-		}
-		req.Path = path
 	case "clear":
-		path, err := a.preferenceConfigPath(req.Target, req.Path)
-		if err != nil {
+		if err := a.clearRemoteEnv(&req); err != nil {
 			return err
 		}
-		if err := unsetConfigKeys(path, remoteResetKeys); err != nil {
-			return err
-		}
-		a.Config.Future.RemoteEnabled = false
-		a.Config.Future.RemoteAuthToken = ""
-		a.Config.Future.RemoteLeaseSeconds = 0
-		req.Path = path
 	default:
 		return fmt.Errorf("unknown remote-env command %q", req.Action)
 	}
+	return a.renderRemoteEnv(req)
+}
+
+func (a *App) setRemoteEnv(req *remoteEnvRequest) error {
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	if !req.SetEnabled && req.AuthToken == "" && !req.ClearToken && !req.SetLease {
+		return errors.New("remote-env set requires --enabled, --auth-token, --clear-auth-token, or --lease-seconds")
+	}
+	if req.SetEnabled {
+		if err := a.writeRemoteEnabled(path, req.Enabled); err != nil {
+			return err
+		}
+	}
+	if req.AuthToken != "" {
+		if err := a.writeRemoteAuthToken(path, req.AuthToken); err != nil {
+			return err
+		}
+	}
+	if req.ClearToken {
+		if err := a.clearRemoteAuthToken(path); err != nil {
+			return err
+		}
+	}
+	if req.SetLease {
+		if err := a.writeRemoteLease(path, req.LeaseSeconds); err != nil {
+			return err
+		}
+	}
+	req.Path = path
+	return nil
+}
+
+func (a *App) clearRemoteEnv(req *remoteEnvRequest) error {
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	if err := unsetConfigKeys(path, remoteResetKeys); err != nil {
+		return err
+	}
+	a.Config.Future.RemoteEnabled = false
+	a.Config.Future.RemoteAuthToken = ""
+	a.Config.Future.RemoteLeaseSeconds = 0
+	req.Path = path
+	return nil
+}
+
+func (a *App) renderRemoteEnv(req remoteEnvRequest) error {
 	report := remoteEnvReport{
 		Kind:                "remote_env",
 		Action:              req.Action,
@@ -4046,67 +4057,17 @@ func (a *App) RemoteSetup(args []string, overrides config.FlagOverrides) error {
 	switch req.Action {
 	case "status":
 	case "enable":
-		path, err := a.preferenceConfigPath(req.Target, req.Path)
-		if err != nil {
+		if err := a.enableRemoteSetup(&req); err != nil {
 			return err
 		}
-		if _, err := config.SetFileValue(path, "remote.enabled", true); err != nil {
-			return err
-		}
-		a.Config.Future.RemoteEnabled = true
-		if req.AuthToken != "" {
-			if _, err := config.SetFileValue(path, "remote.auth_token", req.AuthToken); err != nil {
-				return err
-			}
-			a.Config.Future.RemoteAuthToken = req.AuthToken
-		}
-		if req.ClearToken {
-			if _, err := config.UnsetFileValue(path, "remote.auth_token"); err != nil {
-				return err
-			}
-			if _, err := config.UnsetFileValue(path, legacyRemoteAuthTokenKey); err != nil {
-				return err
-			}
-			a.Config.Future.RemoteAuthToken = ""
-		}
-		if req.SetLease {
-			if _, err := config.SetFileValue(path, "remote.lease_seconds", req.LeaseSeconds); err != nil {
-				return err
-			}
-			a.Config.Future.RemoteLeaseSeconds = req.LeaseSeconds
-		}
-		req.Path = path
 	case "disable":
-		path, err := a.preferenceConfigPath(req.Target, req.Path)
-		if err != nil {
+		if err := a.disableRemoteSetup(&req); err != nil {
 			return err
 		}
-		if _, err := config.SetFileValue(path, "remote.enabled", false); err != nil {
-			return err
-		}
-		a.Config.Future.RemoteEnabled = false
-		if req.ClearToken {
-			if _, err := config.UnsetFileValue(path, "remote.auth_token"); err != nil {
-				return err
-			}
-			if _, err := config.UnsetFileValue(path, legacyRemoteAuthTokenKey); err != nil {
-				return err
-			}
-			a.Config.Future.RemoteAuthToken = ""
-		}
-		req.Path = path
 	case "clear":
-		path, err := a.preferenceConfigPath(req.Target, req.Path)
-		if err != nil {
+		if err := a.clearRemoteSetup(&req); err != nil {
 			return err
 		}
-		if err := unsetConfigKeys(path, remoteResetKeys); err != nil {
-			return err
-		}
-		a.Config.Future.RemoteEnabled = false
-		a.Config.Future.RemoteAuthToken = ""
-		a.Config.Future.RemoteLeaseSeconds = 0
-		req.Path = path
 	default:
 		return fmt.Errorf("unknown remote-setup command %q", req.Action)
 	}
@@ -4117,6 +4078,100 @@ func (a *App) RemoteSetup(args []string, overrides config.FlagOverrides) error {
 		return nil
 	}
 	renderRemoteSetupReport(a.Out, report)
+	return nil
+}
+
+func (a *App) enableRemoteSetup(req *remoteSetupRequest) error {
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	if err := a.writeRemoteEnabled(path, true); err != nil {
+		return err
+	}
+	if req.AuthToken != "" {
+		if err := a.writeRemoteAuthToken(path, req.AuthToken); err != nil {
+			return err
+		}
+	}
+	if req.ClearToken {
+		if err := a.clearRemoteAuthToken(path); err != nil {
+			return err
+		}
+	}
+	if req.SetLease {
+		if err := a.writeRemoteLease(path, req.LeaseSeconds); err != nil {
+			return err
+		}
+	}
+	req.Path = path
+	return nil
+}
+
+func (a *App) disableRemoteSetup(req *remoteSetupRequest) error {
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	if err := a.writeRemoteEnabled(path, false); err != nil {
+		return err
+	}
+	if req.ClearToken {
+		if err := a.clearRemoteAuthToken(path); err != nil {
+			return err
+		}
+	}
+	req.Path = path
+	return nil
+}
+
+func (a *App) clearRemoteSetup(req *remoteSetupRequest) error {
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	if err := unsetConfigKeys(path, remoteResetKeys); err != nil {
+		return err
+	}
+	a.Config.Future.RemoteEnabled = false
+	a.Config.Future.RemoteAuthToken = ""
+	a.Config.Future.RemoteLeaseSeconds = 0
+	req.Path = path
+	return nil
+}
+
+func (a *App) writeRemoteEnabled(path string, enabled bool) error {
+	if _, err := config.SetFileValue(path, "remote.enabled", enabled); err != nil {
+		return err
+	}
+	a.Config.Future.RemoteEnabled = enabled
+	return nil
+}
+
+func (a *App) writeRemoteAuthToken(path string, token string) error {
+	if _, err := config.SetFileValue(path, "remote.auth_token", token); err != nil {
+		return err
+	}
+	a.Config.Future.RemoteAuthToken = token
+	return nil
+}
+
+func (a *App) clearRemoteAuthToken(path string) error {
+	if _, err := config.UnsetFileValue(path, "remote.auth_token"); err != nil {
+		return err
+	}
+	if _, err := config.UnsetFileValue(path, legacyRemoteAuthTokenKey); err != nil {
+		return err
+	}
+	a.Config.Future.RemoteAuthToken = ""
+	return nil
+}
+
+func (a *App) writeRemoteLease(path string, seconds int) error {
+	if _, err := config.SetFileValue(path, "remote.lease_seconds", seconds); err != nil {
+		return err
+	}
+	a.Config.Future.RemoteLeaseSeconds = seconds
 	return nil
 }
 

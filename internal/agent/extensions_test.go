@@ -3775,6 +3775,28 @@ func requireSetupCheck(t *testing.T, checks []setupCheck, name string, status st
 	require.Failf(t, "missing setup check", "check %q not found in %#v", name, checks)
 }
 
+func TestRemoteConfigurationActionErrors(t *testing.T) {
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: t.TempDir(),
+		Out:       io.Discard,
+	}
+
+	require.Error(t, app.RemoteEnv([]string{"unknown"}))
+	require.Error(t, app.setRemoteEnv(&remoteEnvRequest{Target: "user"}))
+	require.Error(t, app.setRemoteEnv(&remoteEnvRequest{Target: "invalid", SetEnabled: true}))
+	require.Error(t, app.clearRemoteEnv(&remoteEnvRequest{Target: "invalid"}))
+	require.Error(t, app.enableRemoteSetup(&remoteSetupRequest{Target: "invalid"}))
+	require.Error(t, app.disableRemoteSetup(&remoteSetupRequest{Target: "invalid"}))
+	require.Error(t, app.clearRemoteSetup(&remoteSetupRequest{Target: "invalid"}))
+
+	directory := t.TempDir()
+	require.Error(t, app.writeRemoteEnabled(directory, true))
+	require.Error(t, app.writeRemoteAuthToken(directory, "secret"))
+	require.Error(t, app.clearRemoteAuthToken(directory))
+	require.Error(t, app.writeRemoteLease(directory, 30))
+}
+
 func TestRemoteEnvCommandPersistsSettings(t *testing.T) {
 	configHome := t.TempDir()
 	var out bytes.Buffer

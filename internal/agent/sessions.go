@@ -2769,15 +2769,7 @@ func (a *App) Skills(args []string) error {
 	case "list":
 		return a.listSkills(rest)
 	case "search":
-		format, remaining, err := parseTemplateOutputArgs("skills search", rest)
-		if err != nil {
-			return err
-		}
-		query := strings.TrimSpace(strings.Join(remaining, " "))
-		if query == "" {
-			return renderMissingActionArgument(a.Out, "skills", "search", "query", "skills search requires a query", "Usage: codog skills search QUERY [--json|--output-format text|json].", format)
-		}
-		return a.listSkillsWithAction([]string{query, "--output-format", format}, "search", query)
+		return a.skillsSearch(rest)
 	case "audit":
 		return a.skillAudit(rest)
 	case "sources":
@@ -2785,105 +2777,13 @@ func (a *App) Skills(args []string) error {
 	case "help":
 		return renderCommandHelpTopic(a.Out, "skills", rest, "text")
 	case "show":
-		format, remaining, err := parseTemplateOutputArgs("skills show", rest)
-		if err != nil {
-			return err
-		}
-		if len(remaining) < 1 {
-			return a.listSkills([]string{"--output-format", format})
-		}
-		if len(remaining) > 1 {
-			return renderCLIError(a.Out, unexpectedExtraArgsError{
-				Command: "skills show",
-				Args:    append([]string(nil), remaining[1:]...),
-				Usage:   "codog skills show NAME [--json|--output-format text|json]",
-			}, format)
-		}
-		skill, err := a.findRuntimeSkill(remaining[0])
-		if err != nil {
-			return renderSkillLookupError(a.Out, "show", remaining[0], err, format)
-		}
-		if format == "json" {
-			data, _ := json.MarshalIndent(skill, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		fmt.Fprint(a.Out, skill.Body)
-		if !strings.HasSuffix(skill.Body, "\n") {
-			fmt.Fprintln(a.Out)
-		}
+		return a.skillsShow(rest)
 	case "invoke":
-		format, remaining, err := parseTemplateOutputArgs("skills invoke", rest)
-		if err != nil {
-			return err
-		}
-		if len(remaining) < 1 {
-			return renderMissingActionArgument(a.Out, "skills", "invoke", "skill_name", "skills invoke requires a skill name", "Usage: codog skills invoke NAME [ARGS...] [--json|--output-format text|json]. Run `codog skills list` to see available skills.", format)
-		}
-		skill, err := a.findRuntimeSkill(remaining[0])
-		if err != nil {
-			return renderSkillLookupError(a.Out, "invoke", remaining[0], err, format)
-		}
-		rendered := skills.RenderInvocation(skill, strings.Join(remaining[1:], " "))
-		if format == "json" {
-			data, _ := json.MarshalIndent(map[string]any{
-				"kind":     "skill_invocation",
-				"name":     skill.Name,
-				"source":   skill.Source,
-				"origin":   skill.Origin,
-				"path":     skill.Path,
-				"rendered": rendered,
-			}, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		fmt.Fprintln(a.Out, rendered)
+		return a.skillsInvoke(rest)
 	case "install":
-		req, err := parseSkillInstallArgs(rest)
-		if err != nil {
-			if errors.Is(err, errSkillInstallMissingSource) {
-				return renderSkillsInstallMissingSource(a.Out, req.Format)
-			}
-			return err
-		}
-		targetRoot, targetLabel, err := a.skillTargetRoot(req.Target)
-		if err != nil {
-			return err
-		}
-		report, err := skills.Install(req.Source, targetRoot, req.Name, targetLabel)
-		if err != nil {
-			return renderSkillLookupError(a.Out, "install", req.Source, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		fmt.Fprintln(a.Out, "Skill Installed")
-		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
-		fmt.Fprintf(a.Out, "  Target           %s\n", report.Target)
-		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
+		return a.skillsInstall(rest)
 	case "uninstall":
-		req, err := parseSkillUninstallArgs(rest)
-		if err != nil {
-			if errors.Is(err, errSkillUninstallMissingName) {
-				return renderMissingActionArgument(a.Out, "skills", "uninstall", "skill_name", "skills uninstall requires a skill name", "Usage: codog skills uninstall NAME [--project|--user|--claude] [--json|--output-format text|json]. Run `codog skills list` to see installed skills.", req.Format)
-			}
-			return err
-		}
-		roots := a.skillUninstallRoots(req.Target)
-		report, err := skills.Uninstall(req.Name, roots)
-		if err != nil {
-			return renderSkillLookupError(a.Out, "uninstall", req.Name, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		fmt.Fprintln(a.Out, "Skill Uninstalled")
-		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
-		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
+		return a.skillsUninstall(rest)
 	case "enable":
 		return a.skillActivation("enable", rest)
 	case "disable":
@@ -2897,6 +2797,140 @@ func (a *App) Skills(args []string) error {
 		}
 		return renderUnsupportedSkillsAction(a.Out, action, format)
 	}
+}
+
+func (a *App) skillsSearch(args []string) error {
+	format, remaining, err := parseTemplateOutputArgs("skills search", args)
+	if err != nil {
+		return err
+	}
+	query := strings.TrimSpace(strings.Join(remaining, " "))
+	if query == "" {
+		return renderMissingActionArgument(a.Out, "skills", "search", "query", "skills search requires a query", "Usage: codog skills search QUERY [--json|--output-format text|json].", format)
+	}
+	return a.listSkillsWithAction([]string{query, "--output-format", format}, "search", query)
+}
+
+func (a *App) skillsShow(args []string) error {
+	format, remaining, err := parseTemplateOutputArgs("skills show", args)
+	if err != nil {
+		return err
+	}
+	if len(remaining) < 1 {
+		return a.listSkills([]string{"--output-format", format})
+	}
+	if len(remaining) > 1 {
+		return renderCLIError(a.Out, unexpectedExtraArgsError{
+			Command: "skills show",
+			Args:    append([]string(nil), remaining[1:]...),
+			Usage:   "codog skills show NAME [--json|--output-format text|json]",
+		}, format)
+	}
+	skill, err := a.findRuntimeSkill(remaining[0])
+	if err != nil {
+		return renderSkillLookupError(a.Out, "show", remaining[0], err, format)
+	}
+	return renderSkill(a.Out, skill, format)
+}
+
+func renderSkill(out io.Writer, skill skills.Skill, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(skill, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprint(out, skill.Body)
+	if !strings.HasSuffix(skill.Body, "\n") {
+		fmt.Fprintln(out)
+	}
+	return nil
+}
+
+func (a *App) skillsInvoke(args []string) error {
+	format, remaining, err := parseTemplateOutputArgs("skills invoke", args)
+	if err != nil {
+		return err
+	}
+	if len(remaining) < 1 {
+		return renderMissingActionArgument(a.Out, "skills", "invoke", "skill_name", "skills invoke requires a skill name", "Usage: codog skills invoke NAME [ARGS...] [--json|--output-format text|json]. Run `codog skills list` to see available skills.", format)
+	}
+	skill, err := a.findRuntimeSkill(remaining[0])
+	if err != nil {
+		return renderSkillLookupError(a.Out, "invoke", remaining[0], err, format)
+	}
+	rendered := skills.RenderInvocation(skill, strings.Join(remaining[1:], " "))
+	if format == "json" {
+		data, _ := json.MarshalIndent(map[string]any{
+			"kind":     "skill_invocation",
+			"name":     skill.Name,
+			"source":   skill.Source,
+			"origin":   skill.Origin,
+			"path":     skill.Path,
+			"rendered": rendered,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, rendered)
+	return nil
+}
+
+func (a *App) skillsInstall(args []string) error {
+	req, err := parseSkillInstallArgs(args)
+	if err != nil {
+		if errors.Is(err, errSkillInstallMissingSource) {
+			return renderSkillsInstallMissingSource(a.Out, req.Format)
+		}
+		return err
+	}
+	targetRoot, targetLabel, err := a.skillTargetRoot(req.Target)
+	if err != nil {
+		return err
+	}
+	report, err := skills.Install(req.Source, targetRoot, req.Name, targetLabel)
+	if err != nil {
+		return renderSkillLookupError(a.Out, "install", req.Source, err, req.Format)
+	}
+	return renderSkillInstallReport(a.Out, report, req.Format)
+}
+
+func renderSkillInstallReport(out io.Writer, report skills.InstallReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Skill Installed")
+	fmt.Fprintf(out, "  Name             %s\n", report.Name)
+	fmt.Fprintf(out, "  Target           %s\n", report.Target)
+	fmt.Fprintf(out, "  Path             %s\n", report.Path)
+	return nil
+}
+
+func (a *App) skillsUninstall(args []string) error {
+	req, err := parseSkillUninstallArgs(args)
+	if err != nil {
+		if errors.Is(err, errSkillUninstallMissingName) {
+			return renderMissingActionArgument(a.Out, "skills", "uninstall", "skill_name", "skills uninstall requires a skill name", "Usage: codog skills uninstall NAME [--project|--user|--claude] [--json|--output-format text|json]. Run `codog skills list` to see installed skills.", req.Format)
+		}
+		return err
+	}
+	report, err := skills.Uninstall(req.Name, a.skillUninstallRoots(req.Target))
+	if err != nil {
+		return renderSkillLookupError(a.Out, "uninstall", req.Name, err, req.Format)
+	}
+	return renderSkillUninstallReport(a.Out, report, req.Format)
+}
+
+func renderSkillUninstallReport(out io.Writer, report skills.UninstallReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Skill Uninstalled")
+	fmt.Fprintf(out, "  Name             %s\n", report.Name)
+	fmt.Fprintf(out, "  Path             %s\n", report.Path)
 	return nil
 }
 

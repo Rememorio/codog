@@ -2197,6 +2197,70 @@ func TestCodeIntelLSPCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"status": "stopped"`)
 }
 
+func TestCodeIntelLSPQueryArgumentBoundaries(t *testing.T) {
+	language, req, err := parseCodeIntelLSPQueryArgs([]string{
+		"go", "rename", "main.go", "2", "3", "renamed",
+		"--apply", "--action-title=Apply rename",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "go", language)
+	require.Equal(t, "rename", req.Action)
+	require.Equal(t, "main.go", req.Path)
+	require.Equal(t, 2, req.Line)
+	require.Equal(t, 3, req.Character)
+	require.Equal(t, "renamed", req.NewName)
+	require.Equal(t, "Apply rename", req.CodeActionTitle)
+	require.True(t, req.Apply)
+
+	_, req, err = parseCodeIntelLSPQueryArgs([]string{
+		"go", "code-action", "main.go", "--write", "--preview", "--code-action-title", "Quick fix",
+	})
+	require.NoError(t, err)
+	require.False(t, req.Apply)
+	require.Equal(t, "Quick fix", req.CodeActionTitle)
+
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{name: "missing query args", args: []string{"go", "rename"}},
+		{name: "missing action title", args: []string{"go", "code-action", "main.go", "--action-title"}},
+		{name: "invalid line", args: []string{"go", "definition", "main.go", "line"}},
+		{name: "invalid character", args: []string{"go", "definition", "main.go", "1", "column"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, err := parseCodeIntelLSPQueryArgs(test.args)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestCodeIntelLSPRouterErrorBoundaries(t *testing.T) {
+	store := codeintel.NewLSPStore(t.TempDir(), t.TempDir())
+	app := &App{}
+
+	for _, test := range []struct {
+		name   string
+		action string
+		args   []string
+	}{
+		{name: "start missing language", action: "start"},
+		{name: "status missing language", action: "status"},
+		{name: "query missing arguments", action: "query"},
+		{name: "stop missing language", action: "stop"},
+		{name: "unknown action", action: "statuz"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := app.codeIntelLSPPayload(&store, test.action, test.args)
+			require.Error(t, err)
+		})
+	}
+
+	payload, err := app.codeIntelLSPPayload(&store, "capabilities", nil)
+	require.NoError(t, err)
+	require.IsType(t, codeIntelLSPActionsReport{}, payload)
+}
+
 func TestResumedCodeIntelLSPStartAndStop(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX sh")
