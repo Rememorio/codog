@@ -3799,63 +3799,11 @@ func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 		*sess = *next
 		fmt.Fprintf(a.Err, "session switched: %s\n", sess.ID)
 	case "fork":
-		req, err := parseSessionForkArgs("/session fork", args[1:], sess.ID, "text")
-		if err != nil {
-			fmt.Fprintln(a.Err, "error:", err)
-			return
-		}
-		report, next, err := a.forkSessionWithReport(req.SourceID, req.BranchName)
-		if err != nil {
-			fmt.Fprintln(a.Err, "error:", err)
-			return
-		}
-		*sess = *next
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return
-		}
-		renderSessionForkText(a.Err, report)
+		a.sessionSlashFork(args[1:], sess)
 	case "rename":
-		req, err := parseSessionRenameArgs("/session rename", args[1:], sess.ID, "text")
-		if err != nil {
-			fmt.Fprintln(a.Err, "error:", err)
-			return
-		}
-		report, err := a.renameSessionWithReport(req.OldID, req.NewID)
-		if err != nil {
-			fmt.Fprintln(a.Err, "error:", err)
-			return
-		}
-		next, err := a.Sessions.Open(report.NewSessionID)
-		if err != nil {
-			fmt.Fprintln(a.Err, "error:", err)
-			return
-		}
-		*sess = *next
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return
-		}
-		renderSessionRenameText(a.Err, report)
+		a.sessionSlashRename(args[1:], sess)
 	case "prune":
-		req, err := parseSessionPruneArgs("/session prune", args[1:], "text")
-		if err != nil {
-			fmt.Fprintln(a.Err, "error:", err)
-			return
-		}
-		report, err := a.pruneSessionsWithReport(req, sess.ID)
-		if err != nil {
-			fmt.Fprintln(a.Err, "error:", err)
-			return
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return
-		}
-		renderSessionPruneText(a.Err, report)
+		a.sessionSlashPrune(args[1:], sess.ID)
 	case "repair":
 		if err := a.RepairSessions(args[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -3870,38 +3818,100 @@ func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "delete":
-		req, err := parseSessionDeleteArgs("/session delete", args[1:])
-		if err != nil {
-			fmt.Fprintln(a.Err, "error:", err)
-			return
-		}
-		if !req.Force {
-			fmt.Fprintf(a.Err, "delete: confirmation required; rerun with /session delete %s --force\n", req.ID)
-			return
-		}
-		target, err := a.Sessions.OpenExisting(req.ID)
-		if err != nil {
-			fmt.Fprintln(a.Err, "error:", err)
-			return
-		}
-		if target.ID == sess.ID || target.Path == sess.Path {
-			fmt.Fprintf(a.Err, "delete: refusing to delete the active session %q\n", target.ID)
-			return
-		}
-		report, err := a.deleteSessionWithReport(target.ID)
-		if err != nil {
-			fmt.Fprintln(a.Err, "error:", err)
-			return
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return
-		}
-		renderSessionDeleteText(a.Err, report)
+		a.sessionSlashDelete(args[1:], sess)
 	default:
 		fmt.Fprintf(a.Err, "unknown /session action: %s\n", args[0])
 	}
+}
+
+func (a *App) sessionSlashFork(args []string, sess *session.Session) {
+	req, err := parseSessionForkArgs("/session fork", args, sess.ID, "text")
+	if a.writeSessionSlashError(err) {
+		return
+	}
+	report, next, err := a.forkSessionWithReport(req.SourceID, req.BranchName)
+	if a.writeSessionSlashError(err) {
+		return
+	}
+	*sess = *next
+	if req.Format == "json" {
+		_ = renderJSONValue(a.Out, report)
+		return
+	}
+	renderSessionForkText(a.Err, report)
+}
+
+func (a *App) sessionSlashRename(args []string, sess *session.Session) {
+	req, err := parseSessionRenameArgs("/session rename", args, sess.ID, "text")
+	if a.writeSessionSlashError(err) {
+		return
+	}
+	report, err := a.renameSessionWithReport(req.OldID, req.NewID)
+	if a.writeSessionSlashError(err) {
+		return
+	}
+	next, err := a.Sessions.Open(report.NewSessionID)
+	if a.writeSessionSlashError(err) {
+		return
+	}
+	*sess = *next
+	if req.Format == "json" {
+		_ = renderJSONValue(a.Out, report)
+		return
+	}
+	renderSessionRenameText(a.Err, report)
+}
+
+func (a *App) sessionSlashPrune(args []string, activeID string) {
+	req, err := parseSessionPruneArgs("/session prune", args, "text")
+	if a.writeSessionSlashError(err) {
+		return
+	}
+	report, err := a.pruneSessionsWithReport(req, activeID)
+	if a.writeSessionSlashError(err) {
+		return
+	}
+	if req.Format == "json" {
+		_ = renderJSONValue(a.Out, report)
+		return
+	}
+	renderSessionPruneText(a.Err, report)
+}
+
+func (a *App) sessionSlashDelete(args []string, sess *session.Session) {
+	req, err := parseSessionDeleteArgs("/session delete", args)
+	if a.writeSessionSlashError(err) {
+		return
+	}
+	if !req.Force {
+		fmt.Fprintf(a.Err, "delete: confirmation required; rerun with /session delete %s --force\n", req.ID)
+		return
+	}
+	target, err := a.Sessions.OpenExisting(req.ID)
+	if a.writeSessionSlashError(err) {
+		return
+	}
+	if target.ID == sess.ID || target.Path == sess.Path {
+		fmt.Fprintf(a.Err, "delete: refusing to delete the active session %q\n", target.ID)
+		return
+	}
+	report, err := a.deleteSessionWithReport(target.ID)
+	if a.writeSessionSlashError(err) {
+		return
+	}
+	if req.Format == "json" {
+		_ = renderJSONValue(a.Out, report)
+		return
+	}
+	renderSessionDeleteText(a.Err, report)
+}
+
+func (a *App) writeSessionSlashError(err error) bool {
+	if err == nil {
+		return false
+	}
+	fmt.Fprintln(a.Err, "error:", err)
+	return true
 }
 
 type sessionDeleteRequest struct {
@@ -3974,114 +3984,23 @@ func (a *App) SessionsCommand(args []string) error {
 		}
 		return a.SessionExists(existsArgs, "")
 	case "search":
-		req, err := parseSessionSearchArgs("codog sessions search", args[1:], "json")
-		if err != nil {
-			return err
-		}
-		report, err := a.searchSessionsWithReport(req)
-		if err != nil {
-			return err
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		renderSessionSearchText(a.Out, report)
+		return a.sessionsSearch(args[1:])
 	case "audit":
-		format, err := parseSimpleOutputFormat("sessions audit", args[1:])
-		if err != nil {
-			return err
-		}
-		report, err := a.auditSessionsWithReport()
-		if err != nil {
-			return err
-		}
-		if format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		renderSessionAuditText(a.Out, report)
+		return a.sessionsAudit(args[1:])
 	case "repair":
 		return a.RepairSessions(args[1:])
 	case "export":
 		return a.SessionExport(args[1:])
 	case "import":
-		req, err := parseSessionImportArgs("codog sessions import", args[1:], "json")
-		if err != nil {
-			return err
-		}
-		report, err := a.importSessionWithReport(req)
-		if err != nil {
-			return err
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		renderSessionImportText(a.Out, report)
+		return a.sessionsImport(args[1:])
 	case "fork":
-		req, err := parseSessionForkArgs("codog sessions fork", args[1:], "", "json")
-		if err != nil {
-			return err
-		}
-		report, _, err := a.forkSessionWithReport(req.SourceID, req.BranchName)
-		if err != nil {
-			return err
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		renderSessionForkText(a.Out, report)
+		return a.sessionsFork(args[1:])
 	case "switch":
-		req, err := parseSessionSwitchArgs("codog sessions switch", args[1:], "json")
-		if err != nil {
-			return err
-		}
-		report, err := a.switchSessionWithReport("", req.ID)
-		if err != nil {
-			return err
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		renderSessionSwitchText(a.Out, report)
+		return a.sessionsSwitch(args[1:])
 	case "rename":
-		req, err := parseSessionRenameArgs("codog sessions rename", args[1:], "", "json")
-		if err != nil {
-			return err
-		}
-		report, err := a.renameSessionWithReport(req.OldID, req.NewID)
-		if err != nil {
-			return err
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		renderSessionRenameText(a.Out, report)
+		return a.sessionsRename(args[1:])
 	case "prune":
-		req, err := parseSessionPruneArgs("codog sessions prune", args[1:], "json")
-		if err != nil {
-			return err
-		}
-		report, err := a.pruneSessionsWithReport(req, "")
-		if err != nil {
-			return err
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		renderSessionPruneText(a.Out, report)
+		return a.sessionsPrune(args[1:])
 	case "pin", "unpin":
 		req, err := parseSessionPinArgs("codog sessions "+action, args[1:], "", "json")
 		if err != nil {
@@ -4089,29 +4008,152 @@ func (a *App) SessionsCommand(args []string) error {
 		}
 		return a.runPinRequest(action, req)
 	case "delete":
-		deleteArgs := args[1:]
-		if !argsHaveOutputFormat(deleteArgs) {
-			deleteArgs = append(append([]string(nil), deleteArgs...), "--json")
-		}
-		req, err := parseSessionDeleteArgs("codog sessions delete", deleteArgs)
-		if err != nil {
-			return err
-		}
-		if !req.Force {
-			return fmt.Errorf("delete: confirmation required; rerun with codog sessions delete %s --force", req.ID)
-		}
-		report, err := a.deleteSessionWithReport(req.ID)
-		if err != nil {
-			return err
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		renderSessionDeleteText(a.Out, report)
+		return a.sessionsDelete(args[1:])
 	default:
 		return sessionsActionError{Action: args[0]}
 	}
+}
+
+func (a *App) sessionsSearch(args []string) error {
+	req, err := parseSessionSearchArgs("codog sessions search", args, "json")
+	if err != nil {
+		return err
+	}
+	report, err := a.searchSessionsWithReport(req)
+	if err != nil {
+		return err
+	}
+	return renderSessionSearchReport(a.Out, report, req.Format)
+}
+
+func (a *App) sessionsAudit(args []string) error {
+	format, err := parseSimpleOutputFormat("sessions audit", args)
+	if err != nil {
+		return err
+	}
+	report, err := a.auditSessionsWithReport()
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		return renderJSONValue(a.Out, report)
+	}
+	renderSessionAuditText(a.Out, report)
+	return nil
+}
+
+func (a *App) sessionsImport(args []string) error {
+	req, err := parseSessionImportArgs("codog sessions import", args, "json")
+	if err != nil {
+		return err
+	}
+	report, err := a.importSessionWithReport(req)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		return renderJSONValue(a.Out, report)
+	}
+	renderSessionImportText(a.Out, report)
+	return nil
+}
+
+func (a *App) sessionsFork(args []string) error {
+	req, err := parseSessionForkArgs("codog sessions fork", args, "", "json")
+	if err != nil {
+		return err
+	}
+	report, _, err := a.forkSessionWithReport(req.SourceID, req.BranchName)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		return renderJSONValue(a.Out, report)
+	}
+	renderSessionForkText(a.Out, report)
+	return nil
+}
+
+func (a *App) sessionsSwitch(args []string) error {
+	req, err := parseSessionSwitchArgs("codog sessions switch", args, "json")
+	if err != nil {
+		return err
+	}
+	report, err := a.switchSessionWithReport("", req.ID)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		return renderJSONValue(a.Out, report)
+	}
+	renderSessionSwitchText(a.Out, report)
+	return nil
+}
+
+func (a *App) sessionsRename(args []string) error {
+	req, err := parseSessionRenameArgs("codog sessions rename", args, "", "json")
+	if err != nil {
+		return err
+	}
+	report, err := a.renameSessionWithReport(req.OldID, req.NewID)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		return renderJSONValue(a.Out, report)
+	}
+	renderSessionRenameText(a.Out, report)
+	return nil
+}
+
+func (a *App) sessionsPrune(args []string) error {
+	req, err := parseSessionPruneArgs("codog sessions prune", args, "json")
+	if err != nil {
+		return err
+	}
+	report, err := a.pruneSessionsWithReport(req, "")
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		return renderJSONValue(a.Out, report)
+	}
+	renderSessionPruneText(a.Out, report)
+	return nil
+}
+
+func (a *App) sessionsDelete(args []string) error {
+	if !argsHaveOutputFormat(args) {
+		args = append(append([]string(nil), args...), "--json")
+	}
+	req, err := parseSessionDeleteArgs("codog sessions delete", args)
+	if err != nil {
+		return err
+	}
+	if !req.Force {
+		return fmt.Errorf("delete: confirmation required; rerun with codog sessions delete %s --force", req.ID)
+	}
+	report, err := a.deleteSessionWithReport(req.ID)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		return renderJSONValue(a.Out, report)
+	}
+	renderSessionDeleteText(a.Out, report)
+	return nil
+}
+
+func renderSessionSearchReport(out io.Writer, report sessionSearchReport, format string) error {
+	if format == "json" {
+		return renderJSONValue(out, report)
+	}
+	renderSessionSearchText(out, report)
+	return nil
+}
+
+func renderJSONValue(out io.Writer, value any) error {
+	data, _ := json.MarshalIndent(value, "", "  ")
+	fmt.Fprintln(out, string(data))
 	return nil
 }

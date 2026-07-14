@@ -14,8 +14,6 @@ gocognit|internal/agent/commands_test.go|TestResumedSlashCLIContracts|36
 gocognit|internal/agent/diagnostics.go|parseAPIKeyArgs|41
 gocognit|internal/agent/diagnostics.go|parsePermissionsArgs|35
 gocognit|internal/agent/diagnostics.go|parseTemperatureArgs|36
-gocognit|internal/agent/git.go|(*App).SessionsCommand|64
-gocognit|internal/agent/git.go|(*App).handleSessionSlash|53
 gocognit|internal/agent/git.go|parseBranchLockArgs|32
 gocognit|internal/agent/git.go|parseCopyArgs|31
 gocognit|internal/agent/git.go|parseG004ConformanceArgs|31

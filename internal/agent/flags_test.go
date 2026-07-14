@@ -3730,6 +3730,42 @@ func TestSessionSlashSwitchAndFork(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestSessionRouterErrorBoundaries(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("active", anthropic.TextMessage("user", "hello")))
+	sess, err := store.Open("active")
+	require.NoError(t, err)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Err: &errOut}
+
+	app.sessionSlashFork([]string{"--bad"}, sess)
+	app.sessionSlashRename([]string{"--bad"}, sess)
+	app.sessionSlashPrune([]string{"--bad"}, sess.ID)
+	app.sessionSlashDelete(nil, sess)
+	missing := &session.Session{ID: "missing"}
+	app.sessionSlashFork([]string{"branch"}, missing)
+	app.sessionSlashRename([]string{"renamed"}, missing)
+	app.sessionSlashDelete([]string{"missing", "--force"}, sess)
+	require.Contains(t, errOut.String(), "error:")
+
+	require.Error(t, app.sessionsSearch([]string{"--bad"}))
+	require.Error(t, app.sessionsAudit([]string{"--bad"}))
+	require.Error(t, app.sessionsImport(nil))
+	require.Error(t, app.sessionsFork([]string{"--bad"}))
+	require.Error(t, app.sessionsSwitch(nil))
+	require.Error(t, app.sessionsRename(nil))
+	require.Error(t, app.sessionsPrune([]string{"--bad"}))
+	require.Error(t, app.sessionsDelete(nil))
+
+	out.Reset()
+	require.NoError(t, app.sessionsAudit([]string{"--output-format", "text"}))
+	require.Contains(t, out.String(), "Session Audit")
+	out.Reset()
+	require.NoError(t, app.sessionsSearch([]string{"hello", "--output-format", "text"}))
+	require.Contains(t, out.String(), "Session Search")
+}
+
 func TestSessionSlashForkJSONReportsNewSession(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello slash")))
