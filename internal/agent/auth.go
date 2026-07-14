@@ -282,151 +282,31 @@ type oauthProviderDeleteReport struct {
 
 // OAuth runs local OAuth helper commands for provider profiles and tokens.
 func (a *App) OAuth(args []string) error {
-	var err error
-	args, err = normalizeOAuthJSONArgs(args)
+	normalized, err := normalizeOAuthJSONArgs(args)
 	if err != nil {
 		return err
 	}
+	args = normalized
 	if len(args) == 0 || args[0] == "pkce" {
-		pkce, err := oauth.GeneratePKCE()
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(pkce, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+		return a.oauthPKCE()
 	}
-	if args[0] == "discover" {
-		if len(args) < 2 {
-			return renderMissingActionArgument(a.Out, "oauth", "discover", "issuer_url", "oauth discover requires an issuer URL", "Usage: codog oauth discover ISSUER_URL [--json|--output-format json].", "json")
-		}
-		metadata, err := oauth.DiscoverProvider(context.Background(), args[1])
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(metadata, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	}
-	if args[0] == "device" {
+	switch args[0] {
+	case "discover":
+		return a.oauthDiscover(args)
+	case "device":
 		return a.oauthDevice(args[1:])
-	}
-	if args[0] == "browser" {
+	case "browser":
 		return a.oauthBrowser(args[1:])
-	}
-	if args[0] == "provider" {
+	case "provider":
 		return a.oauthProvider(args[1:])
-	}
-	if args[0] == "status" {
-		profile := ""
-		if len(args) > 1 {
-			profile = args[1]
-		}
-		status := oauth.InspectStatus(a.Config.ConfigHome, profile, time.Now().UTC())
-		data, _ := json.MarshalIndent(status, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	}
-	if args[0] == "logout" {
-		profile := ""
-		if len(args) > 1 {
-			profile = args[1]
-		}
-		result, err := oauth.Logout(context.Background(), a.Config.ConfigHome, profile)
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	}
-	if args[0] != "token" {
-		return unexpectedExtraArgsError{
-			Command: "oauth",
-			Args:    []string{args[0]},
-			Usage:   oauthUsage,
-		}
-	}
-	if len(args) < 2 {
-		status := oauth.InspectStatus(a.Config.ConfigHome, "", time.Now().UTC())
-		data, _ := json.MarshalIndent(status, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	}
-	switch args[1] {
-	case "save":
-		if len(args) < 3 {
-			return renderMissingActionArgument(a.Out, "oauth", "token_save", "access_token", "oauth token save requires an access token", "Usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT].", "json")
-		}
-		token := oauth.Token{AccessToken: args[2]}
-		if len(args) > 3 {
-			token.RefreshToken = args[3]
-		}
-		if len(args) > 4 {
-			expiresAt, err := time.Parse(time.RFC3339, args[4])
-			if err != nil {
-				return err
-			}
-			token.ExpiresAt = expiresAt
-		}
-		saved, err := oauth.SaveToken(a.Config.ConfigHome, token)
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(saved.View(time.Now().UTC()), "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	case "show":
-		token, err := oauth.LoadToken(a.Config.ConfigHome)
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(token.View(time.Now().UTC()), "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
 	case "status":
-		profile := ""
-		if len(args) > 2 {
-			profile = args[2]
-		}
-		status := oauth.InspectStatus(a.Config.ConfigHome, profile, time.Now().UTC())
-		data, _ := json.MarshalIndent(status, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	case "refresh":
-		profile := ""
-		if len(args) > 2 {
-			profile = args[2]
-		}
-		token, err := oauth.RefreshStoredToken(context.Background(), a.Config.ConfigHome, profile)
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(token.View(time.Now().UTC()), "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	case "revoke":
-		result, err := a.oauthTokenRevoke(args[2:])
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	case "delete":
-		if err := oauth.DeleteToken(a.Config.ConfigHome); err != nil {
-			return err
-		}
-		report := oauthTokenDeleteReport{Kind: "oauth_token", Action: "delete", Status: "ok", Deleted: true}
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+		return a.oauthStatus(optionalArgument(args, 1))
+	case "logout":
+		return a.oauthLogout(optionalArgument(args, 1))
+	case "token":
+		return a.oauthToken(args[1:])
 	default:
-		return unexpectedExtraArgsError{
-			Command: "oauth token",
-			Args:    []string{args[1]},
-			Usage:   oauthTokenUsage,
-		}
+		return unexpectedExtraArgsError{Command: "oauth", Args: []string{args[0]}, Usage: oauthUsage}
 	}
 }
 
@@ -649,87 +529,7 @@ func (a *App) Profile(args []string) error {
 const profileUsage = "codog profile [show|list|set|clear] [NAME] [--target user|project|local] [--path PATH] [--output-format text|json]"
 
 func parseProfileArgs(args []string) (profileRequest, error) {
-	req := profileRequest{Action: "show", Format: "text", Target: "user"}
-	rest := []string{}
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "profile", Flag: arg, Usage: profileUsage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "profile", Flag: arg, Usage: profileUsage}
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "profile", Flag: arg, Usage: profileUsage}
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{Command: "profile", Option: arg, Usage: profileUsage}
-		default:
-			rest = append(rest, arg)
-		}
-	}
-	normalizedFormat, err := normalizeOutputFormat("profile", req.Format, []string{"text", "json"})
-	if err != nil {
-		return req, err
-	}
-	req.Format = normalizedFormat
-	if len(rest) == 0 {
-		return req, nil
-	}
-	switch strings.ToLower(strings.TrimSpace(rest[0])) {
-	case "status", "show", "current":
-		req.Action = "show"
-		if len(rest) > 1 {
-			req.Name = rest[1]
-		}
-		if len(rest) > 2 {
-			return req, unexpectedExtraArgsError{Command: "profile " + strings.ToLower(rest[0]), Args: rest[2:], Usage: profileUsage}
-		}
-	case "list":
-		req.Action = "list"
-		if len(rest) > 1 {
-			return req, unexpectedExtraArgsError{Command: "profile list", Args: rest[1:], Usage: profileUsage}
-		}
-	case "set", "switch", "use":
-		req.Action = "set"
-		if len(rest) < 2 {
-			return req, requiredArgumentError{Command: "profile set", Argument: "NAME", Usage: profileUsage}
-		}
-		req.Name = rest[1]
-		if len(rest) > 2 {
-			return req, unexpectedExtraArgsError{Command: "profile " + strings.ToLower(rest[0]), Args: rest[2:], Usage: profileUsage}
-		}
-	case "clear", "reset", "unset":
-		req.Action = "clear"
-		if len(rest) > 1 {
-			return req, unexpectedExtraArgsError{Command: "profile " + strings.ToLower(rest[0]), Args: rest[1:], Usage: profileUsage}
-		}
-	default:
-		req.Action = "set"
-		req.Name = rest[0]
-		if len(rest) > 1 {
-			return req, unexpectedExtraArgsError{Command: "profile", Args: rest[1:], Usage: profileUsage}
-		}
-	}
-	return req, nil
+	return parseProfileRequest(args)
 }
 
 func (a *App) buildProfileReport(action string, path string, selected *oauth.ProviderProfile, selectedSource string) (profileReport, error) {
@@ -996,123 +796,7 @@ func renderProvidersCommand(out io.Writer, cfg config.Config, paths []string, ar
 }
 
 func parseProviderCommandArgs(args []string) (providerCommandRequest, error) {
-	req := providerCommandRequest{Action: "status", Format: "text"}
-	positionals := []string{}
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			i++
-			if i >= len(args) {
-				return req, errors.New("providers output format is required")
-			}
-			req.Format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--base-url":
-			i++
-			if i >= len(args) || strings.TrimSpace(args[i]) == "" {
-				return req, errors.New("provider base URL is required")
-			}
-			req.BaseURL = args[i]
-		case strings.HasPrefix(arg, "--base-url="):
-			req.BaseURL = strings.TrimPrefix(arg, "--base-url=")
-		case arg == "--model":
-			i++
-			if i >= len(args) || strings.TrimSpace(args[i]) == "" {
-				return req, errors.New("provider model is required")
-			}
-			req.Model = args[i]
-		case strings.HasPrefix(arg, "--model="):
-			req.Model = strings.TrimPrefix(arg, "--model=")
-		case arg == "--target":
-			i++
-			if i >= len(args) || strings.TrimSpace(args[i]) == "" {
-				return req, errors.New("provider config target is required")
-			}
-			req.Target = args[i]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			i++
-			if i >= len(args) || strings.TrimSpace(args[i]) == "" {
-				return req, errors.New("provider config path is required")
-			}
-			req.Path = args[i]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		default:
-			positionals = append(positionals, arg)
-		}
-	}
-	if len(positionals) > 0 {
-		switch strings.ToLower(positionals[0]) {
-		case "status", "list", "show", "set":
-			req.Action = strings.ToLower(positionals[0])
-			positionals = positionals[1:]
-		default:
-			req.Name = positionals[0]
-			req.Action = "show"
-			positionals = positionals[1:]
-		}
-	}
-	switch req.Action {
-	case "status", "list":
-		if len(positionals) > 0 {
-			return req, unexpectedExtraArgsError{
-				Command: "providers " + req.Action,
-				Args:    append([]string(nil), positionals...),
-				Usage:   "codog providers [status|list|show NAME|set NAME [BASE_URL] [MODEL]] [--json|--output-format text|json]",
-			}
-		}
-	case "show":
-		if req.Name == "" {
-			if len(positionals) == 0 {
-				return req, requiredArgumentError{Command: "providers show", Argument: "NAME", Usage: "codog providers show NAME [--json|--output-format text|json]"}
-			}
-			req.Name = positionals[0]
-			positionals = positionals[1:]
-		}
-		if len(positionals) > 0 {
-			return req, unexpectedExtraArgsError{
-				Command: "providers show",
-				Args:    append([]string(nil), positionals...),
-				Usage:   "codog providers show NAME [--json|--output-format text|json]",
-			}
-		}
-	case "set":
-		if len(positionals) == 0 {
-			return req, requiredArgumentError{Command: "providers set", Argument: "provider", Usage: "codog providers set anthropic|openai|xai|dashscope|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]"}
-		}
-		req.Name = positionals[0]
-		if len(positionals) > 1 && req.BaseURL == "" {
-			req.BaseURL = positionals[1]
-		}
-		if len(positionals) > 2 && req.Model == "" {
-			req.Model = positionals[2]
-		}
-		if len(positionals) > 3 {
-			return req, unexpectedExtraArgsError{
-				Command: "providers set",
-				Args:    append([]string(nil), positionals[3:]...),
-				Usage:   "codog providers set anthropic|openai|xai|dashscope|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]",
-			}
-		}
-	default:
-		return req, unexpectedExtraArgsError{
-			Command: "providers",
-			Args:    []string{req.Action},
-			Usage:   "codog providers [status|list|show NAME|set NAME [BASE_URL] [MODEL]] [--json|--output-format text|json]",
-		}
-	}
-	switch req.Format {
-	case "text", "json":
-		return req, nil
-	default:
-		return req, outputFormatError{Command: "providers", Value: req.Format, Expected: []string{"text", "json"}}
-	}
+	return parseProviderRequest(args)
 }
 
 func buildProvidersReport(cfg config.Config, action string) (providersReport, error) {
@@ -1437,96 +1121,34 @@ func unknownProviderNameHint(name string, action string) string {
 }
 
 func setProviderConfig(paths []string, req providerCommandRequest) (providerSetReport, error) {
-	name := strings.ToLower(strings.TrimSpace(req.Name))
-	if name == "" {
-		return providerSetReport{}, errors.New("provider name is required")
-	}
-	requestedName := name
-	baseURL := strings.TrimSpace(req.BaseURL)
-	model := strings.TrimSpace(req.Model)
-	switch name {
-	case "anthropic", "default":
-		name = "anthropic"
-		if baseURL == "" {
-			baseURL = config.DefaultBaseURL
-		}
-		if model == "" {
-			model = config.DefaultModel
-		}
-	case "custom", "compatible", "anthropic-compatible":
-		name = "custom"
-		if baseURL == "" {
-			return providerSetReport{}, errors.New("custom provider requires --base-url or a BASE_URL positional argument")
-		}
-	case "openai", "openai-compatible":
-		name = "openai"
-		if baseURL == "" {
-			baseURL = modelrouting.DefaultOpenAIBaseURL
-		}
-		if model == "" {
-			model = "openai/gpt-4o-mini"
-		}
-	case "xai", "grok":
-		name = "xai"
-		if baseURL == "" {
-			baseURL = modelrouting.DefaultXAIBaseURL
-		}
-		if model == "" {
-			model = "grok"
-		}
-	case "dashscope", "qwen", "kimi":
-		name = "dashscope"
-		if baseURL == "" {
-			baseURL = modelrouting.DefaultDashScopeBaseURL
-		}
-		if model == "" {
-			model = "qwen-plus"
-			if requestedName == "kimi" {
-				model = "kimi"
-			}
-		}
-	default:
-		if baseURL == "" {
-			return providerSetReport{}, invalidFlagValueError{
-				Flag:    "provider",
-				Value:   req.Name,
-				Message: fmt.Sprintf("unknown provider %q; use anthropic, openai, xai, dashscope, or custom --base-url URL", req.Name),
-				Hint:    unknownProviderNameHint(req.Name, "set"),
-				Usage:   "codog providers set anthropic|openai|xai|dashscope|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]",
-			}
-		}
-	}
-	if err := validateProviderBaseURL(baseURL); err != nil {
-		return providerSetReport{}, err
-	}
-	mutationReq := configMutationRequest{Target: req.Target, Path: req.Path}
-	path, err := configMutationPath(mutationReq, paths)
+	resolved, err := resolveProviderConfig(req)
 	if err != nil {
 		return providerSetReport{}, err
 	}
-	changes := []config.MutationReport{}
-	baseReport, err := config.SetFileValue(path, "base_url", baseURL)
+	if err := validateProviderBaseURL(resolved.baseURL); err != nil {
+		return providerSetReport{}, err
+	}
+	path, err := configMutationPath(configMutationRequest{Target: req.Target, Path: req.Path}, paths)
+	if err != nil {
+		return providerSetReport{}, err
+	}
+	changes := make([]config.MutationReport, 0, 2)
+	baseReport, err := config.SetFileValue(path, "base_url", resolved.baseURL)
 	if err != nil {
 		return providerSetReport{}, err
 	}
 	changes = append(changes, baseReport)
-	if model != "" {
-		modelReport, err := config.SetFileValue(path, "model", model)
+	if resolved.model != "" {
+		modelReport, err := config.SetFileValue(path, "model", resolved.model)
 		if err != nil {
 			return providerSetReport{}, err
 		}
 		changes = append(changes, modelReport)
 	}
 	return providerSetReport{
-		Kind:     "provider",
-		Action:   "set",
-		Status:   "ok",
-		Provider: name,
-		BaseURL:  baseURL,
-		Model:    model,
-		Target:   req.Target,
-		Path:     path,
-		Changes:  changes,
+		Kind: "provider", Action: "set", Status: "ok",
+		Provider: resolved.name, BaseURL: resolved.baseURL, Model: resolved.model,
+		Target: req.Target, Path: path, Changes: changes,
 	}, nil
 }
 
@@ -1712,114 +1334,17 @@ func (a *App) oauthBrowser(args []string) error {
 		return a.oauthFlowStatus("browser", "")
 	}
 	if args[0] == "status" {
-		profile := ""
-		if len(args) > 1 {
-			profile = args[1]
-		}
-		return a.oauthFlowStatus("browser", profile)
+		return a.oauthFlowStatus("browser", optionalArgument(args, 1))
 	}
 	switch args[0] {
 	case "start":
-		if len(args) < 2 {
-			return renderMissingActionArgument(a.Out, "oauth", "browser_start", "profile", "oauth browser start requires a profile name", "Usage: codog oauth browser start PROFILE REDIRECT_URI [SCOPE...].", "json")
-		}
-		if len(args) < 3 {
-			return renderMissingActionArgument(a.Out, "oauth", "browser_start", "redirect_uri", "oauth browser start requires a redirect URI", "Usage: codog oauth browser start PROFILE REDIRECT_URI [SCOPE...].", "json")
-		}
-		source, err := a.oauthProfileSource(args[1], args[3:])
-		if err != nil {
-			return err
-		}
-		auth, err := oauth.BuildBrowserAuthorization(source.Metadata, source.ClientID, args[2], source.Scopes, "", oauth.PKCE{})
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(auth, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+		return a.oauthBrowserStart(args[1:])
 	case "exchange":
-		if len(args) < 2 {
-			return renderMissingActionArgument(a.Out, "oauth", "browser_exchange", "profile", "oauth browser exchange requires a profile name", "Usage: codog oauth browser exchange PROFILE CODE CODE_VERIFIER REDIRECT_URI.", "json")
-		}
-		if len(args) < 3 {
-			return renderMissingActionArgument(a.Out, "oauth", "browser_exchange", "code", "oauth browser exchange requires an authorization code", "Usage: codog oauth browser exchange PROFILE CODE CODE_VERIFIER REDIRECT_URI.", "json")
-		}
-		if len(args) < 4 {
-			return renderMissingActionArgument(a.Out, "oauth", "browser_exchange", "code_verifier", "oauth browser exchange requires a PKCE code verifier", "Usage: codog oauth browser exchange PROFILE CODE CODE_VERIFIER REDIRECT_URI.", "json")
-		}
-		if len(args) < 5 {
-			return renderMissingActionArgument(a.Out, "oauth", "browser_exchange", "redirect_uri", "oauth browser exchange requires a redirect URI", "Usage: codog oauth browser exchange PROFILE CODE CODE_VERIFIER REDIRECT_URI.", "json")
-		}
-		source, err := a.oauthProfileSource(args[1], nil)
-		if err != nil {
-			return err
-		}
-		token, err := oauth.ExchangeAuthorizationCode(context.Background(), source.Metadata, source.ClientID, args[2], args[3], args[4])
-		if err != nil {
-			return err
-		}
-		saved, err := oauth.SaveToken(a.Config.ConfigHome, token)
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(saved.View(time.Now().UTC()), "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+		return a.oauthBrowserExchange(args[1:])
 	case "login":
-		if len(args) < 2 {
-			return renderMissingActionArgument(a.Out, "oauth", "browser_login", "profile", "oauth browser login requires a profile name", "Usage: codog oauth browser login PROFILE [ADDR].", "json")
-		}
-		source, err := a.oauthProfileSource(args[1], nil)
-		if err != nil {
-			return err
-		}
-		addr := "127.0.0.1:0"
-		if len(args) > 2 {
-			addr = args[2]
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		pkce, err := oauth.GeneratePKCE()
-		if err != nil {
-			return err
-		}
-		state, err := oauth.GenerateState()
-		if err != nil {
-			return err
-		}
-		callback, err := startBrowserCallbackServer(ctx, addr, "/oauth/callback", state)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = callback.Close() }()
-		auth, err := oauth.BuildBrowserAuthorization(source.Metadata, source.ClientID, callback.RedirectURI, source.Scopes, state, pkce)
-		if err != nil {
-			return err
-		}
-		if a.Err != nil {
-			fmt.Fprintf(a.Err, "Open %s\n", auth.AuthorizationURL)
-		}
-		result := <-callback.Results
-		if result.Err != nil {
-			return result.Err
-		}
-		token, err := oauth.ExchangeAuthorizationCode(ctx, source.Metadata, source.ClientID, result.Callback.Code, auth.CodeVerifier, callback.RedirectURI)
-		if err != nil {
-			return err
-		}
-		saved, err := oauth.SaveToken(a.Config.ConfigHome, token)
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(map[string]any{"redirect_uri": callback.RedirectURI, "token": saved.View(time.Now().UTC())}, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+		return a.oauthBrowserLogin(args[1:])
 	default:
-		return unexpectedExtraArgsError{
-			Command: "oauth browser",
-			Args:    []string{args[0]},
-			Usage:   oauthBrowserUsage,
-		}
+		return unexpectedExtraArgsError{Command: "oauth browser", Args: []string{args[0]}, Usage: oauthBrowserUsage}
 	}
 }
 
@@ -1828,103 +1353,17 @@ func (a *App) oauthDevice(args []string) error {
 		return a.oauthFlowStatus("device", "")
 	}
 	if args[0] == "status" {
-		profile := ""
-		if len(args) > 1 {
-			profile = args[1]
-		}
-		return a.oauthFlowStatus("device", profile)
+		return a.oauthFlowStatus("device", optionalArgument(args, 1))
 	}
 	switch args[0] {
 	case "start":
-		if len(args) < 2 {
-			return renderMissingActionArgument(a.Out, "oauth", "device_start", "profile_or_issuer", "oauth device start requires a profile name or issuer URL", "Usage: codog oauth device start ISSUER_URL CLIENT_ID [SCOPE...] or codog oauth device start PROFILE [SCOPE...].", "json")
-		}
-		if isURLish(args[1]) && len(args) < 3 {
-			return renderMissingActionArgument(a.Out, "oauth", "device_start", "client_id", "oauth device start with an issuer URL requires a client id", "Usage: codog oauth device start ISSUER_URL CLIENT_ID [SCOPE...].", "json")
-		}
-		source, err := a.oauthDeviceSource(args[1:], true)
-		if err != nil {
-			return err
-		}
-		auth, err := oauth.StartDeviceAuthorization(context.Background(), source.Metadata, source.ClientID, source.Scopes)
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(auth, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+		return a.oauthDeviceStart(args[1:])
 	case "poll":
-		if len(args) < 2 {
-			return renderMissingActionArgument(a.Out, "oauth", "device_poll", "profile_or_issuer", "oauth device poll requires a profile name or issuer URL", "Usage: codog oauth device poll ISSUER_URL CLIENT_ID DEVICE_CODE or codog oauth device poll PROFILE DEVICE_CODE.", "json")
-		}
-		if isURLish(args[1]) {
-			if len(args) < 3 {
-				return renderMissingActionArgument(a.Out, "oauth", "device_poll", "client_id", "oauth device poll with an issuer URL requires a client id", "Usage: codog oauth device poll ISSUER_URL CLIENT_ID DEVICE_CODE.", "json")
-			}
-			if len(args) < 4 {
-				return renderMissingActionArgument(a.Out, "oauth", "device_poll", "device_code", "oauth device poll requires a device code", "Usage: codog oauth device poll ISSUER_URL CLIENT_ID DEVICE_CODE.", "json")
-			}
-		} else if len(args) < 3 {
-			return renderMissingActionArgument(a.Out, "oauth", "device_poll", "device_code", "oauth device poll requires a device code", "Usage: codog oauth device poll PROFILE DEVICE_CODE.", "json")
-		}
-		source, deviceCode, err := a.oauthDevicePollSource(args[1:])
-		if err != nil {
-			return err
-		}
-		token, err := oauth.PollDeviceToken(context.Background(), source.Metadata, deviceCode, oauth.DevicePollOptions{ClientID: source.ClientID})
-		if err != nil {
-			return err
-		}
-		saved, err := oauth.SaveToken(a.Config.ConfigHome, token)
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(saved.View(time.Now().UTC()), "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+		return a.oauthDevicePoll(args[1:])
 	case "login":
-		if len(args) < 2 {
-			return renderMissingActionArgument(a.Out, "oauth", "device_login", "profile_or_issuer", "oauth device login requires a profile name or issuer URL", "Usage: codog oauth device login ISSUER_URL CLIENT_ID [SCOPE...] or codog oauth device login PROFILE [SCOPE...].", "json")
-		}
-		if isURLish(args[1]) && len(args) < 3 {
-			return renderMissingActionArgument(a.Out, "oauth", "device_login", "client_id", "oauth device login with an issuer URL requires a client id", "Usage: codog oauth device login ISSUER_URL CLIENT_ID [SCOPE...].", "json")
-		}
-		source, err := a.oauthDeviceSource(args[1:], true)
-		if err != nil {
-			return err
-		}
-		auth, err := oauth.StartDeviceAuthorization(context.Background(), source.Metadata, source.ClientID, source.Scopes)
-		if err != nil {
-			return err
-		}
-		if a.Err != nil {
-			target := auth.VerificationURI
-			if auth.VerificationURIComplete != "" {
-				target = auth.VerificationURIComplete
-			}
-			fmt.Fprintf(a.Err, "Open %s and enter code %s\n", target, auth.UserCode)
-		}
-		token, err := oauth.PollDeviceToken(context.Background(), source.Metadata, auth.DeviceCode, oauth.DevicePollOptions{
-			ClientID:  source.ClientID,
-			Interval:  time.Duration(auth.Interval) * time.Second,
-			ExpiresAt: auth.ExpiresAt,
-		})
-		if err != nil {
-			return err
-		}
-		saved, err := oauth.SaveToken(a.Config.ConfigHome, token)
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(map[string]any{"device": auth, "token": saved.View(time.Now().UTC())}, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+		return a.oauthDeviceLogin(args[1:])
 	default:
-		return unexpectedExtraArgsError{
-			Command: "oauth device",
-			Args:    []string{args[0]},
-			Usage:   oauthDeviceUsage,
-		}
+		return unexpectedExtraArgsError{Command: "oauth device", Args: []string{args[0]}, Usage: oauthDeviceUsage}
 	}
 }
 

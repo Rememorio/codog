@@ -5,12 +5,6 @@ gocognit|internal/agent/agent.go|parseRemoteEnvArgs|39
 gocognit|internal/agent/agent.go|parseRemoteSetupArgs|49
 gocognit|internal/agent/agent.go|parseSSHArgs|46
 gocognit|internal/agent/agent.go|parseServerArgs|57
-gocognit|internal/agent/auth.go|(*App).OAuth|47
-gocognit|internal/agent/auth.go|(*App).oauthBrowser|49
-gocognit|internal/agent/auth.go|(*App).oauthDevice|49
-gocognit|internal/agent/auth.go|parseProfileArgs|32
-gocognit|internal/agent/auth.go|parseProviderCommandArgs|47
-gocognit|internal/agent/auth.go|setProviderConfig|31
 gocognit|internal/agent/background.go|(*App).AgentsWithOverrides|101
 gocognit|internal/agent/background.go|(*App).Marketplace|78
 gocognit|internal/agent/background.go|parseMarketplaceRemoteArgs|66
@@ -69,7 +63,6 @@ gocognit|internal/agent/remote.go|parseCronArgsWithDefault|37
 gocognit|internal/agent/remote.go|parseMobileHandoffArgs|39
 gocognit|internal/agent/remote.go|parseTeamArgsWithDefault|79
 gocognit|internal/agent/resume.go|(*App).CodeIntelLSP|46
-gocognit|internal/agent/resume.go|(*App).runResumedOAuthSlash|107
 gocognit|internal/agent/resume.go|(*App).runResumedSessionSlash|35
 gocognit|internal/agent/resume.go|parseCodeIntelNotebookEditArgs|42
 gocognit|internal/agent/resume.go|parseCodeIntelNotebookReadArgs|34
