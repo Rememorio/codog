@@ -51,7 +51,6 @@ gocognit|internal/agent/keybindings.go|parseCommitPushPRArgs|32
 gocognit|internal/agent/keybindings.go|parsePassesArgs|62
 gocognit|internal/agent/limits.go|(*App).openSession|34
 gocognit|internal/agent/limits.go|parseAntTraceArgs|41
-gocognit|internal/agent/limits.go|parseFlags|97
 gocognit|internal/agent/limits.go|parseMockLimitsArgs|42
 gocognit|internal/agent/limits.go|parseRateLimitArgs|77
 gocognit|internal/agent/limits.go|snapshotWatchPaths|34
@@ -155,7 +154,6 @@ gocognit|internal/tools/mcp.go|(BashTool).Execute|37
 gocognit|internal/tools/tools.go|(*Prompter).Decide|51
 gocognit|internal/workspaceops/workspaceops.go|(Service).Search|46
 gocyclo|internal/agent/diagnostics.go|parseBranchArgs|32
-gocyclo|internal/agent/flags.go|commandHelpSpecFor|116
 gocyclo|internal/agent/git.go|parseTrustArgs|32
 gocyclo|internal/agent/keybindings.go|parseExtraUsageArgs|32
 gocyclo|internal/agent/statusline.go|parseCapabilitiesArgs|31

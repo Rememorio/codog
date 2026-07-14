@@ -888,7 +888,30 @@ func renderCommandHelpSpec(out io.Writer, spec commandHelpSpec, format string) e
 }
 
 func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
-	switch strings.ToLower(strings.TrimSpace(topic)) {
+	normalized := strings.ToLower(strings.TrimSpace(topic))
+	if spec, ok := commandHelpSpecGroup1(normalized); ok {
+		return spec, true
+	}
+	if spec, ok := commandHelpSpecGroup2(normalized); ok {
+		return spec, true
+	}
+	if spec, ok := commandHelpSpecGroup3(normalized); ok {
+		return spec, true
+	}
+	if spec, ok := commandHelpSpecGroup4(normalized); ok {
+		return spec, true
+	}
+	if spec, ok := commandHelpSpecGroup5(normalized); ok {
+		return spec, true
+	}
+	if isBuiltInCommandName(topic) {
+		return genericBuiltInCommandHelpSpec(topic), true
+	}
+	return commandHelpSpec{}, false
+}
+
+func commandHelpSpecGroup1(topic string) (commandHelpSpec, bool) {
+	switch topic {
 	case "prompt", "p", "print":
 		return providerCommandHelpSpec(
 			"prompt",
@@ -1123,6 +1146,12 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"idle", "running", "completed", "error"},
 			false,
 		), true
+	}
+	return commandHelpSpec{}, false
+}
+
+func commandHelpSpecGroup2(topic string) (commandHelpSpec, bool) {
+	switch topic {
 	case "completion":
 		return localCommandHelpSpec(
 			"completion",
@@ -1347,6 +1376,12 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	}
+	return commandHelpSpec{}, false
+}
+
+func commandHelpSpecGroup3(topic string) (commandHelpSpec, bool) {
+	switch topic {
 	case "api":
 		return localCommandHelpSpec(
 			"api",
@@ -1551,6 +1586,12 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "warn", "empty", "error"},
 			true,
 		), true
+	}
+	return commandHelpSpec{}, false
+}
+
+func commandHelpSpecGroup4(topic string) (commandHelpSpec, bool) {
+	switch topic {
 	case "tokens":
 		return localCommandHelpSpec(
 			"tokens",
@@ -1786,6 +1827,12 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	}
+	return commandHelpSpec{}, false
+}
+
+func commandHelpSpecGroup5(topic string) (commandHelpSpec, bool) {
+	switch topic {
 	case "exit":
 		return localCommandHelpSpec(
 			"exit",
@@ -2035,12 +2082,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			OutputFields:            []string{"session_id", "message_count"},
 			StatusValues:            []string{"ok", "error"},
 		}, true
-	default:
-		if isBuiltInCommandName(topic) {
-			return genericBuiltInCommandHelpSpec(topic), true
-		}
-		return commandHelpSpec{}, false
 	}
+	return commandHelpSpec{}, false
 }
 
 func isBuiltInCommandName(topic string) bool {
