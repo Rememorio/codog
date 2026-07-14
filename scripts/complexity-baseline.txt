@@ -166,7 +166,6 @@ gocognit|internal/status/status.go|RenderText|45
 gocognit|internal/tools/mcp.go|(BashTool).Execute|37
 gocognit|internal/tools/tools.go|(*Prompter).Decide|51
 gocognit|internal/tui/helpers.go|toolActivityOutputLines|39
-gocognit|internal/tui/input.go|(model).Update|452
 gocognit|internal/tui/input.go|(model).View|37
 gocognit|internal/tui/input.go|(model).handleBoundTUIActionKey|84
 gocognit|internal/tui/views.go|(model).promptFooterHints|63
@@ -178,7 +177,6 @@ gocyclo|internal/agent/diagnostics.go|parseBranchArgs|32
 gocyclo|internal/agent/flags.go|commandHelpSpecFor|116
 gocyclo|internal/agent/git.go|parseTrustArgs|32
 gocyclo|internal/agent/keybindings.go|parseExtraUsageArgs|32
-gocyclo|internal/agent/statusline.go|(*App).RunResumedSlash|184
 gocyclo|internal/agent/statusline.go|parseCapabilitiesArgs|31
 gocyclo|internal/bridge/stdio_test.go|TestBridgeFakeLSPServer|55
 gocyclo|internal/codeintel/lsp_client.go|lspMethodParams|39

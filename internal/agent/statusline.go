@@ -3868,6 +3868,35 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 	if strings.TrimSpace(resumed.Resume) == "" {
 		resumed.Resume = "latest"
 	}
+	handlers := []resumedSlashHandler{
+		a.runResumedSlashBasics,
+		a.runResumedSlashAccount,
+		a.runResumedSlashPreferences,
+		a.runResumedSlashWorkspace,
+		a.runResumedSlashExtensions,
+		a.runResumedSlashReview,
+		a.runResumedSlashCodeIntel,
+		a.runResumedSlashProduct,
+		a.runResumedSlashRemote,
+		a.runResumedSlashOperations,
+		a.runResumedSlashDevelopment,
+		a.runResumedSlashGit,
+		a.runResumedSlashSessions,
+		a.runResumedSlashUsage,
+	}
+	for _, handle := range handlers {
+		if err := handle(ctx, name, args, resumed, format); !errors.Is(err, errResumedSlashNotHandled) {
+			return err
+		}
+	}
+	return renderUnsupportedResumedSlashCommand(a.Out, command, format)
+}
+
+var errResumedSlashNotHandled = errors.New("resumed slash command not handled")
+
+type resumedSlashHandler func(context.Context, string, []string, config.FlagOverrides, string) error
+
+func (a *App) runResumedSlashBasics(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
 	switch name {
 	case "/help":
 		return renderHelpCommand(a.Out, resumeSlashArgs("help", args, format))
@@ -3889,6 +3918,13 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedOAuthRefreshSlash(resumeSlashArgs("oauth-refresh", args, format), format)
 	case "/logout":
 		return a.runResumedLogoutSlash(resumeSlashArgs("logout", args, format), format)
+	default:
+		return errResumedSlashNotHandled
+	}
+}
+
+func (a *App) runResumedSlashAccount(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
+	switch name {
 	case "/profile":
 		return a.runResumedProfileSlash(resumeSlashArgs("profile", args, format), format)
 	case "/advisor":
@@ -3909,6 +3945,13 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedFastSlash(resumeSlashArgs("fast", args, format), format)
 	case "/voice":
 		return a.runResumedVoiceSlash(resumeSlashArgs("voice", args, format), format)
+	default:
+		return errResumedSlashNotHandled
+	}
+}
+
+func (a *App) runResumedSlashPreferences(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
+	switch name {
 	case "/listen":
 		return a.runResumedVoiceSlash(resumeSlashArgs("voice", append([]string{"listen"}, args...), format), format)
 	case "/speak":
@@ -3941,6 +3984,13 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedPermissionsSlash(resumeSlashArgs("permissions", args, format), format)
 	case "/allowed-tools":
 		return a.runResumedAllowedToolsSlash(resumeSlashArgs("allowed-tools", args, format), format)
+	default:
+		return errResumedSlashNotHandled
+	}
+}
+
+func (a *App) runResumedSlashWorkspace(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
+	switch name {
 	case "/init":
 		return a.Init(resumeSlashArgs("init", args, format))
 	case "/init-verifiers":
@@ -3975,6 +4025,13 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Statusline(resumeSlashArgs("statusline", args, format), resumed)
 	case "/sandbox":
 		return a.Sandbox()
+	default:
+		return errResumedSlashNotHandled
+	}
+}
+
+func (a *App) runResumedSlashExtensions(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
+	switch name {
 	case "/sandbox-toggle":
 		return a.runResumedSandboxToggleSlash(resumeSlashArgs("sandbox-toggle", args, format), format)
 	case "/mcp":
@@ -4011,6 +4068,13 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedCronSlash(resumeSlashArgs("cron", args, format), format)
 	case "/team":
 		return a.runResumedTeamSlash(resumeSlashArgs("team", args, format), format)
+	default:
+		return errResumedSlashNotHandled
+	}
+}
+
+func (a *App) runResumedSlashReview(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
+	switch name {
 	case "/terminal-setup":
 		return a.runResumedTerminalSetupSlash(resumeSlashArgs("terminal-setup", args, format), format)
 	case "/files":
@@ -4035,6 +4099,13 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.PRComments(ctx, resumeSlashArgs("pr-comments", args, format))
 	case "/brief":
 		return a.Brief(resumeSlashArgs("brief", args, format))
+	default:
+		return errResumedSlashNotHandled
+	}
+}
+
+func (a *App) runResumedSlashCodeIntel(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
+	switch name {
 	case "/btw":
 		return a.BTW(ctx, resumeSlashArgs("btw", args, format), resumed, nil)
 	case "/install-github-app":
@@ -4067,6 +4138,13 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedFormatSlash(resumeSlashArgs("format", args, format), format)
 	case "/code-intel":
 		return a.runResumedCodeIntelSlash(ctx, args, format)
+	default:
+		return errResumedSlashNotHandled
+	}
+}
+
+func (a *App) runResumedSlashProduct(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
+	switch name {
 	case "/notebook-read":
 		return a.CodeIntel(resumeSlashArgs("notebook-read", append([]string{"notebook-read"}, args...), format))
 	case "/notebook-edit":
@@ -4087,6 +4165,13 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Mobile(resumeSlashArgs("mobile", append([]string{"ios"}, args...), format), resumed)
 	case "/android":
 		return a.Mobile(resumeSlashArgs("mobile", append([]string{"android"}, args...), format), resumed)
+	default:
+		return errResumedSlashNotHandled
+	}
+}
+
+func (a *App) runResumedSlashRemote(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
+	switch name {
 	case "/remote-env":
 		return a.runResumedRemoteEnvSlash(resumeSlashArgs("remote-env", args, format), format)
 	case "/remote":
@@ -4111,6 +4196,13 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Validation(resumeSlashArgs("validation", args, format))
 	case "/ant-trace":
 		return a.runResumedAntTraceSlash(ctx, resumeSlashArgs("ant-trace", args, format), format)
+	default:
+		return errResumedSlashNotHandled
+	}
+}
+
+func (a *App) runResumedSlashOperations(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
+	switch name {
 	case "/mock-limits":
 		return a.runResumedMockLimitsSlash(resumeSlashArgs("mock-limits", args, format), resumed, format)
 	case "/mock-parity", "/self-test":
@@ -4129,6 +4221,13 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedPassesSlash(resumeSlashArgs("passes", args, format), format)
 	case "/heapdump":
 		return a.runResumedHeapDumpSlash(resumeSlashArgs("heapdump", args, format), format)
+	default:
+		return errResumedSlashNotHandled
+	}
+}
+
+func (a *App) runResumedSlashDevelopment(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
+	switch name {
 	case "/diff":
 		return a.Diff(resumeSlashArgs("diff", args, format))
 	case "/commit":
@@ -4163,6 +4262,13 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedPlanSlash(resumeSlashArgs("plan", args, format), format)
 	case "/exit-plan":
 		return a.runResumedPlanSlash(resumeSlashArgs("plan", append([]string{"exit"}, args...), format), format)
+	default:
+		return errResumedSlashNotHandled
+	}
+}
+
+func (a *App) runResumedSlashGit(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
+	switch name {
 	case "/branch":
 		return a.runResumedBranchSlash(resumeSlashArgs("branch", args, format), format)
 	case "/branch-lock":
@@ -4181,6 +4287,13 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedTagSlash(resumeSlashArgs("tag", args, format), resumed, format)
 	case "/stash":
 		return a.runResumedStashSlash(resumeSlashArgs("stash", args, format), format)
+	default:
+		return errResumedSlashNotHandled
+	}
+}
+
+func (a *App) runResumedSlashSessions(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
+	switch name {
 	case "/clear":
 		return a.ClearResumedSession(resumeSlashArgs("clear", args, format), resumed)
 	case "/compact":
@@ -4213,6 +4326,13 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Copy(ctx, resumeSlashJSONArgs(args, format), resumed)
 	case "/paste":
 		return a.Paste(ctx, resumeSlashJSONArgs(args, format), resumed)
+	default:
+		return errResumedSlashNotHandled
+	}
+}
+
+func (a *App) runResumedSlashUsage(ctx context.Context, name string, args []string, resumed config.FlagOverrides, format string) error {
+	switch name {
 	case "/pin":
 		return a.Pin(resumeSlashArgs("pin", args, format), resumed)
 	case "/unpin":
@@ -4230,6 +4350,6 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 	case "/rename":
 		return a.Rename(resumeSlashArgs("rename", args, format), resumed)
 	default:
-		return renderUnsupportedResumedSlashCommand(a.Out, command, format)
+		return errResumedSlashNotHandled
 	}
 }
