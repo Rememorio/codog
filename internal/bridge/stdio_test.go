@@ -103,6 +103,13 @@ func TestBridgeInitialize(t *testing.T) {
 	require.NotEqual(t, copied[0], Capabilities()[0])
 }
 
+func TestBridgeUnknownMethodWithinNamespace(t *testing.T) {
+	result, rpcErr := (Server{}).handle(Request{Method: "diagnostics/unknown"})
+
+	require.Nil(t, result)
+	require.Equal(t, &Error{Code: -32601, Message: "method not found: diagnostics/unknown"}, rpcErr)
+}
+
 func TestBridgeSessionMutations(t *testing.T) {
 	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
 	input := strings.Join([]string{

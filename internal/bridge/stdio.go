@@ -170,414 +170,269 @@ func (s Server) Serve(in io.Reader, out io.Writer) error {
 }
 
 func (s Server) handle(req Request) (any, *Error) {
-	switch req.Method {
-	case "initialize":
+	if req.Method == "initialize" {
 		return s.InitializeResult(), nil
+	}
+	namespace, _, _ := strings.Cut(req.Method, "/")
+	switch namespace {
+	case "workspace":
+		return s.handleWorkspace(req)
+	case "sessions":
+		return s.handleSessions(req)
+	case "file":
+		return s.handleFiles(req)
+	case "editor":
+		return s.handleEditor(req)
+	case "bridge":
+		return s.handleBridge(req)
+	case "diagnostics":
+		if req.Method == "diagnostics/go" {
+			return rpcResult(s.goDiagnostics(req.Params))
+		}
+		return methodNotFound(req.Method)
+	case "code":
+		return s.handleCode(req)
+	case "notebook":
+		return s.handleNotebook(req)
+	case "lsp":
+		return s.handleLSP(req)
+	case "mcp":
+		return s.handleMCP(req)
+	case "background":
+		return s.handleBackground(req)
+	case "agent-runs":
+		return s.handleAgentRuns(req)
+	default:
+		return methodNotFound(req.Method)
+	}
+}
+
+func (s Server) handleWorkspace(req Request) (any, *Error) {
+	switch req.Method {
 	case "workspace/info":
 		workspace, err := s.workspace()
 		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
+			return rpcResult(nil, err)
 		}
 		return map[string]any{"path": workspace, "name": filepath.Base(workspace)}, nil
 	case "workspace/files":
-		result, err := s.workspaceFiles(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.workspaceFiles(req.Params))
 	case "workspace/search":
-		result, err := s.workspaceSearch(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.workspaceSearch(req.Params))
+	default:
+		return methodNotFound(req.Method)
+	}
+}
+
+func (s Server) handleSessions(req Request) (any, *Error) {
+	switch req.Method {
 	case "sessions/list":
-		sessions, err := s.Sessions.List()
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return sessions, nil
+		return rpcResult(s.Sessions.List())
 	case "sessions/open":
-		result, err := s.sessionOpen(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.sessionOpen(req.Params))
 	case "sessions/get":
-		result, err := s.sessionGet(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.sessionGet(req.Params))
 	case "sessions/append_message":
-		result, err := s.sessionAppendMessage(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.sessionAppendMessage(req.Params))
 	case "sessions/append_input":
-		result, err := s.sessionAppendInput(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.sessionAppendInput(req.Params))
 	case "sessions/rewind":
-		result, err := s.sessionRewind(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.sessionRewind(req.Params))
 	case "sessions/history":
-		result, err := s.sessionHistory(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.sessionHistory(req.Params))
 	case "sessions/fork":
-		result, err := s.sessionFork(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.sessionFork(req.Params))
 	case "sessions/rename":
-		result, err := s.sessionRename(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.sessionRename(req.Params))
 	case "sessions/delete":
-		result, err := s.sessionDelete(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.sessionDelete(req.Params))
 	case "sessions/prune":
-		result, err := s.sessionPrune(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.sessionPrune(req.Params))
 	case "sessions/prompt":
-		result, err := s.sessionPrompt(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.sessionPrompt(req.Params))
+	default:
+		return methodNotFound(req.Method)
+	}
+}
+
+func (s Server) handleFiles(req Request) (any, *Error) {
+	switch req.Method {
 	case "file/read":
-		result, err := s.readFile(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.readFile(req.Params))
 	case "file/write":
-		result, err := s.writeFile(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.writeFile(req.Params))
 	case "file/edit":
-		result, err := s.editFile(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.editFile(req.Params))
 	case "file/diff":
-		result, err := s.diffFile(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.diffFile(req.Params))
+	default:
+		return methodNotFound(req.Method)
+	}
+}
+
+func (s Server) handleEditor(req Request) (any, *Error) {
+	switch req.Method {
 	case "editor/identify":
-		result, err := s.editorIdentify(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.editorIdentify(req.Params))
 	case "editor/state":
-		result, err := s.editorState()
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.editorState())
 	case "editor/open":
-		result, err := s.editorOpen(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.editorOpen(req.Params))
 	case "editor/selection":
-		result, err := s.editorSelection(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.editorSelection(req.Params))
+	default:
+		return methodNotFound(req.Method)
+	}
+}
+
+func (s Server) handleBridge(req Request) (any, *Error) {
+	switch req.Method {
 	case "bridge/faults/list":
-		result, err := s.bridgeFaultsList()
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.bridgeFaultsList())
 	case "bridge/faults/record":
-		result, err := s.bridgeFaultsRecord(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.bridgeFaultsRecord(req.Params))
 	case "bridge/faults/clear":
-		result, err := s.bridgeFaultsClear()
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "diagnostics/go":
-		result, err := s.goDiagnostics(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.bridgeFaultsClear())
+	default:
+		return methodNotFound(req.Method)
+	}
+}
+
+func (s Server) handleCode(req Request) (any, *Error) {
+	switch req.Method {
 	case "code/symbols":
-		result, err := s.codeSymbols(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.codeSymbols(req.Params))
 	case "code/references":
-		result, err := s.codeReferences(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.codeReferences(req.Params))
 	case "code/definition":
-		result, err := s.codeDefinition(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.codeDefinition(req.Params))
 	case "code/hover":
-		result, err := s.codeHover(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.codeHover(req.Params))
 	case "code/completion":
-		result, err := s.codeCompletion(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.codeCompletion(req.Params))
 	case "code/format":
-		result, err := s.codeFormat(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.codeFormat(req.Params))
+	default:
+		return methodNotFound(req.Method)
+	}
+}
+
+func (s Server) handleNotebook(req Request) (any, *Error) {
+	switch req.Method {
 	case "notebook/read":
-		result, err := s.notebookRead(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.notebookRead(req.Params))
 	case "notebook/edit":
-		result, err := s.notebookEdit(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.notebookEdit(req.Params))
+	default:
+		return methodNotFound(req.Method)
+	}
+}
+
+func (s Server) handleLSP(req Request) (any, *Error) {
+	switch req.Method {
 	case "lsp/actions":
 		return s.lspActions(), nil
 	case "lsp/discover":
 		return s.lspDiscover(), nil
 	case "lsp/list":
-		result, err := s.lspList()
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.lspList())
 	case "lsp/start":
-		result, err := s.lspStart(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.lspStart(req.Params))
 	case "lsp/status":
-		result, err := s.lspStatus(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.lspStatus(req.Params))
 	case "lsp/stop":
-		result, err := s.lspStop(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.lspStop(req.Params))
 	case "lsp/query":
-		result, err := s.lspQuery(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.lspQuery(req.Params))
+	default:
+		return methodNotFound(req.Method)
+	}
+}
+
+func (s Server) handleMCP(req Request) (any, *Error) {
+	switch req.Method {
 	case "mcp/list":
 		return s.mcpList(req.Params), nil
 	case "mcp/show":
-		result, err := s.mcpShow(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.mcpShow(req.Params))
 	case "mcp/auth":
-		result, err := s.mcpAuth(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.mcpAuth(req.Params))
 	case "mcp/tools":
-		result, err := s.mcpTools(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.mcpTools(req.Params))
 	case "mcp/call":
-		result, err := s.mcpCall(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.mcpCall(req.Params))
 	case "mcp/resources":
-		result, err := s.mcpResources(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.mcpResources(req.Params))
 	case "mcp/resource-templates":
-		result, err := s.mcpResourceTemplates(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.mcpResourceTemplates(req.Params))
 	case "mcp/read":
-		result, err := s.mcpRead(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.mcpRead(req.Params))
 	case "mcp/prompts":
-		result, err := s.mcpPrompts(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.mcpPrompts(req.Params))
 	case "mcp/prompt":
-		result, err := s.mcpPrompt(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "background/list":
-		result, err := s.backgroundList(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "background/run":
-		result, err := s.backgroundRun(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "background/get":
-		result, err := s.backgroundGet(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "background/logs":
-		result, err := s.backgroundLogs(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "background/board":
-		result, err := s.backgroundBoard(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "background/heartbeat":
-		result, err := s.backgroundHeartbeat(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "background/stop":
-		result, err := s.backgroundStop(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "background/restart":
-		result, err := s.backgroundRestart(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "background/prune":
-		result, err := s.backgroundPrune(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "background/supervise":
-		result, err := s.backgroundSupervise(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "agent-runs/list":
-		result, err := s.agentRunsList(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "agent-runs/get":
-		result, err := s.agentRunsGet(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "agent-runs/logs":
-		result, err := s.agentRunsLogs(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "agent-runs/board":
-		result, err := s.agentRunsBoard(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "agent-runs/heartbeat":
-		result, err := s.agentRunsHeartbeat(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "agent-runs/stop":
-		result, err := s.agentRunsStop(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
-	case "agent-runs/prune":
-		result, err := s.agentRunsPrune(req.Params)
-		if err != nil {
-			return nil, &Error{Code: -32000, Message: err.Error()}
-		}
-		return result, nil
+		return rpcResult(s.mcpPrompt(req.Params))
 	default:
-		return nil, &Error{Code: -32601, Message: fmt.Sprintf("method not found: %s", req.Method)}
+		return methodNotFound(req.Method)
 	}
+}
+
+func (s Server) handleBackground(req Request) (any, *Error) {
+	switch req.Method {
+	case "background/list":
+		return rpcResult(s.backgroundList(req.Params))
+	case "background/run":
+		return rpcResult(s.backgroundRun(req.Params))
+	case "background/get":
+		return rpcResult(s.backgroundGet(req.Params))
+	case "background/logs":
+		return rpcResult(s.backgroundLogs(req.Params))
+	case "background/board":
+		return rpcResult(s.backgroundBoard(req.Params))
+	case "background/heartbeat":
+		return rpcResult(s.backgroundHeartbeat(req.Params))
+	case "background/stop":
+		return rpcResult(s.backgroundStop(req.Params))
+	case "background/restart":
+		return rpcResult(s.backgroundRestart(req.Params))
+	case "background/prune":
+		return rpcResult(s.backgroundPrune(req.Params))
+	case "background/supervise":
+		return rpcResult(s.backgroundSupervise(req.Params))
+	default:
+		return methodNotFound(req.Method)
+	}
+}
+
+func (s Server) handleAgentRuns(req Request) (any, *Error) {
+	switch req.Method {
+	case "agent-runs/list":
+		return rpcResult(s.agentRunsList(req.Params))
+	case "agent-runs/get":
+		return rpcResult(s.agentRunsGet(req.Params))
+	case "agent-runs/logs":
+		return rpcResult(s.agentRunsLogs(req.Params))
+	case "agent-runs/board":
+		return rpcResult(s.agentRunsBoard(req.Params))
+	case "agent-runs/heartbeat":
+		return rpcResult(s.agentRunsHeartbeat(req.Params))
+	case "agent-runs/stop":
+		return rpcResult(s.agentRunsStop(req.Params))
+	case "agent-runs/prune":
+		return rpcResult(s.agentRunsPrune(req.Params))
+	default:
+		return methodNotFound(req.Method)
+	}
+}
+
+func rpcResult(result any, err error) (any, *Error) {
+	if err != nil {
+		return nil, &Error{Code: -32000, Message: err.Error()}
+	}
+	return result, nil
+}
+
+func methodNotFound(method string) (any, *Error) {
+	return nil, &Error{Code: -32601, Message: fmt.Sprintf("method not found: %s", method)}
 }
 
 func (s Server) goDiagnostics(params json.RawMessage) (any, error) {

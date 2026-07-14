@@ -33,3 +33,6 @@ go mod tidy -diff
 
 step "static analysis"
 golangci-lint run
+
+step "complexity regression gate"
+scripts/complexity.sh
