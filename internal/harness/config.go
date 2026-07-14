@@ -364,12 +364,11 @@ func configValidationStatusScenarioRunLocal(ctx context.Context, workspace strin
 	if err := os.WriteFile(configPath, []byte(`{"model":"claude-status","permission_mode":"workspace-write","modle":"typo"}`), 0o644); err != nil {
 		return localScenarioResult{}, err
 	}
-	statusOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "status")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var snapshot localstatus.Snapshot
-	if err := json.Unmarshal([]byte(statusOut), &snapshot); err != nil {
+	statusOut, err := decodeHarnessOutput(&snapshot, func() (string, error) {
+		return runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "status")
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if snapshot.ConfigValidation.Status != "warning" ||
@@ -1004,14 +1003,13 @@ func promptDirectoryReferenceScenarioRunLocal(ctx context.Context, workspace str
 		return localScenarioResult{}, err
 	}
 
-	out, err := runHarnessCodog(ctx, workspace, "--config", configPath, "prompt", "Summarize @docs", "--output-format", "json")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var promptReport struct {
 		Response string `json:"response"`
 	}
-	if err := json.Unmarshal([]byte(out), &promptReport); err != nil {
+	_, err = decodeHarnessOutput(&promptReport, func() (string, error) {
+		return runHarnessCodog(ctx, workspace, "--config", configPath, "prompt", "Summarize @docs", "--output-format", "json")
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if promptReport.Response != "directory reference harness ok" {
@@ -1305,16 +1303,8 @@ func contextViewScenarioRunLocal(_ context.Context, workspace string) (localScen
 }
 
 func themeLifecycleScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
-	configHome := filepath.Join(workspace, ".codog-home")
-	if err := os.MkdirAll(configHome, 0o755); err != nil {
-		return localScenarioResult{}, err
-	}
-	configPath := filepath.Join(workspace, "codog-config.json")
-	configData, err := json.Marshal(map[string]any{"config_home": configHome})
+	configPath, err := createHarnessConfigFile(workspace, ".codog-home", nil)
 	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if err := os.WriteFile(configPath, configData, 0o644); err != nil {
 		return localScenarioResult{}, err
 	}
 	initialOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "theme")
@@ -1343,12 +1333,8 @@ func themeLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loca
 	if setReport.Action != "set" || setReport.Theme != "dark" || setReport.Previous != "default" {
 		return localScenarioResult{}, fmt.Errorf("unexpected set theme report: %#v", setReport)
 	}
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
+	if err := verifyHarnessFileContainsAny(configPath, `"theme": "dark"`, `"theme":"dark"`); err != nil {
 		return localScenarioResult{}, err
-	}
-	if !strings.Contains(string(configData), `"theme": "dark"`) && !strings.Contains(string(configData), `"theme":"dark"`) {
-		return localScenarioResult{}, fmt.Errorf("theme config did not persist dark theme: %s", string(configData))
 	}
 
 	statusOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "theme")
@@ -1382,12 +1368,8 @@ func themeLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loca
 	if clearReport.Action != "clear" || clearReport.Theme != "default" || clearReport.Previous != "dark" {
 		return localScenarioResult{}, fmt.Errorf("unexpected clear theme report: %#v", clearReport)
 	}
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
+	if err := verifyHarnessFileOmits(configPath, `"theme"`); err != nil {
 		return localScenarioResult{}, err
-	}
-	if strings.Contains(string(configData), `"theme"`) {
-		return localScenarioResult{}, fmt.Errorf("theme config still contains theme after clear: %s", string(configData))
 	}
 
 	report := map[string]any{
@@ -1416,669 +1398,608 @@ func themeLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loca
 }
 
 func interfacePreferencesScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
-	configHome := filepath.Join(workspace, ".codog-home")
-	if err := os.MkdirAll(configHome, 0o755); err != nil {
-		return localScenarioResult{}, err
-	}
-	configPath := filepath.Join(workspace, "codog-config.json")
-	configData, err := json.Marshal(map[string]any{"config_home": configHome})
+	configPath, err := createHarnessConfigFile(workspace, ".codog-home", nil)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if err := os.WriteFile(configPath, configData, 0o644); err != nil {
-		return localScenarioResult{}, err
-	}
-
-	initialLanguageOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "language")
+	language, err := interfaceLanguagePhase(ctx, workspace, configPath)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	initialLanguage, err := decodeLanguageHarnessReport(initialLanguageOut)
+	vim, err := interfaceVimPhase(ctx, workspace, configPath)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if initialLanguage.Kind != "language" || initialLanguage.Action != "status" || initialLanguage.Configured || initialLanguage.Language != "" {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial language report: %#v", initialLanguage)
-	}
-
-	setLanguageOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "language", "use", "Japanese", "--path", configPath)
+	data, err := json.Marshal(map[string]any{"kind": "interface_preferences", "language": language, "vim": vim})
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	setLanguage, err := decodeLanguageHarnessReport(setLanguageOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if setLanguage.Action != "set" || !setLanguage.Configured || setLanguage.Language != "Japanese" {
-		return localScenarioResult{}, fmt.Errorf("unexpected set language report: %#v", setLanguage)
-	}
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !strings.Contains(string(configData), `"language": "Japanese"`) && !strings.Contains(string(configData), `"language":"Japanese"`) {
-		return localScenarioResult{}, fmt.Errorf("language config did not persist: %s", string(configData))
-	}
-
-	statusLanguageOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "language", "view")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	statusLanguage, err := decodeLanguageHarnessReport(statusLanguageOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if statusLanguage.Action != "status" || !statusLanguage.Configured || statusLanguage.Language != "Japanese" {
-		return localScenarioResult{}, fmt.Errorf("unexpected persisted language report: %#v", statusLanguage)
-	}
-
-	languageText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "language", "view")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !harnessContainsAll(languageText, "Language", "Japanese") {
-		return localScenarioResult{}, fmt.Errorf("language text output missing expected values: %s", languageText)
-	}
-
-	clearLanguageOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "language", "clear", "--path", configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	clearLanguage, err := decodeLanguageHarnessReport(clearLanguageOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if clearLanguage.Action != "clear" || clearLanguage.Configured || clearLanguage.Language != "" || clearLanguage.Previous != "Japanese" {
-		return localScenarioResult{}, fmt.Errorf("unexpected clear language report: %#v", clearLanguage)
-	}
-
-	initialVimOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "vim", "status")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	initialVim, err := decodeVimHarnessReport(initialVimOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if initialVim.Kind != "vim" || initialVim.Action != "status" || initialVim.Enabled || initialVim.EditorMode != "default" {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial vim report: %#v", initialVim)
-	}
-
-	setVimOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "vim", "on", "--path", configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	setVim, err := decodeVimHarnessReport(setVimOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if setVim.Action != "set" || !setVim.Enabled || setVim.EditorMode != "vim" || setVim.Previous != "default" {
-		return localScenarioResult{}, fmt.Errorf("unexpected set vim report: %#v", setVim)
-	}
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !strings.Contains(string(configData), `"editorMode": "vim"`) && !strings.Contains(string(configData), `"editorMode":"vim"`) {
-		return localScenarioResult{}, fmt.Errorf("vim config did not persist: %s", string(configData))
-	}
-
-	statusVimOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "vim", "status")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	statusVim, err := decodeVimHarnessReport(statusVimOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if statusVim.Action != "status" || !statusVim.Enabled || statusVim.EditorMode != "vim" {
-		return localScenarioResult{}, fmt.Errorf("unexpected persisted vim report: %#v", statusVim)
-	}
-
-	vimText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "vim", "status")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !harnessContainsAll(vimText, "Vim", "Editor mode", "vim") {
-		return localScenarioResult{}, fmt.Errorf("vim text output missing expected values: %s", vimText)
-	}
-
-	clearVimOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "vim", "clear", "--path", configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	clearVim, err := decodeVimHarnessReport(clearVimOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if clearVim.Action != "clear" || clearVim.Enabled || clearVim.EditorMode != "default" || clearVim.Previous != "vim" {
-		return localScenarioResult{}, fmt.Errorf("unexpected clear vim report: %#v", clearVim)
-	}
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if strings.Contains(string(configData), `"language"`) || strings.Contains(string(configData), `"editorMode"`) {
-		return localScenarioResult{}, fmt.Errorf("interface preferences still persisted after clear: %s", string(configData))
-	}
-
-	report := map[string]any{
-		"kind": "interface_preferences",
-		"language": map[string]any{
-			"initial_configured": initialLanguage.Configured,
-			"set":                setLanguage.Language,
-			"status":             statusLanguage.Language,
-			"cleared":            clearLanguage.Language,
-			"clear_previous":     clearLanguage.Previous,
-			"path_persisted":     setLanguage.Path != "" && strings.HasSuffix(setLanguage.Path, "codog-config.json"),
-			"text_rendered":      strings.Contains(languageText, "Japanese"),
-		},
-		"vim": map[string]any{
-			"initial_enabled": initialVim.Enabled,
-			"set":             setVim.EditorMode,
-			"status":          statusVim.EditorMode,
-			"cleared":         clearVim.EditorMode,
-			"clear_previous":  clearVim.Previous,
-			"path_persisted":  setVim.Path != "" && strings.HasSuffix(setVim.Path, "codog-config.json"),
-			"text_rendered":   strings.Contains(vimText, "Editor mode"),
-		},
-	}
-	data, err := json.Marshal(report)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	return localScenarioResult{
-		Output:       string(data),
-		FinalMessage: "interface preferences harness ok",
-		RequestCount: 8,
-		MessageCount: 1,
-	}, nil
+	return localScenarioResult{Output: string(data), FinalMessage: "interface preferences harness ok", RequestCount: 8, MessageCount: 1}, nil
 }
 
 func privacyKeybindingsScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
-	configHome := filepath.Join(workspace, ".codog-home")
-	if err := os.MkdirAll(configHome, 0o755); err != nil {
-		return localScenarioResult{}, err
-	}
-	configPath := filepath.Join(workspace, "codog-config.json")
-	configData, err := json.Marshal(map[string]any{
-		"config_home": configHome,
-		"editorMode":  "vim",
-	})
+	configPath, err := createHarnessConfigFile(workspace, ".codog-home", map[string]any{"editorMode": "vim"})
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if err := os.WriteFile(configPath, configData, 0o644); err != nil {
-		return localScenarioResult{}, err
-	}
-
-	initialPrivacyOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "privacy-settings")
+	privacy, err := privacySettingsPhase(ctx, workspace, configPath)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	initialPrivacy, err := decodePrivacyHarnessReport(initialPrivacyOut)
+	keybindings, err := keybindingsInitPhase(ctx, workspace, configPath)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if initialPrivacy.Kind != "privacy_settings" || initialPrivacy.Action != "show" || !initialPrivacy.Settings["prompt_history_enabled"] {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial privacy report: %#v", initialPrivacy)
-	}
-
-	setPrivacyOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "privacy-settings", "set", "prompt-history", "off", "--path", configPath)
+	validated, err := keybindingsValidationPhase(ctx, workspace, configPath)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	setPrivacy, err := decodePrivacyHarnessReport(setPrivacyOut)
+	for key, value := range validated {
+		keybindings[key] = value
+	}
+	data, err := json.Marshal(map[string]any{"kind": "privacy_keybindings", "privacy": privacy, "keybindings": keybindings})
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if setPrivacy.Action != "set" || setPrivacy.Key != "prompt_history_enabled" || setPrivacy.Value == nil || *setPrivacy.Value || setPrivacy.Settings["prompt_history_enabled"] {
-		return localScenarioResult{}, fmt.Errorf("unexpected set privacy report: %#v", setPrivacy)
-	}
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !strings.Contains(string(configData), `"prompt_history_enabled": false`) && !strings.Contains(string(configData), `"prompt_history_enabled":false`) {
-		return localScenarioResult{}, fmt.Errorf("privacy config did not persist prompt-history setting: %s", string(configData))
-	}
-
-	statusPrivacyOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "privacy-settings", "show")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	statusPrivacy, err := decodePrivacyHarnessReport(statusPrivacyOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if statusPrivacy.Action != "show" || statusPrivacy.Settings["prompt_history_enabled"] {
-		return localScenarioResult{}, fmt.Errorf("unexpected persisted privacy report: %#v", statusPrivacy)
-	}
-
-	privacyText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "privacy-settings")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !harnessContainsAll(privacyText, "Privacy Settings", "Prompt history", "disabled") {
-		return localScenarioResult{}, fmt.Errorf("privacy text output missing expected values: %s", privacyText)
-	}
-
-	clearPrivacyOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "privacy-settings", "clear", "prompt-history", "--path", configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	clearPrivacy, err := decodePrivacyHarnessReport(clearPrivacyOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if clearPrivacy.Action != "clear" || clearPrivacy.Key != "prompt_history_enabled" || !clearPrivacy.Settings["prompt_history_enabled"] {
-		return localScenarioResult{}, fmt.Errorf("unexpected clear privacy report: %#v", clearPrivacy)
-	}
-
-	initialKeybindingsOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	initialKeybindings, err := decodeKeybindingsHarnessReport(initialKeybindingsOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if initialKeybindings.Kind != "keybindings" || initialKeybindings.Action != "show" || !initialKeybindings.VimMode || initialKeybindings.KeybindingsExists {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial keybindings report: %#v", initialKeybindings)
-	}
-
-	pathOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings", "path")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	pathReport, err := decodeKeybindingsFileHarnessReport(pathOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if pathReport.Action != "path" || pathReport.Path != filepath.Join(configHome, "keybindings.json") || pathReport.Exists {
-		return localScenarioResult{}, fmt.Errorf("unexpected keybindings path report: %#v", pathReport)
-	}
-
-	initOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings", "init")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	initReport, err := decodeKeybindingsFileHarnessReport(initOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if initReport.Action != "init" || initReport.Status != "created" || !initReport.Created || !initReport.Exists {
-		return localScenarioResult{}, fmt.Errorf("unexpected keybindings init report: %#v", initReport)
-	}
-	keybindingsData, err := os.ReadFile(pathReport.Path)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !harnessContainsAll(string(keybindingsData), `"context": "repl"`, `"ctrl+r"`, `"shift+enter"`, `"ctrl+s"`, `"ctrl+g"`, `"ctrl+x ctrl+e"`, `"ctrl+x ctrl+k"`, `"ctrl+x ctrl+c"`, `"ctrl+x ctrl+u"`, `"ctrl+x ctrl+s"`, `"ctrl+x ctrl+y"`, `"ctrl+x backspace"`, `"ctrl+_"`, `"ctrl+shift+-"`, `"ctrl+v"`, `"ctrl+shift+p"`, `"ctrl+p"`, `"ctrl+shift+f"`, `"ctrl+f"`, `"alt+m"`, `"meta+m"`, `"alt+p"`, `"alt+o"`, `"alt+t"`, `"shift+up"`, `"ctrl+o"`, `"ctrl+l"`, `"ctrl+u"`, `"ctrl+k"`, `"home"`, `"ctrl+a"`, `"end"`, `"ctrl+d"`, `"ctrl+b"`, `"ctrl+t"`, `"ctrl+shift+t"`, `"up"`) {
-		return localScenarioResult{}, fmt.Errorf("keybindings template missing expected entries: %s", string(keybindingsData))
-	}
-	if !harnessContainsAll(string(keybindingsData), `"context": "tui-modal"`, `"j"`, `"shift+down"`, `"ctrl+down"`) {
-		return localScenarioResult{}, fmt.Errorf("keybindings template missing modal navigation entries: %s", string(keybindingsData))
-	}
-	if !harnessContainsAll(string(keybindingsData), `"context": "tui-attachments"`, `"right"`, `"backspace"`, `"delete"`) {
-		return localScenarioResult{}, fmt.Errorf("keybindings template missing attachment navigation entries: %s", string(keybindingsData))
-	}
-	if !harnessContainsAll(string(keybindingsData), `"context": "tui-diff"`, `"enter"`, `"left"`, `"right"`) {
-		return localScenarioResult{}, fmt.Errorf("keybindings template missing diff dialog entries: %s", string(keybindingsData))
-	}
-
-	editorLog := filepath.Join(workspace, "keybindings-editor.log")
-	editorScript := filepath.Join(workspace, "keybindings-editor.sh")
-	if err := os.WriteFile(editorScript, []byte("#!/bin/sh\nprintf '%s\\n' \"$2\" > \"$1\"\n"), 0o755); err != nil {
-		return localScenarioResult{}, err
-	}
-	if err := os.Remove(pathReport.Path); err != nil {
-		return localScenarioResult{}, err
-	}
-	openOut, err := runHarnessCodogWithEnv(ctx, workspace, []string{"VISUAL=" + editorScript + " " + editorLog}, "--config", configPath, "--output-format", "json", "keybindings", "open")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	openReport, err := decodeKeybindingsFileHarnessReport(openOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	openedPath, err := os.ReadFile(editorLog)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if openReport.Action != "open" || openReport.Status != "created_opened" || !openReport.Created || !openReport.Opened || string(openedPath) != pathReport.Path+"\n" {
-		return localScenarioResult{}, fmt.Errorf("unexpected keybindings open report: %#v opened=%q", openReport, string(openedPath))
-	}
-	keybindingsData, err = os.ReadFile(pathReport.Path)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-
-	validateOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings", "validate")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	validateReport, err := decodeKeybindingsValidationHarnessReport(validateOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 7 || validateReport.BindingCount != 86 {
-		return localScenarioResult{}, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
-	}
-
-	resolveOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings", "resolve", "repl", "Control-R")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	resolveReport, err := decodeKeybindingsResolveHarnessReport(resolveOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if resolveReport.Action != "resolve" || !resolveReport.Found || resolveReport.Source != "user" || resolveReport.NormalizedKey != "ctrl+r" || resolveReport.BindingAction != "reverse search prompt history" {
-		return localScenarioResult{}, fmt.Errorf("unexpected keybindings resolve report: %#v", resolveReport)
-	}
-
-	keybindingsText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "keybindings")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !harnessContainsAll(keybindingsText, "Keybindings", "Editor mode      vim", "User valid       true") {
-		return localScenarioResult{}, fmt.Errorf("keybindings text output missing expected values: %s", keybindingsText)
-	}
-
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if strings.Contains(string(configData), `"prompt_history_enabled"`) {
-		return localScenarioResult{}, fmt.Errorf("privacy config still contains prompt_history_enabled after clear: %s", string(configData))
-	}
-
-	report := map[string]any{
-		"kind": "privacy_keybindings",
-		"privacy": map[string]any{
-			"initial_prompt_history": initialPrivacy.Settings["prompt_history_enabled"],
-			"set_prompt_history":     setPrivacy.Settings["prompt_history_enabled"],
-			"status_prompt_history":  statusPrivacy.Settings["prompt_history_enabled"],
-			"cleared_prompt_history": clearPrivacy.Settings["prompt_history_enabled"],
-			"path_persisted":         setPrivacy.Path != "" && strings.HasSuffix(setPrivacy.Path, "codog-config.json"),
-			"text_rendered":          strings.Contains(privacyText, "Prompt history"),
-		},
-		"keybindings": map[string]any{
-			"initial_exists":        initialKeybindings.KeybindingsExists,
-			"path":                  strings.HasSuffix(pathReport.Path, "keybindings.json"),
-			"created":               initReport.Created,
-			"opened":                openReport.Opened,
-			"valid":                 validateReport.Valid,
-			"contexts":              validateReport.ContextCount,
-			"bindings":              validateReport.BindingCount,
-			"shift_enter":           strings.Contains(string(keybindingsData), `"shift+enter"`),
-			"prompt_stash_key":      strings.Contains(string(keybindingsData), `"ctrl+s"`),
-			"external_editor":       strings.Contains(string(keybindingsData), `"ctrl+g"`),
-			"external_editor_chord": strings.Contains(string(keybindingsData), `"ctrl+x ctrl+e"`),
-			"kill_agents_chord":     strings.Contains(string(keybindingsData), `"ctrl+x ctrl+k"`),
-			"compact_chord":         strings.Contains(string(keybindingsData), `"ctrl+x ctrl+c"`),
-			"undo_change_chord":     strings.Contains(string(keybindingsData), `"ctrl+x ctrl+u"`),
-			"export_chord":          strings.Contains(string(keybindingsData), `"ctrl+x ctrl+s"`),
-			"copy_chord":            strings.Contains(string(keybindingsData), `"ctrl+x ctrl+y"`),
-			"attachment_remove_key": strings.Contains(string(keybindingsData), `"ctrl+x backspace"`),
-			"composer_undo_key":     harnessContainsAll(string(keybindingsData), `"ctrl+_"`, `"ctrl+shift+-"`),
-			"clipboard_paste_key":   strings.Contains(string(keybindingsData), `"ctrl+v"`),
-			"quick_open_key":        harnessContainsAll(string(keybindingsData), `"ctrl+shift+p"`, `"ctrl+p"`),
-			"global_search_key":     harnessContainsAll(string(keybindingsData), `"ctrl+shift+f"`, `"ctrl+f"`),
-			"mode_cycle_keys":       harnessContainsAll(string(keybindingsData), `"alt+m"`, `"meta+m"`),
-			"modal_navigation_keys": harnessContainsAll(string(keybindingsData), `"context": "tui-modal"`, `"j"`, `"k"`, `"shift+down"`),
-			"attachment_nav_keys":   harnessContainsAll(string(keybindingsData), `"context": "tui-attachments"`, `"right"`, `"backspace"`, `"delete"`),
-			"diff_dialog_keys":      harnessContainsAll(string(keybindingsData), `"context": "tui-diff"`, `"enter"`, `"left"`, `"right"`),
-			"runtime_control_keys":  harnessContainsAll(string(keybindingsData), `"alt+p"`, `"alt+o"`, `"alt+t"`),
-			"message_actions_key":   strings.Contains(string(keybindingsData), `"shift+up"`),
-			"transcript_key":        strings.Contains(string(keybindingsData), `"ctrl+o"`),
-			"terminal_keys":         harnessContainsAll(string(keybindingsData), `"ctrl+l"`, `"ctrl+d"`),
-			"background_key":        strings.Contains(string(keybindingsData), `"ctrl+b"`),
-			"todo_panel_key":        strings.Contains(string(keybindingsData), `"ctrl+t"`),
-			"task_board_key":        strings.Contains(string(keybindingsData), `"ctrl+shift+t"`),
-			"queue_edit_key":        strings.Contains(string(keybindingsData), `"up"`),
-			"resolved":              resolveReport.Found,
-			"source":                resolveReport.Source,
-			"text_rendered":         strings.Contains(keybindingsText, "User valid"),
-		},
-	}
-	data, err := json.Marshal(report)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	return localScenarioResult{
-		Output:       string(data),
-		FinalMessage: "privacy keybindings harness ok",
-		RequestCount: 12,
-		MessageCount: 1,
-	}, nil
+	return localScenarioResult{Output: string(data), FinalMessage: "privacy keybindings harness ok", RequestCount: 12, MessageCount: 1}, nil
 }
 
 func browserNotificationsScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
-	configHome := filepath.Join(workspace, ".codog-home")
-	if err := os.MkdirAll(configHome, 0o755); err != nil {
-		return localScenarioResult{}, err
-	}
-	configPath := filepath.Join(workspace, "codog-config.json")
-	configData, err := json.Marshal(map[string]any{"config_home": configHome})
+	configPath, err := createHarnessConfigFile(workspace, ".codog-home", nil)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+	chrome, err := browserChromePhase(ctx, workspace, configPath)
+	if err != nil {
 		return localScenarioResult{}, err
 	}
+	notifications, err := browserNotificationsPhase(ctx, workspace, configPath)
+	if err != nil {
+		return localScenarioResult{}, err
+	}
+	telemetry, err := browserTelemetryPhase(ctx, workspace, configPath)
+	if err != nil {
+		return localScenarioResult{}, err
+	}
+	if err := verifyBrowserNotificationConfigCleared(configPath); err != nil {
+		return localScenarioResult{}, err
+	}
+	data, err := json.Marshal(map[string]any{"kind": "browser_notifications", "chrome": chrome, "notifications": notifications, "telemetry": telemetry})
+	if err != nil {
+		return localScenarioResult{}, err
+	}
+	return localScenarioResult{Output: string(data), FinalMessage: "browser notifications harness ok", RequestCount: 13, MessageCount: 1}, nil
+}
 
+func browserChromePhase(ctx context.Context, workspace string, configPath string) (map[string]any, error) {
 	initialChromeOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "chrome")
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	initialChrome, err := decodeChromeHarnessReport(initialChromeOut)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if initialChrome.Kind != "chrome" || initialChrome.Action != "status" || initialChrome.Enabled || initialChrome.Configured {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial chrome report: %#v", initialChrome)
+		return nil, fmt.Errorf("unexpected initial chrome report: %#v", initialChrome)
 	}
 
 	setChromeOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "chrome", "on", "--path", configPath)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	setChrome, err := decodeChromeHarnessReport(setChromeOut)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if setChrome.Action != "set" || !setChrome.Enabled || !setChrome.Configured || setChrome.MCPServer == "" {
-		return localScenarioResult{}, fmt.Errorf("unexpected set chrome report: %#v", setChrome)
+		return nil, fmt.Errorf("unexpected set chrome report: %#v", setChrome)
 	}
-	configData, err = os.ReadFile(configPath)
+	configData, err := os.ReadFile(configPath)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if !strings.Contains(string(configData), `"chrome_default_enabled": true`) && !strings.Contains(string(configData), `"chrome_default_enabled":true`) {
-		return localScenarioResult{}, fmt.Errorf("chrome config did not persist enabled state: %s", string(configData))
+		return nil, fmt.Errorf("chrome config did not persist enabled state: %s", string(configData))
 	}
 
 	statusChromeOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "chrome", "status")
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	statusChrome, err := decodeChromeHarnessReport(statusChromeOut)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if statusChrome.Action != "status" || !statusChrome.Enabled || !statusChrome.Configured {
-		return localScenarioResult{}, fmt.Errorf("unexpected persisted chrome report: %#v", statusChrome)
+		return nil, fmt.Errorf("unexpected persisted chrome report: %#v", statusChrome)
 	}
 
 	chromeText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "chrome", "permissions")
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if !harnessContainsAll(chromeText, "Chrome", "Permissions URL", "https://clau.de/chrome/permissions") {
-		return localScenarioResult{}, fmt.Errorf("chrome text output missing expected values: %s", chromeText)
+		return nil, fmt.Errorf("chrome text output missing expected values: %s", chromeText)
 	}
 
 	clearChromeOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "chrome", "clear", "--path", configPath)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	clearChrome, err := decodeChromeHarnessReport(clearChromeOut)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if clearChrome.Action != "clear" || clearChrome.Enabled || clearChrome.Configured || !clearChrome.Previous {
-		return localScenarioResult{}, fmt.Errorf("unexpected clear chrome report: %#v", clearChrome)
+		return nil, fmt.Errorf("unexpected clear chrome report: %#v", clearChrome)
 	}
 
+	return map[string]any{"initial_enabled": initialChrome.Enabled, "set": setChrome.Enabled, "status": statusChrome.Enabled, "cleared": clearChrome.Enabled, "mcp_server": setChrome.MCPServer, "path_persisted": setChrome.Path != "" && strings.HasSuffix(setChrome.Path, "codog-config.json"), "text_rendered": strings.Contains(chromeText, "Permissions URL")}, nil
+}
+func browserNotificationsPhase(ctx context.Context, workspace string, configPath string) (map[string]any, error) {
 	initialNotificationsOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "notifications")
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	initialNotifications, err := decodeNotificationsHarnessReport(initialNotificationsOut)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if initialNotifications.Kind != "notifications" || initialNotifications.Action != "status" || !initialNotifications.Enabled || initialNotifications.Configured {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial notifications report: %#v", initialNotifications)
+		return nil, fmt.Errorf("unexpected initial notifications report: %#v", initialNotifications)
 	}
 
 	setNotificationsOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "notifications", "off", "--path", configPath)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	setNotifications, err := decodeNotificationsHarnessReport(setNotificationsOut)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if setNotifications.Action != "set" || setNotifications.Enabled || !setNotifications.Configured || !setNotifications.Previous {
-		return localScenarioResult{}, fmt.Errorf("unexpected set notifications report: %#v", setNotifications)
+		return nil, fmt.Errorf("unexpected set notifications report: %#v", setNotifications)
 	}
-	configData, err = os.ReadFile(configPath)
+	configData, err := os.ReadFile(configPath)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if !strings.Contains(string(configData), `"notifications_enabled": false`) && !strings.Contains(string(configData), `"notifications_enabled":false`) {
-		return localScenarioResult{}, fmt.Errorf("notifications config did not persist disabled state: %s", string(configData))
+		return nil, fmt.Errorf("notifications config did not persist disabled state: %s", string(configData))
 	}
 
 	notificationsText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "notifications")
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if !harnessContainsAll(notificationsText, "Notifications", "Enabled          false") {
-		return localScenarioResult{}, fmt.Errorf("notifications text output missing expected values: %s", notificationsText)
+		return nil, fmt.Errorf("notifications text output missing expected values: %s", notificationsText)
 	}
 
 	clearNotificationsOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "notifications", "clear", "--path", configPath)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	clearNotifications, err := decodeNotificationsHarnessReport(clearNotificationsOut)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if clearNotifications.Action != "clear" || !clearNotifications.Enabled || clearNotifications.Configured || clearNotifications.Previous {
-		return localScenarioResult{}, fmt.Errorf("unexpected clear notifications report: %#v", clearNotifications)
+		return nil, fmt.Errorf("unexpected clear notifications report: %#v", clearNotifications)
 	}
 
+	return map[string]any{"initial_enabled": initialNotifications.Enabled, "set": setNotifications.Enabled, "cleared": clearNotifications.Enabled, "path_persisted": setNotifications.Path != "" && strings.HasSuffix(setNotifications.Path, "codog-config.json"), "text_rendered": strings.Contains(notificationsText, "Enabled          false")}, nil
+}
+func browserTelemetryPhase(ctx context.Context, workspace string, configPath string) (map[string]any, error) {
 	initialTelemetryOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "telemetry")
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	initialTelemetry, err := decodeTelemetryHarnessReport(initialTelemetryOut)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if initialTelemetry.Kind != "telemetry" || initialTelemetry.Action != "status" || initialTelemetry.Enabled || initialTelemetry.Configured {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial telemetry report: %#v", initialTelemetry)
+		return nil, fmt.Errorf("unexpected initial telemetry report: %#v", initialTelemetry)
 	}
 
 	setTelemetryOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "telemetry", "on", "--path", configPath)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	setTelemetry, err := decodeTelemetryHarnessReport(setTelemetryOut)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if setTelemetry.Action != "set" || !setTelemetry.Enabled || !setTelemetry.Configured {
-		return localScenarioResult{}, fmt.Errorf("unexpected set telemetry report: %#v", setTelemetry)
+		return nil, fmt.Errorf("unexpected set telemetry report: %#v", setTelemetry)
 	}
-	configData, err = os.ReadFile(configPath)
+	configData, err := os.ReadFile(configPath)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if !strings.Contains(string(configData), `"telemetry_enabled": true`) && !strings.Contains(string(configData), `"telemetry_enabled":true`) {
-		return localScenarioResult{}, fmt.Errorf("telemetry config did not persist enabled state: %s", string(configData))
+		return nil, fmt.Errorf("telemetry config did not persist enabled state: %s", string(configData))
 	}
 
 	telemetryText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "telemetry")
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if !harnessContainsAll(telemetryText, "Telemetry", "Enabled          true") {
-		return localScenarioResult{}, fmt.Errorf("telemetry text output missing expected values: %s", telemetryText)
+		return nil, fmt.Errorf("telemetry text output missing expected values: %s", telemetryText)
 	}
 
 	clearTelemetryOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "telemetry", "clear", "--path", configPath)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	clearTelemetry, err := decodeTelemetryHarnessReport(clearTelemetryOut)
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
 	if clearTelemetry.Action != "clear" || clearTelemetry.Enabled || clearTelemetry.Configured || !clearTelemetry.Previous {
-		return localScenarioResult{}, fmt.Errorf("unexpected clear telemetry report: %#v", clearTelemetry)
+		return nil, fmt.Errorf("unexpected clear telemetry report: %#v", clearTelemetry)
 	}
 
-	configData, err = os.ReadFile(configPath)
+	return map[string]any{"initial_enabled": initialTelemetry.Enabled, "set": setTelemetry.Enabled, "cleared": clearTelemetry.Enabled, "path_persisted": setTelemetry.Path != "" && strings.HasSuffix(setTelemetry.Path, "codog-config.json"), "text_rendered": strings.Contains(telemetryText, "Enabled          true")}, nil
+}
+func verifyBrowserNotificationConfigCleared(configPath string) error {
+	configData, err := os.ReadFile(configPath)
 	if err != nil {
-		return localScenarioResult{}, err
+		return err
 	}
 	for _, clearedKey := range []string{`"chrome_default_enabled"`, `"notifications_enabled"`, `"telemetry_enabled"`} {
 		if strings.Contains(string(configData), clearedKey) {
-			return localScenarioResult{}, fmt.Errorf("config still contains %s after clear: %s", clearedKey, string(configData))
+			return fmt.Errorf("config still contains %s after clear: %s", clearedKey, string(configData))
 		}
 	}
 
-	report := map[string]any{
-		"kind": "browser_notifications",
-		"chrome": map[string]any{
-			"initial_enabled": initialChrome.Enabled,
-			"set":             setChrome.Enabled,
-			"status":          statusChrome.Enabled,
-			"cleared":         clearChrome.Enabled,
-			"mcp_server":      setChrome.MCPServer,
-			"path_persisted":  setChrome.Path != "" && strings.HasSuffix(setChrome.Path, "codog-config.json"),
-			"text_rendered":   strings.Contains(chromeText, "Permissions URL"),
-		},
-		"notifications": map[string]any{
-			"initial_enabled": initialNotifications.Enabled,
-			"set":             setNotifications.Enabled,
-			"cleared":         clearNotifications.Enabled,
-			"path_persisted":  setNotifications.Path != "" && strings.HasSuffix(setNotifications.Path, "codog-config.json"),
-			"text_rendered":   strings.Contains(notificationsText, "Enabled          false"),
-		},
-		"telemetry": map[string]any{
-			"initial_enabled": initialTelemetry.Enabled,
-			"set":             setTelemetry.Enabled,
-			"cleared":         clearTelemetry.Enabled,
-			"path_persisted":  setTelemetry.Path != "" && strings.HasSuffix(setTelemetry.Path, "codog-config.json"),
-			"text_rendered":   strings.Contains(telemetryText, "Enabled          true"),
-		},
-	}
-	data, err := json.Marshal(report)
+	return nil
+}
+
+func interfaceLanguagePhase(ctx context.Context, workspace string, configPath string) (map[string]any, error) {
+	initialLanguageOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "language")
 	if err != nil {
-		return localScenarioResult{}, err
+		return nil, err
 	}
-	return localScenarioResult{
-		Output:       string(data),
-		FinalMessage: "browser notifications harness ok",
-		RequestCount: 13,
-		MessageCount: 1,
+	initialLanguage, err := decodeLanguageHarnessReport(initialLanguageOut)
+	if err != nil {
+		return nil, err
+	}
+	if initialLanguage.Kind != "language" || initialLanguage.Action != "status" || initialLanguage.Configured || initialLanguage.Language != "" {
+		return nil, fmt.Errorf("unexpected initial language report: %#v", initialLanguage)
+	}
+
+	setLanguageOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "language", "use", "Japanese", "--path", configPath)
+	if err != nil {
+		return nil, err
+	}
+	setLanguage, err := decodeLanguageHarnessReport(setLanguageOut)
+	if err != nil {
+		return nil, err
+	}
+	if setLanguage.Action != "set" || !setLanguage.Configured || setLanguage.Language != "Japanese" {
+		return nil, fmt.Errorf("unexpected set language report: %#v", setLanguage)
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.Contains(string(configData), `"language": "Japanese"`) && !strings.Contains(string(configData), `"language":"Japanese"`) {
+		return nil, fmt.Errorf("language config did not persist: %s", string(configData))
+	}
+
+	statusLanguageOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "language", "view")
+	if err != nil {
+		return nil, err
+	}
+	statusLanguage, err := decodeLanguageHarnessReport(statusLanguageOut)
+	if err != nil {
+		return nil, err
+	}
+	if statusLanguage.Action != "status" || !statusLanguage.Configured || statusLanguage.Language != "Japanese" {
+		return nil, fmt.Errorf("unexpected persisted language report: %#v", statusLanguage)
+	}
+
+	languageText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "language", "view")
+	if err != nil {
+		return nil, err
+	}
+	if !harnessContainsAll(languageText, "Language", "Japanese") {
+		return nil, fmt.Errorf("language text output missing expected values: %s", languageText)
+	}
+
+	clearLanguageOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "language", "clear", "--path", configPath)
+	if err != nil {
+		return nil, err
+	}
+	clearLanguage, err := decodeLanguageHarnessReport(clearLanguageOut)
+	if err != nil {
+		return nil, err
+	}
+	if clearLanguage.Action != "clear" || clearLanguage.Configured || clearLanguage.Language != "" || clearLanguage.Previous != "Japanese" {
+		return nil, fmt.Errorf("unexpected clear language report: %#v", clearLanguage)
+	}
+
+	return map[string]any{"initial_configured": initialLanguage.Configured, "set": setLanguage.Language, "status": statusLanguage.Language, "cleared": clearLanguage.Language, "clear_previous": clearLanguage.Previous, "path_persisted": setLanguage.Path != "" && strings.HasSuffix(setLanguage.Path, "codog-config.json"), "text_rendered": strings.Contains(languageText, "Japanese")}, nil
+}
+func interfaceVimPhase(ctx context.Context, workspace string, configPath string) (map[string]any, error) {
+	initialVimOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "vim", "status")
+	if err != nil {
+		return nil, err
+	}
+	initialVim, err := decodeVimHarnessReport(initialVimOut)
+	if err != nil {
+		return nil, err
+	}
+	if initialVim.Kind != "vim" || initialVim.Action != "status" || initialVim.Enabled || initialVim.EditorMode != "default" {
+		return nil, fmt.Errorf("unexpected initial vim report: %#v", initialVim)
+	}
+
+	setVimOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "vim", "on", "--path", configPath)
+	if err != nil {
+		return nil, err
+	}
+	setVim, err := decodeVimHarnessReport(setVimOut)
+	if err != nil {
+		return nil, err
+	}
+	if setVim.Action != "set" || !setVim.Enabled || setVim.EditorMode != "vim" || setVim.Previous != "default" {
+		return nil, fmt.Errorf("unexpected set vim report: %#v", setVim)
+	}
+	if err := verifyHarnessFileContainsAny(configPath, `"editorMode": "vim"`, `"editorMode":"vim"`); err != nil {
+		return nil, err
+	}
+
+	statusVimOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "vim", "status")
+	if err != nil {
+		return nil, err
+	}
+	statusVim, err := decodeVimHarnessReport(statusVimOut)
+	if err != nil {
+		return nil, err
+	}
+	if statusVim.Action != "status" || !statusVim.Enabled || statusVim.EditorMode != "vim" {
+		return nil, fmt.Errorf("unexpected persisted vim report: %#v", statusVim)
+	}
+
+	vimText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "vim", "status")
+	if err != nil {
+		return nil, err
+	}
+	if !harnessContainsAll(vimText, "Vim", "Editor mode", "vim") {
+		return nil, fmt.Errorf("vim text output missing expected values: %s", vimText)
+	}
+
+	clearVimOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "vim", "clear", "--path", configPath)
+	if err != nil {
+		return nil, err
+	}
+	clearVim, err := decodeVimHarnessReport(clearVimOut)
+	if err != nil {
+		return nil, err
+	}
+	if clearVim.Action != "clear" || clearVim.Enabled || clearVim.EditorMode != "default" || clearVim.Previous != "vim" {
+		return nil, fmt.Errorf("unexpected clear vim report: %#v", clearVim)
+	}
+	if err := verifyHarnessFileOmits(configPath, `"language"`, `"editorMode"`); err != nil {
+		return nil, err
+	}
+
+	return map[string]any{"initial_enabled": initialVim.Enabled, "set": setVim.EditorMode, "status": statusVim.EditorMode, "cleared": clearVim.EditorMode, "clear_previous": clearVim.Previous, "path_persisted": setVim.Path != "" && strings.HasSuffix(setVim.Path, "codog-config.json"), "text_rendered": strings.Contains(vimText, "Editor mode")}, nil
+}
+
+func privacySettingsPhase(ctx context.Context, workspace, configPath string) (map[string]any, error) {
+	initialPrivacyOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "privacy-settings")
+	if err != nil {
+		return nil, err
+	}
+	initialPrivacy, err := decodePrivacyHarnessReport(initialPrivacyOut)
+	if err != nil {
+		return nil, err
+	}
+	if initialPrivacy.Kind != "privacy_settings" || initialPrivacy.Action != "show" || !initialPrivacy.Settings["prompt_history_enabled"] {
+		return nil, fmt.Errorf("unexpected initial privacy report: %#v", initialPrivacy)
+	}
+
+	setPrivacyOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "privacy-settings", "set", "prompt-history", "off", "--path", configPath)
+	if err != nil {
+		return nil, err
+	}
+	setPrivacy, err := decodePrivacyHarnessReport(setPrivacyOut)
+	if err != nil {
+		return nil, err
+	}
+	if setPrivacy.Action != "set" || setPrivacy.Key != "prompt_history_enabled" || setPrivacy.Value == nil || *setPrivacy.Value || setPrivacy.Settings["prompt_history_enabled"] {
+		return nil, fmt.Errorf("unexpected set privacy report: %#v", setPrivacy)
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.Contains(string(configData), `"prompt_history_enabled": false`) && !strings.Contains(string(configData), `"prompt_history_enabled":false`) {
+		return nil, fmt.Errorf("privacy config did not persist prompt-history setting: %s", string(configData))
+	}
+
+	statusPrivacyOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "privacy-settings", "show")
+	if err != nil {
+		return nil, err
+	}
+	statusPrivacy, err := decodePrivacyHarnessReport(statusPrivacyOut)
+	if err != nil {
+		return nil, err
+	}
+	if statusPrivacy.Action != "show" || statusPrivacy.Settings["prompt_history_enabled"] {
+		return nil, fmt.Errorf("unexpected persisted privacy report: %#v", statusPrivacy)
+	}
+
+	privacyText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "privacy-settings")
+	if err != nil {
+		return nil, err
+	}
+	if !harnessContainsAll(privacyText, "Privacy Settings", "Prompt history", "disabled") {
+		return nil, fmt.Errorf("privacy text output missing expected values: %s", privacyText)
+	}
+
+	clearPrivacyOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "privacy-settings", "clear", "prompt-history", "--path", configPath)
+	if err != nil {
+		return nil, err
+	}
+	clearPrivacy, err := decodePrivacyHarnessReport(clearPrivacyOut)
+	if err != nil {
+		return nil, err
+	}
+	if clearPrivacy.Action != "clear" || clearPrivacy.Key != "prompt_history_enabled" || !clearPrivacy.Settings["prompt_history_enabled"] {
+		return nil, fmt.Errorf("unexpected clear privacy report: %#v", clearPrivacy)
+	}
+
+	return map[string]any{"initial_prompt_history": initialPrivacy.Settings["prompt_history_enabled"], "set_prompt_history": setPrivacy.Settings["prompt_history_enabled"], "status_prompt_history": statusPrivacy.Settings["prompt_history_enabled"], "cleared_prompt_history": clearPrivacy.Settings["prompt_history_enabled"], "path_persisted": setPrivacy.Path != "" && strings.HasSuffix(setPrivacy.Path, "codog-config.json"), "text_rendered": strings.Contains(privacyText, "Prompt history")}, nil
+}
+func keybindingsInitPhase(ctx context.Context, workspace, configPath string) (map[string]any, error) {
+	configHome := filepath.Join(workspace, ".codog-home")
+	initialKeybindingsOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings")
+	if err != nil {
+		return nil, err
+	}
+	initialKeybindings, err := decodeKeybindingsHarnessReport(initialKeybindingsOut)
+	if err != nil {
+		return nil, err
+	}
+	if initialKeybindings.Kind != "keybindings" || initialKeybindings.Action != "show" || !initialKeybindings.VimMode || initialKeybindings.KeybindingsExists {
+		return nil, fmt.Errorf("unexpected initial keybindings report: %#v", initialKeybindings)
+	}
+
+	pathOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings", "path")
+	if err != nil {
+		return nil, err
+	}
+	pathReport, err := decodeKeybindingsFileHarnessReport(pathOut)
+	if err != nil {
+		return nil, err
+	}
+	if pathReport.Action != "path" || pathReport.Path != filepath.Join(configHome, "keybindings.json") || pathReport.Exists {
+		return nil, fmt.Errorf("unexpected keybindings path report: %#v", pathReport)
+	}
+
+	initOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings", "init")
+	if err != nil {
+		return nil, err
+	}
+	initReport, err := decodeKeybindingsFileHarnessReport(initOut)
+	if err != nil {
+		return nil, err
+	}
+	if initReport.Action != "init" || initReport.Status != "created" || !initReport.Created || !initReport.Exists {
+		return nil, fmt.Errorf("unexpected keybindings init report: %#v", initReport)
+	}
+	keybindingsData, err := os.ReadFile(pathReport.Path)
+	if err != nil {
+		return nil, err
+	}
+	if !harnessContainsAll(string(keybindingsData), `"context": "repl"`, `"ctrl+r"`, `"shift+enter"`, `"ctrl+s"`, `"ctrl+g"`, `"ctrl+x ctrl+e"`, `"ctrl+x ctrl+k"`, `"ctrl+x ctrl+c"`, `"ctrl+x ctrl+u"`, `"ctrl+x ctrl+s"`, `"ctrl+x ctrl+y"`, `"ctrl+x backspace"`, `"ctrl+_"`, `"ctrl+shift+-"`, `"ctrl+v"`, `"ctrl+shift+p"`, `"ctrl+p"`, `"ctrl+shift+f"`, `"ctrl+f"`, `"alt+m"`, `"meta+m"`, `"alt+p"`, `"alt+o"`, `"alt+t"`, `"shift+up"`, `"ctrl+o"`, `"ctrl+l"`, `"ctrl+u"`, `"ctrl+k"`, `"home"`, `"ctrl+a"`, `"end"`, `"ctrl+d"`, `"ctrl+b"`, `"ctrl+t"`, `"ctrl+shift+t"`, `"up"`) {
+		return nil, fmt.Errorf("keybindings template missing expected entries: %s", string(keybindingsData))
+	}
+	if !harnessContainsAll(string(keybindingsData), `"context": "tui-modal"`, `"j"`, `"shift+down"`, `"ctrl+down"`) {
+		return nil, fmt.Errorf("keybindings template missing modal navigation entries: %s", string(keybindingsData))
+	}
+	if !harnessContainsAll(string(keybindingsData), `"context": "tui-attachments"`, `"right"`, `"backspace"`, `"delete"`) {
+		return nil, fmt.Errorf("keybindings template missing attachment navigation entries: %s", string(keybindingsData))
+	}
+	if !harnessContainsAll(string(keybindingsData), `"context": "tui-diff"`, `"enter"`, `"left"`, `"right"`) {
+		return nil, fmt.Errorf("keybindings template missing diff dialog entries: %s", string(keybindingsData))
+	}
+
+	return map[string]any{"initial_exists": initialKeybindings.KeybindingsExists, "path": strings.HasSuffix(pathReport.Path, "keybindings.json"), "created": initReport.Created}, nil
+}
+func keybindingsValidationPhase(ctx context.Context, workspace, configPath string) (map[string]any, error) {
+	configHome := filepath.Join(workspace, ".codog-home")
+	keybindingsPath := filepath.Join(configHome, "keybindings.json")
+	editorLog := filepath.Join(workspace, "keybindings-editor.log")
+	editorScript := filepath.Join(workspace, "keybindings-editor.sh")
+	if err := os.WriteFile(editorScript, []byte("#!/bin/sh\nprintf '%s\\n' \"$2\" > \"$1\"\n"), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.Remove(keybindingsPath); err != nil {
+		return nil, err
+	}
+	openOut, err := runHarnessCodogWithEnv(ctx, workspace, []string{"VISUAL=" + editorScript + " " + editorLog}, "--config", configPath, "--output-format", "json", "keybindings", "open")
+	if err != nil {
+		return nil, err
+	}
+	openReport, err := decodeKeybindingsFileHarnessReport(openOut)
+	if err != nil {
+		return nil, err
+	}
+	openedPath, err := os.ReadFile(editorLog)
+	if err != nil {
+		return nil, err
+	}
+	if openReport.Action != "open" || openReport.Status != "created_opened" || !openReport.Created || !openReport.Opened || string(openedPath) != keybindingsPath+"\n" {
+		return nil, fmt.Errorf("unexpected keybindings open report: %#v opened=%q", openReport, string(openedPath))
+	}
+	keybindingsData, err := os.ReadFile(keybindingsPath)
+	if err != nil {
+		return nil, err
+	}
+
+	validateOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings", "validate")
+	if err != nil {
+		return nil, err
+	}
+	validateReport, err := decodeKeybindingsValidationHarnessReport(validateOut)
+	if err != nil {
+		return nil, err
+	}
+	if validateReport.Action != "validate" || !validateReport.Valid || validateReport.ContextCount != 7 || validateReport.BindingCount != 86 {
+		return nil, fmt.Errorf("unexpected keybindings validate report: %#v", validateReport)
+	}
+
+	resolveOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "keybindings", "resolve", "repl", "Control-R")
+	if err != nil {
+		return nil, err
+	}
+	resolveReport, err := decodeKeybindingsResolveHarnessReport(resolveOut)
+	if err != nil {
+		return nil, err
+	}
+	if resolveReport.Action != "resolve" || !resolveReport.Found || resolveReport.Source != "user" || resolveReport.NormalizedKey != "ctrl+r" || resolveReport.BindingAction != "reverse search prompt history" {
+		return nil, fmt.Errorf("unexpected keybindings resolve report: %#v", resolveReport)
+	}
+
+	keybindingsText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "keybindings")
+	if err != nil {
+		return nil, err
+	}
+	if !harnessContainsAll(keybindingsText, "Keybindings", "Editor mode      vim", "User valid       true") {
+		return nil, fmt.Errorf("keybindings text output missing expected values: %s", keybindingsText)
+	}
+
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if strings.Contains(string(configData), `"prompt_history_enabled"`) {
+		return nil, fmt.Errorf("privacy config still contains prompt_history_enabled after clear: %s", string(configData))
+	}
+
+	return map[string]any{
+		"opened": openReport.Opened, "valid": validateReport.Valid, "contexts": validateReport.ContextCount, "bindings": validateReport.BindingCount,
+		"shift_enter": strings.Contains(string(keybindingsData), `"shift+enter"`), "prompt_stash_key": strings.Contains(string(keybindingsData), `"ctrl+s"`),
+		"external_editor": strings.Contains(string(keybindingsData), `"ctrl+g"`), "external_editor_chord": strings.Contains(string(keybindingsData), `"ctrl+x ctrl+e"`),
+		"kill_agents_chord": strings.Contains(string(keybindingsData), `"ctrl+x ctrl+k"`), "compact_chord": strings.Contains(string(keybindingsData), `"ctrl+x ctrl+c"`),
+		"undo_change_chord": strings.Contains(string(keybindingsData), `"ctrl+x ctrl+u"`), "export_chord": strings.Contains(string(keybindingsData), `"ctrl+x ctrl+s"`), "copy_chord": strings.Contains(string(keybindingsData), `"ctrl+x ctrl+y"`),
+		"attachment_remove_key": strings.Contains(string(keybindingsData), `"ctrl+x backspace"`), "composer_undo_key": harnessContainsAll(string(keybindingsData), `"ctrl+_"`, `"ctrl+shift+-"`),
+		"clipboard_paste_key": strings.Contains(string(keybindingsData), `"ctrl+v"`), "quick_open_key": harnessContainsAll(string(keybindingsData), `"ctrl+shift+p"`, `"ctrl+p"`),
+		"global_search_key": harnessContainsAll(string(keybindingsData), `"ctrl+shift+f"`, `"ctrl+f"`), "mode_cycle_keys": harnessContainsAll(string(keybindingsData), `"alt+m"`, `"meta+m"`),
+		"modal_navigation_keys": harnessContainsAll(string(keybindingsData), `"context": "tui-modal"`, `"j"`, `"k"`, `"shift+down"`),
+		"attachment_nav_keys":   harnessContainsAll(string(keybindingsData), `"context": "tui-attachments"`, `"right"`, `"backspace"`, `"delete"`),
+		"diff_dialog_keys":      harnessContainsAll(string(keybindingsData), `"context": "tui-diff"`, `"enter"`, `"left"`, `"right"`),
+		"runtime_control_keys":  harnessContainsAll(string(keybindingsData), `"alt+p"`, `"alt+o"`, `"alt+t"`),
+		"message_actions_key":   strings.Contains(string(keybindingsData), `"shift+up"`), "transcript_key": strings.Contains(string(keybindingsData), `"ctrl+o"`),
+		"terminal_keys": harnessContainsAll(string(keybindingsData), `"ctrl+l"`, `"ctrl+d"`), "background_key": strings.Contains(string(keybindingsData), `"ctrl+b"`),
+		"todo_panel_key": strings.Contains(string(keybindingsData), `"ctrl+t"`), "task_board_key": strings.Contains(string(keybindingsData), `"ctrl+shift+t"`), "queue_edit_key": strings.Contains(string(keybindingsData), `"up"`),
+		"resolved": resolveReport.Found, "source": resolveReport.Source, "text_rendered": strings.Contains(keybindingsText, "User valid"),
 	}, nil
 }

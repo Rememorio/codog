@@ -633,512 +633,7 @@ func TestBridgeFakeLSPServer(t *testing.T) {
 	if os.Getenv("CODOG_BRIDGE_FAKE_LSP") != "1" {
 		return
 	}
-	reader := bufio.NewReader(os.Stdin)
-	currentURI := ""
-	rootURI := ""
-	for {
-		raw, err := readBridgeTestLSPMessage(reader)
-		if err != nil {
-			return
-		}
-		var msg struct {
-			JSONRPC string          `json:"jsonrpc"`
-			ID      any             `json:"id,omitempty"`
-			Method  string          `json:"method,omitempty"`
-			Params  json.RawMessage `json:"params,omitempty"`
-		}
-		if err := json.Unmarshal(raw, &msg); err != nil {
-			return
-		}
-		switch msg.Method {
-		case "initialize":
-			var params struct {
-				RootURI string `json:"rootUri"`
-			}
-			_ = json.Unmarshal(msg.Params, &params)
-			rootURI = strings.TrimRight(params.RootURI, "/")
-			if currentURI == "" && rootURI != "" {
-				currentURI = rootURI + "/main.go"
-			}
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"capabilities": map[string]any{}}})
-		case "textDocument/diagnostic":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
-				"kind": "full",
-				"items": []map[string]any{{
-					"range": map[string]any{
-						"start": map[string]any{"line": 2, "character": 0},
-						"end":   map[string]any{"line": 2, "character": 4},
-					},
-					"severity": 2,
-					"source":   "bridge-fake-lsp",
-					"message":  "bridge pulled document diagnostic",
-				}},
-			}})
-		case "workspace/diagnostic":
-			if currentURI == "" {
-				currentURI = "file:///workspace/main.go"
-			}
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
-				"items": []map[string]any{{
-					"uri":     currentURI,
-					"version": 1,
-					"kind":    "full",
-					"items": []map[string]any{{
-						"range": map[string]any{
-							"start": map[string]any{"line": 4, "character": 0},
-							"end":   map[string]any{"line": 4, "character": 4},
-						},
-						"severity": 2,
-						"source":   "bridge-fake-lsp",
-						"message":  "bridge pulled workspace diagnostic",
-					}},
-				}},
-			}})
-		case "textDocument/didOpen":
-			uri := bridgeTestLSPDocumentURI(msg.Params)
-			currentURI = uri
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{
-				"jsonrpc": "2.0",
-				"method":  "textDocument/publishDiagnostics",
-				"params": map[string]any{
-					"uri": uri,
-					"diagnostics": []map[string]any{{
-						"range": map[string]any{
-							"start": map[string]any{"line": 2, "character": 0},
-							"end":   map[string]any{"line": 2, "character": 4},
-						},
-						"severity": 2,
-						"code":     "bridge-code",
-						"codeDescription": map[string]any{
-							"href": "https://example.test/bridge-diagnostic",
-						},
-						"source":  "bridge-fake-lsp",
-						"message": "bridge fake diagnostic",
-						"tags":    []int{1},
-						"relatedInformation": []map[string]any{{
-							"location": map[string]any{
-								"uri": uri,
-								"range": map[string]any{
-									"start": map[string]any{"line": 1, "character": 0},
-									"end":   map[string]any{"line": 1, "character": 4},
-								},
-							},
-							"message": "bridge related diagnostic",
-						}},
-						"data": map[string]any{"rule": "bridge-rule"},
-					}},
-				},
-			})
-		case "textDocument/hover":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"contents": map[string]any{"kind": "markdown", "value": "bridge fake hover"}}})
-		case "textDocument/completion":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
-				"isIncomplete": false,
-				"items": []map[string]any{
-					{"label": "BridgeWidget", "kind": 3, "data": map[string]any{"id": "bridge-completion-1"}},
-					{"label": "BridgeOther", "kind": 3, "data": map[string]any{"id": "bridge-completion-2"}},
-				},
-			}})
-		case "completionItem/resolve":
-			var item map[string]any
-			_ = json.Unmarshal(msg.Params, &item)
-			item["detail"] = "func BridgeWidget() Widget"
-			item["documentation"] = map[string]any{"kind": "markdown", "value": "Constructs a bridge widget."}
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": item})
-		case "textDocument/rename":
-			var params struct {
-				NewName string `json:"newName"`
-			}
-			_ = json.Unmarshal(msg.Params, &params)
-			if currentURI == "" {
-				currentURI = "file:///workspace/main.go"
-			}
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
-				"changes": map[string]any{
-					currentURI: []map[string]any{{
-						"range": map[string]any{
-							"start": map[string]any{"line": 2, "character": 5},
-							"end":   map[string]any{"line": 2, "character": 9},
-						},
-						"newText": params.NewName,
-					}},
-				},
-			}})
-		case "textDocument/codeAction":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{
-				{
-					"title": "Bridge fake fix",
-					"kind":  "quickfix",
-					"edit": map[string]any{
-						"changes": map[string]any{
-							currentURI: []map[string]any{{
-								"range": map[string]any{
-									"start": map[string]any{"line": 2, "character": 5},
-									"end":   map[string]any{"line": 2, "character": 10},
-								},
-								"newText": "Launch",
-							}},
-						},
-					},
-				},
-				{"title": "Bridge lazy fix", "kind": "quickfix", "data": map[string]any{"id": "bridge-lazy-fix"}},
-			}})
-		case "codeAction/resolve":
-			var action map[string]any
-			_ = json.Unmarshal(msg.Params, &action)
-			action["edit"] = map[string]any{
-				"changes": map[string]any{
-					currentURI: []map[string]any{{
-						"range": map[string]any{
-							"start": map[string]any{"line": 2, "character": 5},
-							"end":   map[string]any{"line": 2, "character": 10},
-						},
-						"newText": "BridgeLazy",
-					}},
-				},
-			}
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": action})
-		case "textDocument/prepareCallHierarchy":
-			if currentURI == "" {
-				currentURI = "file:///workspace/main.go"
-			}
-			item := map[string]any{
-				"name": "BridgeWidget",
-				"kind": 12,
-				"uri":  currentURI,
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 20},
-				},
-				"selectionRange": map[string]any{
-					"start": map[string]any{"line": 2, "character": 5},
-					"end":   map[string]any{"line": 2, "character": 17},
-				},
-			}
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{item}})
-		case "callHierarchy/incomingCalls":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"from": map[string]any{
-					"name": "BridgeCaller",
-					"kind": 12,
-					"uri":  currentURI,
-					"range": map[string]any{
-						"start": map[string]any{"line": 8, "character": 0},
-						"end":   map[string]any{"line": 10, "character": 1},
-					},
-					"selectionRange": map[string]any{
-						"start": map[string]any{"line": 8, "character": 5},
-						"end":   map[string]any{"line": 8, "character": 17},
-					},
-				},
-				"fromRanges": []map[string]any{{
-					"start": map[string]any{"line": 9, "character": 1},
-					"end":   map[string]any{"line": 9, "character": 13},
-				}},
-			}}})
-		case "callHierarchy/outgoingCalls":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"to": map[string]any{
-					"name": "BridgeCallee",
-					"kind": 12,
-					"uri":  currentURI,
-					"range": map[string]any{
-						"start": map[string]any{"line": 4, "character": 0},
-						"end":   map[string]any{"line": 4, "character": 20},
-					},
-					"selectionRange": map[string]any{
-						"start": map[string]any{"line": 4, "character": 5},
-						"end":   map[string]any{"line": 4, "character": 17},
-					},
-				},
-				"fromRanges": []map[string]any{{
-					"start": map[string]any{"line": 3, "character": 1},
-					"end":   map[string]any{"line": 3, "character": 13},
-				}},
-			}}})
-		case "textDocument/prepareTypeHierarchy":
-			if currentURI == "" {
-				currentURI = "file:///workspace/main.go"
-			}
-			item := map[string]any{
-				"name": "BridgeType",
-				"kind": 23,
-				"uri":  currentURI,
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 20},
-				},
-				"selectionRange": map[string]any{
-					"start": map[string]any{"line": 2, "character": 5},
-					"end":   map[string]any{"line": 2, "character": 15},
-				},
-			}
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{item}})
-		case "typeHierarchy/supertypes":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"name": "BridgeBaseType",
-				"kind": 23,
-				"uri":  currentURI,
-				"range": map[string]any{
-					"start": map[string]any{"line": 1, "character": 0},
-					"end":   map[string]any{"line": 1, "character": 20},
-				},
-				"selectionRange": map[string]any{
-					"start": map[string]any{"line": 1, "character": 5},
-					"end":   map[string]any{"line": 1, "character": 19},
-				},
-			}}})
-		case "typeHierarchy/subtypes":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"name": "BridgeSubType",
-				"kind": 23,
-				"uri":  currentURI,
-				"range": map[string]any{
-					"start": map[string]any{"line": 5, "character": 0},
-					"end":   map[string]any{"line": 5, "character": 20},
-				},
-				"selectionRange": map[string]any{
-					"start": map[string]any{"line": 5, "character": 5},
-					"end":   map[string]any{"line": 5, "character": 18},
-				},
-			}}})
-		case "textDocument/prepareRename":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 5},
-					"end":   map[string]any{"line": 2, "character": 11},
-				},
-				"placeholder": "Launch",
-			}})
-		case "textDocument/selectionRange":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 5},
-					"end":   map[string]any{"line": 2, "character": 11},
-				},
-			}}})
-		case "textDocument/foldingRange":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"startLine": 2,
-				"endLine":   4,
-				"kind":      "region",
-			}}})
-		case "textDocument/documentLink":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 10},
-				},
-				"target": "https://example.test/bridge",
-			}}})
-		case "documentLink/resolve":
-			var link map[string]any
-			_ = json.Unmarshal(msg.Params, &link)
-			link["target"] = "https://example.test/bridge-resolved"
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": link})
-		case "textDocument/documentColor":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 1},
-					"end":   map[string]any{"line": 2, "character": 8},
-				},
-				"color": map[string]any{"red": 0.25, "green": 0.5, "blue": 1.0, "alpha": 1.0},
-			}}})
-		case "textDocument/colorPresentation":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"label": "rgba(64,128,255,1)",
-				"textEdit": map[string]any{
-					"range": map[string]any{
-						"start": map[string]any{"line": 2, "character": 1},
-						"end":   map[string]any{"line": 2, "character": 8},
-					},
-					"newText": "rgba(64,128,255,1)",
-				},
-			}}})
-		case "textDocument/codeLens":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 20},
-				},
-				"command": map[string]any{"title": "Run bridge lens", "command": "bridge.run"},
-				"data":    map[string]any{"id": "bridge-lens-1"},
-			}}})
-		case "codeLens/resolve":
-			var lens map[string]any
-			_ = json.Unmarshal(msg.Params, &lens)
-			lens["command"] = map[string]any{"title": "Run bridge lens (resolved)", "command": "bridge.run", "arguments": []string{"main.go"}}
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": lens})
-		case "textDocument/inlayHint":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"position": map[string]any{"line": 2, "character": 10},
-				"label":    ": string",
-				"kind":     1,
-			}}})
-		case "inlayHint/resolve":
-			var hint map[string]any
-			_ = json.Unmarshal(msg.Params, &hint)
-			hint["tooltip"] = "bridge resolved inlay hint"
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": hint})
-		case "textDocument/inlineValue":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 5},
-					"end":   map[string]any{"line": 2, "character": 10},
-				},
-				"text": "bridgeCount = 1",
-			}}})
-		case "textDocument/linkedEditingRange":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
-				"ranges": []map[string]any{
-					{"start": map[string]any{"line": 2, "character": 5}, "end": map[string]any{"line": 2, "character": 11}},
-					{"start": map[string]any{"line": 4, "character": 5}, "end": map[string]any{"line": 4, "character": 11}},
-				},
-				"wordPattern": "[A-Za-z_]+",
-			}})
-		case "textDocument/moniker":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"scheme":     "gomod",
-				"identifier": "bridge.test/demo.BridgeWidget",
-				"kind":       "export",
-			}}})
-		case "textDocument/semanticTokens/full":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
-				"resultId": "bridge-full-1",
-				"data":     []int{2, 5, 4, 12, 0},
-			}})
-		case "textDocument/semanticTokens/range":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
-				"data": []int{0, 5, 6, 12, 0},
-			}})
-		case "textDocument/semanticTokens/full/delta":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
-				"resultId": "bridge-full-2",
-				"edits": []map[string]any{{
-					"start":       0,
-					"deleteCount": 5,
-					"data":        []int{0, 2, 4, 8, 16},
-				}},
-			}})
-		case "workspace/symbol":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"name": "BridgeWidget",
-				"kind": 12,
-				"location": map[string]any{
-					"uri": currentURI,
-					"range": map[string]any{
-						"start": map[string]any{"line": 2, "character": 5},
-						"end":   map[string]any{"line": 2, "character": 17},
-					},
-				},
-			}}})
-		case "workspaceSymbol/resolve":
-			var symbol map[string]any
-			_ = json.Unmarshal(msg.Params, &symbol)
-			symbol["containerName"] = "bridge"
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": symbol})
-		case "workspace/executeCommand":
-			var params struct {
-				Command   string `json:"command"`
-				Arguments []any  `json:"arguments"`
-			}
-			_ = json.Unmarshal(msg.Params, &params)
-			configurationHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-configuration-check", "workspace/configuration", map[string]any{
-				"items": []map[string]any{{"section": "gopls"}},
-			})
-			foldersHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-folders-check", "workspace/workspaceFolders", nil)
-			registerHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-register-check", "client/registerCapability", map[string]any{
-				"registrations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
-			})
-			unregisterHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-unregister-check", "client/unregisterCapability", map[string]any{
-				"unregisterations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
-			})
-			progressHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-progress-check", "window/workDoneProgress/create", map[string]any{
-				"token": "bridge-progress",
-			})
-			showDocumentHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-show-document-check", "window/showDocument", map[string]any{
-				"uri":       currentURI,
-				"takeFocus": false,
-			})
-			refreshHandled := bridgeFakeLSPServerRequestHandled(reader, "bridge-semantic-refresh-check", "workspace/semanticTokens/refresh", nil) &&
-				bridgeFakeLSPServerRequestHandled(reader, "bridge-inlay-refresh-check", "workspace/inlayHint/refresh", nil) &&
-				bridgeFakeLSPServerRequestHandled(reader, "bridge-code-lens-refresh-check", "workspace/codeLens/refresh", nil) &&
-				bridgeFakeLSPServerRequestHandled(reader, "bridge-diagnostic-refresh-check", "workspace/diagnostic/refresh", nil)
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "method": "window/showMessage", "params": map[string]any{
-				"type":    3,
-				"message": "bridge execute notice",
-			}})
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "method": "window/logMessage", "params": map[string]any{
-				"type":    3,
-				"message": "bridge execute log",
-			}})
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "method": "telemetry/event", "params": map[string]any{
-				"name": "bridge-execute",
-			}})
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "method": "$/progress", "params": map[string]any{
-				"token": "bridge-progress",
-				"value": map[string]any{"kind": "report", "message": "running"},
-			}})
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": "bridge-apply-execute", "method": "workspace/applyEdit", "params": map[string]any{
-				"label": "bridge execute preview",
-				"edit": map[string]any{
-					"changes": map[string]any{
-						currentURI: []map[string]any{{
-							"range": map[string]any{
-								"start": map[string]any{"line": 2, "character": 0},
-								"end":   map[string]any{"line": 2, "character": 14},
-							},
-							"newText": "func bridgeExecutePreview() {}",
-						}},
-					},
-				},
-			}})
-			_, _ = readBridgeTestLSPMessage(reader)
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
-				"status":               "ok",
-				"command":              params.Command,
-				"arguments":            params.Arguments,
-				"configurationHandled": configurationHandled,
-				"foldersHandled":       foldersHandled,
-				"registerHandled":      registerHandled,
-				"unregisterHandled":    unregisterHandled,
-				"progressHandled":      progressHandled,
-				"showDocumentHandled":  showDocumentHandled,
-				"refreshHandled":       refreshHandled,
-			}})
-		case "textDocument/rangeFormatting":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 14},
-				},
-				"newText": "func bridgeRangeFormatted() {}\n",
-			}}})
-		case "textDocument/onTypeFormatting":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 14},
-				},
-				"newText": "func bridgeOnTypeFormatted() {}\n",
-			}}})
-		case "textDocument/willSaveWaitUntil":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 14},
-				},
-				"newText": "func bridgeSaved() {}\n",
-			}}})
-		case "shutdown":
-			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": nil})
-			return
-		default:
-			if msg.ID != nil {
-				_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": nil})
-			}
-		}
-	}
+	(&bridgeFakeLSPServer{reader: bufio.NewReader(os.Stdin)}).run()
 }
 
 func readBridgeTestLSPMessage(reader *bufio.Reader) (json.RawMessage, error) {
@@ -1817,4 +1312,554 @@ func TestBridgeRejectsWorkspaceEscape(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out.String(), `"error"`)
 	require.Contains(t, out.String(), "escapes workspace")
+}
+
+type bridgeFakeLSPRequest struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      any             `json:"id,omitempty"`
+	Method  string          `json:"method,omitempty"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+type bridgeFakeLSPServer struct {
+	reader     *bufio.Reader
+	currentURI string
+	rootURI    string
+}
+
+func (s *bridgeFakeLSPServer) run() {
+	for {
+		raw, err := readBridgeTestLSPMessage(s.reader)
+		if err != nil {
+			return
+		}
+		var msg bridgeFakeLSPRequest
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			return
+		}
+		handled := s.handleGroup1(msg) || s.handleGroup2(msg) || s.handleGroup3(msg) || s.handleGroup4(msg)
+		if handled {
+			if msg.Method == "shutdown" {
+				return
+			}
+			continue
+		}
+		if msg.ID != nil {
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": nil})
+		}
+	}
+}
+
+func (s *bridgeFakeLSPServer) handleGroup1(msg bridgeFakeLSPRequest) bool {
+	switch msg.Method {
+	case "initialize":
+		var params struct {
+			RootURI string `json:"rootUri"`
+		}
+		_ = json.Unmarshal(msg.Params, &params)
+		s.rootURI = strings.TrimRight(params.RootURI, "/")
+		if s.currentURI == "" && s.rootURI != "" {
+			s.currentURI = s.rootURI + "/main.go"
+		}
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"capabilities": map[string]any{}}})
+	case "textDocument/diagnostic":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+			"kind": "full",
+			"items": []map[string]any{{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 0},
+					"end":   map[string]any{"line": 2, "character": 4},
+				},
+				"severity": 2,
+				"source":   "bridge-fake-lsp",
+				"message":  "bridge pulled document diagnostic",
+			}},
+		}})
+	case "workspace/diagnostic":
+		if s.currentURI == "" {
+			s.currentURI = "file:///workspace/main.go"
+		}
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+			"items": []map[string]any{{
+				"uri":     s.currentURI,
+				"version": 1,
+				"kind":    "full",
+				"items": []map[string]any{{
+					"range": map[string]any{
+						"start": map[string]any{"line": 4, "character": 0},
+						"end":   map[string]any{"line": 4, "character": 4},
+					},
+					"severity": 2,
+					"source":   "bridge-fake-lsp",
+					"message":  "bridge pulled workspace diagnostic",
+				}},
+			}},
+		}})
+	case "textDocument/didOpen":
+		uri := bridgeTestLSPDocumentURI(msg.Params)
+		s.currentURI = uri
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "textDocument/publishDiagnostics",
+			"params": map[string]any{
+				"uri": uri,
+				"diagnostics": []map[string]any{{
+					"range": map[string]any{
+						"start": map[string]any{"line": 2, "character": 0},
+						"end":   map[string]any{"line": 2, "character": 4},
+					},
+					"severity": 2,
+					"code":     "bridge-code",
+					"codeDescription": map[string]any{
+						"href": "https://example.test/bridge-diagnostic",
+					},
+					"source":  "bridge-fake-lsp",
+					"message": "bridge fake diagnostic",
+					"tags":    []int{1},
+					"relatedInformation": []map[string]any{{
+						"location": map[string]any{
+							"uri": uri,
+							"range": map[string]any{
+								"start": map[string]any{"line": 1, "character": 0},
+								"end":   map[string]any{"line": 1, "character": 4},
+							},
+						},
+						"message": "bridge related diagnostic",
+					}},
+					"data": map[string]any{"rule": "bridge-rule"},
+				}},
+			},
+		})
+	case "textDocument/hover":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"contents": map[string]any{"kind": "markdown", "value": "bridge fake hover"}}})
+	case "textDocument/completion":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+			"isIncomplete": false,
+			"items": []map[string]any{
+				{"label": "BridgeWidget", "kind": 3, "data": map[string]any{"id": "bridge-completion-1"}},
+				{"label": "BridgeOther", "kind": 3, "data": map[string]any{"id": "bridge-completion-2"}},
+			},
+		}})
+	case "completionItem/resolve":
+		var item map[string]any
+		_ = json.Unmarshal(msg.Params, &item)
+		item["detail"] = "func BridgeWidget() Widget"
+		item["documentation"] = map[string]any{"kind": "markdown", "value": "Constructs a bridge widget."}
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": item})
+	case "textDocument/rename":
+		var params struct {
+			NewName string `json:"newName"`
+		}
+		_ = json.Unmarshal(msg.Params, &params)
+		if s.currentURI == "" {
+			s.currentURI = "file:///workspace/main.go"
+		}
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+			"changes": map[string]any{
+				s.currentURI: []map[string]any{{
+					"range": map[string]any{
+						"start": map[string]any{"line": 2, "character": 5},
+						"end":   map[string]any{"line": 2, "character": 9},
+					},
+					"newText": params.NewName,
+				}},
+			},
+		}})
+	case "textDocument/codeAction":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{
+			{
+				"title": "Bridge fake fix",
+				"kind":  "quickfix",
+				"edit": map[string]any{
+					"changes": map[string]any{
+						s.currentURI: []map[string]any{{
+							"range": map[string]any{
+								"start": map[string]any{"line": 2, "character": 5},
+								"end":   map[string]any{"line": 2, "character": 10},
+							},
+							"newText": "Launch",
+						}},
+					},
+				},
+			},
+			{"title": "Bridge lazy fix", "kind": "quickfix", "data": map[string]any{"id": "bridge-lazy-fix"}},
+		}})
+	case "codeAction/resolve":
+		var action map[string]any
+		_ = json.Unmarshal(msg.Params, &action)
+		action["edit"] = map[string]any{
+			"changes": map[string]any{
+				s.currentURI: []map[string]any{{
+					"range": map[string]any{
+						"start": map[string]any{"line": 2, "character": 5},
+						"end":   map[string]any{"line": 2, "character": 10},
+					},
+					"newText": "BridgeLazy",
+				}},
+			},
+		}
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": action})
+	default:
+		return false
+	}
+	return true
+}
+
+func (s *bridgeFakeLSPServer) handleGroup2(msg bridgeFakeLSPRequest) bool {
+	switch msg.Method {
+	case "textDocument/prepareCallHierarchy":
+		if s.currentURI == "" {
+			s.currentURI = "file:///workspace/main.go"
+		}
+		item := map[string]any{
+			"name": "BridgeWidget",
+			"kind": 12,
+			"uri":  s.currentURI,
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 20},
+			},
+			"selectionRange": map[string]any{
+				"start": map[string]any{"line": 2, "character": 5},
+				"end":   map[string]any{"line": 2, "character": 17},
+			},
+		}
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{item}})
+	case "callHierarchy/incomingCalls":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"from": map[string]any{
+				"name": "BridgeCaller",
+				"kind": 12,
+				"uri":  s.currentURI,
+				"range": map[string]any{
+					"start": map[string]any{"line": 8, "character": 0},
+					"end":   map[string]any{"line": 10, "character": 1},
+				},
+				"selectionRange": map[string]any{
+					"start": map[string]any{"line": 8, "character": 5},
+					"end":   map[string]any{"line": 8, "character": 17},
+				},
+			},
+			"fromRanges": []map[string]any{{
+				"start": map[string]any{"line": 9, "character": 1},
+				"end":   map[string]any{"line": 9, "character": 13},
+			}},
+		}}})
+	case "callHierarchy/outgoingCalls":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"to": map[string]any{
+				"name": "BridgeCallee",
+				"kind": 12,
+				"uri":  s.currentURI,
+				"range": map[string]any{
+					"start": map[string]any{"line": 4, "character": 0},
+					"end":   map[string]any{"line": 4, "character": 20},
+				},
+				"selectionRange": map[string]any{
+					"start": map[string]any{"line": 4, "character": 5},
+					"end":   map[string]any{"line": 4, "character": 17},
+				},
+			},
+			"fromRanges": []map[string]any{{
+				"start": map[string]any{"line": 3, "character": 1},
+				"end":   map[string]any{"line": 3, "character": 13},
+			}},
+		}}})
+	case "textDocument/prepareTypeHierarchy":
+		if s.currentURI == "" {
+			s.currentURI = "file:///workspace/main.go"
+		}
+		item := map[string]any{
+			"name": "BridgeType",
+			"kind": 23,
+			"uri":  s.currentURI,
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 20},
+			},
+			"selectionRange": map[string]any{
+				"start": map[string]any{"line": 2, "character": 5},
+				"end":   map[string]any{"line": 2, "character": 15},
+			},
+		}
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{item}})
+	case "typeHierarchy/supertypes":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"name": "BridgeBaseType",
+			"kind": 23,
+			"uri":  s.currentURI,
+			"range": map[string]any{
+				"start": map[string]any{"line": 1, "character": 0},
+				"end":   map[string]any{"line": 1, "character": 20},
+			},
+			"selectionRange": map[string]any{
+				"start": map[string]any{"line": 1, "character": 5},
+				"end":   map[string]any{"line": 1, "character": 19},
+			},
+		}}})
+	case "typeHierarchy/subtypes":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"name": "BridgeSubType",
+			"kind": 23,
+			"uri":  s.currentURI,
+			"range": map[string]any{
+				"start": map[string]any{"line": 5, "character": 0},
+				"end":   map[string]any{"line": 5, "character": 20},
+			},
+			"selectionRange": map[string]any{
+				"start": map[string]any{"line": 5, "character": 5},
+				"end":   map[string]any{"line": 5, "character": 18},
+			},
+		}}})
+	case "textDocument/prepareRename":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 5},
+				"end":   map[string]any{"line": 2, "character": 11},
+			},
+			"placeholder": "Launch",
+		}})
+	case "textDocument/selectionRange":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 5},
+				"end":   map[string]any{"line": 2, "character": 11},
+			},
+		}}})
+	case "textDocument/foldingRange":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"startLine": 2,
+			"endLine":   4,
+			"kind":      "region",
+		}}})
+	case "textDocument/documentLink":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 10},
+			},
+			"target": "https://example.test/bridge",
+		}}})
+	default:
+		return false
+	}
+	return true
+}
+
+func (s *bridgeFakeLSPServer) handleGroup3(msg bridgeFakeLSPRequest) bool {
+	switch msg.Method {
+	case "documentLink/resolve":
+		var link map[string]any
+		_ = json.Unmarshal(msg.Params, &link)
+		link["target"] = "https://example.test/bridge-resolved"
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": link})
+	case "textDocument/documentColor":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 1},
+				"end":   map[string]any{"line": 2, "character": 8},
+			},
+			"color": map[string]any{"red": 0.25, "green": 0.5, "blue": 1.0, "alpha": 1.0},
+		}}})
+	case "textDocument/colorPresentation":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"label": "rgba(64,128,255,1)",
+			"textEdit": map[string]any{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 1},
+					"end":   map[string]any{"line": 2, "character": 8},
+				},
+				"newText": "rgba(64,128,255,1)",
+			},
+		}}})
+	case "textDocument/codeLens":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 20},
+			},
+			"command": map[string]any{"title": "Run bridge lens", "command": "bridge.run"},
+			"data":    map[string]any{"id": "bridge-lens-1"},
+		}}})
+	case "codeLens/resolve":
+		var lens map[string]any
+		_ = json.Unmarshal(msg.Params, &lens)
+		lens["command"] = map[string]any{"title": "Run bridge lens (resolved)", "command": "bridge.run", "arguments": []string{"main.go"}}
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": lens})
+	case "textDocument/inlayHint":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"position": map[string]any{"line": 2, "character": 10},
+			"label":    ": string",
+			"kind":     1,
+		}}})
+	case "inlayHint/resolve":
+		var hint map[string]any
+		_ = json.Unmarshal(msg.Params, &hint)
+		hint["tooltip"] = "bridge resolved inlay hint"
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": hint})
+	case "textDocument/inlineValue":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 5},
+				"end":   map[string]any{"line": 2, "character": 10},
+			},
+			"text": "bridgeCount = 1",
+		}}})
+	case "textDocument/linkedEditingRange":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+			"ranges": []map[string]any{
+				{"start": map[string]any{"line": 2, "character": 5}, "end": map[string]any{"line": 2, "character": 11}},
+				{"start": map[string]any{"line": 4, "character": 5}, "end": map[string]any{"line": 4, "character": 11}},
+			},
+			"wordPattern": "[A-Za-z_]+",
+		}})
+	case "textDocument/moniker":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"scheme":     "gomod",
+			"identifier": "bridge.test/demo.BridgeWidget",
+			"kind":       "export",
+		}}})
+	default:
+		return false
+	}
+	return true
+}
+
+func (s *bridgeFakeLSPServer) handleGroup4(msg bridgeFakeLSPRequest) bool {
+	switch msg.Method {
+	case "textDocument/semanticTokens/full":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+			"resultId": "bridge-full-1",
+			"data":     []int{2, 5, 4, 12, 0},
+		}})
+	case "textDocument/semanticTokens/range":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+			"data": []int{0, 5, 6, 12, 0},
+		}})
+	case "textDocument/semanticTokens/full/delta":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+			"resultId": "bridge-full-2",
+			"edits": []map[string]any{{
+				"start":       0,
+				"deleteCount": 5,
+				"data":        []int{0, 2, 4, 8, 16},
+			}},
+		}})
+	case "workspace/symbol":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"name": "BridgeWidget",
+			"kind": 12,
+			"location": map[string]any{
+				"uri": s.currentURI,
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 5},
+					"end":   map[string]any{"line": 2, "character": 17},
+				},
+			},
+		}}})
+	case "workspaceSymbol/resolve":
+		var symbol map[string]any
+		_ = json.Unmarshal(msg.Params, &symbol)
+		symbol["containerName"] = "bridge"
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": symbol})
+	case "workspace/executeCommand":
+		var params struct {
+			Command   string `json:"command"`
+			Arguments []any  `json:"arguments"`
+		}
+		_ = json.Unmarshal(msg.Params, &params)
+		configurationHandled := bridgeFakeLSPServerRequestHandled(s.reader, "bridge-configuration-check", "workspace/configuration", map[string]any{
+			"items": []map[string]any{{"section": "gopls"}},
+		})
+		foldersHandled := bridgeFakeLSPServerRequestHandled(s.reader, "bridge-folders-check", "workspace/workspaceFolders", nil)
+		registerHandled := bridgeFakeLSPServerRequestHandled(s.reader, "bridge-register-check", "client/registerCapability", map[string]any{
+			"registrations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
+		})
+		unregisterHandled := bridgeFakeLSPServerRequestHandled(s.reader, "bridge-unregister-check", "client/unregisterCapability", map[string]any{
+			"unregisterations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
+		})
+		progressHandled := bridgeFakeLSPServerRequestHandled(s.reader, "bridge-progress-check", "window/workDoneProgress/create", map[string]any{
+			"token": "bridge-progress",
+		})
+		showDocumentHandled := bridgeFakeLSPServerRequestHandled(s.reader, "bridge-show-document-check", "window/showDocument", map[string]any{
+			"uri":       s.currentURI,
+			"takeFocus": false,
+		})
+		refreshHandled := bridgeFakeLSPServerRequestHandled(s.reader, "bridge-semantic-refresh-check", "workspace/semanticTokens/refresh", nil) &&
+			bridgeFakeLSPServerRequestHandled(s.reader, "bridge-inlay-refresh-check", "workspace/inlayHint/refresh", nil) &&
+			bridgeFakeLSPServerRequestHandled(s.reader, "bridge-code-lens-refresh-check", "workspace/codeLens/refresh", nil) &&
+			bridgeFakeLSPServerRequestHandled(s.reader, "bridge-diagnostic-refresh-check", "workspace/diagnostic/refresh", nil)
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "method": "window/showMessage", "params": map[string]any{
+			"type":    3,
+			"message": "bridge execute notice",
+		}})
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "method": "window/logMessage", "params": map[string]any{
+			"type":    3,
+			"message": "bridge execute log",
+		}})
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "method": "telemetry/event", "params": map[string]any{
+			"name": "bridge-execute",
+		}})
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "method": "$/progress", "params": map[string]any{
+			"token": "bridge-progress",
+			"value": map[string]any{"kind": "report", "message": "running"},
+		}})
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": "bridge-apply-execute", "method": "workspace/applyEdit", "params": map[string]any{
+			"label": "bridge execute preview",
+			"edit": map[string]any{
+				"changes": map[string]any{
+					s.currentURI: []map[string]any{{
+						"range": map[string]any{
+							"start": map[string]any{"line": 2, "character": 0},
+							"end":   map[string]any{"line": 2, "character": 14},
+						},
+						"newText": "func bridgeExecutePreview() {}",
+					}},
+				},
+			},
+		}})
+		_, _ = readBridgeTestLSPMessage(s.reader)
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{
+			"status":               "ok",
+			"command":              params.Command,
+			"arguments":            params.Arguments,
+			"configurationHandled": configurationHandled,
+			"foldersHandled":       foldersHandled,
+			"registerHandled":      registerHandled,
+			"unregisterHandled":    unregisterHandled,
+			"progressHandled":      progressHandled,
+			"showDocumentHandled":  showDocumentHandled,
+			"refreshHandled":       refreshHandled,
+		}})
+	case "textDocument/rangeFormatting":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 14},
+			},
+			"newText": "func bridgeRangeFormatted() {}\n",
+		}}})
+	case "textDocument/onTypeFormatting":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 14},
+			},
+			"newText": "func bridgeOnTypeFormatted() {}\n",
+		}}})
+	case "textDocument/willSaveWaitUntil":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": []map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 14},
+			},
+			"newText": "func bridgeSaved() {}\n",
+		}}})
+	case "shutdown":
+		_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": nil})
+
+	default:
+		return false
+	}
+	return true
 }

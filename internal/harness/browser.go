@@ -84,6 +84,24 @@ func decodeTelemetryHarnessReport(output string) (telemetryHarnessReport, error)
 	return report, nil
 }
 
+func runAPIKeyHarnessCommand(run func(...string) (string, error), args ...string) (string, apiKeyHarnessReport, error) {
+	output, err := run(args...)
+	if err != nil {
+		return output, apiKeyHarnessReport{}, err
+	}
+	report, err := decodeAPIKeyHarnessReport(output)
+	return output, report, err
+}
+
+func runAuthHarnessCommand(run func(...string) (string, error), args ...string) (string, authHarnessReport, error) {
+	output, err := run(args...)
+	if err != nil {
+		return output, authHarnessReport{}, err
+	}
+	report, err := decodeAuthHarnessReport(output)
+	return output, report, err
+}
+
 func modelRuntimePreferencesScenario() scenario {
 	return scenario{
 		name:     "model_runtime_preferences_roundtrip",
@@ -351,222 +369,31 @@ func modelRuntimePreferencesScenarioRunLocal(ctx context.Context, workspace stri
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-
-	initialReasoningOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "reasoning")
+	reasoning, err := modelRuntimeReasoningPhase(ctx, workspace, configPath)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	initialReasoning, err := decodeEffortHarnessReport(initialReasoningOut)
+	fast, err := modelRuntimeFastPhase(ctx, workspace, configPath)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if initialReasoning.Kind != "reasoning" || initialReasoning.Action != "status" || initialReasoning.Effort != "auto" {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial reasoning report: %#v", initialReasoning)
-	}
-	if !slices.Contains(initialReasoning.Available, "high") || !slices.Contains(initialReasoning.Available, "disabled") {
-		return localScenarioResult{}, fmt.Errorf("reasoning available list missing expected levels: %#v", initialReasoning.Available)
-	}
-
-	setReasoningOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "reasoning", "high", "--path", configPath)
+	temperature, err := modelRuntimeTemperaturePhase(ctx, workspace, configPath)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	setReasoning, err := decodeEffortHarnessReport(setReasoningOut)
+	if err := verifyModelRuntimeConfigCleared(configPath); err != nil {
+		return localScenarioResult{}, err
+	}
+	data, err := json.Marshal(map[string]any{
+		"kind":        "model_runtime_preferences",
+		"reasoning":   reasoning,
+		"fast":        fast,
+		"temperature": temperature,
+	})
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if setReasoning.Action != "set" || setReasoning.Effort != "high" || setReasoning.Previous != "auto" {
-		return localScenarioResult{}, fmt.Errorf("unexpected set reasoning report: %#v", setReasoning)
-	}
-	configData, err := os.ReadFile(configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !strings.Contains(string(configData), `"reasoning_effort": "high"`) && !strings.Contains(string(configData), `"reasoning_effort":"high"`) {
-		return localScenarioResult{}, fmt.Errorf("reasoning config did not persist high effort: %s", string(configData))
-	}
-
-	statusReasoningOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "reasoning", "status")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	statusReasoning, err := decodeEffortHarnessReport(statusReasoningOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if statusReasoning.Action != "status" || statusReasoning.Effort != "high" {
-		return localScenarioResult{}, fmt.Errorf("unexpected persisted reasoning report: %#v", statusReasoning)
-	}
-
-	reasoningText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "reasoning", "list")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !harnessContainsAll(reasoningText, "Reasoning", "Available", "disabled") {
-		return localScenarioResult{}, fmt.Errorf("reasoning text output missing expected values: %s", reasoningText)
-	}
-
-	clearReasoningOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "reasoning", "clear", "--path", configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	clearReasoning, err := decodeEffortHarnessReport(clearReasoningOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if clearReasoning.Action != "clear" || clearReasoning.Effort != "auto" || clearReasoning.Previous != "high" {
-		return localScenarioResult{}, fmt.Errorf("unexpected clear reasoning report: %#v", clearReasoning)
-	}
-
-	initialFastOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "fast")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	initialFast, err := decodeFastHarnessReport(initialFastOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if initialFast.Kind != "fast" || initialFast.Action != "status" || initialFast.Enabled {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial fast report: %#v", initialFast)
-	}
-
-	setFastOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "fast", "on", "--path", configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	setFast, err := decodeFastHarnessReport(setFastOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if setFast.Action != "set" || !setFast.Enabled {
-		return localScenarioResult{}, fmt.Errorf("unexpected set fast report: %#v", setFast)
-	}
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !strings.Contains(string(configData), `"fast_mode": true`) && !strings.Contains(string(configData), `"fast_mode":true`) {
-		return localScenarioResult{}, fmt.Errorf("fast config did not persist enabled state: %s", string(configData))
-	}
-
-	fastText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "fast", "status")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !harnessContainsAll(fastText, "Fast Mode", "Enabled          true") {
-		return localScenarioResult{}, fmt.Errorf("fast text output missing expected values: %s", fastText)
-	}
-
-	clearFastOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "fast", "clear", "--path", configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	clearFast, err := decodeFastHarnessReport(clearFastOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if clearFast.Action != "clear" || clearFast.Enabled || !clearFast.Previous {
-		return localScenarioResult{}, fmt.Errorf("unexpected clear fast report: %#v", clearFast)
-	}
-
-	initialTemperatureOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "temperature")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	initialTemperature, err := decodeTemperatureHarnessReport(initialTemperatureOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if initialTemperature.Kind != "temperature" || initialTemperature.Action != "status" || initialTemperature.Configured || initialTemperature.Temperature != nil {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial temperature report: %#v", initialTemperature)
-	}
-
-	setTemperatureOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "temperature", "0.7", "--path", configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	setTemperature, err := decodeTemperatureHarnessReport(setTemperatureOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if setTemperature.Action != "set" || !setTemperature.Configured || setTemperature.Temperature == nil || math.Abs(*setTemperature.Temperature-0.7) > 0.0001 {
-		return localScenarioResult{}, fmt.Errorf("unexpected set temperature report: %#v", setTemperature)
-	}
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !strings.Contains(string(configData), `"temperature": 0.7`) && !strings.Contains(string(configData), `"temperature":0.7`) {
-		return localScenarioResult{}, fmt.Errorf("temperature config did not persist 0.7: %s", string(configData))
-	}
-
-	temperatureText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "temperature")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !harnessContainsAll(temperatureText, "Temperature", "Value            0.7") {
-		return localScenarioResult{}, fmt.Errorf("temperature text output missing expected values: %s", temperatureText)
-	}
-
-	clearTemperatureOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "temperature", "clear", "--path", configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	clearTemperature, err := decodeTemperatureHarnessReport(clearTemperatureOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if clearTemperature.Action != "clear" || clearTemperature.Configured || clearTemperature.Temperature != nil {
-		return localScenarioResult{}, fmt.Errorf("unexpected clear temperature report: %#v", clearTemperature)
-	}
-
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	for _, clearedKey := range []string{`"reasoning_effort"`, `"fast_mode"`, `"temperature"`} {
-		if strings.Contains(string(configData), clearedKey) {
-			return localScenarioResult{}, fmt.Errorf("config still contains %s after clear: %s", clearedKey, string(configData))
-		}
-	}
-
-	report := map[string]any{
-		"kind": "model_runtime_preferences",
-		"reasoning": map[string]any{
-			"initial":        initialReasoning.Effort,
-			"set":            setReasoning.Effort,
-			"status":         statusReasoning.Effort,
-			"cleared":        clearReasoning.Effort,
-			"clear_previous": clearReasoning.Previous,
-			"path_persisted": setReasoning.Path != "" && strings.HasSuffix(setReasoning.Path, "codog-config.json"),
-			"text_rendered":  strings.Contains(reasoningText, "Available"),
-		},
-		"fast": map[string]any{
-			"initial_enabled": initialFast.Enabled,
-			"set":             setFast.Enabled,
-			"cleared":         clearFast.Enabled,
-			"clear_previous":  clearFast.Previous,
-			"path_persisted":  setFast.Path != "" && strings.HasSuffix(setFast.Path, "codog-config.json"),
-			"text_rendered":   strings.Contains(fastText, "Enabled          true"),
-		},
-		"temperature": map[string]any{
-			"initial_configured": initialTemperature.Configured,
-			"set":                *setTemperature.Temperature,
-			"cleared_configured": clearTemperature.Configured,
-			"path_persisted":     setTemperature.Path != "" && strings.HasSuffix(setTemperature.Path, "codog-config.json"),
-			"text_rendered":      strings.Contains(temperatureText, "Value            0.7"),
-		},
-	}
-	data, err := json.Marshal(report)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	return localScenarioResult{
-		Output:       string(data),
-		FinalMessage: "model runtime preferences harness ok",
-		RequestCount: 13,
-		MessageCount: 1,
-	}, nil
+	return localScenarioResult{Output: string(data), FinalMessage: "model runtime preferences harness ok", RequestCount: 13, MessageCount: 1}, nil
 }
 
 func modelSelectionScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
@@ -598,12 +425,8 @@ func modelSelectionScenarioRunLocal(ctx context.Context, workspace string) (loca
 	if setReport.Action != "set" || setReport.Model != "kimi" || setReport.Previous != initial.Model || !strings.HasSuffix(setReport.Path, "codog-config.json") {
 		return localScenarioResult{}, fmt.Errorf("unexpected set model report: %#v", setReport)
 	}
-	configData, err := os.ReadFile(configPath)
-	if err != nil {
+	if err := verifyHarnessFileContainsAny(configPath, `"model": "kimi"`, `"model":"kimi"`); err != nil {
 		return localScenarioResult{}, err
-	}
-	if !strings.Contains(string(configData), `"model": "kimi"`) && !strings.Contains(string(configData), `"model":"kimi"`) {
-		return localScenarioResult{}, fmt.Errorf("model config did not persist kimi: %s", string(configData))
 	}
 
 	statusOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "model")
@@ -697,12 +520,11 @@ func budgetLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if setReport.Action != "set" || setReport.MaxTokens != 8192 || setReport.MaxTurns != 12 || setReport.Previous == nil || setReport.Previous.MaxTokens != 4096 || setReport.Previous.MaxTurns != 8 {
 		return localScenarioResult{}, fmt.Errorf("unexpected set budget report: %#v", setReport)
 	}
-	configData, err := os.ReadFile(configPath)
-	if err != nil {
+	if err := verifyHarnessFileContainsAny(configPath, `"max_tokens": 8192`, `"max_tokens":8192`); err != nil {
 		return localScenarioResult{}, err
 	}
-	if !harnessContainsAll(string(configData), `"max_tokens": 8192`, `"max_turns": 12`) {
-		return localScenarioResult{}, fmt.Errorf("budget config did not persist limits: %s", string(configData))
+	if err := verifyHarnessFileContainsAny(configPath, `"max_turns": 12`, `"max_turns":12`); err != nil {
+		return localScenarioResult{}, err
 	}
 
 	statusOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "budget", "current")
@@ -736,12 +558,8 @@ func budgetLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 	if reset.Action != "reset" || reset.MaxTokens != 4096 || reset.MaxTurns != 8 || reset.Previous == nil || reset.Previous.MaxTokens != 8192 || reset.Previous.MaxTurns != 12 {
 		return localScenarioResult{}, fmt.Errorf("unexpected reset budget report: %#v", reset)
 	}
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
+	if err := verifyHarnessFileOmits(configPath, `"max_tokens"`, `"max_turns"`); err != nil {
 		return localScenarioResult{}, err
-	}
-	if strings.Contains(string(configData), `"max_tokens"`) || strings.Contains(string(configData), `"max_turns"`) {
-		return localScenarioResult{}, fmt.Errorf("budget config still contains limits after reset: %s", string(configData))
 	}
 
 	report := map[string]any{
@@ -774,190 +592,25 @@ func budgetLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 func authCredentialsScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
 	const apiSecret = "sk-ant-codog-harness-secret"
 	const authSecret = "oauth-codog-harness-token-secret"
-	authEnv := []string{
-		"ANTHROPIC_API_KEY=",
-		"CODOG_API_KEY=",
-		"OPENAI_API_KEY=",
-		"CLAUDE_CODE_OAUTH_TOKEN=",
-		"ANTHROPIC_AUTH_TOKEN=",
-		"CODOG_AUTH_TOKEN=",
-	}
-	runAuthCodog := func(args ...string) (string, error) {
-		return runHarnessCodogWithEnv(ctx, workspace, authEnv, args...)
-	}
+	authEnv := []string{"ANTHROPIC_API_KEY=", "CODOG_API_KEY=", "OPENAI_API_KEY=", "CLAUDE_CODE_OAUTH_TOKEN=", "ANTHROPIC_AUTH_TOKEN=", "CODOG_AUTH_TOKEN="}
+	runAuthCodog := func(args ...string) (string, error) { return runHarnessCodogWithEnv(ctx, workspace, authEnv, args...) }
 	configPath, err := createHarnessConfigFile(workspace, ".codog-home", nil)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-
-	initialAPIKeyOut, err := runAuthCodog("--config", configPath, "--output-format", "json", "api-key")
+	apiKey, err := authAPIKeyPhase(runAuthCodog, configPath, apiSecret, authSecret)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if strings.Contains(initialAPIKeyOut, apiSecret) || strings.Contains(initialAPIKeyOut, authSecret) {
-		return localScenarioResult{}, fmt.Errorf("initial api-key output leaked a harness secret")
-	}
-	initialAPIKey, err := decodeAPIKeyHarnessReport(initialAPIKeyOut)
+	token, err := authTokenPhase(runAuthCodog, configPath, apiSecret, authSecret)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if initialAPIKey.Kind != "api_key" || initialAPIKey.Action != "status" {
-		return localScenarioResult{}, fmt.Errorf("unexpected initial api-key report: %#v", initialAPIKey)
-	}
-
-	setAPIKeyOut, err := runAuthCodog("--config", configPath, "--output-format", "json", "api-key", "set", apiSecret, "--path", configPath)
+	data, err := json.Marshal(map[string]any{"kind": "auth_credentials", "api_key": apiKey.report, "auth": map[string]any{"api_key_method": apiKey.authMethod, "token_method": token.authMethod, "token_ready": token.ready, "text_rendered": token.textRendered, "secret_redacted": true}, "setup_token": token.setupReport})
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	if strings.Contains(setAPIKeyOut, apiSecret) || strings.Contains(setAPIKeyOut, authSecret) {
-		return localScenarioResult{}, fmt.Errorf("api-key set output leaked a harness secret")
-	}
-	setAPIKey, err := decodeAPIKeyHarnessReport(setAPIKeyOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if setAPIKey.Action != "set" || !setAPIKey.Configured || setAPIKey.Source != "config" || setAPIKey.RedactedValue == "" {
-		return localScenarioResult{}, fmt.Errorf("unexpected set api-key report: %#v", setAPIKey)
-	}
-	configData, err := os.ReadFile(configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !strings.Contains(string(configData), apiSecret) {
-		return localScenarioResult{}, fmt.Errorf("api key was not persisted in config file")
-	}
-
-	authAPIKeyOut, err := runAuthCodog("--config", configPath, "--output-format", "json", "auth")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if strings.Contains(authAPIKeyOut, apiSecret) || strings.Contains(authAPIKeyOut, authSecret) {
-		return localScenarioResult{}, fmt.Errorf("auth api-key output leaked a harness secret")
-	}
-	authAPIKey, err := decodeAuthHarnessReport(authAPIKeyOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if authAPIKey.Kind != "auth" || authAPIKey.Action != "status" || !authAPIKey.Ready || authAPIKey.AuthMethod != "api_key" || !authAPIKey.APIKeyConfigured || authAPIKey.APIKeySource != "config" {
-		return localScenarioResult{}, fmt.Errorf("unexpected auth api-key report: %#v", authAPIKey)
-	}
-
-	apiKeyText, err := runAuthCodog("--config", configPath, "api-key", "status")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if strings.Contains(apiKeyText, apiSecret) || strings.Contains(apiKeyText, authSecret) {
-		return localScenarioResult{}, fmt.Errorf("api-key text output leaked a harness secret")
-	}
-	if !harnessContainsAll(apiKeyText, "API Key", "Configured       true", "Source           config") {
-		return localScenarioResult{}, fmt.Errorf("api-key text output missing expected values: %s", apiKeyText)
-	}
-
-	clearAPIKeyOut, err := runAuthCodog("--config", configPath, "--output-format", "json", "api-key", "clear", "--path", configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if strings.Contains(clearAPIKeyOut, apiSecret) || strings.Contains(clearAPIKeyOut, authSecret) {
-		return localScenarioResult{}, fmt.Errorf("api-key clear output leaked a harness secret")
-	}
-	clearAPIKey, err := decodeAPIKeyHarnessReport(clearAPIKeyOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if clearAPIKey.Action != "clear" {
-		return localScenarioResult{}, fmt.Errorf("unexpected clear api-key report: %#v", clearAPIKey)
-	}
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if strings.Contains(string(configData), apiSecret) || strings.Contains(string(configData), `"api_key"`) {
-		return localScenarioResult{}, fmt.Errorf("api key was not cleared from config file: %s", string(configData))
-	}
-
-	setupTokenOut, err := runAuthCodog("--config", configPath, "--output-format", "json", "setup-token", "--token", authSecret, "--path", configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if strings.Contains(setupTokenOut, apiSecret) || strings.Contains(setupTokenOut, authSecret) {
-		return localScenarioResult{}, fmt.Errorf("setup-token output leaked a harness secret")
-	}
-	setupToken, err := decodeSetupTokenHarnessReport(setupTokenOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if setupToken.Kind != "setup_token" || setupToken.Action != "save" || !setupToken.Configured || setupToken.RedactedValue == "" || !slices.Contains(setupToken.EnvVars, "CODOG_AUTH_TOKEN") {
-		return localScenarioResult{}, fmt.Errorf("unexpected setup-token report: %#v", setupToken)
-	}
-	configData, err = os.ReadFile(configPath)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if !strings.Contains(string(configData), authSecret) {
-		return localScenarioResult{}, fmt.Errorf("auth token was not persisted in config file")
-	}
-
-	authTokenOut, err := runAuthCodog("--config", configPath, "--output-format", "json", "auth")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if strings.Contains(authTokenOut, apiSecret) || strings.Contains(authTokenOut, authSecret) {
-		return localScenarioResult{}, fmt.Errorf("auth token output leaked a harness secret")
-	}
-	authToken, err := decodeAuthHarnessReport(authTokenOut)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if authToken.AuthMethod != "auth_token" || !authToken.Ready || !authToken.AuthTokenConfigured {
-		return localScenarioResult{}, fmt.Errorf("unexpected auth token report: %#v", authToken)
-	}
-
-	authText, err := runAuthCodog("--config", configPath, "auth", "--text")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	if strings.Contains(authText, apiSecret) || strings.Contains(authText, authSecret) {
-		return localScenarioResult{}, fmt.Errorf("auth text output leaked a harness secret")
-	}
-	if !harnessContainsAll(authText, "Auth", "Ready            true", "Method           auth_token") {
-		return localScenarioResult{}, fmt.Errorf("auth text output missing expected values: %s", authText)
-	}
-
-	report := map[string]any{
-		"kind": "auth_credentials",
-		"api_key": map[string]any{
-			"initial_configured": initialAPIKey.Configured,
-			"set_configured":     setAPIKey.Configured,
-			"source":             setAPIKey.Source,
-			"redacted":           setAPIKey.RedactedValue != "",
-			"cleared_action":     clearAPIKey.Action,
-			"path_persisted":     setAPIKey.Path != "" && strings.HasSuffix(setAPIKey.Path, "codog-config.json"),
-			"text_rendered":      strings.Contains(apiKeyText, "Configured       true"),
-		},
-		"auth": map[string]any{
-			"api_key_method":  authAPIKey.AuthMethod,
-			"token_method":    authToken.AuthMethod,
-			"token_ready":     authToken.Ready,
-			"text_rendered":   strings.Contains(authText, "Method           auth_token"),
-			"secret_redacted": !strings.Contains(setAPIKeyOut+authAPIKeyOut+apiKeyText+clearAPIKeyOut+setupTokenOut+authTokenOut+authText, apiSecret) && !strings.Contains(setAPIKeyOut+authAPIKeyOut+apiKeyText+clearAPIKeyOut+setupTokenOut+authTokenOut+authText, authSecret),
-		},
-		"setup_token": map[string]any{
-			"configured":     setupToken.Configured,
-			"redacted":       setupToken.RedactedValue != "",
-			"env_vars":       len(setupToken.EnvVars),
-			"path_persisted": setupToken.Path != "" && strings.HasSuffix(setupToken.Path, "codog-config.json"),
-		},
-	}
-	data, err := json.Marshal(report)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
-	return localScenarioResult{
-		Output:       string(data),
-		FinalMessage: "auth credentials harness ok",
-		RequestCount: 8,
-		MessageCount: 1,
-	}, nil
+	return localScenarioResult{Output: string(data), FinalMessage: "auth credentials harness ok", RequestCount: 8, MessageCount: 1}, nil
 }
 
 func outputStyleLifecycleScenarioRunLocal(_ context.Context, workspace string) (localScenarioResult, error) {
@@ -1308,10 +961,6 @@ func statuslineCLIScenarioRunLocal(ctx context.Context, workspace string) (local
 		return localScenarioResult{}, err
 	}
 
-	jsonOutput, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "statusline")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var statusline struct {
 		Kind           string `json:"kind"`
 		Line           string `json:"line"`
@@ -1327,7 +976,10 @@ func statuslineCLIScenarioRunLocal(ctx context.Context, workspace string) (local
 		GitDirty       bool   `json:"git_dirty"`
 		PlanActive     bool   `json:"plan_active"`
 	}
-	if err := json.Unmarshal([]byte(jsonOutput), &statusline); err != nil {
+	_, err = decodeHarnessOutput(&statusline, func() (string, error) {
+		return runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "statusline")
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	workspaceName := filepath.Base(workspace)
@@ -1462,38 +1114,36 @@ func askUserQuestionScenarioRunLocal(ctx context.Context, workspace string) (loc
 		QuestionIn:  questionIn,
 		QuestionOut: &questionOut,
 	})
-	choiceOut, err := registry.Execute(ctx, "AskUserQuestionTool", json.RawMessage(`{
-				"question":"Pick a parity lane",
-				"choices":["alpha","beta"],
-				"default":"alpha"
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var choice struct {
 		Question string `json:"question"`
 		Answer   string `json:"answer"`
 	}
-	if err := json.Unmarshal([]byte(choiceOut), &choice); err != nil {
+	choiceOut, err := decodeHarnessOutput(&choice, func() (string, error) {
+		return registry.Execute(ctx, "AskUserQuestionTool", json.RawMessage(`{
+				"question":"Pick a parity lane",
+				"choices":["alpha","beta"],
+				"default":"alpha"
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if choice.Question != "Pick a parity lane" || choice.Answer != "beta" {
 		return localScenarioResult{}, fmt.Errorf("unexpected choice answer: %s", choiceOut)
 	}
 
-	defaultOut, err := registry.Execute(ctx, "ask_user_question", json.RawMessage(`{
-				"question":"Continue with default?",
-				"options":["yes","no"],
-				"default":"yes"
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var defaultAnswer struct {
 		Question string `json:"question"`
 		Answer   string `json:"answer"`
 	}
-	if err := json.Unmarshal([]byte(defaultOut), &defaultAnswer); err != nil {
+	defaultOut, err := decodeHarnessOutput(&defaultAnswer, func() (string, error) {
+		return registry.Execute(ctx, "ask_user_question", json.RawMessage(`{
+				"question":"Continue with default?",
+				"options":["yes","no"],
+				"default":"yes"
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if defaultAnswer.Question != "Continue with default?" || defaultAnswer.Answer != "yes" {
@@ -1523,14 +1173,6 @@ func runtimeOutputToolsScenarioRunLocal(ctx context.Context, workspace string) (
 		return localScenarioResult{}, err
 	}
 	registry := tools.NewRegistry(workspace)
-	briefOut, err := registry.Execute(ctx, "BriefTool", json.RawMessage(`{
-				"message":"Brief parity message",
-				"status":"proactive",
-				"attachments":["diagram.png"]
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var brief struct {
 		Message     string `json:"message"`
 		Status      string `json:"status"`
@@ -1540,21 +1182,20 @@ func runtimeOutputToolsScenarioRunLocal(ctx context.Context, workspace string) (
 			IsImage bool   `json:"is_image"`
 		} `json:"attachments"`
 	}
-	if err := json.Unmarshal([]byte(briefOut), &brief); err != nil {
+	briefOut, err := decodeHarnessOutput(&brief, func() (string, error) {
+		return registry.Execute(ctx, "BriefTool", json.RawMessage(`{
+				"message":"Brief parity message",
+				"status":"proactive",
+				"attachments":["diagram.png"]
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if brief.Message != "Brief parity message" || brief.Status != "proactive" || len(brief.Attachments) != 1 || !brief.Attachments[0].IsImage || brief.Attachments[0].Size != 3 {
 		return localScenarioResult{}, fmt.Errorf("unexpected brief output: %s", briefOut)
 	}
 
-	messageOut, err := registry.Execute(ctx, "send_user_message", json.RawMessage(`{
-				"message":"User-facing parity message",
-				"status":"normal",
-				"attachments":["notes.txt"]
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var message struct {
 		Message     string `json:"message"`
 		Status      string `json:"status"`
@@ -1563,41 +1204,46 @@ func runtimeOutputToolsScenarioRunLocal(ctx context.Context, workspace string) (
 			IsImage bool  `json:"is_image"`
 		} `json:"attachments"`
 	}
-	if err := json.Unmarshal([]byte(messageOut), &message); err != nil {
+	messageOut, err := decodeHarnessOutput(&message, func() (string, error) {
+		return registry.Execute(ctx, "send_user_message", json.RawMessage(`{
+				"message":"User-facing parity message",
+				"status":"normal",
+				"attachments":["notes.txt"]
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if message.Message != "User-facing parity message" || message.Status != "normal" || len(message.Attachments) != 1 || message.Attachments[0].IsImage || message.Attachments[0].Size != 5 {
 		return localScenarioResult{}, fmt.Errorf("unexpected send_user_message output: %s", messageOut)
 	}
 
-	structuredOut, err := registry.Execute(ctx, "StructuredOutputTool", json.RawMessage(`{
-				"ok":true,
-				"items":["brief","structured"],
-				"score":2
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var structured struct {
 		Data             string         `json:"data"`
 		StructuredOutput map[string]any `json:"structured_output"`
 	}
-	if err := json.Unmarshal([]byte(structuredOut), &structured); err != nil {
+	structuredOut, err := decodeHarnessOutput(&structured, func() (string, error) {
+		return registry.Execute(ctx, "StructuredOutputTool", json.RawMessage(`{
+				"ok":true,
+				"items":["brief","structured"],
+				"score":2
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if structured.Data == "" || structured.StructuredOutput["ok"] != true || structured.StructuredOutput["score"] != float64(2) {
 		return localScenarioResult{}, fmt.Errorf("unexpected structured output: %s", structuredOut)
 	}
 
-	sleepOut, err := registry.Execute(ctx, "SleepTool", json.RawMessage(`{"duration_ms":0}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var slept struct {
 		DurationMS int    `json:"duration_ms"`
 		Message    string `json:"message"`
 	}
-	if err := json.Unmarshal([]byte(sleepOut), &slept); err != nil {
+	sleepOut, err := decodeHarnessOutput(&slept, func() (string, error) {
+		return registry.Execute(ctx, "SleepTool", json.RawMessage(`{"duration_ms":0}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if slept.DurationMS != 0 || slept.Message != "Slept for 0ms" {
@@ -1615,14 +1261,6 @@ func replRuntimeScenarioRunLocal(ctx context.Context, workspace string) (localSc
 	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{
 		ConfigEnv: map[string]string{"CODOG_REPL_PARITY": "ready"},
 	})
-	shellOut, err := registry.Execute(ctx, "REPLTool", json.RawMessage(`{
-				"language":"sh",
-				"code":"printf '%s:%s' \"$PWD\" \"$CODOG_REPL_PARITY\"",
-				"timeout_ms":1000
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var shellResult struct {
 		Language   string `json:"language"`
 		Stdout     string `json:"stdout"`
@@ -1631,7 +1269,14 @@ func replRuntimeScenarioRunLocal(ctx context.Context, workspace string) (localSc
 		TimedOut   bool   `json:"timed_out"`
 		DurationMS int64  `json:"duration_ms"`
 	}
-	if err := json.Unmarshal([]byte(shellOut), &shellResult); err != nil {
+	shellOut, err := decodeHarnessOutput(&shellResult, func() (string, error) {
+		return registry.Execute(ctx, "REPLTool", json.RawMessage(`{
+				"language":"sh",
+				"code":"printf '%s:%s' \"$PWD\" \"$CODOG_REPL_PARITY\"",
+				"timeout_ms":1000
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if shellResult.Language != "sh" || !strings.HasSuffix(shellResult.Stdout, filepath.Base(workspace)+":ready") || shellResult.Stderr != "" || shellResult.ExitCode != 0 || shellResult.TimedOut {
@@ -1641,20 +1286,19 @@ func replRuntimeScenarioRunLocal(ctx context.Context, workspace string) (localSc
 		return localScenarioResult{}, fmt.Errorf("unexpected repl duration: %s", shellOut)
 	}
 
-	timeoutOut, err := registry.Execute(ctx, "repl", json.RawMessage(`{
-				"language":"sh",
-				"code":"sleep 1",
-				"timeout_ms":20
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var timeoutResult struct {
 		Language string `json:"language"`
 		ExitCode int    `json:"exit_code"`
 		TimedOut bool   `json:"timed_out"`
 	}
-	if err := json.Unmarshal([]byte(timeoutOut), &timeoutResult); err != nil {
+	timeoutOut, err := decodeHarnessOutput(&timeoutResult, func() (string, error) {
+		return registry.Execute(ctx, "repl", json.RawMessage(`{
+				"language":"sh",
+				"code":"sleep 1",
+				"timeout_ms":20
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if timeoutResult.Language != "sh" || timeoutResult.ExitCode != -1 || !timeoutResult.TimedOut {
@@ -2094,4 +1738,346 @@ func collectTUIPromptCompletionPreviews(workspace string) (map[string]tui.Previe
 		}
 	}
 	return all, nil
+}
+
+func modelRuntimeReasoningPhase(ctx context.Context, workspace string, configPath string) (map[string]any, error) {
+	initialReasoningOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "reasoning")
+	if err != nil {
+		return nil, err
+	}
+	initialReasoning, err := decodeEffortHarnessReport(initialReasoningOut)
+	if err != nil {
+		return nil, err
+	}
+	if initialReasoning.Kind != "reasoning" || initialReasoning.Action != "status" || initialReasoning.Effort != "auto" {
+		return nil, fmt.Errorf("unexpected initial reasoning report: %#v", initialReasoning)
+	}
+	if !slices.Contains(initialReasoning.Available, "high") || !slices.Contains(initialReasoning.Available, "disabled") {
+		return nil, fmt.Errorf("reasoning available list missing expected levels: %#v", initialReasoning.Available)
+	}
+
+	setReasoningOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "reasoning", "high", "--path", configPath)
+	if err != nil {
+		return nil, err
+	}
+	setReasoning, err := decodeEffortHarnessReport(setReasoningOut)
+	if err != nil {
+		return nil, err
+	}
+	if setReasoning.Action != "set" || setReasoning.Effort != "high" || setReasoning.Previous != "auto" {
+		return nil, fmt.Errorf("unexpected set reasoning report: %#v", setReasoning)
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.Contains(string(configData), `"reasoning_effort": "high"`) && !strings.Contains(string(configData), `"reasoning_effort":"high"`) {
+		return nil, fmt.Errorf("reasoning config did not persist high effort: %s", string(configData))
+	}
+
+	statusReasoningOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "reasoning", "status")
+	if err != nil {
+		return nil, err
+	}
+	statusReasoning, err := decodeEffortHarnessReport(statusReasoningOut)
+	if err != nil {
+		return nil, err
+	}
+	if statusReasoning.Action != "status" || statusReasoning.Effort != "high" {
+		return nil, fmt.Errorf("unexpected persisted reasoning report: %#v", statusReasoning)
+	}
+
+	reasoningText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "reasoning", "list")
+	if err != nil {
+		return nil, err
+	}
+	if !harnessContainsAll(reasoningText, "Reasoning", "Available", "disabled") {
+		return nil, fmt.Errorf("reasoning text output missing expected values: %s", reasoningText)
+	}
+
+	clearReasoningOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "reasoning", "clear", "--path", configPath)
+	if err != nil {
+		return nil, err
+	}
+	clearReasoning, err := decodeEffortHarnessReport(clearReasoningOut)
+	if err != nil {
+		return nil, err
+	}
+	if clearReasoning.Action != "clear" || clearReasoning.Effort != "auto" || clearReasoning.Previous != "high" {
+		return nil, fmt.Errorf("unexpected clear reasoning report: %#v", clearReasoning)
+	}
+
+	return map[string]any{
+		"initial":        initialReasoning.Effort,
+		"set":            setReasoning.Effort,
+		"status":         statusReasoning.Effort,
+		"cleared":        clearReasoning.Effort,
+		"clear_previous": clearReasoning.Previous,
+		"path_persisted": setReasoning.Path != "" && strings.HasSuffix(setReasoning.Path, "codog-config.json"),
+		"text_rendered":  strings.Contains(reasoningText, "Available"),
+	}, nil
+}
+
+func modelRuntimeFastPhase(ctx context.Context, workspace string, configPath string) (map[string]any, error) {
+	initialFastOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "fast")
+	if err != nil {
+		return nil, err
+	}
+	initialFast, err := decodeFastHarnessReport(initialFastOut)
+	if err != nil {
+		return nil, err
+	}
+	if initialFast.Kind != "fast" || initialFast.Action != "status" || initialFast.Enabled {
+		return nil, fmt.Errorf("unexpected initial fast report: %#v", initialFast)
+	}
+
+	setFastOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "fast", "on", "--path", configPath)
+	if err != nil {
+		return nil, err
+	}
+	setFast, err := decodeFastHarnessReport(setFastOut)
+	if err != nil {
+		return nil, err
+	}
+	if setFast.Action != "set" || !setFast.Enabled {
+		return nil, fmt.Errorf("unexpected set fast report: %#v", setFast)
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.Contains(string(configData), `"fast_mode": true`) && !strings.Contains(string(configData), `"fast_mode":true`) {
+		return nil, fmt.Errorf("fast config did not persist enabled state: %s", string(configData))
+	}
+
+	fastText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "fast", "status")
+	if err != nil {
+		return nil, err
+	}
+	if !harnessContainsAll(fastText, "Fast Mode", "Enabled          true") {
+		return nil, fmt.Errorf("fast text output missing expected values: %s", fastText)
+	}
+
+	clearFastOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "fast", "clear", "--path", configPath)
+	if err != nil {
+		return nil, err
+	}
+	clearFast, err := decodeFastHarnessReport(clearFastOut)
+	if err != nil {
+		return nil, err
+	}
+	if clearFast.Action != "clear" || clearFast.Enabled || !clearFast.Previous {
+		return nil, fmt.Errorf("unexpected clear fast report: %#v", clearFast)
+	}
+
+	return map[string]any{
+		"initial_enabled": initialFast.Enabled,
+		"set":             setFast.Enabled,
+		"cleared":         clearFast.Enabled,
+		"clear_previous":  clearFast.Previous,
+		"path_persisted":  setFast.Path != "" && strings.HasSuffix(setFast.Path, "codog-config.json"),
+		"text_rendered":   strings.Contains(fastText, "Enabled          true"),
+	}, nil
+}
+
+func modelRuntimeTemperaturePhase(ctx context.Context, workspace string, configPath string) (map[string]any, error) {
+	initialTemperatureOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "temperature")
+	if err != nil {
+		return nil, err
+	}
+	initialTemperature, err := decodeTemperatureHarnessReport(initialTemperatureOut)
+	if err != nil {
+		return nil, err
+	}
+	if initialTemperature.Kind != "temperature" || initialTemperature.Action != "status" || initialTemperature.Configured || initialTemperature.Temperature != nil {
+		return nil, fmt.Errorf("unexpected initial temperature report: %#v", initialTemperature)
+	}
+
+	setTemperatureOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "temperature", "0.7", "--path", configPath)
+	if err != nil {
+		return nil, err
+	}
+	setTemperature, err := decodeTemperatureHarnessReport(setTemperatureOut)
+	if err != nil {
+		return nil, err
+	}
+	if setTemperature.Action != "set" || !setTemperature.Configured || setTemperature.Temperature == nil || math.Abs(*setTemperature.Temperature-0.7) > 0.0001 {
+		return nil, fmt.Errorf("unexpected set temperature report: %#v", setTemperature)
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.Contains(string(configData), `"temperature": 0.7`) && !strings.Contains(string(configData), `"temperature":0.7`) {
+		return nil, fmt.Errorf("temperature config did not persist 0.7: %s", string(configData))
+	}
+
+	temperatureText, err := runHarnessCodog(ctx, workspace, "--config", configPath, "temperature")
+	if err != nil {
+		return nil, err
+	}
+	if !harnessContainsAll(temperatureText, "Temperature", "Value            0.7") {
+		return nil, fmt.Errorf("temperature text output missing expected values: %s", temperatureText)
+	}
+
+	clearTemperatureOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "temperature", "clear", "--path", configPath)
+	if err != nil {
+		return nil, err
+	}
+	clearTemperature, err := decodeTemperatureHarnessReport(clearTemperatureOut)
+	if err != nil {
+		return nil, err
+	}
+	if clearTemperature.Action != "clear" || clearTemperature.Configured || clearTemperature.Temperature != nil {
+		return nil, fmt.Errorf("unexpected clear temperature report: %#v", clearTemperature)
+	}
+
+	return map[string]any{
+		"initial_configured": initialTemperature.Configured,
+		"set":                *setTemperature.Temperature,
+		"cleared_configured": clearTemperature.Configured,
+		"path_persisted":     setTemperature.Path != "" && strings.HasSuffix(setTemperature.Path, "codog-config.json"),
+		"text_rendered":      strings.Contains(temperatureText, "Value            0.7"),
+	}, nil
+}
+
+func verifyModelRuntimeConfigCleared(configPath string) error {
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+	for _, clearedKey := range []string{`"reasoning_effort"`, `"fast_mode"`, `"temperature"`} {
+		if strings.Contains(string(configData), clearedKey) {
+			return fmt.Errorf("config still contains %s after clear: %s", clearedKey, string(configData))
+		}
+	}
+
+	return nil
+}
+
+type authAPIKeyPhaseResult struct {
+	report     map[string]any
+	authMethod string
+}
+type authTokenPhaseResult struct {
+	setupReport  map[string]any
+	authMethod   string
+	ready        bool
+	textRendered bool
+}
+
+func authAPIKeyPhase(runAuthCodog func(...string) (string, error), configPath, apiSecret, authSecret string) (authAPIKeyPhaseResult, error) {
+	initialAPIKeyOut, initialAPIKey, err := runAPIKeyHarnessCommand(runAuthCodog, "--config", configPath, "--output-format", "json", "api-key")
+	if err != nil {
+		return authAPIKeyPhaseResult{}, err
+	}
+	if harnessContainsAny(initialAPIKeyOut, apiSecret, authSecret) {
+		return authAPIKeyPhaseResult{}, fmt.Errorf("initial api-key output leaked a harness secret")
+	}
+	if initialAPIKey.Kind != "api_key" || initialAPIKey.Action != "status" {
+		return authAPIKeyPhaseResult{}, fmt.Errorf("unexpected initial api-key report: %#v", initialAPIKey)
+	}
+
+	setAPIKeyOut, setAPIKey, err := runAPIKeyHarnessCommand(runAuthCodog, "--config", configPath, "--output-format", "json", "api-key", "set", apiSecret, "--path", configPath)
+	if err != nil {
+		return authAPIKeyPhaseResult{}, err
+	}
+	if harnessContainsAny(setAPIKeyOut, apiSecret, authSecret) {
+		return authAPIKeyPhaseResult{}, fmt.Errorf("api-key set output leaked a harness secret")
+	}
+	if setAPIKey.Action != "set" || !setAPIKey.Configured || setAPIKey.Source != "config" || setAPIKey.RedactedValue == "" {
+		return authAPIKeyPhaseResult{}, fmt.Errorf("unexpected set api-key report: %#v", setAPIKey)
+	}
+	if err := verifyHarnessFileContainsAny(configPath, apiSecret); err != nil {
+		return authAPIKeyPhaseResult{}, err
+	}
+
+	authAPIKeyOut, authAPIKey, err := runAuthHarnessCommand(runAuthCodog, "--config", configPath, "--output-format", "json", "auth")
+	if err != nil {
+		return authAPIKeyPhaseResult{}, err
+	}
+	if harnessContainsAny(authAPIKeyOut, apiSecret, authSecret) {
+		return authAPIKeyPhaseResult{}, fmt.Errorf("auth api-key output leaked a harness secret")
+	}
+	if authAPIKey.Kind != "auth" || authAPIKey.Action != "status" || !authAPIKey.Ready || authAPIKey.AuthMethod != "api_key" || !authAPIKey.APIKeyConfigured || authAPIKey.APIKeySource != "config" {
+		return authAPIKeyPhaseResult{}, fmt.Errorf("unexpected auth api-key report: %#v", authAPIKey)
+	}
+
+	apiKeyText, err := runAuthCodog("--config", configPath, "api-key", "status")
+	if err != nil {
+		return authAPIKeyPhaseResult{}, err
+	}
+	if harnessContainsAny(apiKeyText, apiSecret, authSecret) {
+		return authAPIKeyPhaseResult{}, fmt.Errorf("api-key text output leaked a harness secret")
+	}
+	if !harnessContainsAll(apiKeyText, "API Key", "Configured       true", "Source           config") {
+		return authAPIKeyPhaseResult{}, fmt.Errorf("api-key text output missing expected values: %s", apiKeyText)
+	}
+
+	clearAPIKeyOut, clearAPIKey, err := runAPIKeyHarnessCommand(runAuthCodog, "--config", configPath, "--output-format", "json", "api-key", "clear", "--path", configPath)
+	if err != nil {
+		return authAPIKeyPhaseResult{}, err
+	}
+	if harnessContainsAny(clearAPIKeyOut, apiSecret, authSecret) {
+		return authAPIKeyPhaseResult{}, fmt.Errorf("api-key clear output leaked a harness secret")
+	}
+	if clearAPIKey.Action != "clear" {
+		return authAPIKeyPhaseResult{}, fmt.Errorf("unexpected clear api-key report: %#v", clearAPIKey)
+	}
+	if err := verifyHarnessFileOmits(configPath, apiSecret, `"api_key"`); err != nil {
+		return authAPIKeyPhaseResult{}, err
+	}
+
+	return authAPIKeyPhaseResult{report: map[string]any{"initial_configured": initialAPIKey.Configured, "set_configured": setAPIKey.Configured, "source": setAPIKey.Source, "redacted": setAPIKey.RedactedValue != "", "cleared_action": clearAPIKey.Action, "path_persisted": setAPIKey.Path != "" && strings.HasSuffix(setAPIKey.Path, "codog-config.json"), "text_rendered": strings.Contains(apiKeyText, "Configured       true")}, authMethod: authAPIKey.AuthMethod}, nil
+}
+func authTokenPhase(runAuthCodog func(...string) (string, error), configPath, apiSecret, authSecret string) (authTokenPhaseResult, error) {
+	setupTokenOut, err := runAuthCodog("--config", configPath, "--output-format", "json", "setup-token", "--token", authSecret, "--path", configPath)
+	if err != nil {
+		return authTokenPhaseResult{}, err
+	}
+	if strings.Contains(setupTokenOut, apiSecret) || strings.Contains(setupTokenOut, authSecret) {
+		return authTokenPhaseResult{}, fmt.Errorf("setup-token output leaked a harness secret")
+	}
+	setupToken, err := decodeSetupTokenHarnessReport(setupTokenOut)
+	if err != nil {
+		return authTokenPhaseResult{}, err
+	}
+	if setupToken.Kind != "setup_token" || setupToken.Action != "save" || !setupToken.Configured || setupToken.RedactedValue == "" || !slices.Contains(setupToken.EnvVars, "CODOG_AUTH_TOKEN") {
+		return authTokenPhaseResult{}, fmt.Errorf("unexpected setup-token report: %#v", setupToken)
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return authTokenPhaseResult{}, err
+	}
+	if !strings.Contains(string(configData), authSecret) {
+		return authTokenPhaseResult{}, fmt.Errorf("auth token was not persisted in config file")
+	}
+
+	authTokenOut, err := runAuthCodog("--config", configPath, "--output-format", "json", "auth")
+	if err != nil {
+		return authTokenPhaseResult{}, err
+	}
+	if strings.Contains(authTokenOut, apiSecret) || strings.Contains(authTokenOut, authSecret) {
+		return authTokenPhaseResult{}, fmt.Errorf("auth token output leaked a harness secret")
+	}
+	authToken, err := decodeAuthHarnessReport(authTokenOut)
+	if err != nil {
+		return authTokenPhaseResult{}, err
+	}
+	if authToken.AuthMethod != "auth_token" || !authToken.Ready || !authToken.AuthTokenConfigured {
+		return authTokenPhaseResult{}, fmt.Errorf("unexpected auth token report: %#v", authToken)
+	}
+
+	authText, err := runAuthCodog("--config", configPath, "auth", "--text")
+	if err != nil {
+		return authTokenPhaseResult{}, err
+	}
+	if strings.Contains(authText, apiSecret) || strings.Contains(authText, authSecret) {
+		return authTokenPhaseResult{}, fmt.Errorf("auth text output leaked a harness secret")
+	}
+	if !harnessContainsAll(authText, "Auth", "Ready            true", "Method           auth_token") {
+		return authTokenPhaseResult{}, fmt.Errorf("auth text output missing expected values: %s", authText)
+	}
+
+	return authTokenPhaseResult{setupReport: map[string]any{"configured": setupToken.Configured, "redacted": setupToken.RedactedValue != "", "env_vars": len(setupToken.EnvVars), "path_persisted": setupToken.Path != "" && strings.HasSuffix(setupToken.Path, "codog-config.json")}, authMethod: authToken.AuthMethod, ready: authToken.Ready, textRendered: strings.Contains(authText, "Method           auth_token")}, nil
 }

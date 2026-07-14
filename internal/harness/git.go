@@ -110,98 +110,118 @@ func lspHarnessCandidateExists(candidates []lspHarnessCandidate, language string
 }
 
 func pluginLifecycleScenario() scenario {
-	var installedRoot string
-	var disabledRoot string
+	state := &pluginLifecycleState{}
 	return scenario{
 		name:   "plugin_lifecycle_roundtrip",
 		turns:  []mockanthropic.Turn{{Text: "plugin lifecycle harness ok"}},
 		prompt: "verify plugin lifecycle",
-		setup: func(workspace string) error {
-			source := filepath.Join(workspace, "plugin-source")
-			if err := os.MkdirAll(source, 0o755); err != nil {
-				return err
-			}
-			manifest := `{"id":"lifecycle","name":"lifecycle","version":"1.0.0","description":"Lifecycle harness plugin","lifecycle":{"init":["echo init-ok > lifecycle-init.txt"],"shutdown":["echo shutdown-ok > lifecycle-shutdown.txt"]},"tools":[{"name":"lifecycle_tool","command":"cat","permission":"read-only"}]}`
-			if err := os.WriteFile(filepath.Join(source, "plugin.json"), []byte(manifest), 0o644); err != nil {
-				return err
-			}
-			if err := os.WriteFile(filepath.Join(source, "tool.sh"), []byte("#!/bin/sh\ncat\n"), 0o755); err != nil {
-				return err
-			}
-			installed, err := plugins.Install(workspace, source)
-			if err != nil {
-				return err
-			}
-			installedRoot = installed.Root
-			if !installed.Enabled {
-				return fmt.Errorf("installed plugin is disabled")
-			}
-			initRun := plugins.RunLifecycle(context.Background(), installed, "init", 5*time.Second)
-			if initRun.Status != "ok" {
-				return fmt.Errorf("init lifecycle failed: %s", initRun.Message)
-			}
-			initMarker, err := os.ReadFile(filepath.Join(installed.Root, "lifecycle-init.txt"))
-			if err != nil {
-				return err
-			}
-			if !strings.Contains(string(initMarker), "init-ok") {
-				return fmt.Errorf("init lifecycle marker mismatch: %q", string(initMarker))
-			}
-			shutdownRun := plugins.RunLifecycle(context.Background(), installed, "shutdown", 5*time.Second)
-			if shutdownRun.Status != "ok" {
-				return fmt.Errorf("shutdown lifecycle failed: %s", shutdownRun.Message)
-			}
-			shutdownMarker, err := os.ReadFile(filepath.Join(installed.Root, "lifecycle-shutdown.txt"))
-			if err != nil {
-				return err
-			}
-			if !strings.Contains(string(shutdownMarker), "shutdown-ok") {
-				return fmt.Errorf("shutdown lifecycle marker mismatch: %q", string(shutdownMarker))
-			}
-			disabled, err := plugins.Disable(workspace, installed.ID)
-			if err != nil {
-				return err
-			}
-			disabledRoot = disabled.Root
-			if disabled.Enabled {
-				return fmt.Errorf("disabled plugin still reports enabled")
-			}
-			if _, err := os.Stat(filepath.Join(disabled.Root, plugins.DisabledMarker)); err != nil {
-				return err
-			}
-			enabled, err := plugins.Enable(workspace, installed.ID)
-			if err != nil {
-				return err
-			}
-			if !enabled.Enabled {
-				return fmt.Errorf("enabled plugin still reports disabled")
-			}
-			if _, err := os.Stat(filepath.Join(enabled.Root, plugins.DisabledMarker)); !os.IsNotExist(err) {
-				return fmt.Errorf("disabled marker still present after enable: %v", err)
-			}
-			if err := plugins.Remove(workspace, installed.ID); err != nil {
-				return err
-			}
-			return nil
-		},
-		verify: func(_ string, result runloop.TurnResult, output string) error {
-			if !strings.Contains(output, "plugin lifecycle harness ok") {
-				return fmt.Errorf("missing plugin lifecycle final response")
-			}
-			if err := expectToolCalls(result, 0, false); err != nil {
-				return err
-			}
-			for _, root := range []string{installedRoot, disabledRoot} {
-				if strings.TrimSpace(root) == "" {
-					return fmt.Errorf("missing lifecycle plugin root")
-				}
-				if _, err := os.Stat(root); !os.IsNotExist(err) {
-					return fmt.Errorf("plugin root still exists after remove: %s", root)
-				}
-			}
-			return nil
-		},
+		setup:  state.setup,
+		verify: state.verify,
 	}
+}
+
+type pluginLifecycleState struct {
+	installedRoot string
+	disabledRoot  string
+}
+
+func (s *pluginLifecycleState) setup(workspace string) error {
+	source := filepath.Join(workspace, "plugin-source")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		return err
+	}
+	manifest := `{"id":"lifecycle","name":"lifecycle","version":"1.0.0","description":"Lifecycle harness plugin","lifecycle":{"init":["echo init-ok > lifecycle-init.txt"],"shutdown":["echo shutdown-ok > lifecycle-shutdown.txt"]},"tools":[{"name":"lifecycle_tool","command":"cat","permission":"read-only"}]}`
+	if err := os.WriteFile(filepath.Join(source, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(source, "tool.sh"), []byte("#!/bin/sh\ncat\n"), 0o755); err != nil {
+		return err
+	}
+	installed, err := plugins.Install(workspace, source)
+	if err != nil {
+		return err
+	}
+	s.installedRoot = installed.Root
+	if err := verifyInstalledPlugin(installed); err != nil {
+		return err
+	}
+	disabled, err := plugins.Disable(workspace, installed.ID)
+	if err != nil {
+		return err
+	}
+	s.disabledRoot = disabled.Root
+	if err := verifyDisabledPlugin(disabled); err != nil {
+		return err
+	}
+	enabled, err := plugins.Enable(workspace, installed.ID)
+	if err != nil {
+		return err
+	}
+	if err := verifyEnabledPlugin(enabled); err != nil {
+		return err
+	}
+	return plugins.Remove(workspace, installed.ID)
+}
+
+func verifyInstalledPlugin(installed plugins.Manifest) error {
+	if !installed.Enabled {
+		return fmt.Errorf("installed plugin is disabled")
+	}
+	if err := verifyPluginLifecycleEvent(installed, "init", "lifecycle-init.txt", "init-ok"); err != nil {
+		return err
+	}
+	return verifyPluginLifecycleEvent(installed, "shutdown", "lifecycle-shutdown.txt", "shutdown-ok")
+}
+
+func verifyPluginLifecycleEvent(installed plugins.Manifest, event string, markerName string, expected string) error {
+	run := plugins.RunLifecycle(context.Background(), installed, event, 5*time.Second)
+	if run.Status != "ok" {
+		return fmt.Errorf("%s lifecycle failed: %s", event, run.Message)
+	}
+	marker, err := os.ReadFile(filepath.Join(installed.Root, markerName))
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(marker), expected) {
+		return fmt.Errorf("%s lifecycle marker mismatch: %q", event, string(marker))
+	}
+	return nil
+}
+
+func verifyDisabledPlugin(disabled plugins.Manifest) error {
+	if disabled.Enabled {
+		return fmt.Errorf("disabled plugin still reports enabled")
+	}
+	_, err := os.Stat(filepath.Join(disabled.Root, plugins.DisabledMarker))
+	return err
+}
+
+func verifyEnabledPlugin(enabled plugins.Manifest) error {
+	if !enabled.Enabled {
+		return fmt.Errorf("enabled plugin still reports disabled")
+	}
+	if _, err := os.Stat(filepath.Join(enabled.Root, plugins.DisabledMarker)); !os.IsNotExist(err) {
+		return fmt.Errorf("disabled marker still present after enable: %v", err)
+	}
+	return nil
+}
+
+func (s *pluginLifecycleState) verify(_ string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "plugin lifecycle harness ok") {
+		return fmt.Errorf("missing plugin lifecycle final response")
+	}
+	if err := expectToolCalls(result, 0, false); err != nil {
+		return err
+	}
+	for _, root := range []string{s.installedRoot, s.disabledRoot} {
+		if strings.TrimSpace(root) == "" {
+			return fmt.Errorf("missing lifecycle plugin root")
+		}
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			return fmt.Errorf("plugin root still exists after remove: %s", root)
+		}
+	}
+	return nil
 }
 
 func taskLifecycleScenario() scenario {
@@ -355,10 +375,6 @@ func worktreeLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	}
 
 	registry := tools.NewRegistry(workspace)
-	enterOut, err := registry.Execute(ctx, "EnterWorktreeTool", json.RawMessage(`{"name":"reviewer"}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var entered struct {
 		Kind       string `json:"kind"`
 		Operation  string `json:"operation"`
@@ -368,7 +384,10 @@ func worktreeLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 			Ref  string `json:"ref"`
 		} `json:"allocation"`
 	}
-	if err := json.Unmarshal([]byte(enterOut), &entered); err != nil {
+	enterOut, err := decodeHarnessOutput(&entered, func() (string, error) {
+		return registry.Execute(ctx, "EnterWorktreeTool", json.RawMessage(`{"name":"reviewer"}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if entered.Kind != "worktree" || entered.Operation != "enter" || entered.Allocation.ID == "" || entered.Allocation.Path == "" || entered.Allocation.Ref == "" {
@@ -393,17 +412,16 @@ func worktreeLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 		return localScenarioResult{}, fmt.Errorf("missing worktree metadata: %w", err)
 	}
 
-	exitOut, err := registry.Execute(ctx, "exit_worktree", json.RawMessage(fmt.Sprintf(`{"id":%q}`, entered.Allocation.ID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var exited struct {
 		Kind      string `json:"kind"`
 		Operation string `json:"operation"`
 		ID        string `json:"id"`
 		Removed   bool   `json:"removed"`
 	}
-	if err := json.Unmarshal([]byte(exitOut), &exited); err != nil {
+	exitOut, err := decodeHarnessOutput(&exited, func() (string, error) {
+		return registry.Execute(ctx, "exit_worktree", json.RawMessage(fmt.Sprintf(`{"id":%q}`, entered.Allocation.ID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if exited.Kind != "worktree" || exited.Operation != "exit" || exited.ID != entered.Allocation.ID || !exited.Removed {
@@ -441,17 +459,16 @@ func planTodoScenarioRunLocal(ctx context.Context, workspace string) (localScena
 	if err := os.WriteFile(editorScript, []byte("#!/bin/sh\nprintf '%s\\n' \"$2\" > \"$1\"\n"), 0o755); err != nil {
 		return localScenarioResult{}, err
 	}
-	openOut, err := runHarnessCodogWithEnv(ctx, workspace, []string{"VISUAL=" + editorScript + " " + editorLog}, "plan", "open", "--output-format", "json")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var opened struct {
 		Action string `json:"action"`
 		Status string `json:"status"`
 		Opened bool   `json:"opened"`
 	}
-	if err := json.Unmarshal([]byte(openOut), &opened); err != nil {
-		return localScenarioResult{}, fmt.Errorf("plan open output was not json: %w: %s", err, openOut)
+	openOut, err := decodeHarnessOutput(&opened, func() (string, error) {
+		return runHarnessCodogWithEnv(ctx, workspace, []string{"VISUAL=" + editorScript + " " + editorLog}, "plan", "open", "--output-format", "json")
+	})
+	if err != nil {
+		return localScenarioResult{}, err
 	}
 	if opened.Action != "open" || opened.Status != "opened" || !opened.Opened {
 		return localScenarioResult{}, fmt.Errorf("unexpected plan open output: %s", openOut)
@@ -713,12 +730,11 @@ func lspCLIMetadataScenarioRunLocal(ctx context.Context, workspace string) (loca
 		return localScenarioResult{}, err
 	}
 
-	actionsOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "code-intel", "lsp", "actions", "--json")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var actions lspActionsHarnessReport
-	if err := json.Unmarshal([]byte(actionsOut), &actions); err != nil {
+	actionsOut, err := decodeHarnessOutput(&actions, func() (string, error) {
+		return runHarnessCodog(ctx, workspace, "--config", configPath, "code-intel", "lsp", "actions", "--json")
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if actions.Kind != "lsp_actions" || actions.Action != "actions" || actions.Status != "ok" || actions.Count < 40 {
@@ -728,12 +744,11 @@ func lspCLIMetadataScenarioRunLocal(ctx context.Context, workspace string) (loca
 		return localScenarioResult{}, fmt.Errorf("lsp actions output missing expected actions: %s", actionsOut)
 	}
 
-	discoverOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "code-intel", "lsp", "discover", "--json")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var discover lspDiscoverHarnessReport
-	if err := json.Unmarshal([]byte(discoverOut), &discover); err != nil {
+	_, err = decodeHarnessOutput(&discover, func() (string, error) {
+		return runHarnessCodog(ctx, workspace, "--config", configPath, "code-intel", "lsp", "discover", "--json")
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if discover.Kind != "lsp_discover" || discover.Action != "discover" || discover.Status != "ok" || discover.Count < 5 {
@@ -743,12 +758,11 @@ func lspCLIMetadataScenarioRunLocal(ctx context.Context, workspace string) (loca
 		return localScenarioResult{}, fmt.Errorf("lsp discover candidates missing expected defaults: %#v", discover.Candidates)
 	}
 
-	listOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "code-intel", "lsp", "list", "--json")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var list lspListHarnessReport
-	if err := json.Unmarshal([]byte(listOut), &list); err != nil {
+	_, err = decodeHarnessOutput(&list, func() (string, error) {
+		return runHarnessCodog(ctx, workspace, "--config", configPath, "code-intel", "lsp", "list", "--json")
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if list.Kind != "lsp_list" || list.Action != "list" || list.Status != "ok" || list.Count != 0 || len(list.Servers) != 0 {
@@ -790,49 +804,39 @@ func taskLifecycleScenarioRunLocal(ctx context.Context, workspace string) (local
 	configHome := filepath.Join(workspace, "config-home")
 	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
 
-	createOut, err := registry.Execute(ctx, "TaskCreateTool", json.RawMessage(`{
-				"command": "printf task-output",
-				"kind": "parity",
-				"session_id": "session-task"
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var created struct {
 		TaskID string          `json:"task_id"`
 		Kind   string          `json:"kind"`
 		Task   background.Task `json:"task"`
 	}
-	if err := json.Unmarshal([]byte(createOut), &created); err != nil {
+	createOut, err := decodeHarnessOutput(&created, func() (string, error) {
+		return registry.Execute(ctx, "TaskCreateTool", json.RawMessage(`{
+				"command": "printf task-output",
+				"kind": "parity",
+				"session_id": "session-task"
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if created.TaskID == "" || created.Task.ID != created.TaskID || created.Kind != "parity" {
 		return localScenarioResult{}, fmt.Errorf("unexpected task create output: %s", createOut)
 	}
 
-	statusOut, err := registry.Execute(ctx, "task_status", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, created.TaskID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var status struct {
 		TaskID string `json:"task_id"`
 		Kind   string `json:"kind"`
 	}
-	if err := json.Unmarshal([]byte(statusOut), &status); err != nil {
+	statusOut, err := decodeHarnessOutput(&status, func() (string, error) {
+		return registry.Execute(ctx, "task_status", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, created.TaskID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if status.TaskID != created.TaskID || status.Kind != "parity" {
 		return localScenarioResult{}, fmt.Errorf("unexpected task status output: %s", statusOut)
 	}
 
-	outputOut, err := registry.Execute(ctx, "TaskOutputTool", json.RawMessage(fmt.Sprintf(`{
-				"task_id": %q,
-				"block": true,
-				"timeout_ms": 2000
-			}`, created.TaskID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var output struct {
 		TaskID        string `json:"task_id"`
 		Status        string `json:"status"`
@@ -840,7 +844,14 @@ func taskLifecycleScenarioRunLocal(ctx context.Context, workspace string) (local
 		HasOutput     bool   `json:"has_output"`
 		RawOutputPath string `json:"rawOutputPath"`
 	}
-	if err := json.Unmarshal([]byte(outputOut), &output); err != nil {
+	outputOut, err := decodeHarnessOutput(&output, func() (string, error) {
+		return registry.Execute(ctx, "TaskOutputTool", json.RawMessage(fmt.Sprintf(`{
+				"task_id": %q,
+				"block": true,
+				"timeout_ms": 2000
+			}`, created.TaskID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if output.TaskID != created.TaskID || !output.HasOutput || output.Stdout != "task-output" {
@@ -850,71 +861,67 @@ func taskLifecycleScenarioRunLocal(ctx context.Context, workspace string) (local
 		return localScenarioResult{}, fmt.Errorf("task raw output path missing: %w", err)
 	}
 
-	updateOut, err := registry.Execute(ctx, "task_update", json.RawMessage(fmt.Sprintf(`{
-				"task_id": %q,
-				"message": "review logs"
-			}`, created.TaskID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var updated struct {
 		TaskID       string `json:"task_id"`
 		MessageCount int    `json:"message_count"`
 		LastMessage  string `json:"last_message"`
 	}
-	if err := json.Unmarshal([]byte(updateOut), &updated); err != nil {
+	updateOut, err := decodeHarnessOutput(&updated, func() (string, error) {
+		return registry.Execute(ctx, "task_update", json.RawMessage(fmt.Sprintf(`{
+				"task_id": %q,
+				"message": "review logs"
+			}`, created.TaskID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if updated.TaskID != created.TaskID || updated.MessageCount != 1 || updated.LastMessage != "review logs" {
 		return localScenarioResult{}, fmt.Errorf("unexpected task update output: %s", updateOut)
 	}
 
-	getOut, err := registry.Execute(ctx, "task_get", json.RawMessage(fmt.Sprintf(`{"id":%q}`, created.TaskID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var fetched struct {
 		TaskID string `json:"task_id"`
 		Task   struct {
 			Messages []background.TaskMessage `json:"messages"`
 		} `json:"task"`
 	}
-	if err := json.Unmarshal([]byte(getOut), &fetched); err != nil {
+	getOut, err := decodeHarnessOutput(&fetched, func() (string, error) {
+		return registry.Execute(ctx, "task_get", json.RawMessage(fmt.Sprintf(`{"id":%q}`, created.TaskID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if fetched.TaskID != created.TaskID || len(fetched.Task.Messages) != 1 || fetched.Task.Messages[0].Message != "review logs" {
 		return localScenarioResult{}, fmt.Errorf("unexpected task get output: %s", getOut)
 	}
 
-	listOut, err := registry.Execute(ctx, "task_list", json.RawMessage(`{"session_id":"session-task","kind":"parity"}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var listed struct {
 		Total int `json:"total"`
 		Tasks []struct {
 			TaskID string `json:"task_id"`
 		} `json:"tasks"`
 	}
-	if err := json.Unmarshal([]byte(listOut), &listed); err != nil {
+	listOut, err := decodeHarnessOutput(&listed, func() (string, error) {
+		return registry.Execute(ctx, "task_list", json.RawMessage(`{"session_id":"session-task","kind":"parity"}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if listed.Total != 1 || len(listed.Tasks) != 1 || listed.Tasks[0].TaskID != created.TaskID {
 		return localScenarioResult{}, fmt.Errorf("unexpected task list output: %s", listOut)
 	}
 
-	stopCreateOut, err := registry.Execute(ctx, "task_create", json.RawMessage(`{
+	var stopCreated struct {
+		TaskID string `json:"task_id"`
+	}
+	stopCreateOut, err := decodeHarnessOutput(&stopCreated, func() (string, error) {
+		return registry.Execute(ctx, "task_create", json.RawMessage(`{
 				"command": "printf task-stop-ready; sleep 5",
 				"kind": "parity",
 				"session_id": "session-task"
 			}`), nil)
+	})
 	if err != nil {
-		return localScenarioResult{}, err
-	}
-	var stopCreated struct {
-		TaskID string `json:"task_id"`
-	}
-	if err := json.Unmarshal([]byte(stopCreateOut), &stopCreated); err != nil {
 		return localScenarioResult{}, err
 	}
 	if stopCreated.TaskID == "" {
@@ -935,17 +942,16 @@ func taskLifecycleScenarioRunLocal(ctx context.Context, workspace string) (local
 	if !strings.Contains(stopReadyOut, "task-stop-ready") {
 		return localScenarioResult{}, fmt.Errorf("stoppable task did not produce readiness output: %s", stopReadyOut)
 	}
-	stopOut, err := registry.Execute(ctx, "TaskStopTool", json.RawMessage(fmt.Sprintf(`{"shell_id":%q}`, stopCreated.TaskID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var stopped struct {
 		TaskID      string `json:"task_id"`
 		Status      string `json:"status"`
 		Message     string `json:"message"`
 		Interrupted bool   `json:"interrupted"`
 	}
-	if err := json.Unmarshal([]byte(stopOut), &stopped); err != nil {
+	stopOut, err := decodeHarnessOutput(&stopped, func() (string, error) {
+		return registry.Execute(ctx, "TaskStopTool", json.RawMessage(fmt.Sprintf(`{"shell_id":%q}`, stopCreated.TaskID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if stopped.TaskID != stopCreated.TaskID || stopped.Status != "stopped" || stopped.Message != "Task stopped" {
@@ -1010,27 +1016,6 @@ func taskPacketRoundtripScenarioRunLocal(ctx context.Context, workspace string) 
 		Executable: shim,
 	})
 
-	runOut, err := registry.Execute(ctx, "RunTaskPacketTool", json.RawMessage(`{
-				"objective": "Implement typed task packet parity",
-				"scope": "module",
-				"scope_path": "internal/taskpacket",
-				"repo": "codog",
-				"worktree": "reviewer",
-				"branch_policy": "main only",
-				"acceptance_tests": ["go test ./internal/taskpacket"],
-				"acceptance_criteria": ["packet validates", "packet persists"],
-				"resources": [{"kind": "module", "value": "internal/taskpacket"}],
-				"model": "claude-test",
-				"provider": "anthropic",
-				"permission_profile": "workspace-write",
-				"commit_policy": "single focused commit",
-				"reporting_targets": ["leader"],
-				"recovery_policy": "retry once with narrowed scope",
-				"verification_plan": ["go test ./internal/taskpacket"]
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var created struct {
 		TaskID        string `json:"task_id"`
 		Status        string `json:"status"`
@@ -1056,7 +1041,27 @@ func taskPacketRoundtripScenarioRunLocal(ctx context.Context, workspace string) 
 		} `json:"task_packet"`
 		Task background.Task `json:"task"`
 	}
-	if err := json.Unmarshal([]byte(runOut), &created); err != nil {
+	runOut, err := decodeHarnessOutput(&created, func() (string, error) {
+		return registry.Execute(ctx, "RunTaskPacketTool", json.RawMessage(`{
+				"objective": "Implement typed task packet parity",
+				"scope": "module",
+				"scope_path": "internal/taskpacket",
+				"repo": "codog",
+				"worktree": "reviewer",
+				"branch_policy": "main only",
+				"acceptance_tests": ["go test ./internal/taskpacket"],
+				"acceptance_criteria": ["packet validates", "packet persists"],
+				"resources": [{"kind": "module", "value": "internal/taskpacket"}],
+				"model": "claude-test",
+				"provider": "anthropic",
+				"permission_profile": "workspace-write",
+				"commit_policy": "single focused commit",
+				"reporting_targets": ["leader"],
+				"recovery_policy": "retry once with narrowed scope",
+				"verification_plan": ["go test ./internal/taskpacket"]
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if created.TaskID == "" || created.Status != "running" || created.Description != "Implement typed task packet parity" {
@@ -1100,30 +1105,28 @@ func taskPacketRoundtripScenarioRunLocal(ctx context.Context, workspace string) 
 		return localScenarioResult{}, fmt.Errorf("unexpected task packet output: %s", outputOut)
 	}
 
-	getOut, err := registry.Execute(ctx, "task_get", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, created.TaskID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var fetched struct {
 		TaskID string          `json:"task_id"`
 		Task   background.Task `json:"task"`
 	}
-	if err := json.Unmarshal([]byte(getOut), &fetched); err != nil {
+	getOut, err := decodeHarnessOutput(&fetched, func() (string, error) {
+		return registry.Execute(ctx, "task_get", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, created.TaskID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if fetched.TaskID != created.TaskID || fetched.Task.Kind != "task_packet" || len(fetched.Task.TaskPacket) == 0 {
 		return localScenarioResult{}, fmt.Errorf("unexpected fetched task packet task: %s", getOut)
 	}
 
-	stopOut, err := registry.Execute(ctx, "task_stop", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, created.TaskID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var stopped struct {
 		TaskID string `json:"task_id"`
 		Status string `json:"status"`
 	}
-	if err := json.Unmarshal([]byte(stopOut), &stopped); err != nil {
+	stopOut, err := decodeHarnessOutput(&stopped, func() (string, error) {
+		return registry.Execute(ctx, "task_stop", json.RawMessage(fmt.Sprintf(`{"task_id":%q}`, created.TaskID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if stopped.TaskID != created.TaskID || stopped.Status != "stopped" {
@@ -1175,17 +1178,6 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 		Executable: shim,
 	})
 
-	teamCreateOut, err := registry.Execute(ctx, "TeamCreateTool", json.RawMessage(`{
-				"name": "review",
-				"session_id": "session-team",
-				"tasks": [
-					{"description": "auth", "prompt": "check auth flow"},
-					{"description": "tests", "prompt": "check test suite"}
-				]
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var createdTeam struct {
 		ID        string   `json:"team_id"`
 		Name      string   `json:"name"`
@@ -1193,7 +1185,17 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 		TaskIDs   []string `json:"task_ids"`
 		Status    string   `json:"status"`
 	}
-	if err := json.Unmarshal([]byte(teamCreateOut), &createdTeam); err != nil {
+	teamCreateOut, err := decodeHarnessOutput(&createdTeam, func() (string, error) {
+		return registry.Execute(ctx, "TeamCreateTool", json.RawMessage(`{
+				"name": "review",
+				"session_id": "session-team",
+				"tasks": [
+					{"description": "auth", "prompt": "check auth flow"},
+					{"description": "tests", "prompt": "check test suite"}
+				]
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if createdTeam.ID == "" || createdTeam.Name != "review" || createdTeam.TaskCount != 2 || len(createdTeam.TaskIDs) != 2 || createdTeam.Status != "running" {
@@ -1211,10 +1213,6 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 		return localScenarioResult{}, err
 	}
 
-	teamListOut, err := registry.Execute(ctx, "team_list", json.RawMessage(`{"status":"running"}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var listedTeams struct {
 		Kind  string `json:"kind"`
 		Total int    `json:"total"`
@@ -1223,17 +1221,16 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 			TaskStatuses []map[string]any `json:"task_statuses"`
 		} `json:"teams"`
 	}
-	if err := json.Unmarshal([]byte(teamListOut), &listedTeams); err != nil {
+	teamListOut, err := decodeHarnessOutput(&listedTeams, func() (string, error) {
+		return registry.Execute(ctx, "team_list", json.RawMessage(`{"status":"running"}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if listedTeams.Kind != "team_list" || listedTeams.Total != 1 || len(listedTeams.Teams) != 1 || listedTeams.Teams[0].ID != createdTeam.ID || len(listedTeams.Teams[0].TaskStatuses) != 2 {
 		return localScenarioResult{}, fmt.Errorf("unexpected team list output: %s", teamListOut)
 	}
 
-	teamGetOut, err := registry.Execute(ctx, "TeamGetTool", json.RawMessage(fmt.Sprintf(`{"team_id":%q}`, createdTeam.ID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var fetchedTeam struct {
 		Kind      string `json:"kind"`
 		ID        string `json:"team_id"`
@@ -1243,38 +1240,32 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 			Prompt      string `json:"prompt"`
 		} `json:"tasks"`
 	}
-	if err := json.Unmarshal([]byte(teamGetOut), &fetchedTeam); err != nil {
+	teamGetOut, err := decodeHarnessOutput(&fetchedTeam, func() (string, error) {
+		return registry.Execute(ctx, "TeamGetTool", json.RawMessage(fmt.Sprintf(`{"team_id":%q}`, createdTeam.ID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if fetchedTeam.Kind != "team" || fetchedTeam.ID != createdTeam.ID || fetchedTeam.TaskCount != 2 || len(fetchedTeam.Tasks) != 2 || fetchedTeam.Tasks[0].Description != "auth" {
 		return localScenarioResult{}, fmt.Errorf("unexpected team get output: %s", teamGetOut)
 	}
 
-	teamDeleteOut, err := registry.Execute(ctx, "team_delete", json.RawMessage(fmt.Sprintf(`{"team_id":%q}`, createdTeam.ID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var deletedTeam struct {
 		ID           string   `json:"team_id"`
 		Status       string   `json:"status"`
 		StoppedTasks []string `json:"stopped_tasks"`
 		Message      string   `json:"message"`
 	}
-	if err := json.Unmarshal([]byte(teamDeleteOut), &deletedTeam); err != nil {
+	teamDeleteOut, err := decodeHarnessOutput(&deletedTeam, func() (string, error) {
+		return registry.Execute(ctx, "team_delete", json.RawMessage(fmt.Sprintf(`{"team_id":%q}`, createdTeam.ID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if deletedTeam.ID != createdTeam.ID || deletedTeam.Status != "deleted" || deletedTeam.Message != "Team deleted" || len(deletedTeam.StoppedTasks) != 2 {
 		return localScenarioResult{}, fmt.Errorf("unexpected team delete output: %s", teamDeleteOut)
 	}
 
-	cronCreateOut, err := registry.Execute(ctx, "CronCreateTool", json.RawMessage(`{
-				"schedule": "0 9 * * 1",
-				"prompt": "review weekly status",
-				"description": "weekly review"
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var createdCron struct {
 		ID          string `json:"cron_id"`
 		Schedule    string `json:"schedule"`
@@ -1282,17 +1273,20 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 		Description string `json:"description"`
 		Enabled     bool   `json:"enabled"`
 	}
-	if err := json.Unmarshal([]byte(cronCreateOut), &createdCron); err != nil {
+	cronCreateOut, err := decodeHarnessOutput(&createdCron, func() (string, error) {
+		return registry.Execute(ctx, "CronCreateTool", json.RawMessage(`{
+				"schedule": "0 9 * * 1",
+				"prompt": "review weekly status",
+				"description": "weekly review"
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if createdCron.ID == "" || createdCron.Schedule != "0 9 * * 1" || createdCron.Prompt != "review weekly status" || createdCron.Description != "weekly review" || !createdCron.Enabled {
 		return localScenarioResult{}, fmt.Errorf("unexpected cron create output: %s", cronCreateOut)
 	}
 
-	cronListOut, err := registry.Execute(ctx, "cron_list", json.RawMessage(`{}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var listedCrons struct {
 		Count int `json:"count"`
 		Crons []struct {
@@ -1300,23 +1294,23 @@ func teamCronLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 			Schedule string `json:"schedule"`
 		} `json:"crons"`
 	}
-	if err := json.Unmarshal([]byte(cronListOut), &listedCrons); err != nil {
+	cronListOut, err := decodeHarnessOutput(&listedCrons, func() (string, error) { return registry.Execute(ctx, "cron_list", json.RawMessage(`{}`), nil) })
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if listedCrons.Count != 1 || len(listedCrons.Crons) != 1 || listedCrons.Crons[0].ID != createdCron.ID || listedCrons.Crons[0].Schedule != createdCron.Schedule {
 		return localScenarioResult{}, fmt.Errorf("unexpected cron list output: %s", cronListOut)
 	}
 
-	cronDeleteOut, err := registry.Execute(ctx, "CronDeleteTool", json.RawMessage(fmt.Sprintf(`{"cron_id":%q}`, createdCron.ID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var deletedCron struct {
 		ID      string `json:"cron_id"`
 		Status  string `json:"status"`
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal([]byte(cronDeleteOut), &deletedCron); err != nil {
+	cronDeleteOut, err := decodeHarnessOutput(&deletedCron, func() (string, error) {
+		return registry.Execute(ctx, "CronDeleteTool", json.RawMessage(fmt.Sprintf(`{"cron_id":%q}`, createdCron.ID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if deletedCron.ID != createdCron.ID || deletedCron.Status != "deleted" || deletedCron.Message != "Cron entry removed" {
@@ -1373,14 +1367,6 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 		TrustedRoots: []string{"repo-default", "shared"},
 	})
 
-	createOut, err := registry.Execute(ctx, "WorkerCreateTool", json.RawMessage(`{
-				"cwd": ".",
-				"trusted_roots": ["shared", "."],
-				"auto_recover_prompt_misdelivery": false
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var created struct {
 		WorkerID                     string   `json:"worker_id"`
 		Status                       string   `json:"status"`
@@ -1388,7 +1374,14 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 		TrustedRoots                 []string `json:"trusted_roots"`
 		AutoRecoverPromptMisdelivery bool     `json:"auto_recover_prompt_misdelivery"`
 	}
-	if err := json.Unmarshal([]byte(createOut), &created); err != nil {
+	createOut, err := decodeHarnessOutput(&created, func() (string, error) {
+		return registry.Execute(ctx, "WorkerCreateTool", json.RawMessage(`{
+				"cwd": ".",
+				"trusted_roots": ["shared", "."],
+				"auto_recover_prompt_misdelivery": false
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if created.WorkerID == "" || created.Status != "ready_for_prompt" || !created.ReadyForPrompt || created.AutoRecoverPromptMisdelivery || !slices.Equal(created.TrustedRoots, []string{"repo-default", "shared", "."}) {
@@ -1398,10 +1391,6 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 		_, _ = registry.Execute(ctx, "worker_terminate", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
 	}()
 
-	listOut, err := registry.Execute(ctx, "worker_list", json.RawMessage(`{"status":"ready_for_prompt"}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var listed struct {
 		Kind    string `json:"kind"`
 		Total   int    `json:"total"`
@@ -1409,76 +1398,63 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 			WorkerID string `json:"worker_id"`
 		} `json:"workers"`
 	}
-	if err := json.Unmarshal([]byte(listOut), &listed); err != nil {
+	listOut, err := decodeHarnessOutput(&listed, func() (string, error) {
+		return registry.Execute(ctx, "worker_list", json.RawMessage(`{"status":"ready_for_prompt"}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if listed.Kind != "worker_list" || listed.Total != 1 || len(listed.Workers) != 1 || listed.Workers[0].WorkerID != created.WorkerID {
 		return localScenarioResult{}, fmt.Errorf("unexpected worker list output: %s", listOut)
 	}
 
-	readyOut, err := registry.Execute(ctx, "worker_await_ready", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var ready struct {
 		WorkerID       string `json:"worker_id"`
 		Status         string `json:"status"`
 		ReadyForPrompt bool   `json:"ready_for_prompt"`
 	}
-	if err := json.Unmarshal([]byte(readyOut), &ready); err != nil {
+	readyOut, err := decodeHarnessOutput(&ready, func() (string, error) {
+		return registry.Execute(ctx, "worker_await_ready", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if ready.WorkerID != created.WorkerID || ready.Status != "ready_for_prompt" || !ready.ReadyForPrompt {
 		return localScenarioResult{}, fmt.Errorf("unexpected worker ready output: %s", readyOut)
 	}
 
-	observeOut, err := registry.Execute(ctx, "WorkerObserveTool", json.RawMessage(fmt.Sprintf(`{
-				"worker_id": %q,
-				"screen_text": "Do you trust this folder?"
-			}`, created.WorkerID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var observed struct {
 		Status         string `json:"status"`
 		ReadyForPrompt bool   `json:"ready_for_prompt"`
 	}
-	if err := json.Unmarshal([]byte(observeOut), &observed); err != nil {
+	observeOut, err := decodeHarnessOutput(&observed, func() (string, error) {
+		return registry.Execute(ctx, "WorkerObserveTool", json.RawMessage(fmt.Sprintf(`{
+				"worker_id": %q,
+				"screen_text": "Do you trust this folder?"
+			}`, created.WorkerID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if observed.Status != "trust_prompt" || observed.ReadyForPrompt {
 		return localScenarioResult{}, fmt.Errorf("unexpected worker observe output: %s", observeOut)
 	}
 
-	resolveOut, err := registry.Execute(ctx, "worker_resolve_trust", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var resolved struct {
 		Status         string `json:"status"`
 		ReadyForPrompt bool   `json:"ready_for_prompt"`
 		TrustResolved  bool   `json:"trust_resolved"`
 	}
-	if err := json.Unmarshal([]byte(resolveOut), &resolved); err != nil {
+	resolveOut, err := decodeHarnessOutput(&resolved, func() (string, error) {
+		return registry.Execute(ctx, "worker_resolve_trust", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if resolved.Status != "ready_for_prompt" || !resolved.ReadyForPrompt || !resolved.TrustResolved {
 		return localScenarioResult{}, fmt.Errorf("unexpected worker trust resolution output: %s", resolveOut)
 	}
 
-	sendOut, err := registry.Execute(ctx, "worker_send_prompt", json.RawMessage(fmt.Sprintf(`{
-				"worker_id": %q,
-				"prompt": "implement worker tests",
-				"task_receipt": {
-					"repo": "codog",
-					"task_kind": "test",
-					"source_surface": "tool",
-					"objective_preview": "implement worker tests"
-				}
-			}`, created.WorkerID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var sent struct {
 		Status      string `json:"status"`
 		TaskID      string `json:"task_id"`
@@ -1489,7 +1465,19 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 			ObjectivePreview string `json:"objective_preview"`
 		} `json:"task_receipt"`
 	}
-	if err := json.Unmarshal([]byte(sendOut), &sent); err != nil {
+	sendOut, err := decodeHarnessOutput(&sent, func() (string, error) {
+		return registry.Execute(ctx, "worker_send_prompt", json.RawMessage(fmt.Sprintf(`{
+				"worker_id": %q,
+				"prompt": "implement worker tests",
+				"task_receipt": {
+					"repo": "codog",
+					"task_kind": "test",
+					"source_surface": "tool",
+					"objective_preview": "implement worker tests"
+				}
+			}`, created.WorkerID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if sent.Status != "running" || sent.TaskID == "" || sent.TaskReceipt.Repo != "codog" || sent.TaskReceipt.ObjectivePreview != "implement worker tests" {
@@ -1499,57 +1487,62 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 		return localScenarioResult{}, err
 	}
 
-	getOut, err := registry.Execute(ctx, "WorkerGetTool", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var fetched struct {
 		WorkerID   string `json:"worker_id"`
 		Status     string `json:"status"`
 		TaskID     string `json:"task_id"`
 		TaskStatus string `json:"task_status"`
 	}
-	if err := json.Unmarshal([]byte(getOut), &fetched); err != nil {
+	getOut, err := decodeHarnessOutput(&fetched, func() (string, error) {
+		return registry.Execute(ctx, "WorkerGetTool", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if fetched.WorkerID != created.WorkerID || fetched.Status != "running" || fetched.TaskID != sent.TaskID || fetched.TaskStatus == "" {
 		return localScenarioResult{}, fmt.Errorf("unexpected worker get output: %s", getOut)
 	}
 
-	restartOut, err := registry.Execute(ctx, "worker_restart", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var restarted struct {
 		Status string `json:"status"`
 		TaskID string `json:"task_id"`
 	}
-	if err := json.Unmarshal([]byte(restartOut), &restarted); err != nil {
+	restartOut, err := decodeHarnessOutput(&restarted, func() (string, error) {
+		return registry.Execute(ctx, "worker_restart", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if restarted.Status != "running" || restarted.TaskID == "" || restarted.TaskID == sent.TaskID {
 		return localScenarioResult{}, fmt.Errorf("unexpected worker restart output: %s", restartOut)
 	}
 
-	completeOut, err := registry.Execute(ctx, "worker_observe_completion", json.RawMessage(fmt.Sprintf(`{
+	var completed struct {
+		Status string `json:"status"`
+	}
+	completeOut, err := decodeHarnessOutput(&completed, func() (string, error) {
+		return registry.Execute(ctx, "worker_observe_completion", json.RawMessage(fmt.Sprintf(`{
 				"worker_id": %q,
 				"finish_reason": "stop",
 				"tokens_output": 12
 			}`, created.WorkerID)), nil)
+	})
 	if err != nil {
-		return localScenarioResult{}, err
-	}
-	var completed struct {
-		Status string `json:"status"`
-	}
-	if err := json.Unmarshal([]byte(completeOut), &completed); err != nil {
 		return localScenarioResult{}, err
 	}
 	if completed.Status != "finished" {
 		return localScenarioResult{}, fmt.Errorf("unexpected worker completion output: %s", completeOut)
 	}
 
-	timeoutOut, err := registry.Execute(ctx, "worker_startup_timeout", json.RawMessage(fmt.Sprintf(`{
+	var timedOut struct {
+		Status            string `json:"status"`
+		LastError         string `json:"last_error"`
+		StartupNoEvidence struct {
+			Classification string `json:"classification"`
+		} `json:"startup_no_evidence"`
+	}
+	timeoutOut, err := decodeHarnessOutput(&timedOut, func() (string, error) {
+		return registry.Execute(ctx, "worker_startup_timeout", json.RawMessage(fmt.Sprintf(`{
 				"worker_id": %q,
 				"last_lifecycle_state": "trust_prompt",
 				"pane_command": "codog repl",
@@ -1558,31 +1551,21 @@ func workerLifecycleScenarioRunLocal(ctx context.Context, workspace string) (loc
 				"elapsed_seconds": 42,
 				"trust_prompt_detected": true
 			}`, created.WorkerID)), nil)
+	})
 	if err != nil {
-		return localScenarioResult{}, err
-	}
-	var timedOut struct {
-		Status            string `json:"status"`
-		LastError         string `json:"last_error"`
-		StartupNoEvidence struct {
-			Classification string `json:"classification"`
-		} `json:"startup_no_evidence"`
-	}
-	if err := json.Unmarshal([]byte(timeoutOut), &timedOut); err != nil {
 		return localScenarioResult{}, err
 	}
 	if timedOut.Status != "failed" || timedOut.LastError != "startup_no_evidence: trust_required" || timedOut.StartupNoEvidence.Classification != "trust_required" {
 		return localScenarioResult{}, fmt.Errorf("unexpected worker startup timeout output: %s", timeoutOut)
 	}
 
-	terminateOut, err := registry.Execute(ctx, "WorkerTerminateTool", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var terminated struct {
 		Status string `json:"status"`
 	}
-	if err := json.Unmarshal([]byte(terminateOut), &terminated); err != nil {
+	terminateOut, err := decodeHarnessOutput(&terminated, func() (string, error) {
+		return registry.Execute(ctx, "WorkerTerminateTool", json.RawMessage(fmt.Sprintf(`{"worker_id":%q}`, created.WorkerID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if terminated.Status != "terminated" {

@@ -246,126 +246,133 @@ func mcpLifecycleScenario() scenario {
 }
 
 func mcpToolHookScenario() scenario {
-	toolName := tools.NewMCPToolName("workflow", "echo")
-	var serverURL string
-	seenMethods := []string{}
-	seenHookedArgument := false
+	state := &mcpToolHookState{toolName: tools.NewMCPToolName("workflow", "echo")}
 	return scenario{
 		name:       "mcp_tool_hook_roundtrip",
 		permission: tools.PermissionWorkspace,
 		hooks: config.HookConfig{
 			PreToolUseCommands: []config.HookCommand{{
-				Matcher: toolName,
+				Matcher: state.toolName,
 				Command: `printf '%s' '{"systemMessage":"mcp pre hook","hookSpecificOutput":{"permissionDecision":"allow","permissionDecisionReason":"mcp hook ok","updatedInput":{"text":"hooked mcp input"}}}'`,
 			}},
 			PostToolUseCommands: []config.HookCommand{{
-				Matcher: toolName,
+				Matcher: state.toolName,
 				Command: `printf '%s' '{"systemMessage":"mcp post hook"}'`,
 			}},
 		},
-		prepare: func(_ string) ([]mockanthropic.Turn, func(), error) {
-			mcpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-					return
-				}
-				var req map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				method, _ := req["method"].(string)
-				seenMethods = append(seenMethods, method)
-				id := req["id"]
-				switch method {
-				case "initialize":
-					w.Header().Set("Mcp-Session-Id", "mcp-tool-hook-session")
-					writeMCPHarnessResponse(w, id, map[string]any{
-						"protocolVersion": "2024-11-05",
-						"capabilities": map[string]any{
-							"tools": map[string]any{},
-						},
-						"serverInfo": map[string]any{"name": "mcp-tool-hook", "version": "1.0.0"},
-					})
-				case "notifications/initialized":
-					w.WriteHeader(http.StatusAccepted)
-				case "tools/call":
-					params, _ := req["params"].(map[string]any)
-					if params["name"] != "echo" {
-						writeMCPHarnessError(w, id, fmt.Sprintf("unexpected tool name %v", params["name"]))
-						return
-					}
-					args, _ := params["arguments"].(map[string]any)
-					text, _ := args["text"].(string)
-					if text != "hooked mcp input" {
-						writeMCPHarnessError(w, id, "pre hook did not update MCP input")
-						return
-					}
-					seenHookedArgument = true
-					writeMCPHarnessResponse(w, id, map[string]any{"content": []map[string]any{{
-						"type": "text",
-						"text": "mcp tool hook saw hooked mcp input",
-					}}})
-				default:
-					writeMCPHarnessError(w, id, "unsupported method: "+method)
-				}
-			}))
-			serverURL = mcpServer.URL + "/mcp"
-			turns := []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{{
-					ID:    "tool-1",
-					Name:  toolName,
-					Input: json.RawMessage(`{"text":"original mcp input"}`),
-				}}},
-				{Text: "mcp tool hook harness ok"},
-			}
-			return turns, mcpServer.Close, nil
-		},
-		configureRegistry: func(registry *tools.Registry) error {
-			if strings.TrimSpace(serverURL) == "" {
-				return errors.New("MCP server URL was not prepared")
-			}
-			registry.Register(tools.MCPTool{
-				Name:        toolName,
-				ServerName:  "workflow",
-				RemoteName:  "echo",
-				Description: "Echo text through the MCP hook harness.",
-				Schema: map[string]any{
-					"type":                 "object",
-					"additionalProperties": true,
-				},
-				Server: config.MCPServerConfig{URL: serverURL},
-			})
-			return nil
-		},
-		prompt: "call hooked MCP tool",
-		verify: func(_ string, result runloop.TurnResult, output string) error {
-			if !strings.Contains(output, "mcp tool hook harness ok") {
-				return fmt.Errorf("missing MCP tool hook final response")
-			}
-			if err := expectToolCalls(result, 1, false); err != nil {
-				return err
-			}
-			if result.ToolCalls[0].Name != toolName {
-				return fmt.Errorf("unexpected MCP tool name %q", result.ToolCalls[0].Name)
-			}
-			if result.ToolCalls[0].Input != `{"text":"hooked mcp input"}` {
-				return fmt.Errorf("MCP tool input was not updated by hook: %s", result.ToolCalls[0].Input)
-			}
-			if !harnessContainsAll(result.ToolCalls[0].Output, "mcp tool hook saw hooked mcp input", "Hook feedback:\nmcp post hook") {
-				return fmt.Errorf("MCP tool output missing result or post-hook feedback: %s", result.ToolCalls[0].Output)
-			}
-			for _, expectedMethod := range []string{"initialize", "notifications/initialized", "tools/call"} {
-				if !slices.Contains(seenMethods, expectedMethod) {
-					return fmt.Errorf("MCP hook server did not receive %s; methods=%v", expectedMethod, seenMethods)
-				}
-			}
-			if !seenHookedArgument {
-				return fmt.Errorf("MCP hook server did not receive the updated argument")
-			}
-			return nil
-		},
+		prepare:           state.prepare,
+		configureRegistry: state.configureRegistry,
+		prompt:            "call hooked MCP tool",
+		verify:            state.verify,
 	}
+}
+
+type mcpToolHookState struct {
+	toolName           string
+	serverURL          string
+	seenMethods        []string
+	seenHookedArgument bool
+}
+
+func (s *mcpToolHookState) prepare(_ string) ([]mockanthropic.Turn, func(), error) {
+	server := httptest.NewServer(http.HandlerFunc(s.serveHTTP))
+	s.serverURL = server.URL + "/mcp"
+	turns := []mockanthropic.Turn{
+		{ToolUses: []mockanthropic.ToolUse{{ID: "tool-1", Name: s.toolName, Input: json.RawMessage(`{"text":"original mcp input"}`)}}},
+		{Text: "mcp tool hook harness ok"},
+	}
+	return turns, server.Close, nil
+}
+
+func (s *mcpToolHookState) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	method, _ := request["method"].(string)
+	s.seenMethods = append(s.seenMethods, method)
+	s.handleRequest(w, method, request)
+}
+
+func (s *mcpToolHookState) handleRequest(w http.ResponseWriter, method string, request map[string]any) {
+	id := request["id"]
+	switch method {
+	case "initialize":
+		w.Header().Set("Mcp-Session-Id", "mcp-tool-hook-session")
+		writeMCPHarnessResponse(w, id, map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"serverInfo":      map[string]any{"name": "mcp-tool-hook", "version": "1.0.0"},
+		})
+	case "notifications/initialized":
+		w.WriteHeader(http.StatusAccepted)
+	case "tools/call":
+		s.handleToolCall(w, id, request)
+	default:
+		writeMCPHarnessError(w, id, "unsupported method: "+method)
+	}
+}
+
+func (s *mcpToolHookState) handleToolCall(w http.ResponseWriter, id any, request map[string]any) {
+	params, _ := request["params"].(map[string]any)
+	if params["name"] != "echo" {
+		writeMCPHarnessError(w, id, fmt.Sprintf("unexpected tool name %v", params["name"]))
+		return
+	}
+	args, _ := params["arguments"].(map[string]any)
+	text, _ := args["text"].(string)
+	if text != "hooked mcp input" {
+		writeMCPHarnessError(w, id, "pre hook did not update MCP input")
+		return
+	}
+	s.seenHookedArgument = true
+	writeMCPHarnessResponse(w, id, map[string]any{"content": []map[string]any{{"type": "text", "text": "mcp tool hook saw hooked mcp input"}}})
+}
+
+func (s *mcpToolHookState) configureRegistry(registry *tools.Registry) error {
+	if strings.TrimSpace(s.serverURL) == "" {
+		return errors.New("MCP server URL was not prepared")
+	}
+	registry.Register(tools.MCPTool{
+		Name: s.toolName, ServerName: "workflow", RemoteName: "echo",
+		Description: "Echo text through the MCP hook harness.",
+		Schema:      map[string]any{"type": "object", "additionalProperties": true},
+		Server:      config.MCPServerConfig{URL: s.serverURL},
+	})
+	return nil
+}
+
+func (s *mcpToolHookState) verify(_ string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "mcp tool hook harness ok") {
+		return fmt.Errorf("missing MCP tool hook final response")
+	}
+	if err := expectToolCalls(result, 1, false); err != nil {
+		return err
+	}
+	call := result.ToolCalls[0]
+	if call.Name != s.toolName {
+		return fmt.Errorf("unexpected MCP tool name %q", call.Name)
+	}
+	if call.Input != `{"text":"hooked mcp input"}` {
+		return fmt.Errorf("MCP tool input was not updated by hook: %s", call.Input)
+	}
+	if !harnessContainsAll(call.Output, "mcp tool hook saw hooked mcp input", "Hook feedback:\nmcp post hook") {
+		return fmt.Errorf("MCP tool output missing result or post-hook feedback: %s", call.Output)
+	}
+	for _, method := range []string{"initialize", "notifications/initialized", "tools/call"} {
+		if !slices.Contains(s.seenMethods, method) {
+			return fmt.Errorf("MCP hook server did not receive %s; methods=%v", method, s.seenMethods)
+		}
+	}
+	if !s.seenHookedArgument {
+		return fmt.Errorf("MCP hook server did not receive the updated argument")
+	}
+	return nil
 }
 
 func mcpAuthOAuthRefreshScenario() scenario {
@@ -444,10 +451,6 @@ func recoveryLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 	configHome := filepath.Join(workspace, "config-home")
 	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
 
-	recipeOut, err := registry.Execute(ctx, "RecoveryRecipeTool", json.RawMessage(`{"scenario":"stale_branch"}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var recipeReport struct {
 		Kind   string `json:"kind"`
 		Recipe struct {
@@ -460,17 +463,16 @@ func recoveryLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 			} `json:"steps"`
 		} `json:"recipe"`
 	}
-	if err := json.Unmarshal([]byte(recipeOut), &recipeReport); err != nil {
+	recipeOut, err := decodeHarnessOutput(&recipeReport, func() (string, error) {
+		return registry.Execute(ctx, "RecoveryRecipeTool", json.RawMessage(`{"scenario":"stale_branch"}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if recipeReport.Kind != "recovery_recipe" || recipeReport.Recipe.ID != "stale_branch" || recipeReport.Recipe.MaxAttempts != 1 || len(recipeReport.Recipe.Steps) != 2 || recipeReport.Recipe.Steps[0].Kind != "merge_forward_branch" {
 		return localScenarioResult{}, fmt.Errorf("unexpected recovery recipe output: %s", recipeOut)
 	}
 
-	statusOut, err := registry.Execute(ctx, "recovery_status", json.RawMessage(`{"scenario":"stale_branch"}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var initialStatus struct {
 		Kind   string `json:"kind"`
 		Status struct {
@@ -479,17 +481,16 @@ func recoveryLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 			AttemptsRemaining int    `json:"attempts_remaining"`
 		} `json:"status"`
 	}
-	if err := json.Unmarshal([]byte(statusOut), &initialStatus); err != nil {
+	statusOut, err := decodeHarnessOutput(&initialStatus, func() (string, error) {
+		return registry.Execute(ctx, "recovery_status", json.RawMessage(`{"scenario":"stale_branch"}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if initialStatus.Kind != "recovery_status" || initialStatus.Status.Scenario != "stale_branch" || initialStatus.Status.Attempted || initialStatus.Status.AttemptsRemaining != 1 {
 		return localScenarioResult{}, fmt.Errorf("unexpected initial recovery status output: %s", statusOut)
 	}
 
-	firstAttemptOut, err := registry.Execute(ctx, "recovery_attempt", json.RawMessage(`{"scenario":"stale_branch"}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var firstAttempt struct {
 		Kind   string `json:"kind"`
 		Result struct {
@@ -504,17 +505,16 @@ func recoveryLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 			Type string `json:"type"`
 		} `json:"events"`
 	}
-	if err := json.Unmarshal([]byte(firstAttemptOut), &firstAttempt); err != nil {
+	firstAttemptOut, err := decodeHarnessOutput(&firstAttempt, func() (string, error) {
+		return registry.Execute(ctx, "recovery_attempt", json.RawMessage(`{"scenario":"stale_branch"}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if firstAttempt.Kind != "recovery_attempt" || firstAttempt.Result.Kind != "recovered" || firstAttempt.Result.StepsTaken != 2 || firstAttempt.Entry.State != "succeeded" || firstAttempt.Entry.AttemptCount != 1 || len(firstAttempt.Events) == 0 || firstAttempt.Events[len(firstAttempt.Events)-1].Type != "recovery.succeeded" {
 		return localScenarioResult{}, fmt.Errorf("unexpected first recovery attempt output: %s", firstAttemptOut)
 	}
 
-	secondAttemptOut, err := registry.Execute(ctx, "RecoveryAttemptTool", json.RawMessage(`{"scenario":"stale_branch"}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var secondAttempt struct {
 		Result struct {
 			Kind   string `json:"kind"`
@@ -528,21 +528,16 @@ func recoveryLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 			Type string `json:"type"`
 		} `json:"events"`
 	}
-	if err := json.Unmarshal([]byte(secondAttemptOut), &secondAttempt); err != nil {
+	secondAttemptOut, err := decodeHarnessOutput(&secondAttempt, func() (string, error) {
+		return registry.Execute(ctx, "RecoveryAttemptTool", json.RawMessage(`{"scenario":"stale_branch"}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if secondAttempt.Result.Kind != "escalation_required" || secondAttempt.Entry.State != "exhausted" || !strings.Contains(secondAttempt.Entry.EscalationReason, "max recovery attempts") || len(secondAttempt.Events) == 0 || secondAttempt.Events[len(secondAttempt.Events)-1].Type != "recovery.escalated" {
 		return localScenarioResult{}, fmt.Errorf("unexpected second recovery attempt output: %s", secondAttemptOut)
 	}
 
-	partialAttemptOut, err := registry.Execute(ctx, "recovery_attempt", json.RawMessage(`{
-				"scenario": "partial_plugin_startup",
-				"failure_summary": "mcp still unhealthy",
-				"failed_step_index": 1
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var partialAttempt struct {
 		Result struct {
 			Kind      string `json:"kind"`
@@ -561,17 +556,20 @@ func recoveryLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 			Type string `json:"type"`
 		} `json:"events"`
 	}
-	if err := json.Unmarshal([]byte(partialAttemptOut), &partialAttempt); err != nil {
+	partialAttemptOut, err := decodeHarnessOutput(&partialAttempt, func() (string, error) {
+		return registry.Execute(ctx, "recovery_attempt", json.RawMessage(`{
+				"scenario": "partial_plugin_startup",
+				"failure_summary": "mcp still unhealthy",
+				"failed_step_index": 1
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if partialAttempt.Result.Kind != "partial_recovery" || partialAttempt.Entry.State != "failed" || partialAttempt.Entry.LastFailureSummary != "mcp still unhealthy" || len(partialAttempt.Result.Recovered) != 1 || partialAttempt.Result.Recovered[0].Kind != "restart_plugin" || len(partialAttempt.Result.Remaining) != 1 || partialAttempt.Result.Remaining[0].Kind != "retry_mcp_handshake" || len(partialAttempt.Events) == 0 || partialAttempt.Events[len(partialAttempt.Events)-1].Type != "recovery.failed" {
 		return localScenarioResult{}, fmt.Errorf("unexpected partial recovery attempt output: %s", partialAttemptOut)
 	}
 
-	ledgerOut, err := registry.Execute(ctx, "RecoveryStatusTool", json.RawMessage(`{}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var ledger struct {
 		Kind     string `json:"kind"`
 		Statuses []struct {
@@ -588,7 +586,8 @@ func recoveryLifecycleScenarioRunLocal(ctx context.Context, workspace string) (l
 			AttemptCount int    `json:"attempt_count"`
 		} `json:"entries"`
 	}
-	if err := json.Unmarshal([]byte(ledgerOut), &ledger); err != nil {
+	ledgerOut, err := decodeHarnessOutput(&ledger, func() (string, error) { return registry.Execute(ctx, "RecoveryStatusTool", json.RawMessage(`{}`), nil) })
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if ledger.Kind != "recovery_ledger" || len(ledger.Entries) != 2 {
@@ -720,12 +719,9 @@ func nudgeAckDedupeScenarioRunLocal(ctx context.Context, workspace string) (loca
 	configHome := filepath.Join(workspace, "config-home")
 	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
 	call := func(input string) (map[string]any, error) {
-		out, err := registry.Execute(ctx, "NudgeTool", json.RawMessage(input), nil)
-		if err != nil {
-			return nil, err
-		}
 		var report map[string]any
-		if err := json.Unmarshal([]byte(out), &report); err != nil {
+		_, err := decodeHarnessOutput(&report, func() (string, error) { return registry.Execute(ctx, "NudgeTool", json.RawMessage(input), nil) })
+		if err != nil {
 			return nil, err
 		}
 		return report, nil
@@ -783,12 +779,11 @@ func provisionalStatusEscalationScenarioRunLocal(ctx context.Context, workspace 
 	configHome := filepath.Join(workspace, "config-home")
 	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
 	call := func(input string) (map[string]any, error) {
-		out, err := registry.Execute(ctx, "ProvisionalStatusTool", json.RawMessage(input), nil)
-		if err != nil {
-			return nil, err
-		}
 		var report map[string]any
-		if err := json.Unmarshal([]byte(out), &report); err != nil {
+		_, err := decodeHarnessOutput(&report, func() (string, error) {
+			return registry.Execute(ctx, "ProvisionalStatusTool", json.RawMessage(input), nil)
+		})
+		if err != nil {
 			return nil, err
 		}
 		return report, nil
@@ -841,12 +836,11 @@ func roadmapPinpointLifecycleScenarioRunLocal(ctx context.Context, workspace str
 	configHome := filepath.Join(workspace, "config-home")
 	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
 	call := func(input string) (map[string]any, error) {
-		out, err := registry.Execute(ctx, "RoadmapPinpointTool", json.RawMessage(input), nil)
-		if err != nil {
-			return nil, err
-		}
 		var report map[string]any
-		if err := json.Unmarshal([]byte(out), &report); err != nil {
+		_, err := decodeHarnessOutput(&report, func() (string, error) {
+			return registry.Execute(ctx, "RoadmapPinpointTool", json.RawMessage(input), nil)
+		})
+		if err != nil {
 			return nil, err
 		}
 		return report, nil
@@ -989,12 +983,9 @@ func reportBackpressureScenarioRunLocal(ctx context.Context, workspace string) (
 	configHome := filepath.Join(workspace, "config-home")
 	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
 	call := func(tool string, input string) (map[string]any, error) {
-		out, err := registry.Execute(ctx, tool, json.RawMessage(input), nil)
-		if err != nil {
-			return nil, err
-		}
 		var report map[string]any
-		if err := json.Unmarshal([]byte(out), &report); err != nil {
+		_, err := decodeHarnessOutput(&report, func() (string, error) { return registry.Execute(ctx, tool, json.RawMessage(input), nil) })
+		if err != nil {
 			return nil, err
 		}
 		return report, nil
@@ -1369,18 +1360,6 @@ func backgroundAgentRunScenarioRunLocal(ctx context.Context, workspace string) (
 }
 
 func sshPrintPlanScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
-	output, err := runHarnessCodog(ctx, workspace,
-		"--output-format", "json",
-		"ssh",
-		"--local",
-		"localhost",
-		workspace,
-		"--print=ssh harness prompt",
-		"--permission-mode", "read-only",
-	)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var report struct {
 		Kind             string   `json:"kind"`
 		Status           string   `json:"status"`
@@ -1391,7 +1370,18 @@ func sshPrintPlanScenarioRunLocal(ctx context.Context, workspace string) (localS
 		RemoteShell      string   `json:"remote_shell"`
 		Message          string   `json:"message"`
 	}
-	if err := json.Unmarshal([]byte(output), &report); err != nil {
+	output, err := decodeHarnessOutput(&report, func() (string, error) {
+		return runHarnessCodog(ctx, workspace,
+			"--output-format", "json",
+			"ssh",
+			"--local",
+			"localhost",
+			workspace,
+			"--print=ssh harness prompt",
+			"--permission-mode", "read-only",
+		)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if report.Kind != "ssh" || report.Status != "planned" || !report.Local || !report.Print || !report.PromptConfigured {
@@ -1461,13 +1451,13 @@ func remoteAPIListenerScenarioRunLocal(_ context.Context, workspace string) (loc
 	if resp.StatusCode != http.StatusOK {
 		return localScenarioResult{}, fmt.Errorf("authenticated sessions returned %d", resp.StatusCode)
 	}
+	var sessions []json.RawMessage
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return localScenarioResult{}, err
 	}
-	var sessions []json.RawMessage
 	if err := json.Unmarshal(body, &sessions); err != nil {
-		return localScenarioResult{}, fmt.Errorf("sessions response was not a JSON array: %w", err)
+		return localScenarioResult{}, err
 	}
 
 	message := "remote api listener harness ok"

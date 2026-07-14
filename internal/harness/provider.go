@@ -252,93 +252,102 @@ func restoreEnv(previous map[string]string, existed map[string]bool) {
 }
 
 func sessionResumeJSONLRoundtripScenario() scenario {
-	const sessionID = "resume-jsonl"
-	const prompt = "continue from stored session"
-	configHome := func(workspace string) string {
-		return filepath.Join(workspace, "config-home")
-	}
 	return scenario{
-		name:   "session_resume_jsonl_roundtrip",
-		turns:  []mockanthropic.Turn{{Text: "resume harness ok"}},
-		prompt: prompt,
-		setup: func(workspace string) error {
-			store := session.NewWorkspaceStore(configHome(workspace), workspace)
-			if _, err := store.CreateWithIdentity(sessionID, session.SessionIdentity{
-				Title:   "Stored resume context",
-				Purpose: "prompt",
-			}); err != nil {
-				return err
-			}
-			if err := store.AppendInput(sessionID, "stored prompt"); err != nil {
-				return err
-			}
-			if err := store.Append(sessionID, anthropic.TextMessage("user", "stored prompt")); err != nil {
-				return err
-			}
-			return store.Append(sessionID, anthropic.TextMessage("assistant", "stored answer"))
-		},
-		loadPrevious: func(workspace string) ([]anthropic.Message, error) {
-			store := session.NewWorkspaceStore(configHome(workspace), workspace)
-			sess, err := store.OpenExisting(sessionID)
-			if err != nil {
-				return nil, err
-			}
-			if len(sess.Messages) != 2 {
-				return nil, fmt.Errorf("expected 2 stored messages before resume, got %d", len(sess.Messages))
-			}
-			return sess.Messages, nil
-		},
-		verify: func(workspace string, result runloop.TurnResult, output string) error {
-			if !strings.Contains(output, "resume harness ok") {
-				return fmt.Errorf("missing resume final response")
-			}
-			if len(result.Messages) != 4 {
-				return fmt.Errorf("expected 4 messages after resumed turn, got %d", len(result.Messages))
-			}
-			store := session.NewWorkspaceStore(configHome(workspace), workspace)
-			if err := store.AppendInput(sessionID, prompt); err != nil {
-				return err
-			}
-			for _, msg := range result.Messages[2:] {
-				if err := store.Append(sessionID, msg); err != nil {
-					return err
-				}
-			}
-			reopened, err := store.OpenExisting(sessionID)
-			if err != nil {
-				return err
-			}
-			if len(reopened.Messages) != 4 {
-				return fmt.Errorf("expected 4 persisted messages after resume, got %d", len(reopened.Messages))
-			}
-			if strings.TrimSpace(reopened.Messages[0].Content[0].Text) != "stored prompt" ||
-				strings.TrimSpace(reopened.Messages[1].Content[0].Text) != "stored answer" ||
-				strings.TrimSpace(reopened.Messages[2].Content[0].Text) != prompt ||
-				strings.TrimSpace(reopened.Messages[3].Content[0].Text) != "resume harness ok" {
-				return fmt.Errorf("unexpected persisted resume messages: %#v", reopened.Messages)
-			}
-			if strings.TrimSpace(reopened.Identity.Workspace) == "" ||
-				strings.TrimSpace(reopened.Identity.Worktree) == "" ||
-				len(reopened.Identity.Placeholders) != 0 {
-				return fmt.Errorf("unexpected reopened identity after resume: %#v", reopened.Identity)
-			}
-			return nil
-		},
-		verifyRequests: func(requests []anthropic.Request) error {
-			if len(requests) != 1 {
-				return fmt.Errorf("expected 1 resume request, got %d", len(requests))
-			}
-			if len(requests[0].Messages) != 3 {
-				return fmt.Errorf("expected resumed request with 3 messages, got %d", len(requests[0].Messages))
-			}
-			if requests[0].Messages[0].Content[0].Text != "stored prompt" ||
-				requests[0].Messages[1].Content[0].Text != "stored answer" ||
-				requests[0].Messages[2].Content[0].Text != prompt {
-				return fmt.Errorf("unexpected resumed request messages: %#v", requests[0].Messages)
-			}
-			return nil
-		},
+		name:           "session_resume_jsonl_roundtrip",
+		turns:          []mockanthropic.Turn{{Text: "resume harness ok"}},
+		prompt:         resumeJSONLPrompt,
+		setup:          setupResumeJSONLSession,
+		loadPrevious:   loadResumeJSONLMessages,
+		verify:         verifyResumeJSONLResult,
+		verifyRequests: verifyResumeJSONLRequests,
 	}
+}
+
+const (
+	resumeJSONLSessionID = "resume-jsonl"
+	resumeJSONLPrompt    = "continue from stored session"
+)
+
+func resumeJSONLStore(workspace string) *session.Store {
+	return session.NewWorkspaceStore(filepath.Join(workspace, "config-home"), workspace)
+}
+
+func setupResumeJSONLSession(workspace string) error {
+	store := resumeJSONLStore(workspace)
+	if _, err := store.CreateWithIdentity(resumeJSONLSessionID, session.SessionIdentity{Title: "Stored resume context", Purpose: "prompt"}); err != nil {
+		return err
+	}
+	if err := store.AppendInput(resumeJSONLSessionID, "stored prompt"); err != nil {
+		return err
+	}
+	if err := store.Append(resumeJSONLSessionID, anthropic.TextMessage("user", "stored prompt")); err != nil {
+		return err
+	}
+	return store.Append(resumeJSONLSessionID, anthropic.TextMessage("assistant", "stored answer"))
+}
+
+func loadResumeJSONLMessages(workspace string) ([]anthropic.Message, error) {
+	sess, err := resumeJSONLStore(workspace).OpenExisting(resumeJSONLSessionID)
+	if err != nil {
+		return nil, err
+	}
+	if len(sess.Messages) != 2 {
+		return nil, fmt.Errorf("expected 2 stored messages before resume, got %d", len(sess.Messages))
+	}
+	return sess.Messages, nil
+}
+
+func verifyResumeJSONLResult(workspace string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "resume harness ok") {
+		return fmt.Errorf("missing resume final response")
+	}
+	if len(result.Messages) != 4 {
+		return fmt.Errorf("expected 4 messages after resumed turn, got %d", len(result.Messages))
+	}
+	store := resumeJSONLStore(workspace)
+	if err := store.AppendInput(resumeJSONLSessionID, resumeJSONLPrompt); err != nil {
+		return err
+	}
+	for _, msg := range result.Messages[2:] {
+		if err := store.Append(resumeJSONLSessionID, msg); err != nil {
+			return err
+		}
+	}
+	reopened, err := store.OpenExisting(resumeJSONLSessionID)
+	if err != nil {
+		return err
+	}
+	return verifyReopenedResumeJSONL(reopened)
+}
+
+func verifyReopenedResumeJSONL(reopened *session.Session) error {
+	if len(reopened.Messages) != 4 {
+		return fmt.Errorf("expected 4 persisted messages after resume, got %d", len(reopened.Messages))
+	}
+	if strings.TrimSpace(reopened.Messages[0].Content[0].Text) != "stored prompt" ||
+		strings.TrimSpace(reopened.Messages[1].Content[0].Text) != "stored answer" ||
+		strings.TrimSpace(reopened.Messages[2].Content[0].Text) != resumeJSONLPrompt ||
+		strings.TrimSpace(reopened.Messages[3].Content[0].Text) != "resume harness ok" {
+		return fmt.Errorf("unexpected persisted resume messages: %#v", reopened.Messages)
+	}
+	if strings.TrimSpace(reopened.Identity.Workspace) == "" || strings.TrimSpace(reopened.Identity.Worktree) == "" || len(reopened.Identity.Placeholders) != 0 {
+		return fmt.Errorf("unexpected reopened identity after resume: %#v", reopened.Identity)
+	}
+	return nil
+}
+
+func verifyResumeJSONLRequests(requests []anthropic.Request) error {
+	if len(requests) != 1 {
+		return fmt.Errorf("expected 1 resume request, got %d", len(requests))
+	}
+	if len(requests[0].Messages) != 3 {
+		return fmt.Errorf("expected resumed request with 3 messages, got %d", len(requests[0].Messages))
+	}
+	messages := requests[0].Messages
+	if messages[0].Content[0].Text != "stored prompt" || messages[1].Content[0].Text != "stored answer" || messages[2].Content[0].Text != resumeJSONLPrompt {
+		return fmt.Errorf("unexpected resumed request messages: %#v", messages)
+	}
+	return nil
 }
 
 func resumeSlashCommandScenario() scenario {
@@ -698,14 +707,13 @@ func promptDirectoryAttachmentScenarioRunLocal(ctx context.Context, workspace st
 		return localScenarioResult{}, err
 	}
 
-	out, err := runHarnessCodog(ctx, workspace, "--config", configPath, "prompt", "Describe directory attachment", "--attach", "docs", "--output-format", "json")
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var promptReport struct {
 		Response string `json:"response"`
 	}
-	if err := json.Unmarshal([]byte(out), &promptReport); err != nil {
+	_, err = decodeHarnessOutput(&promptReport, func() (string, error) {
+		return runHarnessCodog(ctx, workspace, "--config", configPath, "prompt", "Describe directory attachment", "--attach", "docs", "--output-format", "json")
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if promptReport.Response != "directory attachment harness ok" {
@@ -794,14 +802,14 @@ func bashOutputTruncationScenarioVerify(_ string, result runloop.TurnResult, out
 	if payload.PersistedOutputPath == "" || payload.PersistedOutputSize <= 20000 {
 		return fmt.Errorf("missing persisted full output path/size: path=%q size=%d", payload.PersistedOutputPath, payload.PersistedOutputSize)
 	}
-	data, err := os.ReadFile(payload.PersistedOutputPath)
-	if err != nil {
-		return err
-	}
 	var persisted struct {
 		Kind            string   `json:"kind"`
 		Stdout          string   `json:"stdout"`
 		TruncatedFields []string `json:"truncated_fields"`
+	}
+	data, err := os.ReadFile(payload.PersistedOutputPath)
+	if err != nil {
+		return err
 	}
 	if err := json.Unmarshal(data, &persisted); err != nil {
 		return err
@@ -818,13 +826,6 @@ func bashBackgroundOutputScenarioRunLocal(ctx context.Context, workspace string)
 		return localScenarioResult{}, err
 	}
 	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
-	startOut, err := registry.Execute(ctx, "Bash", json.RawMessage(`{
-				"command":"printf background-harness",
-				"run_in_background":true
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var started struct {
 		Background                   bool   `json:"background"`
 		BackgroundTaskID             string `json:"backgroundTaskId"`
@@ -835,7 +836,13 @@ func bashBackgroundOutputScenarioRunLocal(ctx context.Context, workspace string)
 		ReturnCodeInterpretation     any    `json:"returnCodeInterpretation"`
 		SandboxPermissionsDowngraded bool   `json:"sandboxPermissionsDowngraded"`
 	}
-	if err := json.Unmarshal([]byte(startOut), &started); err != nil {
+	startOut, err := decodeHarnessOutput(&started, func() (string, error) {
+		return registry.Execute(ctx, "Bash", json.RawMessage(`{
+				"command":"printf background-harness",
+				"run_in_background":true
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if !started.Background || started.BackgroundTaskID == "" || started.BackgroundedByUser || started.AssistantAutoBackgrounded {
@@ -845,16 +852,6 @@ func bashBackgroundOutputScenarioRunLocal(ctx context.Context, workspace string)
 		return localScenarioResult{}, fmt.Errorf("unexpected background bash contract fields: %s", startOut)
 	}
 
-	outputOut, err := registry.Execute(ctx, "BashOutput", json.RawMessage(fmt.Sprintf(`{
-				"bash_id":%q,
-				"offset":0,
-				"limit":64,
-				"block":true,
-				"timeout_ms":2000
-			}`, started.BackgroundTaskID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var output struct {
 		Output           string `json:"output"`
 		Stdout           string `json:"stdout"`
@@ -867,7 +864,16 @@ func bashBackgroundOutputScenarioRunLocal(ctx context.Context, workspace string)
 		RawOutputPath    string `json:"rawOutputPath"`
 		NoOutputExpected bool   `json:"noOutputExpected"`
 	}
-	if err := json.Unmarshal([]byte(outputOut), &output); err != nil {
+	outputOut, err := decodeHarnessOutput(&output, func() (string, error) {
+		return registry.Execute(ctx, "BashOutput", json.RawMessage(fmt.Sprintf(`{
+				"bash_id":%q,
+				"offset":0,
+				"limit":64,
+				"block":true,
+				"timeout_ms":2000
+			}`, started.BackgroundTaskID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if output.BackgroundTaskID != started.BackgroundTaskID || output.Stdout != "background-harness" || output.Output != output.Stdout {
@@ -899,18 +905,17 @@ func bashKillScenarioRunLocal(ctx context.Context, workspace string) (localScena
 		return localScenarioResult{}, err
 	}
 	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
-	startOut, err := registry.Execute(ctx, "Bash", json.RawMessage(`{
-				"command":"printf kill-ready; sleep 10",
-				"run_in_background":true
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var started struct {
 		BackgroundTaskID string `json:"backgroundTaskId"`
 		Background       bool   `json:"background"`
 	}
-	if err := json.Unmarshal([]byte(startOut), &started); err != nil {
+	startOut, err := decodeHarnessOutput(&started, func() (string, error) {
+		return registry.Execute(ctx, "Bash", json.RawMessage(`{
+				"command":"printf kill-ready; sleep 10",
+				"run_in_background":true
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if !started.Background || started.BackgroundTaskID == "" {
@@ -923,39 +928,37 @@ func bashKillScenarioRunLocal(ctx context.Context, workspace string) (localScena
 		}
 	}()
 
-	beforeKillOut, err := registry.Execute(ctx, "BashOutput", json.RawMessage(fmt.Sprintf(`{
+	var beforeKill struct {
+		Stdout      string `json:"stdout"`
+		Interrupted bool   `json:"interrupted"`
+		TimedOut    bool   `json:"timedOut"`
+	}
+	beforeKillOut, err := decodeHarnessOutput(&beforeKill, func() (string, error) {
+		return registry.Execute(ctx, "BashOutput", json.RawMessage(fmt.Sprintf(`{
 				"bash_id":%q,
 				"offset":0,
 				"limit":64,
 				"block":true,
 				"timeout_ms":2000
 			}`, started.BackgroundTaskID)), nil)
+	})
 	if err != nil {
-		return localScenarioResult{}, err
-	}
-	var beforeKill struct {
-		Stdout      string `json:"stdout"`
-		Interrupted bool   `json:"interrupted"`
-		TimedOut    bool   `json:"timedOut"`
-	}
-	if err := json.Unmarshal([]byte(beforeKillOut), &beforeKill); err != nil {
 		return localScenarioResult{}, err
 	}
 	if beforeKill.Stdout != "kill-ready" || beforeKill.Interrupted || beforeKill.TimedOut {
 		return localScenarioResult{}, fmt.Errorf("unexpected pre-kill bash output: %s", beforeKillOut)
 	}
 
-	killOut, err := registry.Execute(ctx, "KillBash", json.RawMessage(fmt.Sprintf(`{"bash_id":%q}`, started.BackgroundTaskID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var killed struct {
 		BackgroundTaskID string `json:"backgroundTaskId"`
 		Status           string `json:"status"`
 		Interrupted      bool   `json:"interrupted"`
 		NoOutputExpected bool   `json:"noOutputExpected"`
 	}
-	if err := json.Unmarshal([]byte(killOut), &killed); err != nil {
+	killOut, err := decodeHarnessOutput(&killed, func() (string, error) {
+		return registry.Execute(ctx, "KillBash", json.RawMessage(fmt.Sprintf(`{"bash_id":%q}`, started.BackgroundTaskID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if killed.BackgroundTaskID != started.BackgroundTaskID || killed.Status != "stopped" || !killed.Interrupted || !killed.NoOutputExpected {
@@ -963,14 +966,6 @@ func bashKillScenarioRunLocal(ctx context.Context, workspace string) (localScena
 	}
 	killedTask = true
 
-	afterKillOut, err := registry.Execute(ctx, "BashOutput", json.RawMessage(fmt.Sprintf(`{
-				"bash_id":%q,
-				"offset":0,
-				"limit":64
-			}`, started.BackgroundTaskID)), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var afterKill struct {
 		Stdout           string `json:"stdout"`
 		Status           string `json:"status"`
@@ -978,7 +973,14 @@ func bashKillScenarioRunLocal(ctx context.Context, workspace string) (localScena
 		BackgroundTaskID string `json:"backgroundTaskId"`
 		RawOutputPath    string `json:"rawOutputPath"`
 	}
-	if err := json.Unmarshal([]byte(afterKillOut), &afterKill); err != nil {
+	afterKillOut, err := decodeHarnessOutput(&afterKill, func() (string, error) {
+		return registry.Execute(ctx, "BashOutput", json.RawMessage(fmt.Sprintf(`{
+				"bash_id":%q,
+				"offset":0,
+				"limit":64
+			}`, started.BackgroundTaskID)), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if afterKill.BackgroundTaskID != started.BackgroundTaskID || afterKill.Status != "stopped" || !afterKill.Interrupted || afterKill.Stdout != "kill-ready" {
@@ -1038,13 +1040,6 @@ func permissionScopeDenialScenarioRunLocal(ctx context.Context, workspace string
 	registry := tools.NewRegistry(workspace)
 	prompter := &tools.Prompter{Mode: tools.PermissionReadOnly, Workspace: workspace}
 	command := "cat " + harnessShellQuote(secretPath)
-	permissionOut, err := registry.Execute(ctx, "permission_check", json.RawMessage(`{
-				"target_tool": "BashTool",
-				"input": {"command": `+strconv.Quote(command)+`}
-			}`), prompter)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var permissionCheck struct {
 		Kind               string `json:"kind"`
 		RequestedTool      string `json:"requested_tool"`
@@ -1063,7 +1058,13 @@ func permissionScopeDenialScenarioRunLocal(ctx context.Context, workspace string
 			Message  string `json:"message"`
 		} `json:"decision"`
 	}
-	if err := json.Unmarshal([]byte(permissionOut), &permissionCheck); err != nil {
+	permissionOut, err := decodeHarnessOutput(&permissionCheck, func() (string, error) {
+		return registry.Execute(ctx, "permission_check", json.RawMessage(`{
+				"target_tool": "BashTool",
+				"input": {"command": `+strconv.Quote(command)+`}
+			}`), prompter)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if permissionCheck.Kind != "permission_check" ||
@@ -1146,22 +1147,6 @@ func permissionScopeDenialScenarioRunLocal(ctx context.Context, workspace string
 
 func sandboxBypassStatusScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
 	configHome := filepath.Join(workspace, "config-home")
-	out, err := tools.BashTool{
-		Workspace:       workspace,
-		ConfigHome:      configHome,
-		SandboxStrategy: "detect",
-	}.Execute(ctx, json.RawMessage(`{
-				"command":"printf sandbox-bypass-ok",
-				"timeout_ms":1000,
-				"dangerouslyDisableSandbox":true,
-				"namespaceRestrictions":true,
-				"isolateNetwork":true,
-				"filesystemMode":"allow-list",
-				"allowedMounts":["logs"]
-			}`))
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var payload struct {
 		Stdout                    string `json:"stdout"`
 		DangerouslyDisableSandbox bool   `json:"dangerouslyDisableSandbox"`
@@ -1185,7 +1170,22 @@ func sandboxBypassStatusScenarioRunLocal(ctx context.Context, workspace string) 
 			} `json:"requested"`
 		} `json:"sandboxStatus"`
 	}
-	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+	out, err := decodeHarnessOutput(&payload, func() (string, error) {
+		return tools.BashTool{
+			Workspace:       workspace,
+			ConfigHome:      configHome,
+			SandboxStrategy: "detect",
+		}.Execute(ctx, json.RawMessage(`{
+				"command":"printf sandbox-bypass-ok",
+				"timeout_ms":1000,
+				"dangerouslyDisableSandbox":true,
+				"namespaceRestrictions":true,
+				"isolateNetwork":true,
+				"filesystemMode":"allow-list",
+				"allowedMounts":["logs"]
+			}`))
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if payload.Stdout != "sandbox-bypass-ok" {
@@ -1414,20 +1414,6 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 	configHome := filepath.Join(workspace, "config-home")
 	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
 
-	staleOut, err := registry.Execute(ctx, "PolicyEvaluateTool", json.RawMessage(`{
-				"lane_id": "lane-policy",
-				"green_level": 3,
-				"green_contract_satisfied": true,
-				"review_status": "approved",
-				"diff_scope": "scoped",
-				"branch_status": "stale",
-				"branch_behind": 2,
-				"verification_blocked": true,
-				"completed": true
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var staleEval struct {
 		Kind    string `json:"kind"`
 		Actions []struct {
@@ -1441,7 +1427,20 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 			Action string `json:"action"`
 		} `json:"events"`
 	}
-	if err := json.Unmarshal([]byte(staleOut), &staleEval); err != nil {
+	staleOut, err := decodeHarnessOutput(&staleEval, func() (string, error) {
+		return registry.Execute(ctx, "PolicyEvaluateTool", json.RawMessage(`{
+				"lane_id": "lane-policy",
+				"green_level": 3,
+				"green_contract_satisfied": true,
+				"review_status": "approved",
+				"diff_scope": "scoped",
+				"branch_status": "stale",
+				"branch_behind": 2,
+				"verification_blocked": true,
+				"completed": true
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if staleEval.Kind != "policy_evaluation" || len(staleEval.Actions) != 3 || staleEval.Actions[0].Kind != "merge_forward" || staleEval.Actions[0].RecoveryScenario != "stale_branch" || !slices.Contains(staleEval.Actions[0].Commands, "branch_freshness") || staleEval.Actions[1].Kind != "closeout_lane" || staleEval.Actions[2].Kind != "cleanup_session" {
@@ -1451,15 +1450,6 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 		return localScenarioResult{}, fmt.Errorf("unexpected stale policy events: %s", staleOut)
 	}
 
-	escalateOut, err := registry.Execute(ctx, "policy_evaluate", json.RawMessage(`{
-				"lane_id": "lane-startup",
-				"blocker": "startup",
-				"retry_count": 1,
-				"retry_limit": 1
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var escalateEval struct {
 		Actions []struct {
 			Kind string `json:"kind"`
@@ -1469,25 +1459,21 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 			Action string `json:"action"`
 		} `json:"events"`
 	}
-	if err := json.Unmarshal([]byte(escalateOut), &escalateEval); err != nil {
+	escalateOut, err := decodeHarnessOutput(&escalateEval, func() (string, error) {
+		return registry.Execute(ctx, "policy_evaluate", json.RawMessage(`{
+				"lane_id": "lane-startup",
+				"blocker": "startup",
+				"retry_count": 1,
+				"retry_limit": 1
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if len(escalateEval.Actions) != 1 || escalateEval.Actions[0].Kind != "escalate" || len(escalateEval.Events) != 1 || escalateEval.Events[0].Kind != "escalate" {
 		return localScenarioResult{}, fmt.Errorf("unexpected escalation policy evaluation: %s", escalateOut)
 	}
 
-	blockedOut, err := registry.Execute(ctx, "policy_evaluate", json.RawMessage(`{
-				"lane_id": "lane-main",
-				"requested_action": "git push origin main",
-				"repository": "owner/repo",
-				"branch": "main",
-				"actor": "release-bot",
-				"actor_scope": "automation",
-				"policy_source": "AGENTS.md"
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var blocked struct {
 		BlockedHandoff struct {
 			Kind             string `json:"kind"`
@@ -1501,7 +1487,18 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 			} `json:"fallback"`
 		} `json:"blocked_handoff"`
 	}
-	if err := json.Unmarshal([]byte(blockedOut), &blocked); err != nil {
+	blockedOut, err := decodeHarnessOutput(&blocked, func() (string, error) {
+		return registry.Execute(ctx, "policy_evaluate", json.RawMessage(`{
+				"lane_id": "lane-main",
+				"requested_action": "git push origin main",
+				"repository": "owner/repo",
+				"branch": "main",
+				"actor": "release-bot",
+				"actor_scope": "automation",
+				"policy_source": "AGENTS.md"
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if blocked.BlockedHandoff.Kind != "policy_blocked_handoff" || blocked.BlockedHandoff.Status != "blocked_by_policy" || blocked.BlockedHandoff.Reason != "main_push_forbidden" || blocked.BlockedHandoff.PolicySource != "AGENTS.md" || blocked.BlockedHandoff.ActorScope != "automation" || blocked.BlockedHandoff.TechnicalFailure || len(blocked.BlockedHandoff.Fallback) != 2 || blocked.BlockedHandoff.Fallback[0].Kind != "create_branch" || blocked.BlockedHandoff.Fallback[1].Kind != "open_pr" {
@@ -1509,17 +1506,6 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 	}
 
 	scope := `"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main","commit":"abc123"}`
-	pendingOut, err := registry.Execute(ctx, "ApprovalTokenTool", json.RawMessage(`{
-				"action": "pending",
-				"token": "tok-main",
-				`+scope+`,
-				"approving_actor": "owner",
-				"requesting_actor": "release-lead",
-				"approved_executor": "release-bot"
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var pending struct {
 		Kind   string `json:"kind"`
 		Action string `json:"action"`
@@ -1529,46 +1515,42 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 			Status string `json:"status"`
 		} `json:"grant"`
 	}
-	if err := json.Unmarshal([]byte(pendingOut), &pending); err != nil {
+	pendingOut, err := decodeHarnessOutput(&pending, func() (string, error) {
+		return registry.Execute(ctx, "ApprovalTokenTool", json.RawMessage(`{
+				"action": "pending",
+				"token": "tok-main",
+				`+scope+`,
+				"approving_actor": "owner",
+				"requesting_actor": "release-lead",
+				"approved_executor": "release-bot"
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if pending.Kind != "approval_token" || pending.Action != "pending" || pending.Status != "ok" || pending.Grant.Token != "tok-main" || pending.Grant.Status != "approval_pending" {
 		return localScenarioResult{}, fmt.Errorf("unexpected approval pending output: %s", pendingOut)
 	}
 
-	pendingVerifyOut, err := registry.Execute(ctx, "approval_token", json.RawMessage(`{
+	var pendingVerify struct {
+		Status    string `json:"status"`
+		ErrorKind string `json:"error_kind"`
+	}
+	pendingVerifyOut, err := decodeHarnessOutput(&pendingVerify, func() (string, error) {
+		return registry.Execute(ctx, "approval_token", json.RawMessage(`{
 				"action": "verify",
 				"token": "tok-main",
 				`+scope+`,
 				"executing_actor": "release-bot"
 			}`), nil)
+	})
 	if err != nil {
-		return localScenarioResult{}, err
-	}
-	var pendingVerify struct {
-		Status    string `json:"status"`
-		ErrorKind string `json:"error_kind"`
-	}
-	if err := json.Unmarshal([]byte(pendingVerifyOut), &pendingVerify); err != nil {
 		return localScenarioResult{}, err
 	}
 	if pendingVerify.Status != "denied" || pendingVerify.ErrorKind != "approval_pending" {
 		return localScenarioResult{}, fmt.Errorf("unexpected pending verify output: %s", pendingVerifyOut)
 	}
 
-	grantOut, err := registry.Execute(ctx, "ApprovalTokenTool", json.RawMessage(`{
-				"action": "approve",
-				"token": "tok-main",
-				`+scope+`,
-				"approving_actor": "owner",
-				"requesting_actor": "release-lead",
-				"approved_executor": "release-bot",
-				"max_uses": 1,
-				"delegation_chain": [{"actor":"owner","session_id":"session-owner","reason":"owner approval"},{"actor":"orchestrator","session_id":"session-orchestrator","reason":"relay"}]
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var grant struct {
 		Kind   string `json:"kind"`
 		Action string `json:"action"`
@@ -1582,22 +1564,25 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 			MaxUses               int    `json:"max_uses"`
 		} `json:"grant"`
 	}
-	if err := json.Unmarshal([]byte(grantOut), &grant); err != nil {
+	grantOut, err := decodeHarnessOutput(&grant, func() (string, error) {
+		return registry.Execute(ctx, "ApprovalTokenTool", json.RawMessage(`{
+				"action": "approve",
+				"token": "tok-main",
+				`+scope+`,
+				"approving_actor": "owner",
+				"requesting_actor": "release-lead",
+				"approved_executor": "release-bot",
+				"max_uses": 1,
+				"delegation_chain": [{"actor":"owner","session_id":"session-owner","reason":"owner approval"},{"actor":"orchestrator","session_id":"session-orchestrator","reason":"relay"}]
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if grant.Kind != "approval_token" || grant.Action != "approve" || grant.Status != "ok" || grant.Grant.Token != "tok-main" || grant.Grant.ReplayPreventionNonce == "" || grant.Grant.Status != "approval_granted" || grant.Grant.ApprovingActor != "owner" || grant.Grant.ApprovedExecutor != "release-bot" || grant.Grant.MaxUses != 1 {
 		return localScenarioResult{}, fmt.Errorf("unexpected approval approve output: %s", grantOut)
 	}
 
-	verifyOut, err := registry.Execute(ctx, "approval_token", json.RawMessage(`{
-				"action": "verify",
-				"token": "tok-main",
-				`+scope+`,
-				"executing_actor": "release-bot"
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var verify struct {
 		Status string `json:"status"`
 		Audit  struct {
@@ -1617,22 +1602,21 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 			} `json:"delegation_chain"`
 		} `json:"audit"`
 	}
-	if err := json.Unmarshal([]byte(verifyOut), &verify); err != nil {
+	verifyOut, err := decodeHarnessOutput(&verify, func() (string, error) {
+		return registry.Execute(ctx, "approval_token", json.RawMessage(`{
+				"action": "verify",
+				"token": "tok-main",
+				`+scope+`,
+				"executing_actor": "release-bot"
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if verify.Status != "ok" || verify.Audit.Kind != "approval_token_audit" || verify.Audit.Token != "tok-main" || verify.Audit.ReplayPreventionNonce != grant.Grant.ReplayPreventionNonce || verify.Audit.Scope.Commit != "abc123" || verify.Audit.RequestingActor != "release-lead" || verify.Audit.ExecutingActor != "release-bot" || verify.Audit.ExecutionMode != "delegated_execution" || verify.Audit.Status != "approval_granted" || !verify.Audit.DelegatedExecution || len(verify.Audit.DelegationChain) != 4 || verify.Audit.DelegationChain[1].Actor != "orchestrator" || verify.Audit.DelegationChain[2].Actor != "release-lead" || verify.Audit.DelegationChain[3].Actor != "release-bot" {
 		return localScenarioResult{}, fmt.Errorf("unexpected approval verify output: %s", verifyOut)
 	}
 
-	consumeOut, err := registry.Execute(ctx, "approval_token", json.RawMessage(`{
-				"action": "consume",
-				"token": "tok-main",
-				`+scope+`,
-				"executing_actor": "release-bot"
-			}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var consume struct {
 		Status string `json:"status"`
 		Audit  struct {
@@ -1640,37 +1624,40 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 			Uses   int    `json:"uses"`
 		} `json:"audit"`
 	}
-	if err := json.Unmarshal([]byte(consumeOut), &consume); err != nil {
+	consumeOut, err := decodeHarnessOutput(&consume, func() (string, error) {
+		return registry.Execute(ctx, "approval_token", json.RawMessage(`{
+				"action": "consume",
+				"token": "tok-main",
+				`+scope+`,
+				"executing_actor": "release-bot"
+			}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if consume.Status != "ok" || consume.Audit.Status != "approval_consumed" || consume.Audit.Uses != 1 {
 		return localScenarioResult{}, fmt.Errorf("unexpected approval consume output: %s", consumeOut)
 	}
 
-	replayOut, err := registry.Execute(ctx, "approval_token", json.RawMessage(`{
+	var replay struct {
+		Status    string `json:"status"`
+		ErrorKind string `json:"error_kind"`
+	}
+	replayOut, err := decodeHarnessOutput(&replay, func() (string, error) {
+		return registry.Execute(ctx, "approval_token", json.RawMessage(`{
 				"action": "consume",
 				"token": "tok-main",
 				`+scope+`,
 				"executing_actor": "release-bot"
 			}`), nil)
+	})
 	if err != nil {
-		return localScenarioResult{}, err
-	}
-	var replay struct {
-		Status    string `json:"status"`
-		ErrorKind string `json:"error_kind"`
-	}
-	if err := json.Unmarshal([]byte(replayOut), &replay); err != nil {
 		return localScenarioResult{}, err
 	}
 	if replay.Status != "denied" || replay.ErrorKind != "approval_already_consumed" {
 		return localScenarioResult{}, fmt.Errorf("unexpected approval replay output: %s", replayOut)
 	}
 
-	listOut, err := registry.Execute(ctx, "approval_token", json.RawMessage(`{"action":"list"}`), nil)
-	if err != nil {
-		return localScenarioResult{}, err
-	}
 	var list struct {
 		Status string `json:"status"`
 		Ledger struct {
@@ -1687,7 +1674,10 @@ func policyApprovalScenarioRunLocal(ctx context.Context, workspace string) (loca
 			} `json:"grants"`
 		} `json:"ledger"`
 	}
-	if err := json.Unmarshal([]byte(listOut), &list); err != nil {
+	listOut, err := decodeHarnessOutput(&list, func() (string, error) {
+		return registry.Execute(ctx, "approval_token", json.RawMessage(`{"action":"list"}`), nil)
+	})
+	if err != nil {
 		return localScenarioResult{}, err
 	}
 	if list.Status != "ok" || list.Ledger.Kind != "approval_token_ledger" || len(list.Ledger.Grants) != 1 || list.Ledger.Grants[0].Token != "tok-main" || list.Ledger.Grants[0].ReplayPreventionNonce != grant.Grant.ReplayPreventionNonce || list.Ledger.Grants[0].Status != "approval_consumed" || list.Ledger.Grants[0].State != "consumed" || list.Ledger.Grants[0].Usable || list.Ledger.Grants[0].Uses != 1 || list.Ledger.Grants[0].RemainingUses != 0 || list.Ledger.Grants[0].LastAuditErrorKind != "approval_already_consumed" {
