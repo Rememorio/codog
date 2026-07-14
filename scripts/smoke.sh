@@ -87,7 +87,9 @@ step "go vet"
 go vet ./...
 
 step "go build"
-go build .
+build_dir="${artifact_dir}/build"
+mkdir -p "${build_dir}"
+go build -o "${build_dir}/codog" .
 
 install_dir="${artifact_dir}/bin"
 step "install smoke"
