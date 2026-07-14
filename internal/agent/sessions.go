@@ -1048,121 +1048,137 @@ func (a *App) Conversation(args []string, overrides config.FlagOverrides) error 
 }
 
 func parseConversationArgs(args []string, overrides config.FlagOverrides) (conversationRequest, error) {
-	req := conversationRequest{Action: "status", SessionID: "latest", Format: "text", ExportFormat: session.ExportMarkdown}
+	parser := conversationArgParser{req: conversationRequest{Action: "status", SessionID: "latest", Format: "text", ExportFormat: session.ExportMarkdown}}
 	if strings.TrimSpace(overrides.Resume) != "" {
-		req.SessionID = overrides.Resume
+		parser.req.SessionID = overrides.Resume
 	}
 	if strings.TrimSpace(overrides.SessionID) != "" {
-		req.SessionID = overrides.SessionID
+		parser.req.SessionID = overrides.SessionID
 	}
-	positionals := []string{}
-	actionSet := false
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--confirm":
-			req.Confirm = true
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, errors.New("conversation output format is required")
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--session" || arg == "--resume":
-			index++
-			if index >= len(args) {
-				return req, errors.New("conversation session id is required")
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--session="):
-			req.SessionID = strings.TrimPrefix(arg, "--session=")
-		case strings.HasPrefix(arg, "--resume="):
-			req.SessionID = strings.TrimPrefix(arg, "--resume=")
-		case arg == "--format":
-			index++
-			if index >= len(args) {
-				return req, errors.New("conversation export format is required")
-			}
-			req.ExportFormat = args[index]
-		case strings.HasPrefix(arg, "--format="):
-			req.ExportFormat = strings.TrimPrefix(arg, "--format=")
-		case arg == "--output":
-			index++
-			if index >= len(args) {
-				return req, errors.New("conversation export output path is required")
-			}
-			req.Output = args[index]
-		case strings.HasPrefix(arg, "--output="):
-			req.Output = strings.TrimPrefix(arg, "--output=")
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{
-				Command: "conversation",
-				Option:  arg,
-				Usage:   "codog conversation [status|show|export|clear] [session-id] [--session ID] [--json|--output-format text|json]",
-			}
-		default:
-			if !actionSet {
-				switch strings.ToLower(strings.TrimSpace(arg)) {
-				case "status", "show", "export", "clear":
-					req.Action = strings.ToLower(strings.TrimSpace(arg))
-					actionSet = true
-					continue
-				}
-			}
-			positionals = append(positionals, arg)
+		if parser.consumeBoolean(arg) {
+			continue
 		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "conversation", Option: arg, Usage: conversationUsage}
+		}
+		if parser.consumeAction(arg) {
+			continue
+		}
+		parser.positionals = append(parser.positionals, arg)
 	}
-	if req.Confirm && !actionSet {
-		req.Action = "clear"
+	if err := parser.finish(); err != nil {
+		return parser.req, err
 	}
-	if err := validateTextOrJSON(req.Format, "conversation"); err != nil {
-		return req, err
+	return parser.req, nil
+}
+
+const conversationUsage = "codog conversation [status|show|export|clear] [session-id] [--session ID] [--json|--output-format text|json]"
+
+type conversationArgParser struct {
+	req         conversationRequest
+	positionals []string
+	actionSet   bool
+}
+
+func (p *conversationArgParser) consumeBoolean(arg string) bool {
+	switch arg {
+	case "--confirm":
+		p.req.Confirm = true
+	case "--json":
+		p.req.Format = "json"
+	default:
+		return false
 	}
-	if _, err := session.NormalizeExportFormat(req.ExportFormat); err != nil {
-		return req, err
+	return true
+}
+
+func (p *conversationArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": stringValueOption(&p.req.Format, "conversation output format is required"),
+		"-o":              stringValueOption(&p.req.Format, "conversation output format is required"),
+		"--session":       stringValueOption(&p.req.SessionID, "conversation session id is required"),
+		"--resume":        stringValueOption(&p.req.SessionID, "conversation session id is required"),
+		"--format":        stringValueOption(&p.req.ExportFormat, "conversation export format is required"),
+		"--output":        stringValueOption(&p.req.Output, "conversation export output path is required"),
 	}
-	switch req.Action {
+}
+
+func (p *conversationArgParser) consumeAction(arg string) bool {
+	if p.actionSet {
+		return false
+	}
+	action := strings.ToLower(strings.TrimSpace(arg))
+	switch action {
+	case "status", "show", "export", "clear":
+		p.req.Action = action
+		p.actionSet = true
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *conversationArgParser) finish() error {
+	if p.req.Confirm && !p.actionSet {
+		p.req.Action = "clear"
+	}
+	if err := validateTextOrJSON(p.req.Format, "conversation"); err != nil {
+		return err
+	}
+	if _, err := session.NormalizeExportFormat(p.req.ExportFormat); err != nil {
+		return err
+	}
+	return p.applyPositionals()
+}
+
+func (p *conversationArgParser) applyPositionals() error {
+	switch p.req.Action {
 	case "status", "show":
-		if len(positionals) > 1 {
-			return req, unexpectedExtraArgsError{
+		if len(p.positionals) > 1 {
+			return unexpectedExtraArgsError{
 				Command: "conversation",
-				Args:    positionals[1:],
+				Args:    p.positionals[1:],
 				Usage:   "codog conversation [status|show] [session-id] [--json|--output-format text|json]",
 			}
 		}
-		if len(positionals) == 1 {
-			req.SessionID = positionals[0]
+		if len(p.positionals) == 1 {
+			p.req.SessionID = p.positionals[0]
 		}
 	case "export":
-		if len(positionals) > 1 {
-			return req, unexpectedExtraArgsError{
+		if len(p.positionals) > 1 {
+			return unexpectedExtraArgsError{
 				Command: "conversation",
-				Args:    positionals[1:],
+				Args:    p.positionals[1:],
 				Usage:   "codog conversation export [PATH] [--session ID] [--format markdown|json|jsonl|html]",
 			}
 		}
-		if len(positionals) == 1 {
-			req.Output = positionals[0]
+		if len(p.positionals) == 1 {
+			p.req.Output = p.positionals[0]
 		}
 	case "clear":
-		if len(positionals) != 0 {
-			return req, unexpectedExtraArgsError{
+		if len(p.positionals) != 0 {
+			return unexpectedExtraArgsError{
 				Command: "conversation",
-				Args:    positionals,
+				Args:    p.positionals,
 				Usage:   "codog conversation clear [--confirm] [--json|--output-format text|json]",
 			}
 		}
 	default:
-		return req, fmt.Errorf("unknown conversation action %q", req.Action)
+		return fmt.Errorf("unknown conversation action %q", p.req.Action)
 	}
-	if strings.TrimSpace(req.SessionID) == "" {
-		req.SessionID = "latest"
+	if strings.TrimSpace(p.req.SessionID) == "" {
+		p.req.SessionID = "latest"
 	}
-	return req, nil
+	return nil
 }
 
 func (a *App) buildConversationReport(req conversationRequest) (conversationReport, error) {

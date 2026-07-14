@@ -23,17 +23,11 @@ gocognit|internal/agent/limits.go|parseAntTraceArgs|41
 gocognit|internal/agent/limits.go|parseMockLimitsArgs|42
 gocognit|internal/agent/limits.go|snapshotWatchPaths|34
 gocognit|internal/agent/prompt.go|(*App).TUI|31
-gocognit|internal/agent/prompt.go|parsePromptArgs|42
 gocognit|internal/agent/prompt.go|tuiSessionEntries|42
 gocognit|internal/agent/remote.go|parseBackgroundHeartbeatArgs|41
 gocognit|internal/agent/remote.go|parseCronArgsWithDefault|37
 gocognit|internal/agent/remote.go|parseMobileHandoffArgs|39
 gocognit|internal/agent/resume.go|(*App).runResumedSessionSlash|35
-gocognit|internal/agent/resume.go|parseCodeIntelNotebookEditArgs|42
-gocognit|internal/agent/resume.go|parseCodeIntelNotebookReadArgs|34
-gocognit|internal/agent/resume.go|parseHistoryArgs|46
-gocognit|internal/agent/resume.go|parseRewindArgs|39
-gocognit|internal/agent/sessions.go|parseConversationArgs|42
 gocognit|internal/anthropic/client.go|openAIMessagesFromAnthropic|68
 gocognit|internal/anthropic/client.go|parseOpenAIStream|53
 gocognit|internal/background/background.go|(Store).Watch|34

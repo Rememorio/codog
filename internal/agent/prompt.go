@@ -1120,130 +1120,164 @@ type promptCLIRequest struct {
 }
 
 func parsePromptArgs(args []string) (promptCLIRequest, error) {
-	req := promptCLIRequest{Format: "text", InputFormat: "text"}
-	parts := []string{}
+	parser := promptArgParser{req: promptCLIRequest{Format: "text", InputFormat: "text"}}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--":
-			if len(args[index+1:]) > 0 {
-				req.PromptProvided = true
-			}
-			parts = append(parts, args[index+1:]...)
-			index = len(args)
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, errors.New("prompt output format is required")
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--input-format":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "prompt", Flag: "--input-format", Usage: "codog -p --input-format text|stream-json --output-format stream-json"}
-			}
-			req.InputFormat = args[index]
-		case strings.HasPrefix(arg, "--input-format="):
-			req.InputFormat = strings.TrimPrefix(arg, "--input-format=")
-		case arg == "--replay-user-messages":
-			req.ReplayUserMessages = true
-		case arg == "--include-partial-messages":
-			req.IncludePartialMessages = true
-		case arg == "--verbose" || arg == "-v":
-			req.Verbose = true
-		case arg == "--json-schema":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "prompt", Flag: "--json-schema", Usage: "codog -p --json-schema '{\"type\":\"object\"}' --output-format json"}
-			}
-			req.JSONSchema = args[index]
-		case strings.HasPrefix(arg, "--json-schema="):
-			req.JSONSchema = strings.TrimPrefix(arg, "--json-schema=")
-		case arg == "--max-budget-usd":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "prompt", Flag: "--max-budget-usd", Usage: "codog -p --max-budget-usd 1.50 \"<prompt>\""}
-			}
-			value, err := parsePromptMaxBudgetUSD(args[index])
-			if err != nil {
-				return req, err
-			}
-			req.MaxBudgetUSD = &value
-		case strings.HasPrefix(arg, "--max-budget-usd="):
-			value, err := parsePromptMaxBudgetUSD(strings.TrimPrefix(arg, "--max-budget-usd="))
-			if err != nil {
-				return req, err
-			}
-			req.MaxBudgetUSD = &value
-		case arg == "--compact":
-			req.Compact = true
-		case arg == "--stdin" || arg == "--prompt-stdin":
-			req.UseStdin = true
-		case arg == "--attach" || arg == "--attachment" || arg == "--file":
-			index++
-			if index >= len(args) {
-				return req, errors.New("prompt attachment path is required")
-			}
-			req.Attachments = append(req.Attachments, args[index])
-		case strings.HasPrefix(arg, "--attach="):
-			req.Attachments = append(req.Attachments, strings.TrimPrefix(arg, "--attach="))
-		case strings.HasPrefix(arg, "--attachment="):
-			req.Attachments = append(req.Attachments, strings.TrimPrefix(arg, "--attachment="))
-		case strings.HasPrefix(arg, "--file="):
-			req.Attachments = append(req.Attachments, strings.TrimPrefix(arg, "--file="))
-		default:
-			req.PromptProvided = true
-			parts = append(parts, arg)
+		if parser.consumeTerminator(args, &index) || parser.consumeBoolean(arg) {
+			continue
 		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		parser.req.PromptProvided = true
+		parser.parts = append(parser.parts, arg)
 	}
-	req.Prompt = strings.TrimSpace(strings.Join(parts, " "))
-	normalized, err := normalizeOutputFormat("prompt", req.Format, []string{"text", "json", "stream-json"})
+	if err := parser.finish(); err != nil {
+		return parser.req, err
+	}
+	return parser.req, nil
+}
+
+type promptArgParser struct {
+	req   promptCLIRequest
+	parts []string
+}
+
+func (p *promptArgParser) consumeTerminator(args []string, index *int) bool {
+	if args[*index] != "--" {
+		return false
+	}
+	remaining := args[*index+1:]
+	p.req.PromptProvided = len(remaining) > 0
+	p.parts = append(p.parts, remaining...)
+	*index = len(args)
+	return true
+}
+
+func (p *promptArgParser) consumeBoolean(arg string) bool {
+	switch arg {
+	case "--json":
+		p.req.Format = "json"
+	case "--replay-user-messages":
+		p.req.ReplayUserMessages = true
+	case "--include-partial-messages":
+		p.req.IncludePartialMessages = true
+	case "--verbose", "-v":
+		p.req.Verbose = true
+	case "--compact":
+		p.req.Compact = true
+	case "--stdin", "--prompt-stdin":
+		p.req.UseStdin = true
+	default:
+		return false
+	}
+	return true
+}
+
+func (p *promptArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": stringValueOption(&p.req.Format, "prompt output format is required"),
+		"-o":              stringValueOption(&p.req.Format, "prompt output format is required"),
+		"--input-format":  p.stringOption(&p.req.InputFormat, promptInputFormatMissing),
+		"--json-schema":   p.stringOption(&p.req.JSONSchema, promptJSONSchemaMissing),
+		"--max-budget-usd": {
+			missing: promptBudgetMissing,
+			set:     p.setBudget,
+		},
+		"--attach":     p.attachmentOption(),
+		"--attachment": p.attachmentOption(),
+		"--file":       p.attachmentOption(),
+	}
+}
+
+func (p *promptArgParser) stringOption(target *string, missing func(string) error) valueOption {
+	return valueOption{missing: missing, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func promptInputFormatMissing(flag string) error {
+	return missingFlagValueError{Command: "prompt", Flag: flag, Usage: "codog -p --input-format text|stream-json --output-format stream-json"}
+}
+
+func promptJSONSchemaMissing(flag string) error {
+	return missingFlagValueError{Command: "prompt", Flag: flag, Usage: "codog -p --json-schema '{\"type\":\"object\"}' --output-format json"}
+}
+
+func promptBudgetMissing(flag string) error {
+	return missingFlagValueError{Command: "prompt", Flag: flag, Usage: "codog -p --max-budget-usd 1.50 \"<prompt>\""}
+}
+
+func (p *promptArgParser) setBudget(value string) error {
+	budget, err := parsePromptMaxBudgetUSD(value)
 	if err != nil {
-		return req, err
+		return err
 	}
-	req.Format = normalized
-	inputFormat, err := normalizePromptInputFormat(req.InputFormat)
+	p.req.MaxBudgetUSD = &budget
+	return nil
+}
+
+func (p *promptArgParser) attachmentOption() valueOption {
+	return valueOption{missing: func(string) error { return errors.New("prompt attachment path is required") }, set: func(value string) error {
+		p.req.Attachments = append(p.req.Attachments, value)
+		return nil
+	}}
+}
+
+func (p *promptArgParser) finish() error {
+	p.req.Prompt = strings.TrimSpace(strings.Join(p.parts, " "))
+	normalized, err := normalizeOutputFormat("prompt", p.req.Format, []string{"text", "json", "stream-json"})
 	if err != nil {
-		return req, err
+		return err
 	}
-	req.InputFormat = inputFormat
-	if req.InputFormat == "stream-json" && req.Format != "stream-json" {
-		return req, invalidFlagValueError{
+	p.req.Format = normalized
+	inputFormat, err := normalizePromptInputFormat(p.req.InputFormat)
+	if err != nil {
+		return err
+	}
+	p.req.InputFormat = inputFormat
+	return p.validateModes()
+}
+
+func (p *promptArgParser) validateModes() error {
+	if p.req.InputFormat == "stream-json" && p.req.Format != "stream-json" {
+		return invalidFlagValueError{
 			Flag:    "--input-format",
-			Value:   req.InputFormat,
+			Value:   p.req.InputFormat,
 			Message: "--input-format=stream-json requires --output-format=stream-json",
 			Usage:   "codog -p --input-format stream-json --output-format stream-json",
 		}
 	}
-	if req.ReplayUserMessages && (req.InputFormat != "stream-json" || req.Format != "stream-json") {
-		return req, invalidFlagValueError{
+	if p.req.ReplayUserMessages && (p.req.InputFormat != "stream-json" || p.req.Format != "stream-json") {
+		return invalidFlagValueError{
 			Flag:    "--replay-user-messages",
 			Value:   "",
 			Message: "--replay-user-messages requires --input-format=stream-json and --output-format=stream-json",
 			Usage:   "codog -p --input-format stream-json --output-format stream-json --replay-user-messages",
 		}
 	}
-	if req.IncludePartialMessages && req.Format != "stream-json" {
-		return req, invalidFlagValueError{
+	if p.req.IncludePartialMessages && p.req.Format != "stream-json" {
+		return invalidFlagValueError{
 			Flag:    "--include-partial-messages",
-			Value:   req.Format,
+			Value:   p.req.Format,
 			Message: "--include-partial-messages requires --output-format=stream-json",
 			Usage:   "codog -p --output-format stream-json --include-partial-messages \"<prompt>\"",
 		}
 	}
-	if req.Compact && strings.TrimSpace(req.JSONSchema) != "" {
-		return req, invalidFlagValueError{
+	if p.req.Compact && strings.TrimSpace(p.req.JSONSchema) != "" {
+		return invalidFlagValueError{
 			Flag:    "--json-schema",
 			Value:   "",
 			Message: "--json-schema cannot be used with --compact",
 			Usage:   "codog -p --json-schema '{\"type\":\"object\"}' --output-format json",
 		}
 	}
-	return req, nil
+	return nil
 }
 
 func parsePromptMaxBudgetUSD(value string) (float64, error) {

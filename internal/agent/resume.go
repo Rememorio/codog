@@ -1608,99 +1608,111 @@ func normalizePlanAction(value string) string {
 }
 
 func parseHistoryArgs(args []string, overrides config.FlagOverrides) (historyRequest, error) {
-	const usage = "codog history [SESSION|LIMIT] [--session ID] [--limit N] [--offset N] [--json|--output-format text|json]"
-	req := historyRequest{Format: "text", Limit: prompthistory.DefaultLimit}
+	parser := historyArgParser{req: historyRequest{Format: "text", Limit: prompthistory.DefaultLimit}}
 	if overrides.Resume != "" {
-		req.SessionID = overrides.Resume
-		if req.SessionID == "true" {
-			req.SessionID = "latest"
+		parser.req.SessionID = overrides.Resume
+		if parser.req.SessionID == "true" {
+			parser.req.SessionID = "latest"
 		}
 	}
-	if req.SessionID == "" {
-		req.SessionID = overrides.SessionID
+	if parser.req.SessionID == "" {
+		parser.req.SessionID = overrides.SessionID
 	}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "history", Flag: arg, Usage: usage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--limit" || arg == "-n":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "history", Flag: arg, Usage: usage}
-			}
-			limit, err := parsePositiveIntOption(args[index], "--limit", usage)
-			if err != nil {
-				return req, err
-			}
-			req.Limit = limit
-		case strings.HasPrefix(arg, "--limit="):
-			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
-			if err != nil {
-				return req, err
-			}
-			req.Limit = limit
-		case arg == "--offset":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "history", Flag: arg, Usage: usage}
-			}
-			offset, err := parseNonNegativeIntOption(args[index], "--offset", usage)
-			if err != nil {
-				return req, err
-			}
-			req.Offset = offset
-			req.UseOffset = true
-		case strings.HasPrefix(arg, "--offset="):
-			offset, err := parseNonNegativeIntOption(strings.TrimPrefix(arg, "--offset="), "--offset", usage)
-			if err != nil {
-				return req, err
-			}
-			req.Offset = offset
-			req.UseOffset = true
-		case arg == "--session":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "history", Flag: arg, Usage: usage}
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--session="):
-			req.SessionID = strings.TrimPrefix(arg, "--session=")
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{Command: "history", Option: arg, Usage: usage}
-		default:
-			limit, err := strconv.Atoi(arg)
-			if err == nil {
-				if limit <= 0 {
-					return req, invalidFlagValueError{Flag: "LIMIT", Value: arg, Message: "history limit must be positive", Usage: usage}
-				}
-				req.Limit = limit
-				continue
-			}
-			if req.SessionID == "" || session.IsSessionReferenceAlias(req.SessionID) {
-				req.SessionID = arg
-				continue
-			}
-			return req, unexpectedExtraArgsError{Command: "history", Args: []string{arg}, Usage: usage}
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "history", Option: arg, Usage: historyUsage}
+		}
+		if err := parser.consumePositional(arg); err != nil {
+			return parser.req, err
 		}
 	}
-	normalizedFormat, err := normalizeOutputFormat("history", req.Format, []string{"text", "json"})
+	normalizedFormat, err := normalizeOutputFormat("history", parser.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = normalizedFormat
-	if strings.TrimSpace(req.SessionID) == "" {
-		req.SessionID = "latest"
+	parser.req.Format = normalizedFormat
+	if strings.TrimSpace(parser.req.SessionID) == "" {
+		parser.req.SessionID = "latest"
 	}
-	return req, nil
+	return parser.req, nil
+}
+
+const historyUsage = "codog history [SESSION|LIMIT] [--session ID] [--limit N] [--offset N] [--json|--output-format text|json]"
+
+type historyArgParser struct {
+	req historyRequest
+}
+
+func (p *historyArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format),
+		"-o":              p.stringOption(&p.req.Format),
+		"--limit":         p.limitOption(),
+		"-n":              p.limitOption(),
+		"--offset":        p.offsetOption(),
+		"--session":       p.stringOption(&p.req.SessionID),
+	}
+}
+
+func (p *historyArgParser) stringOption(target *string) valueOption {
+	return valueOption{missing: historyMissingValue, rejectEmptySeparate: true, rejectOutputFormat: true, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func (p *historyArgParser) limitOption() valueOption {
+	return valueOption{missing: historyMissingValue, rejectEmptySeparate: true, rejectOutputFormat: true, set: func(value string) error {
+		limit, err := parsePositiveIntOption(value, "--limit", historyUsage)
+		if err != nil {
+			return err
+		}
+		p.req.Limit = limit
+		return nil
+	}}
+}
+
+func (p *historyArgParser) offsetOption() valueOption {
+	return valueOption{missing: historyMissingValue, rejectEmptySeparate: true, rejectOutputFormat: true, set: func(value string) error {
+		offset, err := parseNonNegativeIntOption(value, "--offset", historyUsage)
+		if err != nil {
+			return err
+		}
+		p.req.Offset, p.req.UseOffset = offset, true
+		return nil
+	}}
+}
+
+func historyMissingValue(flag string) error {
+	return missingFlagValueError{Command: "history", Flag: flag, Usage: historyUsage}
+}
+
+func (p *historyArgParser) consumePositional(arg string) error {
+	limit, err := strconv.Atoi(arg)
+	if err == nil {
+		if limit <= 0 {
+			return invalidFlagValueError{Flag: "LIMIT", Value: arg, Message: "history limit must be positive", Usage: historyUsage}
+		}
+		p.req.Limit = limit
+		return nil
+	}
+	if p.req.SessionID == "" || session.IsSessionReferenceAlias(p.req.SessionID) {
+		p.req.SessionID = arg
+		return nil
+	}
+	return unexpectedExtraArgsError{Command: "history", Args: []string{arg}, Usage: historyUsage}
 }
 
 func parseSummaryArgs(args []string, overrides config.FlagOverrides) (summaryRequest, error) {
@@ -1766,86 +1778,97 @@ func parseSummaryArgs(args []string, overrides config.FlagOverrides) (summaryReq
 }
 
 func parseRewindArgs(args []string, overrides config.FlagOverrides, defaultSession string) (rewindRequest, error) {
-	const usage = "codog rewind [SESSION|COUNT] [--session ID|--resume ID] [--messages N] [--json|--output-format text|json]"
-	req := rewindRequest{Format: "text", Messages: 2, SessionID: defaultSession}
+	parser := rewindArgParser{req: rewindRequest{Format: "text", Messages: 2, SessionID: defaultSession}}
 	if overrides.Resume != "" {
-		req.SessionID = overrides.Resume
-		if req.SessionID == "true" {
-			req.SessionID = "latest"
+		parser.req.SessionID = overrides.Resume
+		if parser.req.SessionID == "true" {
+			parser.req.SessionID = "latest"
 		}
 	}
-	if req.SessionID == "" {
-		req.SessionID = overrides.SessionID
+	if parser.req.SessionID == "" {
+		parser.req.SessionID = overrides.SessionID
 	}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "rewind", Flag: arg, Usage: usage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--session":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "rewind", Flag: arg, Usage: usage}
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--session="):
-			req.SessionID = strings.TrimPrefix(arg, "--session=")
-		case arg == "--resume":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "rewind", Flag: arg, Usage: usage}
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--resume="):
-			req.SessionID = strings.TrimPrefix(arg, "--resume=")
-		case arg == "--messages" || arg == "-n":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "rewind", Flag: arg, Usage: usage}
-			}
-			count, err := parsePositiveIntOption(args[index], "--messages", usage)
-			if err != nil {
-				return req, err
-			}
-			req.Messages = count
-		case strings.HasPrefix(arg, "--messages="):
-			count, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--messages="), "--messages", usage)
-			if err != nil {
-				return req, err
-			}
-			req.Messages = count
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{Command: "rewind", Option: arg, Usage: usage}
-		default:
-			count, err := strconv.Atoi(arg)
-			if err == nil {
-				if count <= 0 {
-					return req, invalidFlagValueError{Flag: "COUNT", Value: arg, Message: "rewind message count must be positive", Usage: usage}
-				}
-				req.Messages = count
-				continue
-			}
-			if req.SessionID == "" || session.IsSessionReferenceAlias(req.SessionID) {
-				req.SessionID = arg
-				continue
-			}
-			return req, unexpectedExtraArgsError{Command: "rewind", Args: []string{arg}, Usage: usage}
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "rewind", Option: arg, Usage: rewindUsage}
+		}
+		if err := parser.consumePositional(arg); err != nil {
+			return parser.req, err
 		}
 	}
-	normalizedFormat, err := normalizeOutputFormat("rewind", req.Format, []string{"text", "json"})
+	normalizedFormat, err := normalizeOutputFormat("rewind", parser.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = normalizedFormat
-	return req, nil
+	parser.req.Format = normalizedFormat
+	return parser.req, nil
+}
+
+const rewindUsage = "codog rewind [SESSION|COUNT] [--session ID|--resume ID] [--messages N] [--json|--output-format text|json]"
+
+type rewindArgParser struct {
+	req rewindRequest
+}
+
+func (p *rewindArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format),
+		"-o":              p.stringOption(&p.req.Format),
+		"--session":       p.stringOption(&p.req.SessionID),
+		"--resume":        p.stringOption(&p.req.SessionID),
+		"--messages":      p.messagesOption(),
+		"-n":              p.messagesOption(),
+	}
+}
+
+func (p *rewindArgParser) stringOption(target *string) valueOption {
+	return valueOption{missing: rewindMissingValue, rejectEmptySeparate: true, rejectOutputFormat: true, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func (p *rewindArgParser) messagesOption() valueOption {
+	return valueOption{missing: rewindMissingValue, rejectEmptySeparate: true, rejectOutputFormat: true, set: func(value string) error {
+		count, err := parsePositiveIntOption(value, "--messages", rewindUsage)
+		if err != nil {
+			return err
+		}
+		p.req.Messages = count
+		return nil
+	}}
+}
+
+func rewindMissingValue(flag string) error {
+	return missingFlagValueError{Command: "rewind", Flag: flag, Usage: rewindUsage}
+}
+
+func (p *rewindArgParser) consumePositional(arg string) error {
+	count, err := strconv.Atoi(arg)
+	if err == nil {
+		if count <= 0 {
+			return invalidFlagValueError{Flag: "COUNT", Value: arg, Message: "rewind message count must be positive", Usage: rewindUsage}
+		}
+		p.req.Messages = count
+		return nil
+	}
+	if p.req.SessionID == "" || session.IsSessionReferenceAlias(p.req.SessionID) {
+		p.req.SessionID = arg
+		return nil
+	}
+	return unexpectedExtraArgsError{Command: "rewind", Args: []string{arg}, Usage: rewindUsage}
 }
 
 func parseFilesArgs(args []string) (filesRequest, error) {
@@ -3236,74 +3259,90 @@ func parseCodeIntelNotebookReadArgs(args []string) (codeIntelNotebookReadRequest
 	if err != nil {
 		return codeIntelNotebookReadRequest{}, err
 	}
-	req := codeIntelNotebookReadRequest{Format: format, Limit: 100}
-	positionals := []string{}
+	parser := notebookReadArgParser{req: codeIntelNotebookReadRequest{Format: format, Limit: 100}}
 	for index := 0; index < len(rest); index++ {
 		arg := rest[index]
-		switch {
-		case arg == "--cell-index" || arg == "--index":
-			index++
-			if index >= len(rest) {
-				return req, errors.New("notebook-read cell index is required")
-			}
-			parsed, err := parseNonNegativeInt(rest[index], "notebook-read cell index")
-			if err != nil {
-				return req, err
-			}
-			req.CellIndex = &parsed
-		case strings.HasPrefix(arg, "--cell-index="):
-			parsed, err := parseNonNegativeInt(strings.TrimPrefix(arg, "--cell-index="), "notebook-read cell index")
-			if err != nil {
-				return req, err
-			}
-			req.CellIndex = &parsed
-		case strings.HasPrefix(arg, "--index="):
-			parsed, err := parseNonNegativeInt(strings.TrimPrefix(arg, "--index="), "notebook-read cell index")
-			if err != nil {
-				return req, err
-			}
-			req.CellIndex = &parsed
-		case arg == "--limit":
-			index++
-			if index >= len(rest) {
-				return req, errors.New("notebook-read limit is required")
-			}
-			parsed, err := parsePositiveInt(rest[index], "notebook-read limit")
-			if err != nil {
-				return req, err
-			}
-			req.Limit = parsed
-		case strings.HasPrefix(arg, "--limit="):
-			parsed, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), "notebook-read limit")
-			if err != nil {
-				return req, err
-			}
-			req.Limit = parsed
-		case arg == "--include-outputs" || arg == "--outputs":
-			req.IncludeOutputs = true
-		case arg == "--no-outputs":
-			req.IncludeOutputs = false
-		case strings.HasPrefix(arg, "--include-outputs="):
-			parsed, err := strconv.ParseBool(strings.TrimPrefix(arg, "--include-outputs="))
-			if err != nil {
-				return req, fmt.Errorf("notebook-read include outputs must be a boolean")
-			}
-			req.IncludeOutputs = parsed
-		case strings.HasPrefix(arg, "--outputs="):
-			parsed, err := strconv.ParseBool(strings.TrimPrefix(arg, "--outputs="))
-			if err != nil {
-				return req, fmt.Errorf("notebook-read outputs must be a boolean")
-			}
-			req.IncludeOutputs = parsed
-		default:
-			positionals = append(positionals, arg)
+		handled, err := parser.consumeOutputOption(arg)
+		if err != nil {
+			return parser.req, err
 		}
+		if handled {
+			continue
+		}
+		handled, err = consumeValueOption(rest, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		parser.positionals = append(parser.positionals, arg)
 	}
-	if len(positionals) != 1 {
-		return req, errors.New("usage: codog code-intel notebook-read NOTEBOOK [--cell-index N] [--limit N] [--include-outputs] [--json]")
+	if len(parser.positionals) != 1 {
+		return parser.req, errors.New("usage: codog code-intel notebook-read NOTEBOOK [--cell-index N] [--limit N] [--include-outputs] [--json]")
 	}
-	req.NotebookPath = positionals[0]
-	return req, nil
+	parser.req.NotebookPath = parser.positionals[0]
+	return parser.req, nil
+}
+
+type notebookReadArgParser struct {
+	req         codeIntelNotebookReadRequest
+	positionals []string
+}
+
+func (p *notebookReadArgParser) consumeOutputOption(arg string) (bool, error) {
+	switch arg {
+	case "--include-outputs", "--outputs":
+		p.req.IncludeOutputs = true
+		return true, nil
+	case "--no-outputs":
+		p.req.IncludeOutputs = false
+		return true, nil
+	}
+	name, value, inline := strings.Cut(arg, "=")
+	if !inline || name != "--include-outputs" && name != "--outputs" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		label := "include outputs"
+		if name == "--outputs" {
+			label = "outputs"
+		}
+		return true, fmt.Errorf("notebook-read %s must be a boolean", label)
+	}
+	p.req.IncludeOutputs = parsed
+	return true, nil
+}
+
+func (p *notebookReadArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--cell-index": p.cellIndexOption(),
+		"--index":      p.cellIndexOption(),
+		"--limit":      p.limitOption(),
+	}
+}
+
+func (p *notebookReadArgParser) cellIndexOption() valueOption {
+	return valueOption{missing: func(string) error { return errors.New("notebook-read cell index is required") }, set: func(value string) error {
+		parsed, err := parseNonNegativeInt(value, "notebook-read cell index")
+		if err != nil {
+			return err
+		}
+		p.req.CellIndex = &parsed
+		return nil
+	}}
+}
+
+func (p *notebookReadArgParser) limitOption() valueOption {
+	return valueOption{missing: func(string) error { return errors.New("notebook-read limit is required") }, set: func(value string) error {
+		parsed, err := parsePositiveInt(value, "notebook-read limit")
+		if err != nil {
+			return err
+		}
+		p.req.Limit = parsed
+		return nil
+	}}
 }
 
 func parseCodeIntelNotebookEditArgs(args []string) (codeIntelNotebookEditRequest, error) {
@@ -3311,109 +3350,88 @@ func parseCodeIntelNotebookEditArgs(args []string) (codeIntelNotebookEditRequest
 	if err != nil {
 		return codeIntelNotebookEditRequest{}, err
 	}
-	req := codeIntelNotebookEditRequest{Format: format, Mode: "replace"}
-	positionals := []string{}
+	parser := notebookEditArgParser{req: codeIntelNotebookEditRequest{Format: format, Mode: "replace"}}
 	for index := 0; index < len(rest); index++ {
 		arg := rest[index]
-		switch {
-		case arg == "--mode" || arg == "--edit-mode":
-			index++
-			if index >= len(rest) {
-				return req, errors.New("notebook-edit mode is required")
-			}
-			req.Mode = rest[index]
-		case strings.HasPrefix(arg, "--mode="):
-			req.Mode = strings.TrimPrefix(arg, "--mode=")
-		case strings.HasPrefix(arg, "--edit-mode="):
-			req.Mode = strings.TrimPrefix(arg, "--edit-mode=")
-		case arg == "--cell-index" || arg == "--index":
-			index++
-			if index >= len(rest) {
-				return req, errors.New("notebook-edit cell index is required")
-			}
-			parsed, err := parseNonNegativeInt(rest[index], "notebook-edit cell index")
-			if err != nil {
-				return req, err
-			}
-			req.CellIndex = &parsed
-		case strings.HasPrefix(arg, "--cell-index="):
-			parsed, err := parseNonNegativeInt(strings.TrimPrefix(arg, "--cell-index="), "notebook-edit cell index")
-			if err != nil {
-				return req, err
-			}
-			req.CellIndex = &parsed
-		case strings.HasPrefix(arg, "--index="):
-			parsed, err := parseNonNegativeInt(strings.TrimPrefix(arg, "--index="), "notebook-edit cell index")
-			if err != nil {
-				return req, err
-			}
-			req.CellIndex = &parsed
-		case arg == "--cell-id":
-			index++
-			if index >= len(rest) {
-				return req, errors.New("notebook-edit cell id is required")
-			}
-			req.CellID = rest[index]
-		case strings.HasPrefix(arg, "--cell-id="):
-			req.CellID = strings.TrimPrefix(arg, "--cell-id=")
-		case arg == "--cell-type" || arg == "--type":
-			index++
-			if index >= len(rest) {
-				return req, errors.New("notebook-edit cell type is required")
-			}
-			req.CellType = rest[index]
-		case strings.HasPrefix(arg, "--cell-type="):
-			req.CellType = strings.TrimPrefix(arg, "--cell-type=")
-		case strings.HasPrefix(arg, "--type="):
-			req.CellType = strings.TrimPrefix(arg, "--type=")
-		case arg == "--source" || arg == "--new-source" || arg == "--new_source":
-			index++
-			if index >= len(rest) {
-				return req, errors.New("notebook-edit source is required")
-			}
-			req.Source = rest[index]
-			req.SourceSet = true
-		case strings.HasPrefix(arg, "--source="):
-			req.Source = strings.TrimPrefix(arg, "--source=")
-			req.SourceSet = true
-		case strings.HasPrefix(arg, "--new-source="):
-			req.Source = strings.TrimPrefix(arg, "--new-source=")
-			req.SourceSet = true
-		case strings.HasPrefix(arg, "--new_source="):
-			req.Source = strings.TrimPrefix(arg, "--new_source=")
-			req.SourceSet = true
-		default:
-			positionals = append(positionals, arg)
-		}
-	}
-	if strings.TrimSpace(req.Mode) == "" {
-		req.Mode = "replace"
-	}
-	req.Mode = strings.ToLower(strings.TrimSpace(req.Mode))
-	if req.CellIndex != nil && strings.TrimSpace(req.CellID) != "" {
-		return req, errors.New("notebook-edit accepts either cell_index or cell_id, not both")
-	}
-	if len(positionals) >= 4 && req.CellIndex == nil && req.CellID == "" && req.CellType == "" && !req.SourceSet {
-		parsed, err := parseNonNegativeInt(positionals[1], "notebook-edit cell index")
+		handled, err := consumeValueOption(rest, &index, parser.valueOptions())
 		if err != nil {
-			return req, err
+			return parser.req, err
 		}
-		req.NotebookPath = positionals[0]
-		req.CellIndex = &parsed
-		req.CellType = positionals[2]
-		req.Source = strings.Join(positionals[3:], " ")
-		req.SourceSet = true
-		return validateCodeIntelNotebookEditRequest(req)
+		if handled {
+			continue
+		}
+		parser.positionals = append(parser.positionals, arg)
 	}
-	if len(positionals) == 0 {
-		return req, errors.New("usage: codog code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--json]")
+	return parser.finish()
+}
+
+type notebookEditArgParser struct {
+	req         codeIntelNotebookEditRequest
+	positionals []string
+}
+
+func (p *notebookEditArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--mode":       stringValueOption(&p.req.Mode, "notebook-edit mode is required"),
+		"--edit-mode":  stringValueOption(&p.req.Mode, "notebook-edit mode is required"),
+		"--cell-index": p.cellIndexOption(),
+		"--index":      p.cellIndexOption(),
+		"--cell-id":    stringValueOption(&p.req.CellID, "notebook-edit cell id is required"),
+		"--cell-type":  stringValueOption(&p.req.CellType, "notebook-edit cell type is required"),
+		"--type":       stringValueOption(&p.req.CellType, "notebook-edit cell type is required"),
+		"--source":     p.sourceOption(),
+		"--new-source": p.sourceOption(),
+		"--new_source": p.sourceOption(),
 	}
-	req.NotebookPath = positionals[0]
-	if len(positionals) > 1 && !req.SourceSet {
-		req.Source = strings.Join(positionals[1:], " ")
-		req.SourceSet = true
+}
+
+func (p *notebookEditArgParser) cellIndexOption() valueOption {
+	return valueOption{missing: func(string) error { return errors.New("notebook-edit cell index is required") }, set: func(value string) error {
+		parsed, err := parseNonNegativeInt(value, "notebook-edit cell index")
+		if err != nil {
+			return err
+		}
+		p.req.CellIndex = &parsed
+		return nil
+	}}
+}
+
+func (p *notebookEditArgParser) sourceOption() valueOption {
+	return valueOption{missing: func(string) error { return errors.New("notebook-edit source is required") }, set: func(value string) error {
+		p.req.Source, p.req.SourceSet = value, true
+		return nil
+	}}
+}
+
+func (p *notebookEditArgParser) finish() (codeIntelNotebookEditRequest, error) {
+	if strings.TrimSpace(p.req.Mode) == "" {
+		p.req.Mode = "replace"
 	}
-	return validateCodeIntelNotebookEditRequest(req)
+	p.req.Mode = strings.ToLower(strings.TrimSpace(p.req.Mode))
+	if p.req.CellIndex != nil && strings.TrimSpace(p.req.CellID) != "" {
+		return p.req, errors.New("notebook-edit accepts either cell_index or cell_id, not both")
+	}
+	if len(p.positionals) >= 4 && p.req.CellIndex == nil && p.req.CellID == "" && p.req.CellType == "" && !p.req.SourceSet {
+		parsed, err := parseNonNegativeInt(p.positionals[1], "notebook-edit cell index")
+		if err != nil {
+			return p.req, err
+		}
+		p.req.NotebookPath = p.positionals[0]
+		p.req.CellIndex = &parsed
+		p.req.CellType = p.positionals[2]
+		p.req.Source = strings.Join(p.positionals[3:], " ")
+		p.req.SourceSet = true
+		return validateCodeIntelNotebookEditRequest(p.req)
+	}
+	if len(p.positionals) == 0 {
+		return p.req, errors.New("usage: codog code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--json]")
+	}
+	p.req.NotebookPath = p.positionals[0]
+	if len(p.positionals) > 1 && !p.req.SourceSet {
+		p.req.Source = strings.Join(p.positionals[1:], " ")
+		p.req.SourceSet = true
+	}
+	return validateCodeIntelNotebookEditRequest(p.req)
 }
 
 func validateCodeIntelNotebookEditRequest(req codeIntelNotebookEditRequest) (codeIntelNotebookEditRequest, error) {
