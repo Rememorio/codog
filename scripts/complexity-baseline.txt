@@ -176,7 +176,6 @@ gocognit|internal/tui/views.go|renderCommandView|50
 gocognit|internal/tui/views.go|renderQuestionRequest|50
 gocognit|internal/tui/views.go|statusBarText|40
 gocognit|internal/workspaceops/workspaceops.go|(Service).Search|46
-gocyclo|internal/acpserver/server.go|handle|75
 gocyclo|internal/agent/diagnostics.go|parseBranchArgs|32
 gocyclo|internal/agent/flags.go|commandHelpSpecFor|116
 gocyclo|internal/agent/git.go|parseTrustArgs|32

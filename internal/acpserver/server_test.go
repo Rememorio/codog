@@ -14,6 +14,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestHandleRejectsUnknownNamespacedMethods(t *testing.T) {
+	for _, namespace := range []string{
+		"workspace",
+		"file",
+		"editor",
+		"bridge",
+		"diagnostics",
+		"code",
+		"notebook",
+		"lsp",
+		"background",
+		"agent-runs",
+		"mcp",
+		"session",
+		"sessions",
+		"unknown",
+	} {
+		t.Run(namespace, func(t *testing.T) {
+			method := namespace + "/unknown"
+			var out bytes.Buffer
+
+			stop, err := handle(context.Background(), &out, Handlers{}, Options{}, request{
+				ID:     json.RawMessage("1"),
+				Method: method,
+			})
+
+			require.NoError(t, err)
+			require.False(t, stop)
+			require.Contains(t, out.String(), `"code":-32601`)
+			require.Contains(t, out.String(), "method not found: "+method)
+		})
+	}
+}
+
 func TestServeHandlesACPRequests(t *testing.T) {
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,

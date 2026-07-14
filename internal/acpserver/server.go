@@ -589,12 +589,58 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return true, writeResult(out, req.ID, map[string]any{})
 	case "status":
 		return false, handleStatus(ctx, out, handlers, opts, req)
+	case "prompt":
+		return false, handlePrompt(ctx, out, handlers, req)
+	case "history":
+		return false, handleHistory(ctx, out, handlers, req)
+	}
+
+	namespace, _, _ := strings.Cut(req.Method, "/")
+	switch namespace {
+	case "workspace":
+		return handleWorkspaceMethod(ctx, out, handlers, opts, req)
+	case "file":
+		return handleFileMethod(ctx, out, handlers, req)
+	case "editor":
+		return handleEditorMethod(ctx, out, handlers, req)
+	case "bridge":
+		return handleBridgeMethod(ctx, out, handlers, req)
+	case "diagnostics":
+		return handleDiagnosticsMethod(ctx, out, handlers, req)
+	case "code":
+		return handleCodeMethod(ctx, out, handlers, req)
+	case "notebook":
+		return handleNotebookMethod(ctx, out, handlers, req)
+	case "lsp":
+		return handleLSPMethod(ctx, out, handlers, req)
+	case "background":
+		return handleBackgroundMethod(ctx, out, handlers, req)
+	case "agent-runs":
+		return handleAgentRunsMethod(ctx, out, handlers, req)
+	case "mcp":
+		return handleMCPMethod(ctx, out, handlers, req)
+	case "session", "sessions":
+		return handleSessionMethod(ctx, out, handlers, opts, req)
+	default:
+		return methodNotFound(out, req)
+	}
+}
+
+func handleWorkspaceMethod(ctx context.Context, out io.Writer, handlers Handlers, opts Options, req request) (bool, error) {
+	switch req.Method {
 	case "workspace/info":
 		return false, handleWorkspaceInfo(ctx, out, handlers, opts, req)
 	case "workspace/files":
 		return false, handleWorkspaceFiles(ctx, out, handlers, req)
 	case "workspace/search":
 		return false, handleWorkspaceSearch(ctx, out, handlers, req)
+	default:
+		return methodNotFound(out, req)
+	}
+}
+
+func handleFileMethod(ctx context.Context, out io.Writer, handlers Handlers, req request) (bool, error) {
+	switch req.Method {
 	case "file/read":
 		return false, handleFileRead(ctx, out, handlers, req)
 	case "file/write":
@@ -603,6 +649,13 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleFileEdit(ctx, out, handlers, req)
 	case "file/diff":
 		return false, handleFileDiff(ctx, out, handlers, req)
+	default:
+		return methodNotFound(out, req)
+	}
+}
+
+func handleEditorMethod(ctx context.Context, out io.Writer, handlers Handlers, req request) (bool, error) {
+	switch req.Method {
 	case "editor/identify":
 		return false, handleEditorIdentify(ctx, out, handlers, req)
 	case "editor/state":
@@ -611,14 +664,33 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleEditorOpen(ctx, out, handlers, req)
 	case "editor/selection":
 		return false, handleEditorSelection(ctx, out, handlers, req)
+	default:
+		return methodNotFound(out, req)
+	}
+}
+
+func handleBridgeMethod(ctx context.Context, out io.Writer, handlers Handlers, req request) (bool, error) {
+	switch req.Method {
 	case "bridge/faults/list":
 		return false, handleBridgeFaultsList(ctx, out, handlers, req)
 	case "bridge/faults/record":
 		return false, handleBridgeFaultsRecord(ctx, out, handlers, req)
 	case "bridge/faults/clear":
 		return false, handleBridgeFaultsClear(ctx, out, handlers, req)
-	case "diagnostics/go":
+	default:
+		return methodNotFound(out, req)
+	}
+}
+
+func handleDiagnosticsMethod(ctx context.Context, out io.Writer, handlers Handlers, req request) (bool, error) {
+	if req.Method == "diagnostics/go" {
 		return false, handleDiagnosticsGo(ctx, out, handlers, req)
+	}
+	return methodNotFound(out, req)
+}
+
+func handleCodeMethod(ctx context.Context, out io.Writer, handlers Handlers, req request) (bool, error) {
+	switch req.Method {
 	case "code/symbols":
 		return false, handleCodeSymbols(ctx, out, handlers, req)
 	case "code/references":
@@ -631,10 +703,24 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleCodeCompletion(ctx, out, handlers, req)
 	case "code/format":
 		return false, handleCodeFormat(ctx, out, handlers, req)
+	default:
+		return methodNotFound(out, req)
+	}
+}
+
+func handleNotebookMethod(ctx context.Context, out io.Writer, handlers Handlers, req request) (bool, error) {
+	switch req.Method {
 	case "notebook/read":
 		return false, handleNotebookRead(ctx, out, handlers, req)
 	case "notebook/edit":
 		return false, handleNotebookEdit(ctx, out, handlers, req)
+	default:
+		return methodNotFound(out, req)
+	}
+}
+
+func handleLSPMethod(ctx context.Context, out io.Writer, handlers Handlers, req request) (bool, error) {
+	switch req.Method {
 	case "lsp/actions":
 		return false, handleLSPActions(ctx, out, handlers, req)
 	case "lsp/discover":
@@ -649,6 +735,13 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleLSPStop(ctx, out, handlers, req)
 	case "lsp/query", "lsp/request":
 		return false, handleLSPQuery(ctx, out, handlers, req)
+	default:
+		return methodNotFound(out, req)
+	}
+}
+
+func handleBackgroundMethod(ctx context.Context, out io.Writer, handlers Handlers, req request) (bool, error) {
+	switch req.Method {
 	case "background/list":
 		return false, handleBackgroundList(ctx, out, handlers, req)
 	case "background/run":
@@ -671,6 +764,13 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleBackgroundSupervise(ctx, out, handlers, req)
 	case "background/watch":
 		return false, handleBackgroundWatch(ctx, out, handlers, req)
+	default:
+		return methodNotFound(out, req)
+	}
+}
+
+func handleAgentRunsMethod(ctx context.Context, out io.Writer, handlers Handlers, req request) (bool, error) {
+	switch req.Method {
 	case "agent-runs/list":
 		return false, handleAgentRunsList(ctx, out, handlers, req)
 	case "agent-runs/get", "agent-runs/status":
@@ -685,6 +785,13 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleAgentRunsStop(ctx, out, handlers, req)
 	case "agent-runs/prune":
 		return false, handleAgentRunsPrune(ctx, out, handlers, req)
+	default:
+		return methodNotFound(out, req)
+	}
+}
+
+func handleMCPMethod(ctx context.Context, out io.Writer, handlers Handlers, req request) (bool, error) {
+	switch req.Method {
 	case "mcp/list":
 		return false, handleMCPList(ctx, out, handlers, req)
 	case "mcp/show":
@@ -705,6 +812,13 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleMCPPrompts(ctx, out, handlers, req)
 	case "mcp/prompt":
 		return false, handleMCPPrompt(ctx, out, handlers, req)
+	default:
+		return methodNotFound(out, req)
+	}
+}
+
+func handleSessionMethod(ctx context.Context, out io.Writer, handlers Handlers, opts Options, req request) (bool, error) {
+	switch req.Method {
 	case "session/new", "session/create", "sessions/new":
 		return false, handleNewSession(ctx, out, handlers, opts, req)
 	case "session/open", "sessions/open":
@@ -729,11 +843,15 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleDeleteSession(ctx, out, handlers, req)
 	case "session/prune", "sessions/prune":
 		return false, handlePruneSessions(ctx, out, handlers, req)
-	case "prompt", "session/prompt":
+	case "session/prompt":
 		return false, handlePrompt(ctx, out, handlers, req)
 	default:
-		return false, writeError(out, req.ID, -32601, "method not found: "+req.Method)
+		return methodNotFound(out, req)
 	}
+}
+
+func methodNotFound(out io.Writer, req request) (bool, error) {
+	return false, writeError(out, req.ID, -32601, "method not found: "+req.Method)
 }
 
 func initializeResult(opts Options) map[string]any {
@@ -744,104 +862,35 @@ func initializeResult(opts Options) map[string]any {
 	return map[string]any{
 		"protocolVersion": "codog-acp-0.1",
 		"serverInfo":      map[string]any{"name": "codog", "version": version},
-		"capabilities": map[string]any{
-			"sessions": map[string]any{
-				"new":     true,
-				"open":    true,
-				"list":    true,
-				"get":     true,
-				"history": true,
-				"append":  true,
-				"rewind":  true,
-				"fork":    true,
-				"rename":  true,
-				"delete":  true,
-				"prune":   true,
-			},
-			"workspace": map[string]any{
-				"info":   true,
-				"files":  true,
-				"search": true,
-			},
-			"file": map[string]any{
-				"read":  true,
-				"write": true,
-				"edit":  true,
-				"diff":  true,
-			},
-			"editor": map[string]any{
-				"identify":  true,
-				"state":     true,
-				"open":      true,
-				"selection": true,
-			},
-			"bridge_faults": map[string]any{
-				"list":   true,
-				"record": true,
-				"clear":  true,
-			},
-			"diagnostics": map[string]any{
-				"go": true,
-			},
-			"code": map[string]any{
-				"symbols":    true,
-				"references": true,
-				"definition": true,
-				"hover":      true,
-				"completion": true,
-				"format":     true,
-			},
-			"notebook": map[string]any{
-				"read": true,
-				"edit": true,
-			},
-			"lsp": map[string]any{
-				"actions":  true,
-				"discover": true,
-				"list":     true,
-				"start":    true,
-				"status":   true,
-				"stop":     true,
-				"query":    true,
-			},
-			"background": map[string]any{
-				"list":      true,
-				"run":       true,
-				"get":       true,
-				"logs":      true,
-				"board":     true,
-				"heartbeat": true,
-				"stop":      true,
-				"restart":   true,
-				"prune":     true,
-				"supervise": true,
-				"watch":     true,
-			},
-			"agent_runs": map[string]any{
-				"list":      true,
-				"get":       true,
-				"logs":      true,
-				"board":     true,
-				"heartbeat": true,
-				"stop":      true,
-				"prune":     true,
-			},
-			"mcp": map[string]any{
-				"list":               true,
-				"show":               true,
-				"auth":               true,
-				"tools":              true,
-				"call":               true,
-				"resources":          true,
-				"resource_templates": true,
-				"read":               true,
-				"prompts":            true,
-				"prompt":             true,
-			},
-			"prompt": true,
-			"status": true,
-		},
+		"capabilities":    initializeCapabilities(),
 	}
+}
+
+func initializeCapabilities() map[string]any {
+	return map[string]any{
+		"sessions":      capabilitySet("new", "open", "list", "get", "history", "append", "rewind", "fork", "rename", "delete", "prune"),
+		"workspace":     capabilitySet("info", "files", "search"),
+		"file":          capabilitySet("read", "write", "edit", "diff"),
+		"editor":        capabilitySet("identify", "state", "open", "selection"),
+		"bridge_faults": capabilitySet("list", "record", "clear"),
+		"diagnostics":   capabilitySet("go"),
+		"code":          capabilitySet("symbols", "references", "definition", "hover", "completion", "format"),
+		"notebook":      capabilitySet("read", "edit"),
+		"lsp":           capabilitySet("actions", "discover", "list", "start", "status", "stop", "query"),
+		"background":    capabilitySet("list", "run", "get", "logs", "board", "heartbeat", "stop", "restart", "prune", "supervise", "watch"),
+		"agent_runs":    capabilitySet("list", "get", "logs", "board", "heartbeat", "stop", "prune"),
+		"mcp":           capabilitySet("list", "show", "auth", "tools", "call", "resources", "resource_templates", "read", "prompts", "prompt"),
+		"prompt":        true,
+		"status":        true,
+	}
+}
+
+func capabilitySet(names ...string) map[string]any {
+	capabilities := make(map[string]any, len(names))
+	for _, name := range names {
+		capabilities[name] = true
+	}
+	return capabilities
 }
 
 func handleStatus(ctx context.Context, out io.Writer, handlers Handlers, opts Options, req request) error {
