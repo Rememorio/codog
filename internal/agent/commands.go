@@ -3666,92 +3666,83 @@ func (a *App) PerfIssue(args []string) error {
 }
 
 func parsePerfIssueArgs(args []string) (perfIssueRequest, error) {
-	req := perfIssueRequest{Format: "text", Limit: 5}
-	const usage = "codog perf-issue [--limit N] [--token-threshold N] [--tool-threshold N] [--output PATH] [--write] [--output-format text|json]"
+	parser := perfIssueArgParser{req: perfIssueRequest{Format: "text", Limit: 5}}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "perf-issue", Flag: arg, Usage: usage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--limit":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "perf-issue", Flag: arg, Usage: usage}
-			}
-			limit, err := parsePositiveIntOption(args[index], "--limit", usage)
-			if err != nil {
-				return req, err
-			}
-			req.Limit = limit
-		case strings.HasPrefix(arg, "--limit="):
-			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
-			if err != nil {
-				return req, err
-			}
-			req.Limit = limit
-		case arg == "--token-threshold":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "perf-issue", Flag: arg, Usage: usage}
-			}
-			value, err := parsePositiveIntOption(args[index], "--token-threshold", usage)
-			if err != nil {
-				return req, err
-			}
-			req.TokenThreshold = value
-		case strings.HasPrefix(arg, "--token-threshold="):
-			value, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--token-threshold="), "--token-threshold", usage)
-			if err != nil {
-				return req, err
-			}
-			req.TokenThreshold = value
-		case arg == "--tool-threshold":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "perf-issue", Flag: arg, Usage: usage}
-			}
-			value, err := parsePositiveIntOption(args[index], "--tool-threshold", usage)
-			if err != nil {
-				return req, err
-			}
-			req.ToolThreshold = value
-		case strings.HasPrefix(arg, "--tool-threshold="):
-			value, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--tool-threshold="), "--tool-threshold", usage)
-			if err != nil {
-				return req, err
-			}
-			req.ToolThreshold = value
-		case arg == "--output":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "perf-issue", Flag: arg, Usage: usage}
-			}
-			req.Output = args[index]
-		case strings.HasPrefix(arg, "--output="):
-			req.Output = strings.TrimPrefix(arg, "--output=")
-		case arg == "--write":
-			req.Write = true
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return req, unknownOptionError{Command: "perf-issue", Option: arg, Usage: usage}
-			}
-			return req, unexpectedExtraArgsError{Command: "perf-issue", Args: []string{arg}, Usage: usage}
+		if parser.consumeBoolean(arg) {
+			continue
 		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "perf-issue", Option: arg, Usage: perfIssueUsage}
+		}
+		return parser.req, unexpectedExtraArgsError{Command: "perf-issue", Args: []string{arg}, Usage: perfIssueUsage}
 	}
-	normalizedFormat, err := normalizeOutputFormat("perf-issue", req.Format, []string{"text", "json"})
+	normalizedFormat, err := normalizeOutputFormat("perf-issue", parser.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = normalizedFormat
-	return req, nil
+	parser.req.Format = normalizedFormat
+	return parser.req, nil
+}
+
+const perfIssueUsage = "codog perf-issue [--limit N] [--token-threshold N] [--tool-threshold N] [--output PATH] [--write] [--output-format text|json]"
+
+type perfIssueArgParser struct {
+	req perfIssueRequest
+}
+
+func (p *perfIssueArgParser) consumeBoolean(arg string) bool {
+	switch arg {
+	case "--json":
+		p.req.Format = "json"
+	case "--write":
+		p.req.Write = true
+	default:
+		return false
+	}
+	return true
+}
+
+func (p *perfIssueArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format, false),
+		"-o":              p.stringOption(&p.req.Format, false),
+		"--limit":         p.positiveIntOption(&p.req.Limit, "--limit"),
+		"--token-threshold": p.positiveIntOption(
+			&p.req.TokenThreshold, "--token-threshold",
+		),
+		"--tool-threshold": p.positiveIntOption(&p.req.ToolThreshold, "--tool-threshold"),
+		"--output":         p.stringOption(&p.req.Output, true),
+	}
+}
+
+func (p *perfIssueArgParser) stringOption(target *string, rejectOutputFormat bool) valueOption {
+	return valueOption{missing: perfIssueMissingValue, rejectOutputFormat: rejectOutputFormat, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func (p *perfIssueArgParser) positiveIntOption(target *int, flag string) valueOption {
+	return valueOption{missing: perfIssueMissingValue, rejectOutputFormat: true, set: func(value string) error {
+		parsed, err := parsePositiveIntOption(value, flag, perfIssueUsage)
+		if err != nil {
+			return err
+		}
+		*target = parsed
+		return nil
+	}}
+}
+
+func perfIssueMissingValue(flag string) error {
+	return missingFlagValueError{Command: "perf-issue", Flag: flag, Usage: perfIssueUsage}
 }
 
 func (a *App) perfIssueOutputPath(output string, createdAt time.Time) string {

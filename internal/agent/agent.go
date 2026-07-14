@@ -3018,109 +3018,131 @@ func (a *App) SSH(ctx context.Context, args []string) error {
 }
 
 func parseSSHArgs(args []string) (sshRequest, error) {
-	req := sshRequest{Format: "text"}
-	positionals := []string{}
+	parser := sshArgParser{req: sshRequest{Format: "text"}}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "ssh", Flag: arg, Usage: sshUsage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--permission-mode":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "ssh", Flag: arg, Usage: sshUsage}
-			}
-			req.PermissionMode = strings.TrimSpace(args[index])
-		case strings.HasPrefix(arg, "--permission-mode="):
-			req.PermissionMode = strings.TrimSpace(strings.TrimPrefix(arg, "--permission-mode="))
-		case arg == "--plan-mode-required":
-			req.PlanModeRequired = true
-		case arg == "-c" || arg == "--continue":
-			req.ExtraArgs = append(req.ExtraArgs, "--continue")
-		case arg == "--resume":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "ssh", Flag: arg, Usage: sshUsage}
-			}
-			value := strings.TrimSpace(args[index])
-			if value == "" {
-				return req, missingFlagValueError{Command: "ssh", Flag: arg, Usage: sshUsage}
-			}
-			req.ExtraArgs = append(req.ExtraArgs, "--resume", value)
-		case strings.HasPrefix(arg, "--resume="):
-			value := strings.TrimSpace(strings.TrimPrefix(arg, "--resume="))
-			if value == "" {
-				return req, missingFlagValueError{Command: "ssh", Flag: "--resume", Usage: sshUsage}
-			}
-			req.ExtraArgs = append(req.ExtraArgs, "--resume", value)
-		case arg == "--model":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "ssh", Flag: arg, Usage: sshUsage}
-			}
-			value := strings.TrimSpace(args[index])
-			if value == "" {
-				return req, missingFlagValueError{Command: "ssh", Flag: arg, Usage: sshUsage}
-			}
-			req.ExtraArgs = append(req.ExtraArgs, "--model", value)
-		case strings.HasPrefix(arg, "--model="):
-			value := strings.TrimSpace(strings.TrimPrefix(arg, "--model="))
-			if value == "" {
-				return req, missingFlagValueError{Command: "ssh", Flag: "--model", Usage: sshUsage}
-			}
-			req.ExtraArgs = append(req.ExtraArgs, "--model", value)
-		case arg == "-p" || arg == "--print":
-			req.Print = true
-			if index+1 < len(args) && !strings.HasPrefix(args[index+1], "-") {
-				index++
-				req.Prompt = args[index]
-			}
-		case strings.HasPrefix(arg, "-p="):
-			req.Print = true
-			req.Prompt = strings.TrimPrefix(arg, "-p=")
-		case strings.HasPrefix(arg, "--print="):
-			req.Print = true
-			req.Prompt = strings.TrimPrefix(arg, "--print=")
-		case arg == "--dangerously-skip-permissions" || arg == "--skip-permissions":
-			req.DangerouslySkipPermissions = true
-		case arg == "--local":
-			req.Local = true
-		case arg == "--execute" || arg == "--run":
-			req.Execute = true
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return req, unknownOptionError{Command: "ssh", Option: arg, Usage: sshUsage}
-			}
-			positionals = append(positionals, arg)
+		if parser.consumeBoolean(arg) || parser.consumePrint(args, &index) {
+			continue
 		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "ssh", Option: arg, Usage: sshUsage}
+		}
+		parser.positionals = append(parser.positionals, arg)
 	}
-	if len(positionals) == 0 || strings.TrimSpace(positionals[0]) == "" {
-		return req, requiredArgumentError{Command: "ssh", Argument: "host", Usage: sshUsage}
+	if err := parser.finish(); err != nil {
+		return parser.req, err
 	}
-	if len(positionals) > 2 {
-		return req, unexpectedExtraArgsError{Command: "ssh", Args: positionals[2:], Usage: sshUsage}
+	return parser.req, nil
+}
+
+type sshArgParser struct {
+	req         sshRequest
+	positionals []string
+}
+
+func (p *sshArgParser) consumeBoolean(arg string) bool {
+	switch arg {
+	case "--json":
+		p.req.Format = "json"
+	case "--plan-mode-required":
+		p.req.PlanModeRequired = true
+	case "-c", "--continue":
+		p.req.ExtraArgs = append(p.req.ExtraArgs, "--continue")
+	case "--dangerously-skip-permissions", "--skip-permissions":
+		p.req.DangerouslySkipPermissions = true
+	case "--local":
+		p.req.Local = true
+	case "--execute", "--run":
+		p.req.Execute = true
+	default:
+		return false
 	}
-	req.Host = strings.TrimSpace(positionals[0])
-	if len(positionals) == 2 {
-		req.Directory = strings.TrimSpace(positionals[1])
+	return true
+}
+
+func (p *sshArgParser) consumePrint(args []string, index *int) bool {
+	arg := args[*index]
+	switch {
+	case arg == "-p" || arg == "--print":
+		p.req.Print = true
+		if *index+1 < len(args) && !strings.HasPrefix(args[*index+1], "-") {
+			(*index)++
+			p.req.Prompt = args[*index]
+		}
+		return true
+	case strings.HasPrefix(arg, "-p="):
+		p.req.Print, p.req.Prompt = true, strings.TrimPrefix(arg, "-p=")
+		return true
+	case strings.HasPrefix(arg, "--print="):
+		p.req.Print, p.req.Prompt = true, strings.TrimPrefix(arg, "--print=")
+		return true
+	default:
+		return false
 	}
-	if req.PermissionMode != "" && !validPermissionMode(req.PermissionMode) {
-		return req, fmt.Errorf("invalid --permission-mode %q; expected read-only, workspace-write, danger-full-access, prompt, or allow", req.PermissionMode)
+}
+
+func (p *sshArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format":   p.stringOption(&p.req.Format, false),
+		"-o":                p.stringOption(&p.req.Format, false),
+		"--permission-mode": p.stringOption(&p.req.PermissionMode, true),
+		"--resume":          p.forwardedOption("--resume"),
+		"--model":           p.forwardedOption("--model"),
 	}
-	normalizedFormat, err := normalizeOutputFormat("ssh", req.Format, []string{"text", "json"})
+}
+
+func (p *sshArgParser) stringOption(target *string, trim bool) valueOption {
+	return valueOption{missing: sshMissingValue, rejectEmptySeparate: true, rejectOutputFormat: true, set: func(value string) error {
+		if trim {
+			value = strings.TrimSpace(value)
+		}
+		*target = value
+		return nil
+	}}
+}
+
+func (p *sshArgParser) forwardedOption(name string) valueOption {
+	return valueOption{missing: sshMissingValue, rejectEmptySeparate: true, rejectOutputFormat: true, set: func(value string) error {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return sshMissingValue(name)
+		}
+		p.req.ExtraArgs = append(p.req.ExtraArgs, name, value)
+		return nil
+	}}
+}
+
+func sshMissingValue(flag string) error {
+	return missingFlagValueError{Command: "ssh", Flag: flag, Usage: sshUsage}
+}
+
+func (p *sshArgParser) finish() error {
+	if len(p.positionals) == 0 || strings.TrimSpace(p.positionals[0]) == "" {
+		return requiredArgumentError{Command: "ssh", Argument: "host", Usage: sshUsage}
+	}
+	if len(p.positionals) > 2 {
+		return unexpectedExtraArgsError{Command: "ssh", Args: p.positionals[2:], Usage: sshUsage}
+	}
+	p.req.Host = strings.TrimSpace(p.positionals[0])
+	if len(p.positionals) == 2 {
+		p.req.Directory = strings.TrimSpace(p.positionals[1])
+	}
+	if p.req.PermissionMode != "" && !validPermissionMode(p.req.PermissionMode) {
+		return fmt.Errorf("invalid --permission-mode %q; expected read-only, workspace-write, danger-full-access, prompt, or allow", p.req.PermissionMode)
+	}
+	normalizedFormat, err := normalizeOutputFormat("ssh", p.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return err
 	}
-	req.Format = normalizedFormat
-	return req, nil
+	p.req.Format = normalizedFormat
+	return nil
 }
 
 func (a *App) buildSSHReport(req sshRequest) sshReport {

@@ -1,8 +1,6 @@
 gocognit|internal/agent/acp.go|renderMemoryCommand|42
-gocognit|internal/agent/agent.go|parseSSHArgs|46
 gocognit|internal/agent/background.go|parseMarketplaceSourcesArgs|34
 gocognit|internal/agent/commands.go|parseCompactArgs|32
-gocognit|internal/agent/commands.go|parsePerfIssueArgs|45
 gocognit|internal/agent/commands.go|parseThinkBackArgs|35
 gocognit|internal/agent/commands.go|renderMCPListReport|34
 gocognit|internal/agent/commands_test.go|TestResumedSlashCLIContracts|36
@@ -13,8 +11,6 @@ gocognit|internal/agent/git.go|parseBranchLockArgs|32
 gocognit|internal/agent/git.go|parseCopyArgs|31
 gocognit|internal/agent/git.go|parseG004ConformanceArgs|31
 gocognit|internal/agent/git.go|parseGenerateSessionNameArgs|36
-gocognit|internal/agent/git.go|parseGreenContractArgs|46
-gocognit|internal/agent/git.go|parseReportSchemaArgs|45
 gocognit|internal/agent/git.go|parseStaleBaseArgs|31
 gocognit|internal/agent/git.go|parseTagArgs|35
 gocognit|internal/agent/git.go|renderReportSchemaReport|34

@@ -382,134 +382,129 @@ func (a *App) GreenContract(args []string) error {
 }
 
 func parseGreenContractArgs(args []string) (greenContractRequest, error) {
-	req := greenContractRequest{
+	parser := greenContractArgParser{req: greenContractRequest{
 		Format:        "text",
 		Action:        "check",
 		RequiredLevel: greencontract.LevelWorkspace,
 		ObservedLevel: greencontract.LevelTargetedTests,
-	}
-	var positionals []string
+	}}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			i++
-			if i >= len(args) {
-				return req, errors.New("green-contract output format is required")
-			}
-			req.Format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--required-level" || arg == "--required":
-			i++
-			if i >= len(args) {
-				return req, errors.New("green-contract required level is required")
-			}
-			req.RequiredLevel = args[i]
-		case strings.HasPrefix(arg, "--required-level="):
-			req.RequiredLevel = strings.TrimPrefix(arg, "--required-level=")
-		case strings.HasPrefix(arg, "--required="):
-			req.RequiredLevel = strings.TrimPrefix(arg, "--required=")
-		case arg == "--observed-level" || arg == "--observed" || arg == "--level":
-			i++
-			if i >= len(args) {
-				return req, errors.New("green-contract observed level is required")
-			}
-			req.ObservedLevel = args[i]
-		case strings.HasPrefix(arg, "--observed-level="):
-			req.ObservedLevel = strings.TrimPrefix(arg, "--observed-level=")
-		case strings.HasPrefix(arg, "--observed="):
-			req.ObservedLevel = strings.TrimPrefix(arg, "--observed=")
-		case strings.HasPrefix(arg, "--level="):
-			req.ObservedLevel = strings.TrimPrefix(arg, "--level=")
-		case arg == "--merge-ready":
-			req.MergeReady = true
-		case arg == "--test-command":
-			i++
-			if i >= len(args) {
-				return req, errors.New("green-contract test command is required")
-			}
-			req.TestCommands = append(req.TestCommands, greencontract.TestCommandProvenance{Command: args[i], ExitCode: 0})
-		case strings.HasPrefix(arg, "--test-command="):
-			req.TestCommands = append(req.TestCommands, greencontract.TestCommandProvenance{Command: strings.TrimPrefix(arg, "--test-command="), ExitCode: 0})
-		case arg == "--failed-test-command":
-			i++
-			if i >= len(args) {
-				return req, errors.New("green-contract failed test command is required")
-			}
-			req.TestCommands = append(req.TestCommands, greencontract.TestCommandProvenance{Command: args[i], ExitCode: 1})
-		case strings.HasPrefix(arg, "--failed-test-command="):
-			req.TestCommands = append(req.TestCommands, greencontract.TestCommandProvenance{Command: strings.TrimPrefix(arg, "--failed-test-command="), ExitCode: 1})
-		case arg == "--test-result":
-			i++
-			if i >= len(args) {
-				return req, errors.New("green-contract test result is required")
-			}
-			testCommand, err := parseGreenTestResult(args[i])
-			if err != nil {
-				return req, err
-			}
-			req.TestCommands = append(req.TestCommands, testCommand)
-		case strings.HasPrefix(arg, "--test-result="):
-			testCommand, err := parseGreenTestResult(strings.TrimPrefix(arg, "--test-result="))
-			if err != nil {
-				return req, err
-			}
-			req.TestCommands = append(req.TestCommands, testCommand)
-		case arg == "--base-branch-fresh" || arg == "--base-fresh":
-			req.BaseBranchFresh = true
-		case arg == "--recovery-context" || arg == "--recovery-attempt-context":
-			req.RecoveryAttemptContextRecorded = true
-		case arg == "--known-flake":
-			i++
-			if i >= len(args) {
-				return req, errors.New("green-contract known flake name is required")
-			}
-			req.KnownFlakes = append(req.KnownFlakes, greencontract.KnownFlake{TestName: args[i]})
-		case strings.HasPrefix(arg, "--known-flake="):
-			req.KnownFlakes = append(req.KnownFlakes, greencontract.KnownFlake{TestName: strings.TrimPrefix(arg, "--known-flake=")})
-		case arg == "--blocking-flake":
-			i++
-			if i >= len(args) {
-				return req, errors.New("green-contract blocking flake name is required")
-			}
-			req.KnownFlakes = append(req.KnownFlakes, greencontract.KnownFlake{TestName: args[i], BlocksGreen: true})
-		case strings.HasPrefix(arg, "--blocking-flake="):
-			req.KnownFlakes = append(req.KnownFlakes, greencontract.KnownFlake{TestName: strings.TrimPrefix(arg, "--blocking-flake="), BlocksGreen: true})
-		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown green-contract flag %q", arg)
-		default:
-			positionals = append(positionals, arg)
+		if parser.consumeBoolean(arg) {
+			continue
 		}
+		handled, err := consumeValueOption(args, &i, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, fmt.Errorf("unknown green-contract flag %q", arg)
+		}
+		parser.positionals = append(parser.positionals, arg)
 	}
-	normalized, err := normalizeTextOrJSON(req.Format, "green-contract")
+	if err := parser.finish(); err != nil {
+		return parser.req, err
+	}
+	return parser.req, nil
+}
+
+type greenContractArgParser struct {
+	req         greenContractRequest
+	positionals []string
+}
+
+func (p *greenContractArgParser) consumeBoolean(arg string) bool {
+	switch arg {
+	case "--json":
+		p.req.Format = "json"
+	case "--merge-ready":
+		p.req.MergeReady = true
+	case "--base-branch-fresh", "--base-fresh":
+		p.req.BaseBranchFresh = true
+	case "--recovery-context", "--recovery-attempt-context":
+		p.req.RecoveryAttemptContextRecorded = true
+	default:
+		return false
+	}
+	return true
+}
+
+func (p *greenContractArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format":       p.stringOption(&p.req.Format, "green-contract output format is required"),
+		"-o":                    p.stringOption(&p.req.Format, "green-contract output format is required"),
+		"--required-level":      p.stringOption(&p.req.RequiredLevel, "green-contract required level is required"),
+		"--required":            p.stringOption(&p.req.RequiredLevel, "green-contract required level is required"),
+		"--observed-level":      p.stringOption(&p.req.ObservedLevel, "green-contract observed level is required"),
+		"--observed":            p.stringOption(&p.req.ObservedLevel, "green-contract observed level is required"),
+		"--level":               p.stringOption(&p.req.ObservedLevel, "green-contract observed level is required"),
+		"--test-command":        p.testCommandOption(0, "green-contract test command is required"),
+		"--failed-test-command": p.testCommandOption(1, "green-contract failed test command is required"),
+		"--test-result":         p.testResultOption(),
+		"--known-flake":         p.flakeOption(false, "green-contract known flake name is required"),
+		"--blocking-flake":      p.flakeOption(true, "green-contract blocking flake name is required"),
+	}
+}
+
+func (p *greenContractArgParser) stringOption(target *string, message string) valueOption {
+	return stringValueOption(target, message)
+}
+
+func (p *greenContractArgParser) testCommandOption(exitCode int, message string) valueOption {
+	return valueOption{missing: func(string) error { return errors.New(message) }, set: func(value string) error {
+		p.req.TestCommands = append(p.req.TestCommands, greencontract.TestCommandProvenance{Command: value, ExitCode: exitCode})
+		return nil
+	}}
+}
+
+func (p *greenContractArgParser) testResultOption() valueOption {
+	return valueOption{missing: func(string) error { return errors.New("green-contract test result is required") }, set: func(value string) error {
+		testCommand, err := parseGreenTestResult(value)
+		if err != nil {
+			return err
+		}
+		p.req.TestCommands = append(p.req.TestCommands, testCommand)
+		return nil
+	}}
+}
+
+func (p *greenContractArgParser) flakeOption(blocking bool, message string) valueOption {
+	return valueOption{missing: func(string) error { return errors.New(message) }, set: func(value string) error {
+		p.req.KnownFlakes = append(p.req.KnownFlakes, greencontract.KnownFlake{TestName: value, BlocksGreen: blocking})
+		return nil
+	}}
+}
+
+func (p *greenContractArgParser) finish() error {
+	normalized, err := normalizeTextOrJSON(p.req.Format, "green-contract")
 	if err != nil {
-		return req, err
+		return err
 	}
-	req.Format = normalized
-	if len(positionals) > 0 {
-		action := strings.ToLower(strings.TrimSpace(positionals[0]))
+	p.req.Format = normalized
+	if len(p.positionals) > 0 {
+		action := strings.ToLower(strings.TrimSpace(p.positionals[0]))
 		if action == "check" || action == "status" || action == "verify" {
-			req.Action = "check"
-			positionals = positionals[1:]
+			p.req.Action = "check"
+			p.positionals = p.positionals[1:]
 		}
 	}
-	if len(positionals) > 0 {
-		return req, errors.New("usage: codog green-contract [check] [--merge-ready] [--required-level LEVEL] [--observed-level LEVEL] [--test-command COMMAND] [--test-result COMMAND=EXIT] [--base-branch-fresh] [--recovery-context] [--blocking-flake NAME] [--json|--output-format text|json]")
+	if len(p.positionals) > 0 {
+		return errors.New("usage: codog green-contract [check] [--merge-ready] [--required-level LEVEL] [--observed-level LEVEL] [--test-command COMMAND] [--test-result COMMAND=EXIT] [--base-branch-fresh] [--recovery-context] [--blocking-flake NAME] [--json|--output-format text|json]")
 	}
-	level, err := greencontract.NormalizeLevel(req.RequiredLevel)
+	level, err := greencontract.NormalizeLevel(p.req.RequiredLevel)
 	if err != nil {
-		return req, err
+		return err
 	}
-	req.RequiredLevel = level
-	level, err = greencontract.NormalizeLevel(req.ObservedLevel)
+	p.req.RequiredLevel = level
+	level, err = greencontract.NormalizeLevel(p.req.ObservedLevel)
 	if err != nil {
-		return req, err
+		return err
 	}
-	req.ObservedLevel = level
-	return req, nil
+	p.req.ObservedLevel = level
+	return nil
 }
 
 func parseGreenTestResult(value string) (greencontract.TestCommandProvenance, error) {
@@ -806,138 +801,124 @@ func (a *App) ReportSchema(args []string) error {
 }
 
 func parseReportSchemaArgs(args []string) (reportSchemaRequest, error) {
-	req := reportSchemaRequest{
+	parser := reportSchemaArgParser{req: reportSchemaRequest{
 		Format:         "text",
 		Action:         "registry",
 		View:           "default",
 		Consumer:       "codog",
 		SchemaVersions: []string{reportschema.SchemaV1},
 		MaxSensitivity: reportschema.SensitivityPublic,
-	}
-	var positionals []string
+	}}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			i++
-			if i >= len(args) {
-				return req, errors.New("report-schema output format is required")
-			}
-			req.Format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--input":
-			i++
-			if i >= len(args) {
-				return req, errors.New("report-schema input JSON is required")
-			}
-			req.Input = args[i]
-		case strings.HasPrefix(arg, "--input="):
-			req.Input = strings.TrimPrefix(arg, "--input=")
-		case arg == "--file" || arg == "-f":
-			i++
-			if i >= len(args) {
-				return req, errors.New("report-schema file is required")
-			}
-			req.File = args[i]
-		case strings.HasPrefix(arg, "--file="):
-			req.File = strings.TrimPrefix(arg, "--file=")
-		case arg == "--stdin":
-			req.Stdin = true
-		case arg == "--view":
-			i++
-			if i >= len(args) {
-				return req, errors.New("report-schema view is required")
-			}
-			req.View = args[i]
-		case strings.HasPrefix(arg, "--view="):
-			req.View = strings.TrimPrefix(arg, "--view=")
-		case arg == "--consumer":
-			i++
-			if i >= len(args) {
-				return req, errors.New("report-schema consumer is required")
-			}
-			req.Consumer = args[i]
-		case strings.HasPrefix(arg, "--consumer="):
-			req.Consumer = strings.TrimPrefix(arg, "--consumer=")
-		case arg == "--report":
-			i++
-			if i >= len(args) {
-				return req, errors.New("report-schema report id is required")
-			}
-			req.ReportIDs = append(req.ReportIDs, args[i])
-		case strings.HasPrefix(arg, "--report="):
-			req.ReportIDs = append(req.ReportIDs, strings.TrimPrefix(arg, "--report="))
-		case arg == "--schema-version":
-			i++
-			if i >= len(args) {
-				return req, errors.New("report-schema schema version is required")
-			}
-			req.SchemaVersions = appendSchemaVersion(req.SchemaVersions, args[i])
-			req.SchemaFilter = true
-		case strings.HasPrefix(arg, "--schema-version="):
-			req.SchemaVersions = appendSchemaVersion(req.SchemaVersions, strings.TrimPrefix(arg, "--schema-version="))
-			req.SchemaFilter = true
-		case arg == "--field-family":
-			i++
-			if i >= len(args) {
-				return req, errors.New("report-schema field family is required")
-			}
-			req.FieldFamilies = append(req.FieldFamilies, args[i])
-		case strings.HasPrefix(arg, "--field-family="):
-			req.FieldFamilies = append(req.FieldFamilies, strings.TrimPrefix(arg, "--field-family="))
-		case arg == "--max-sensitivity":
-			i++
-			if i >= len(args) {
-				return req, errors.New("report-schema max sensitivity is required")
-			}
-			req.MaxSensitivity = args[i]
-		case strings.HasPrefix(arg, "--max-sensitivity="):
-			req.MaxSensitivity = strings.TrimPrefix(arg, "--max-sensitivity=")
-		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown report-schema flag %q", arg)
-		default:
-			positionals = append(positionals, arg)
+		if parser.consumeBoolean(arg) {
+			continue
 		}
+		handled, err := consumeValueOption(args, &i, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, fmt.Errorf("unknown report-schema flag %q", arg)
+		}
+		parser.positionals = append(parser.positionals, arg)
 	}
-	normalized, err := normalizeTextOrJSON(req.Format, "report-schema")
+	if err := parser.finish(); err != nil {
+		return parser.req, err
+	}
+	return parser.req, nil
+}
+
+type reportSchemaArgParser struct {
+	req         reportSchemaRequest
+	positionals []string
+}
+
+func (p *reportSchemaArgParser) consumeBoolean(arg string) bool {
+	switch arg {
+	case "--json":
+		p.req.Format = "json"
+	case "--stdin":
+		p.req.Stdin = true
+	default:
+		return false
+	}
+	return true
+}
+
+func (p *reportSchemaArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format":  stringValueOption(&p.req.Format, "report-schema output format is required"),
+		"-o":               stringValueOption(&p.req.Format, "report-schema output format is required"),
+		"--input":          stringValueOption(&p.req.Input, "report-schema input JSON is required"),
+		"--file":           stringValueOption(&p.req.File, "report-schema file is required"),
+		"-f":               stringValueOption(&p.req.File, "report-schema file is required"),
+		"--view":           stringValueOption(&p.req.View, "report-schema view is required"),
+		"--consumer":       stringValueOption(&p.req.Consumer, "report-schema consumer is required"),
+		"--report":         p.appendOption(&p.req.ReportIDs, "report-schema report id is required"),
+		"--schema-version": p.schemaVersionOption(),
+		"--field-family":   p.appendOption(&p.req.FieldFamilies, "report-schema field family is required"),
+		"--max-sensitivity": stringValueOption(
+			&p.req.MaxSensitivity, "report-schema max sensitivity is required",
+		),
+	}
+}
+
+func (p *reportSchemaArgParser) appendOption(target *[]string, message string) valueOption {
+	return valueOption{missing: func(string) error { return errors.New(message) }, set: func(value string) error {
+		*target = append(*target, value)
+		return nil
+	}}
+}
+
+func (p *reportSchemaArgParser) schemaVersionOption() valueOption {
+	return valueOption{missing: func(string) error { return errors.New("report-schema schema version is required") }, set: func(value string) error {
+		p.req.SchemaVersions = appendSchemaVersion(p.req.SchemaVersions, value)
+		p.req.SchemaFilter = true
+		return nil
+	}}
+}
+
+func (p *reportSchemaArgParser) finish() error {
+	normalized, err := normalizeTextOrJSON(p.req.Format, "report-schema")
 	if err != nil {
-		return req, err
+		return err
 	}
-	req.Format = normalized
-	if len(positionals) > 0 {
-		action := strings.ToLower(strings.TrimSpace(positionals[0]))
+	p.req.Format = normalized
+	if len(p.positionals) > 0 {
+		action := strings.ToLower(strings.TrimSpace(p.positionals[0]))
 		switch action {
 		case "registry", "schema", "fields":
-			req.Action = "registry"
+			p.req.Action = "registry"
 		case "canonicalize", "canonicalise", "canonical":
-			req.Action = "canonicalize"
+			p.req.Action = "canonicalize"
 		case "project", "projection":
-			req.Action = "project"
+			p.req.Action = "project"
 		case "conformance", "consumer-conformance", "validate-consumer":
-			req.Action = "conformance"
+			p.req.Action = "conformance"
 		case "conformance-fixtures", "fixtures", "consumer-fixtures":
-			req.Action = "conformance-fixtures"
+			p.req.Action = "conformance-fixtures"
 		default:
-			return req, fmt.Errorf("unknown report-schema action %q", positionals[0])
+			return fmt.Errorf("unknown report-schema action %q", p.positionals[0])
 		}
-		positionals = positionals[1:]
+		p.positionals = p.positionals[1:]
 	}
-	if len(positionals) > 0 {
-		return req, errors.New("usage: codog report-schema [registry|canonicalize|project|conformance|conformance-fixtures] [--input JSON|--file PATH|--stdin] [--report ID] [--schema-version VERSION] [--consumer NAME] [--field-family NAME] [--max-sensitivity public|internal|operator_only|secret] [--output-format text|json]")
+	if len(p.positionals) > 0 {
+		return errors.New("usage: codog report-schema [registry|canonicalize|project|conformance|conformance-fixtures] [--input JSON|--file PATH|--stdin] [--report ID] [--schema-version VERSION] [--consumer NAME] [--field-family NAME] [--max-sensitivity public|internal|operator_only|secret] [--output-format text|json]")
 	}
-	if strings.TrimSpace(req.Input) != "" && strings.TrimSpace(req.File) != "" {
-		return req, errors.New("report-schema accepts only one of --input or --file")
+	if strings.TrimSpace(p.req.Input) != "" && strings.TrimSpace(p.req.File) != "" {
+		return errors.New("report-schema accepts only one of --input or --file")
 	}
-	if req.Stdin && (strings.TrimSpace(req.Input) != "" || strings.TrimSpace(req.File) != "") {
-		return req, errors.New("report-schema accepts --stdin only without --input or --file")
+	if p.req.Stdin && (strings.TrimSpace(p.req.Input) != "" || strings.TrimSpace(p.req.File) != "") {
+		return errors.New("report-schema accepts --stdin only without --input or --file")
 	}
-	if (req.Action == "canonicalize" || req.Action == "project" || req.Action == "conformance") && strings.TrimSpace(req.Input) == "" && strings.TrimSpace(req.File) == "" && !req.Stdin {
-		return req, errors.New("report-schema input is required for canonicalize, project, and conformance")
+	if (p.req.Action == "canonicalize" || p.req.Action == "project" || p.req.Action == "conformance") && strings.TrimSpace(p.req.Input) == "" && strings.TrimSpace(p.req.File) == "" && !p.req.Stdin {
+		return errors.New("report-schema input is required for canonicalize, project, and conformance")
 	}
-	return req, nil
+	return nil
 }
 
 func appendSchemaVersion(values []string, value string) []string {
