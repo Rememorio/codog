@@ -4,7 +4,6 @@ gocognit|internal/agent/agent.go|(*App).RemoteSetup|43
 gocognit|internal/agent/agent.go|parseRemoteEnvArgs|39
 gocognit|internal/agent/agent.go|parseRemoteSetupArgs|49
 gocognit|internal/agent/agent.go|parseSSHArgs|46
-gocognit|internal/agent/agent.go|parseServerArgs|57
 gocognit|internal/agent/background.go|parseMarketplaceSourcesArgs|34
 gocognit|internal/agent/commands.go|parseCompactArgs|32
 gocognit|internal/agent/commands.go|parsePerfIssueArgs|45
@@ -37,7 +36,6 @@ gocognit|internal/agent/prompt.go|parsePromptArgs|42
 gocognit|internal/agent/prompt.go|tuiSessionEntries|42
 gocognit|internal/agent/remote.go|(*App).Updater|47
 gocognit|internal/agent/remote.go|parseBackgroundHeartbeatArgs|41
-gocognit|internal/agent/remote.go|parseBackgroundRunArgs|58
 gocognit|internal/agent/remote.go|parseCronArgsWithDefault|37
 gocognit|internal/agent/remote.go|parseMobileHandoffArgs|39
 gocognit|internal/agent/resume.go|(*App).CodeIntelLSP|46
@@ -46,9 +44,7 @@ gocognit|internal/agent/resume.go|parseCodeIntelNotebookEditArgs|42
 gocognit|internal/agent/resume.go|parseCodeIntelNotebookReadArgs|34
 gocognit|internal/agent/resume.go|parseHistoryArgs|46
 gocognit|internal/agent/resume.go|parseRewindArgs|39
-gocognit|internal/agent/sessions.go|(*App).Commands|53
 gocognit|internal/agent/sessions.go|(*App).Skills|49
-gocognit|internal/agent/sessions.go|parseBookmarksArgs|53
 gocognit|internal/agent/sessions.go|parseConversationArgs|42
 gocognit|internal/anthropic/client.go|openAIMessagesFromAnthropic|68
 gocognit|internal/anthropic/client.go|parseOpenAIStream|53

@@ -1358,127 +1358,148 @@ func (a *App) Bookmarks(args []string, overrides config.FlagOverrides) error {
 }
 
 func parseBookmarksArgs(args []string, overrides config.FlagOverrides) (bookmarksRequest, error) {
+	parser := bookmarksArgParser{req: newBookmarksRequest(overrides)}
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		if parser.consumeBooleanOption(arg) {
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "bookmarks", Option: arg, Usage: bookmarksUsage}
+		}
+		parser.consumePositional(arg)
+	}
+	if err := validateBookmarksRequest(&parser.req, parser.positionals); err != nil {
+		return parser.req, err
+	}
+	return parser.req, nil
+}
+
+const bookmarksUsage = "codog bookmarks [list|add|show|delete|clear] [NAME|ID] [--session ID] [--message N|last] [--pr PR] [--json|--output-format text|json]"
+
+type bookmarksArgParser struct {
+	req         bookmarksRequest
+	positionals []string
+	actionSet   bool
+}
+
+func newBookmarksRequest(overrides config.FlagOverrides) bookmarksRequest {
 	req := bookmarksRequest{Action: "list", Format: "text", SessionID: "latest", MessageIndex: -1}
-	const usage = "codog bookmarks [list|add|show|delete|clear] [NAME|ID] [--session ID] [--message N|last] [--pr PR] [--json|--output-format text|json]"
 	if strings.TrimSpace(overrides.Resume) != "" {
 		req.SessionID = overrides.Resume
 	}
 	if strings.TrimSpace(overrides.SessionID) != "" {
 		req.SessionID = overrides.SessionID
 	}
-	positionals := []string{}
-	actionSet := false
-	for index := 0; index < len(args); index++ {
-		arg := strings.TrimSpace(args[index])
-		switch {
-		case arg == "":
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "bookmarks", Flag: arg, Usage: usage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--all":
-			req.All = true
-		case arg == "--session" || arg == "--resume":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "bookmarks", Flag: arg, Usage: usage}
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--session="):
-			req.SessionID = strings.TrimPrefix(arg, "--session=")
-		case strings.HasPrefix(arg, "--resume="):
-			req.SessionID = strings.TrimPrefix(arg, "--resume=")
-		case arg == "--message" || arg == "--message-index":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "bookmarks", Flag: arg, Usage: usage}
-			}
-			messageIndex, err := parseBookmarkMessageIndex(args[index], arg, usage)
-			if err != nil {
-				return req, err
-			}
-			req.MessageIndex = messageIndex
-		case strings.HasPrefix(arg, "--message="):
-			messageIndex, err := parseBookmarkMessageIndex(strings.TrimPrefix(arg, "--message="), "--message", usage)
-			if err != nil {
-				return req, err
-			}
-			req.MessageIndex = messageIndex
-		case strings.HasPrefix(arg, "--message-index="):
-			messageIndex, err := parseBookmarkMessageIndex(strings.TrimPrefix(arg, "--message-index="), "--message-index", usage)
-			if err != nil {
-				return req, err
-			}
-			req.MessageIndex = messageIndex
-		case arg == "--pr" || arg == "--pull-request":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "bookmarks", Flag: arg, Usage: usage}
-			}
-			req.PRRef = args[index]
-		case strings.HasPrefix(arg, "--pr="):
-			req.PRRef = strings.TrimPrefix(arg, "--pr=")
-		case strings.HasPrefix(arg, "--pull-request="):
-			req.PRRef = strings.TrimPrefix(arg, "--pull-request=")
-		case arg == "--note":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "bookmarks", Flag: arg, Usage: usage}
-			}
-			req.Note = args[index]
-		case strings.HasPrefix(arg, "--note="):
-			req.Note = strings.TrimPrefix(arg, "--note=")
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{
-				Command: "bookmarks",
-				Option:  arg,
-				Usage:   usage,
-			}
-		default:
-			if !actionSet && isBookmarksAction(arg) {
-				req.Action = normalizeBookmarksAction(arg)
-				actionSet = true
-				continue
-			}
-			positionals = append(positionals, arg)
-		}
+	return req
+}
+
+func (p *bookmarksArgParser) consumeBooleanOption(arg string) bool {
+	switch arg {
+	case "":
+		return true
+	case "--json":
+		p.req.Format = "json"
+		return true
+	case "--all":
+		p.req.All = true
+		return true
+	default:
+		return false
 	}
+}
+
+func (p *bookmarksArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format, false),
+		"-o":              p.stringOption(&p.req.Format, false),
+		"--session":       p.stringOption(&p.req.SessionID, true),
+		"--resume":        p.stringOption(&p.req.SessionID, true),
+		"--message":       p.messageOption("--message"),
+		"--message-index": p.messageOption("--message-index"),
+		"--pr":            p.stringOption(&p.req.PRRef, true),
+		"--pull-request":  p.stringOption(&p.req.PRRef, true),
+		"--note":          p.stringOption(&p.req.Note, true),
+	}
+}
+
+func (p *bookmarksArgParser) stringOption(target *string, rejectOutputFormat bool) valueOption {
+	return valueOption{
+		missing:            bookmarksMissingValueError,
+		rejectOutputFormat: rejectOutputFormat,
+		set: func(value string) error {
+			*target = value
+			return nil
+		},
+	}
+}
+
+func (p *bookmarksArgParser) messageOption(flag string) valueOption {
+	return valueOption{
+		missing:            bookmarksMissingValueError,
+		rejectOutputFormat: true,
+		set: func(value string) error {
+			messageIndex, err := parseBookmarkMessageIndex(value, flag, bookmarksUsage)
+			if err != nil {
+				return err
+			}
+			p.req.MessageIndex = messageIndex
+			return nil
+		},
+	}
+}
+
+func bookmarksMissingValueError(flag string) error {
+	return missingFlagValueError{Command: "bookmarks", Flag: flag, Usage: bookmarksUsage}
+}
+
+func (p *bookmarksArgParser) consumePositional(arg string) {
+	if !p.actionSet && isBookmarksAction(arg) {
+		p.req.Action = normalizeBookmarksAction(arg)
+		p.actionSet = true
+		return
+	}
+	p.positionals = append(p.positionals, arg)
+}
+
+func validateBookmarksRequest(req *bookmarksRequest, positionals []string) error {
 	normalizedFormat, err := normalizeOutputFormat("bookmarks", req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return err
 	}
 	req.Format = normalizedFormat
 	switch req.Action {
 	case "list", "clear":
 		if len(positionals) != 0 {
-			return req, unexpectedExtraArgsError{Command: "bookmarks " + req.Action, Args: positionals, Usage: usage}
+			return unexpectedExtraArgsError{Command: "bookmarks " + req.Action, Args: positionals, Usage: bookmarksUsage}
 		}
 	case "add":
 		if len(positionals) == 0 {
-			return req, requiredArgumentError{Command: "bookmarks add", Argument: "NAME", Usage: usage}
+			return requiredArgumentError{Command: "bookmarks add", Argument: "NAME", Usage: bookmarksUsage}
 		}
 		req.Name = strings.Join(positionals, " ")
 	case "show", "delete":
 		if len(positionals) != 1 {
 			if len(positionals) == 0 {
-				return req, requiredArgumentError{Command: "bookmarks " + req.Action, Argument: "ID_OR_NAME", Usage: usage}
+				return requiredArgumentError{Command: "bookmarks " + req.Action, Argument: "ID_OR_NAME", Usage: bookmarksUsage}
 			}
-			return req, unexpectedExtraArgsError{Command: "bookmarks " + req.Action, Args: positionals[1:], Usage: usage}
+			return unexpectedExtraArgsError{Command: "bookmarks " + req.Action, Args: positionals[1:], Usage: bookmarksUsage}
 		}
 		req.Ref = positionals[0]
 	default:
-		return req, unexpectedExtraArgsError{Command: "bookmarks", Args: []string{req.Action}, Usage: usage}
+		return unexpectedExtraArgsError{Command: "bookmarks", Args: []string{req.Action}, Usage: bookmarksUsage}
 	}
 	if strings.TrimSpace(req.SessionID) == "" {
 		req.SessionID = "latest"
 	}
-	return req, nil
+	return nil
 }
 
 func isBookmarksAction(value string) bool {
@@ -3746,121 +3767,21 @@ func (a *App) Commands(args []string) error {
 	}
 	switch action {
 	case "list":
-		format, err := parseSimpleOutputFormat("commands", rest)
-		if err != nil {
-			return err
-		}
-		return a.renderCommandsList(format)
+		return a.commandsList(rest)
 	case "search":
-		format, remaining, err := parseTemplateOutputArgs("commands search", rest)
-		if err != nil {
-			return err
-		}
-		query := strings.TrimSpace(strings.Join(remaining, " "))
-		if query == "" {
-			return renderMissingActionArgument(a.Out, "commands", "search", "query", "commands search requires a query", "Usage: codog commands search QUERY [--json|--output-format text|json].", format)
-		}
-		return a.renderCommandsListWithAction(format, "search", query)
+		return a.commandsSearch(rest)
 	case "audit":
 		return a.commandAudit(rest)
 	case "sources":
 		return a.commandSources(rest)
 	case "show":
-		format, remaining, err := parseTemplateOutputArgs("commands show", rest)
-		if err != nil {
-			return err
-		}
-		if len(remaining) == 0 {
-			return a.renderCommandsList(format)
-		}
-		if len(remaining) > 1 {
-			return renderCLIError(a.Out, unexpectedExtraArgsError{
-				Command: "commands show",
-				Args:    append([]string(nil), remaining[1:]...),
-				Usage:   "codog commands show [NAME] [--json|--output-format text|json]",
-			}, format)
-		}
-		command, err := a.findRuntimeCustomCommand(remaining[0])
-		if err != nil {
-			return err
-		}
-		if format == "json" {
-			data, _ := json.MarshalIndent(command, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		fmt.Fprint(a.Out, command.Body)
-		if !strings.HasSuffix(command.Body, "\n") {
-			fmt.Fprintln(a.Out)
-		}
+		return a.commandsShow(rest)
 	case "run":
-		format, remaining, err := parseTemplateOutputArgs("commands run", rest)
-		if err != nil {
-			return err
-		}
-		if len(remaining) < 1 {
-			return renderMissingActionArgument(a.Out, "commands", "run", "command_name", "commands run requires a command name", "Usage: codog commands run NAME [ARGS...] [--json|--output-format text|json]. Run `codog commands list` to see available commands.", format)
-		}
-		command, err := a.findRuntimeCustomCommand(remaining[0])
-		if err != nil {
-			return err
-		}
-		rendered := customcommands.Render(command, strings.Join(remaining[1:], " "))
-		if format == "json" {
-			data, _ := json.MarshalIndent(map[string]any{"kind": "command_run", "command": rendered}, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		fmt.Fprint(a.Out, rendered.Rendered)
-		if !strings.HasSuffix(rendered.Rendered, "\n") {
-			fmt.Fprintln(a.Out)
-		}
+		return a.commandsRun(rest)
 	case "install":
-		req, err := parseCommandInstallArgs(rest)
-		if err != nil {
-			if errors.Is(err, errCommandInstallMissingSource) {
-				return renderCommandInstallMissingSource(a.Out, req.Format)
-			}
-			return err
-		}
-		targetRoot, targetLabel, err := a.commandTargetRoot(req.Target)
-		if err != nil {
-			return err
-		}
-		report, err := customcommands.Install(req.Source, targetRoot, req.Name, targetLabel)
-		if err != nil {
-			return renderCommandLookupError(a.Out, "install", req.Source, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		fmt.Fprintln(a.Out, "Command Installed")
-		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
-		fmt.Fprintf(a.Out, "  Target           %s\n", report.Target)
-		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
+		return a.commandsInstall(rest)
 	case "uninstall":
-		req, err := parseCommandUninstallArgs(rest)
-		if err != nil {
-			if errors.Is(err, errCommandUninstallMissingName) {
-				return renderMissingActionArgument(a.Out, "commands", "uninstall", "command_name", "commands uninstall requires a command name", "Usage: codog commands uninstall NAME [--project|--user|--claude] [--json|--output-format text|json]. Run `codog commands list` to see installed commands.", req.Format)
-			}
-			return err
-		}
-		roots := a.commandUninstallRoots(req.Target)
-		report, err := customcommands.Uninstall(req.Name, roots)
-		if err != nil {
-			return renderCommandLookupError(a.Out, "uninstall", req.Name, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		fmt.Fprintln(a.Out, "Command Uninstalled")
-		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
-		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
+		return a.commandsUninstall(rest)
 	default:
 		_, format, err := stripJSONOnlyOutputFormat("commands", rest)
 		if err != nil {
@@ -3868,6 +3789,144 @@ func (a *App) Commands(args []string) error {
 		}
 		return renderUnsupportedCommandsAction(a.Out, action, format)
 	}
+}
+
+func (a *App) commandsList(args []string) error {
+	format, err := parseSimpleOutputFormat("commands", args)
+	if err != nil {
+		return err
+	}
+	return a.renderCommandsList(format)
+}
+
+func (a *App) commandsSearch(args []string) error {
+	format, remaining, err := parseTemplateOutputArgs("commands search", args)
+	if err != nil {
+		return err
+	}
+	query := strings.TrimSpace(strings.Join(remaining, " "))
+	if query == "" {
+		return renderMissingActionArgument(a.Out, "commands", "search", "query", "commands search requires a query", "Usage: codog commands search QUERY [--json|--output-format text|json].", format)
+	}
+	return a.renderCommandsListWithAction(format, "search", query)
+}
+
+func (a *App) commandsShow(args []string) error {
+	format, remaining, err := parseTemplateOutputArgs("commands show", args)
+	if err != nil {
+		return err
+	}
+	if len(remaining) == 0 {
+		return a.renderCommandsList(format)
+	}
+	if len(remaining) > 1 {
+		return renderCLIError(a.Out, unexpectedExtraArgsError{
+			Command: "commands show",
+			Args:    append([]string(nil), remaining[1:]...),
+			Usage:   "codog commands show [NAME] [--json|--output-format text|json]",
+		}, format)
+	}
+	command, err := a.findRuntimeCustomCommand(remaining[0])
+	if err != nil {
+		return err
+	}
+	return renderCustomCommand(a.Out, command, format)
+}
+
+func renderCustomCommand(out io.Writer, command customcommands.Command, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(command, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprint(out, command.Body)
+	if !strings.HasSuffix(command.Body, "\n") {
+		fmt.Fprintln(out)
+	}
+	return nil
+}
+
+func (a *App) commandsRun(args []string) error {
+	format, remaining, err := parseTemplateOutputArgs("commands run", args)
+	if err != nil {
+		return err
+	}
+	if len(remaining) < 1 {
+		return renderMissingActionArgument(a.Out, "commands", "run", "command_name", "commands run requires a command name", "Usage: codog commands run NAME [ARGS...] [--json|--output-format text|json]. Run `codog commands list` to see available commands.", format)
+	}
+	command, err := a.findRuntimeCustomCommand(remaining[0])
+	if err != nil {
+		return err
+	}
+	rendered := customcommands.Render(command, strings.Join(remaining[1:], " "))
+	if format == "json" {
+		data, _ := json.MarshalIndent(map[string]any{"kind": "command_run", "command": rendered}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprint(a.Out, rendered.Rendered)
+	if !strings.HasSuffix(rendered.Rendered, "\n") {
+		fmt.Fprintln(a.Out)
+	}
+	return nil
+}
+
+func (a *App) commandsInstall(args []string) error {
+	req, err := parseCommandInstallArgs(args)
+	if err != nil {
+		if errors.Is(err, errCommandInstallMissingSource) {
+			return renderCommandInstallMissingSource(a.Out, req.Format)
+		}
+		return err
+	}
+	targetRoot, targetLabel, err := a.commandTargetRoot(req.Target)
+	if err != nil {
+		return err
+	}
+	report, err := customcommands.Install(req.Source, targetRoot, req.Name, targetLabel)
+	if err != nil {
+		return renderCommandLookupError(a.Out, "install", req.Source, err, req.Format)
+	}
+	return renderCommandInstallReport(a.Out, report, req.Format)
+}
+
+func renderCommandInstallReport(out io.Writer, report customcommands.InstallReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Command Installed")
+	fmt.Fprintf(out, "  Name             %s\n", report.Name)
+	fmt.Fprintf(out, "  Target           %s\n", report.Target)
+	fmt.Fprintf(out, "  Path             %s\n", report.Path)
+	return nil
+}
+
+func (a *App) commandsUninstall(args []string) error {
+	req, err := parseCommandUninstallArgs(args)
+	if err != nil {
+		if errors.Is(err, errCommandUninstallMissingName) {
+			return renderMissingActionArgument(a.Out, "commands", "uninstall", "command_name", "commands uninstall requires a command name", "Usage: codog commands uninstall NAME [--project|--user|--claude] [--json|--output-format text|json]. Run `codog commands list` to see installed commands.", req.Format)
+		}
+		return err
+	}
+	report, err := customcommands.Uninstall(req.Name, a.commandUninstallRoots(req.Target))
+	if err != nil {
+		return renderCommandLookupError(a.Out, "uninstall", req.Name, err, req.Format)
+	}
+	return renderCommandUninstallReport(a.Out, report, req.Format)
+}
+
+func renderCommandUninstallReport(out io.Writer, report customcommands.UninstallReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Command Uninstalled")
+	fmt.Fprintf(out, "  Name             %s\n", report.Name)
+	fmt.Fprintf(out, "  Path             %s\n", report.Path)
 	return nil
 }
 

@@ -340,6 +340,53 @@ func TestServerArgsGenerateAuthTokenAndValidateOptions(t *testing.T) {
 	require.Contains(t, err.Error(), "non-negative integer")
 }
 
+func TestServerArgumentParserBoundaries(t *testing.T) {
+	req, err := parseServerArgs([]string{
+		"--host=127.0.0.1",
+		"--port", "8080",
+		"--auth-token= secret ",
+		"--workspace", "workspace",
+		"--idle-timeout=2500",
+		"--max-sessions", "0",
+		"--output-format=json",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "127.0.0.1", req.Host)
+	require.Equal(t, "8080", req.Port)
+	require.Equal(t, "secret", req.AuthToken)
+	require.Equal(t, "workspace", req.Workspace)
+	require.Equal(t, 2500, req.IdleTimeoutMS)
+	require.Zero(t, req.MaxSessions)
+	require.Equal(t, "json", req.Format)
+
+	req, err = parseServerArgs([]string{"--unix", "codog.sock", "-o", "text"})
+	require.NoError(t, err)
+	require.Equal(t, "codog.sock", req.Unix)
+
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{name: "missing host", args: []string{"--host"}},
+		{name: "missing port before output", args: []string{"--port", "--json"}},
+		{name: "missing auth token", args: []string{"--auth-token"}},
+		{name: "missing workspace", args: []string{"--workspace"}},
+		{name: "missing idle timeout", args: []string{"--idle-timeout"}},
+		{name: "invalid max sessions", args: []string{"--max-sessions=bad"}},
+		{name: "unknown option", args: []string{"--bogus"}},
+		{name: "unexpected positional", args: []string{"extra"}},
+		{name: "empty host", args: []string{"--host="}},
+		{name: "empty port", args: []string{"--port="}},
+		{name: "unix host conflict", args: []string{"--unix=codog.sock", "--host=localhost"}},
+		{name: "unknown format", args: []string{"--output-format=yaml"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parseServerArgs(test.args)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestOpenCommandConnectsAndSubmitsPrompt(t *testing.T) {
 	var sawSession bool
 	var sawPrompt bool

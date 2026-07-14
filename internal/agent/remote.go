@@ -3942,113 +3942,105 @@ func parseBackgroundOutputFormat(args []string, defaultFormat string) ([]string,
 }
 
 func parseBackgroundRunArgs(args []string) (string, background.RunOptions, error) {
-	var options background.RunOptions
-	var policy *background.RestartPolicy
-	for len(args) > 0 {
-		arg := args[0]
+	parser := backgroundRunArgParser{}
+	index := 0
+	for index < len(args) {
+		arg := args[index]
 		if arg == "--" {
-			args = args[1:]
+			index++
 			break
 		}
 		if arg == "--restart" {
-			policy = ensureRestartPolicy(policy)
-			args = args[1:]
+			parser.policy = ensureRestartPolicy(parser.policy)
+			index++
 			continue
 		}
-		if strings.HasPrefix(arg, "--restart=") {
-			policy = ensureRestartPolicy(policy)
-			mode := strings.TrimPrefix(arg, "--restart=")
-			if mode != "on-failure" && mode != "always" {
-				return "", options, errors.New("restart mode must be on-failure or always")
-			}
-			policy.Mode = mode
-			args = args[1:]
-			continue
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return "", parser.options, err
 		}
-		if arg == "--restart-limit" {
-			if len(args) < 2 {
-				return "", options, errors.New("missing value for --restart-limit")
-			}
-			limit, err := strconv.Atoi(args[1])
-			if err != nil {
-				return "", options, err
-			}
-			if limit < 0 {
-				return "", options, errors.New("restart limit must be non-negative")
-			}
-			policy = ensureRestartPolicy(policy)
-			policy.MaxAttempts = limit
-			args = args[2:]
-			continue
+		if !handled {
+			break
 		}
-		if arg == "--restart-delay" {
-			if len(args) < 2 {
-				return "", options, errors.New("missing value for --restart-delay")
-			}
-			delay, err := strconv.Atoi(args[1])
-			if err != nil {
-				return "", options, err
-			}
-			if delay < 0 {
-				return "", options, errors.New("restart delay must be non-negative")
-			}
-			policy = ensureRestartPolicy(policy)
-			policy.DelaySeconds = delay
-			args = args[2:]
-			continue
-		}
-		if arg == "--owner" {
-			if len(args) < 2 {
-				return "", options, errors.New("missing value for --owner")
-			}
-			options.ScopeBinding.Owner = args[1]
-			args = args[2:]
-			continue
-		}
-		if strings.HasPrefix(arg, "--owner=") {
-			options.ScopeBinding.Owner = strings.TrimPrefix(arg, "--owner=")
-			args = args[1:]
-			continue
-		}
-		if arg == "--workflow-scope" || arg == "--scope" {
-			if len(args) < 2 {
-				return "", options, fmt.Errorf("missing value for %s", arg)
-			}
-			options.ScopeBinding.WorkflowScope = args[1]
-			args = args[2:]
-			continue
-		}
-		if strings.HasPrefix(arg, "--workflow-scope=") {
-			options.ScopeBinding.WorkflowScope = strings.TrimPrefix(arg, "--workflow-scope=")
-			args = args[1:]
-			continue
-		}
-		if strings.HasPrefix(arg, "--scope=") {
-			options.ScopeBinding.WorkflowScope = strings.TrimPrefix(arg, "--scope=")
-			args = args[1:]
-			continue
-		}
-		if arg == "--watcher-action" {
-			if len(args) < 2 {
-				return "", options, errors.New("missing value for --watcher-action")
-			}
-			options.ScopeBinding.WatcherAction = args[1]
-			args = args[2:]
-			continue
-		}
-		if strings.HasPrefix(arg, "--watcher-action=") {
-			options.ScopeBinding.WatcherAction = strings.TrimPrefix(arg, "--watcher-action=")
-			args = args[1:]
-			continue
-		}
-		break
+		index++
 	}
-	command := strings.Join(args, " ")
+	command := strings.Join(args[index:], " ")
 	if strings.TrimSpace(command) == "" {
-		return "", options, errors.New("background command is required")
+		return "", parser.options, errors.New("background command is required")
 	}
-	options.RestartPolicy = policy
-	return command, options, nil
+	parser.options.RestartPolicy = parser.policy
+	return command, parser.options, nil
+}
+
+type backgroundRunArgParser struct {
+	options background.RunOptions
+	policy  *background.RestartPolicy
+}
+
+func (p *backgroundRunArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--restart":        {missing: backgroundRunMissingValue, set: p.setRestartMode},
+		"--restart-limit":  {missing: backgroundRunMissingValue, set: p.setRestartLimit},
+		"--restart-delay":  {missing: backgroundRunMissingValue, set: p.setRestartDelay},
+		"--owner":          {missing: backgroundRunMissingValue, set: p.setOwner},
+		"--workflow-scope": {missing: backgroundRunMissingValue, set: p.setWorkflowScope},
+		"--scope":          {missing: backgroundRunMissingValue, set: p.setWorkflowScope},
+		"--watcher-action": {missing: backgroundRunMissingValue, set: p.setWatcherAction},
+	}
+}
+
+func backgroundRunMissingValue(flag string) error {
+	return fmt.Errorf("missing value for %s", flag)
+}
+
+func (p *backgroundRunArgParser) setRestartMode(mode string) error {
+	if mode != "on-failure" && mode != "always" {
+		return errors.New("restart mode must be on-failure or always")
+	}
+	p.policy = ensureRestartPolicy(p.policy)
+	p.policy.Mode = mode
+	return nil
+}
+
+func (p *backgroundRunArgParser) setRestartLimit(value string) error {
+	limit, err := strconv.Atoi(value)
+	if err != nil {
+		return err
+	}
+	if limit < 0 {
+		return errors.New("restart limit must be non-negative")
+	}
+	p.policy = ensureRestartPolicy(p.policy)
+	p.policy.MaxAttempts = limit
+	return nil
+}
+
+func (p *backgroundRunArgParser) setRestartDelay(value string) error {
+	delay, err := strconv.Atoi(value)
+	if err != nil {
+		return err
+	}
+	if delay < 0 {
+		return errors.New("restart delay must be non-negative")
+	}
+	p.policy = ensureRestartPolicy(p.policy)
+	p.policy.DelaySeconds = delay
+	return nil
+}
+
+func (p *backgroundRunArgParser) setOwner(value string) error {
+	p.options.ScopeBinding.Owner = value
+	return nil
+}
+
+func (p *backgroundRunArgParser) setWorkflowScope(value string) error {
+	p.options.ScopeBinding.WorkflowScope = value
+	return nil
+}
+
+func (p *backgroundRunArgParser) setWatcherAction(value string) error {
+	p.options.ScopeBinding.WatcherAction = value
+	return nil
 }
 
 func ensureRestartPolicy(policy *background.RestartPolicy) *background.RestartPolicy {

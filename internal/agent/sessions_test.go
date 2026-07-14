@@ -1884,6 +1884,57 @@ func TestSlashCompletionCandidatesIncludeRuntimeContext(t *testing.T) {
 	require.NotContains(t, menu, "/permissions workspace-write")
 }
 
+func TestBookmarksArgumentParserBoundaries(t *testing.T) {
+	req, err := parseBookmarksArgs([]string{
+		"create", "release", "candidate",
+		"--resume=resume-session",
+		"--message-index=last",
+		"--pull-request", "owner/repo#42",
+		"--note=ready",
+		"--all",
+		"--output-format=json",
+	}, config.FlagOverrides{Resume: "override-resume", SessionID: "override-session"})
+	require.NoError(t, err)
+	require.Equal(t, "add", req.Action)
+	require.Equal(t, "release candidate", req.Name)
+	require.Equal(t, "resume-session", req.SessionID)
+	require.Equal(t, -1, req.MessageIndex)
+	require.Equal(t, "owner/repo#42", req.PRRef)
+	require.Equal(t, "ready", req.Note)
+	require.True(t, req.All)
+	require.Equal(t, "json", req.Format)
+
+	req, err = parseBookmarksArgs([]string{"jump", "checkpoint", "--session", ""}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "show", req.Action)
+	require.Equal(t, "checkpoint", req.Ref)
+	require.Equal(t, "latest", req.SessionID)
+
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{name: "list extra argument", args: []string{"list", "extra"}},
+		{name: "add missing name", args: []string{"add"}},
+		{name: "show missing ref", args: []string{"show"}},
+		{name: "delete extra ref", args: []string{"delete", "one", "two"}},
+		{name: "unknown action", args: []string{"unknown"}},
+		{name: "missing output format", args: []string{"-o"}},
+		{name: "missing session", args: []string{"--session"}},
+		{name: "missing message", args: []string{"--message"}},
+		{name: "invalid message", args: []string{"add", "name", "--message=0"}},
+		{name: "missing pull request", args: []string{"--pr"}},
+		{name: "missing note", args: []string{"--note"}},
+		{name: "unknown option", args: []string{"--bogus"}},
+		{name: "unknown format", args: []string{"--output-format=yaml"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parseBookmarksArgs(test.args, config.FlagOverrides{})
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestBookmarksCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

@@ -2561,123 +2561,110 @@ func (a *App) Server(ctx context.Context, args []string) error {
 }
 
 func parseServerArgs(args []string) (serverRequest, error) {
-	req := serverRequest{
+	parser := serverArgParser{req: serverRequest{
 		Host:          "0.0.0.0",
 		Port:          "0",
 		IdleTimeoutMS: 600000,
 		MaxSessions:   32,
 		Format:        "text",
-	}
+	}}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--host":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
-			}
-			req.Host = args[index]
-		case strings.HasPrefix(arg, "--host="):
-			req.Host = strings.TrimPrefix(arg, "--host=")
-		case arg == "--port":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
-			}
-			req.Port = args[index]
-		case strings.HasPrefix(arg, "--port="):
-			req.Port = strings.TrimPrefix(arg, "--port=")
-		case arg == "--auth-token":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
-			}
-			req.AuthToken = strings.TrimSpace(args[index])
-		case strings.HasPrefix(arg, "--auth-token="):
-			req.AuthToken = strings.TrimSpace(strings.TrimPrefix(arg, "--auth-token="))
-		case arg == "--unix":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
-			}
-			req.Unix = args[index]
-		case strings.HasPrefix(arg, "--unix="):
-			req.Unix = strings.TrimPrefix(arg, "--unix=")
-		case arg == "--workspace":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
-			}
-			req.Workspace = args[index]
-		case strings.HasPrefix(arg, "--workspace="):
-			req.Workspace = strings.TrimPrefix(arg, "--workspace=")
-		case arg == "--idle-timeout":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
-			}
-			value, err := parseNonNegativeServerInt("--idle-timeout", args[index])
-			if err != nil {
-				return req, err
-			}
-			req.IdleTimeoutMS = value
-		case strings.HasPrefix(arg, "--idle-timeout="):
-			value, err := parseNonNegativeServerInt("--idle-timeout", strings.TrimPrefix(arg, "--idle-timeout="))
-			if err != nil {
-				return req, err
-			}
-			req.IdleTimeoutMS = value
-		case arg == "--max-sessions":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "server", Flag: arg, Usage: serverUsage}
-			}
-			value, err := parseNonNegativeServerInt("--max-sessions", args[index])
-			if err != nil {
-				return req, err
-			}
-			req.MaxSessions = value
-		case strings.HasPrefix(arg, "--max-sessions="):
-			value, err := parseNonNegativeServerInt("--max-sessions", strings.TrimPrefix(arg, "--max-sessions="))
-			if err != nil {
-				return req, err
-			}
-			req.MaxSessions = value
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return req, unknownOptionError{Command: "server", Option: arg, Usage: serverUsage}
-			}
-			return req, unexpectedExtraArgsError{Command: "server", Args: []string{arg}, Usage: serverUsage}
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if !handled {
+			return parser.req, serverArgumentError(arg)
 		}
 	}
+	if err := validateServerRequest(&parser.req); err != nil {
+		return parser.req, err
+	}
+	return parser.req, nil
+}
+
+type serverArgParser struct {
+	req serverRequest
+}
+
+func (p *serverArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format, false, false),
+		"-o":              p.stringOption(&p.req.Format, false, false),
+		"--host":          p.stringOption(&p.req.Host, true, false),
+		"--port":          p.stringOption(&p.req.Port, true, false),
+		"--auth-token":    p.stringOption(&p.req.AuthToken, true, true),
+		"--unix":          p.stringOption(&p.req.Unix, true, false),
+		"--workspace":     p.stringOption(&p.req.Workspace, true, false),
+		"--idle-timeout":  p.numberOption("--idle-timeout", &p.req.IdleTimeoutMS),
+		"--max-sessions":  p.numberOption("--max-sessions", &p.req.MaxSessions),
+	}
+}
+
+func (p *serverArgParser) stringOption(target *string, rejectOutputFormat bool, trim bool) valueOption {
+	return valueOption{
+		missing:            serverMissingValueError,
+		rejectOutputFormat: rejectOutputFormat,
+		set: func(value string) error {
+			if trim {
+				value = strings.TrimSpace(value)
+			}
+			*target = value
+			return nil
+		},
+	}
+}
+
+func (p *serverArgParser) numberOption(flag string, target *int) valueOption {
+	return valueOption{
+		missing:            serverMissingValueError,
+		rejectOutputFormat: true,
+		set: func(value string) error {
+			parsed, err := parseNonNegativeServerInt(flag, value)
+			if err != nil {
+				return err
+			}
+			*target = parsed
+			return nil
+		},
+	}
+}
+
+func serverMissingValueError(flag string) error {
+	return missingFlagValueError{Command: "server", Flag: flag, Usage: serverUsage}
+}
+
+func serverArgumentError(arg string) error {
+	if strings.HasPrefix(arg, "-") {
+		return unknownOptionError{Command: "server", Option: arg, Usage: serverUsage}
+	}
+	return unexpectedExtraArgsError{Command: "server", Args: []string{arg}, Usage: serverUsage}
+}
+
+func validateServerRequest(req *serverRequest) error {
 	if strings.TrimSpace(req.Host) == "" {
-		return req, invalidFlagValueError{Flag: "--host", Value: req.Host, Message: "host must not be empty"}
+		return invalidFlagValueError{Flag: "--host", Value: req.Host, Message: "host must not be empty"}
 	}
 	if strings.TrimSpace(req.Port) == "" {
-		return req, invalidFlagValueError{Flag: "--port", Value: req.Port, Message: "port must not be empty"}
+		return invalidFlagValueError{Flag: "--port", Value: req.Port, Message: "port must not be empty"}
 	}
 	if _, err := strconv.Atoi(req.Port); err != nil {
-		return req, invalidFlagValueError{Flag: "--port", Value: req.Port, Message: "port must be an integer"}
+		return invalidFlagValueError{Flag: "--port", Value: req.Port, Message: "port must be an integer"}
 	}
 	if strings.TrimSpace(req.Unix) != "" && (req.Host != "0.0.0.0" || req.Port != "0") {
-		return req, invalidFlagValueError{Flag: "--unix", Value: req.Unix, Message: "--unix cannot be combined with --host or --port"}
+		return invalidFlagValueError{Flag: "--unix", Value: req.Unix, Message: "--unix cannot be combined with --host or --port"}
 	}
 	normalizedFormat, err := normalizeOutputFormat("server", req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return err
 	}
 	req.Format = normalizedFormat
-	return req, nil
+	return nil
 }
 
 func parseNonNegativeServerInt(flag string, value string) (int, error) {

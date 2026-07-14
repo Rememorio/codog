@@ -2087,6 +2087,47 @@ func TestParseBackgroundRunArgsWithRestartPolicy(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestParseBackgroundRunArgsBoundaries(t *testing.T) {
+	command, options, err := parseBackgroundRunArgs([]string{
+		"--restart",
+		"--restart-limit=0",
+		"--restart-delay=1",
+		"--owner=ops",
+		"--scope=deploy",
+		"--watcher-action=observe",
+		"--",
+		"echo", "--restart=never",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "echo --restart=never", command)
+	require.Equal(t, "on-failure", options.RestartPolicy.Mode)
+	require.Zero(t, options.RestartPolicy.MaxAttempts)
+	require.Equal(t, 1, options.RestartPolicy.DelaySeconds)
+	require.Equal(t, "ops", options.ScopeBinding.Owner)
+	require.Equal(t, "deploy", options.ScopeBinding.WorkflowScope)
+	require.Equal(t, "observe", options.ScopeBinding.WatcherAction)
+
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{name: "missing command", args: nil},
+		{name: "missing restart limit", args: []string{"--restart-limit"}},
+		{name: "invalid restart limit", args: []string{"--restart-limit=bad", "echo"}},
+		{name: "negative restart limit", args: []string{"--restart-limit=-1", "echo"}},
+		{name: "missing restart delay", args: []string{"--restart-delay"}},
+		{name: "negative restart delay", args: []string{"--restart-delay=-1", "echo"}},
+		{name: "missing owner", args: []string{"--owner"}},
+		{name: "missing scope", args: []string{"--workflow-scope"}},
+		{name: "missing watcher action", args: []string{"--watcher-action"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, err := parseBackgroundRunArgs(test.args)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestCodeIntelLSPCommands(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX sh")
