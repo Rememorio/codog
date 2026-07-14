@@ -3426,106 +3426,9 @@ func marketplaceRemoteUsesStructuredReport(args []string) bool {
 
 func parseMarketplaceRemoteArgs(args []string) (marketplaceRemoteRequest, error) {
 	req := marketplaceRemoteRequest{Action: "list", Page: 1, PerPage: 20}
-	positionals := []string{}
-	actionSet := false
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--url" || arg == "--marketplace":
-			index++
-			if index >= len(args) {
-				return req, errors.New("marketplace remote URL is required")
-			}
-			req.URL = args[index]
-		case strings.HasPrefix(arg, "--url="):
-			req.URL = strings.TrimPrefix(arg, "--url=")
-		case strings.HasPrefix(arg, "--marketplace="):
-			req.URL = strings.TrimPrefix(arg, "--marketplace=")
-		case arg == "--public-key" || arg == "--key":
-			index++
-			if index >= len(args) {
-				return req, errors.New("marketplace public key is required")
-			}
-			req.PublicKey = args[index]
-		case strings.HasPrefix(arg, "--public-key="):
-			req.PublicKey = strings.TrimPrefix(arg, "--public-key=")
-		case strings.HasPrefix(arg, "--key="):
-			req.PublicKey = strings.TrimPrefix(arg, "--key=")
-		case arg == "--query" || arg == "-q":
-			index++
-			if index >= len(args) {
-				return req, errors.New("marketplace remote query is required")
-			}
-			req.Query = args[index]
-		case strings.HasPrefix(arg, "--query="):
-			req.Query = strings.TrimPrefix(arg, "--query=")
-		case arg == "--id":
-			index++
-			if index >= len(args) {
-				return req, errors.New("marketplace remote plugin id is required")
-			}
-			req.ID = args[index]
-		case strings.HasPrefix(arg, "--id="):
-			req.ID = strings.TrimPrefix(arg, "--id=")
-		case arg == "--page":
-			index++
-			if index >= len(args) {
-				return req, errors.New("marketplace remote page is required")
-			}
-			value, err := strconv.Atoi(args[index])
-			if err != nil {
-				return req, err
-			}
-			req.Page = value
-		case strings.HasPrefix(arg, "--page="):
-			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--page="))
-			if err != nil {
-				return req, err
-			}
-			req.Page = value
-		case arg == "--per-page" || arg == "--limit":
-			index++
-			if index >= len(args) {
-				return req, errors.New("marketplace remote page size is required")
-			}
-			value, err := strconv.Atoi(args[index])
-			if err != nil {
-				return req, err
-			}
-			req.PerPage = value
-		case strings.HasPrefix(arg, "--per-page="):
-			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--per-page="))
-			if err != nil {
-				return req, err
-			}
-			req.PerPage = value
-		case strings.HasPrefix(arg, "--limit="):
-			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
-			if err != nil {
-				return req, err
-			}
-			req.PerPage = value
-		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown marketplace remote flag %q", arg)
-		default:
-			if !actionSet {
-				switch strings.ToLower(strings.TrimSpace(arg)) {
-				case "list", "ls":
-					req.Action = "list"
-					actionSet = true
-					continue
-				case "search", "find":
-					req.Action = "search"
-					actionSet = true
-					continue
-				case "show", "info", "describe":
-					req.Action = "show"
-					actionSet = true
-					continue
-				}
-			}
-			positionals = append(positionals, arg)
-		}
+	positionals, err := parseMarketplaceRemoteOptions(args, &req)
+	if err != nil {
+		return req, err
 	}
 	if req.Page < 1 {
 		req.Page = 1
@@ -3533,6 +3436,80 @@ func parseMarketplaceRemoteArgs(args []string) (marketplaceRemoteRequest, error)
 	if req.PerPage < 1 {
 		req.PerPage = 20
 	}
+	return applyMarketplaceRemotePositionals(req, positionals)
+}
+
+func parseMarketplaceRemoteOptions(args []string, req *marketplaceRemoteRequest) ([]string, error) {
+	options := marketplaceRemoteValueOptions(req)
+	var positionals []string
+	actionSet := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		handled, err := consumeValueOption(args, &index, options)
+		if err != nil {
+			return nil, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return nil, fmt.Errorf("unknown marketplace remote flag %q", arg)
+		}
+		if !actionSet && setMarketplaceRemoteAction(req, arg) {
+			actionSet = true
+			continue
+		}
+		positionals = append(positionals, arg)
+	}
+	return positionals, nil
+}
+
+func marketplaceRemoteValueOptions(req *marketplaceRemoteRequest) map[string]valueOption {
+	options := map[string]valueOption{
+		"--url":        stringValueOption(&req.URL, "marketplace remote URL is required"),
+		"--public-key": stringValueOption(&req.PublicKey, "marketplace public key is required"),
+		"--query":      stringValueOption(&req.Query, "marketplace remote query is required"),
+		"--id":         stringValueOption(&req.ID, "marketplace remote plugin id is required"),
+		"--page": {
+			missing: func(string) error { return errors.New("marketplace remote page is required") },
+			set:     func(value string) error { return setMarketplaceRemoteInt(&req.Page, value) },
+		},
+		"--per-page": {
+			missing: func(string) error { return errors.New("marketplace remote page size is required") },
+			set:     func(value string) error { return setMarketplaceRemoteInt(&req.PerPage, value) },
+		},
+	}
+	options["--marketplace"] = options["--url"]
+	options["--key"] = options["--public-key"]
+	options["-q"] = options["--query"]
+	options["--limit"] = options["--per-page"]
+	return options
+}
+
+func setMarketplaceRemoteInt(target *int, raw string) error {
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return err
+	}
+	*target = value
+	return nil
+}
+
+func setMarketplaceRemoteAction(req *marketplaceRemoteRequest, raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "list", "ls":
+		req.Action = "list"
+	case "search", "find":
+		req.Action = "search"
+	case "show", "info", "describe":
+		req.Action = "show"
+	default:
+		return false
+	}
+	return true
+}
+
+func applyMarketplaceRemotePositionals(req marketplaceRemoteRequest, positionals []string) (marketplaceRemoteRequest, error) {
 	switch req.Action {
 	case "list":
 		if len(positionals) > 0 {

@@ -5,12 +5,10 @@ gocognit|internal/agent/agent.go|parseRemoteEnvArgs|39
 gocognit|internal/agent/agent.go|parseRemoteSetupArgs|49
 gocognit|internal/agent/agent.go|parseSSHArgs|46
 gocognit|internal/agent/agent.go|parseServerArgs|57
-gocognit|internal/agent/background.go|parseMarketplaceRemoteArgs|66
 gocognit|internal/agent/background.go|parseMarketplaceSourcesArgs|34
 gocognit|internal/agent/commands.go|(*App).MCP|61
 gocognit|internal/agent/commands.go|(*App).Templates|56
 gocognit|internal/agent/commands.go|parseCompactArgs|32
-gocognit|internal/agent/commands.go|parseMCPAddArgs|59
 gocognit|internal/agent/commands.go|parsePerfIssueArgs|45
 gocognit|internal/agent/commands.go|parseThinkBackArgs|35
 gocognit|internal/agent/commands.go|renderMCPListReport|34

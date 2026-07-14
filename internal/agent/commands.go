@@ -2353,87 +2353,85 @@ var (
 
 func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 	var req mcpAddRequest
+	positionals, err := parseMCPAddOptions(args, &req)
+	if err != nil {
+		return req, err
+	}
+	return finishMCPAddRequest(req, positionals)
+}
+
+func parseMCPAddOptions(args []string, req *mcpAddRequest) ([]string, error) {
+	options := mcpAddValueOptions(req)
 	var positionals []string
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--":
+		if arg == "--" {
 			positionals = append(positionals, args[index+1:]...)
-			index = len(args)
-		case arg == "--url":
-			index++
-			if index >= len(args) {
-				return req, errors.New("mcp add url value is required")
-			}
-			req.URL = args[index]
-		case strings.HasPrefix(arg, "--url="):
-			req.URL = strings.TrimPrefix(arg, "--url=")
-		case arg == "--header" || arg == "-H":
-			index++
-			if index >= len(args) {
-				return req, errors.New("mcp add header value is required")
-			}
-			if req.Headers == nil {
-				req.Headers = map[string]string{}
-			}
-			if err := addMCPHeader(req.Headers, args[index]); err != nil {
-				return req, err
-			}
-		case strings.HasPrefix(arg, "--header="):
-			if req.Headers == nil {
-				req.Headers = map[string]string{}
-			}
-			if err := addMCPHeader(req.Headers, strings.TrimPrefix(arg, "--header=")); err != nil {
-				return req, err
-			}
-		case arg == "--headers-helper" || arg == "--headersHelper":
-			index++
-			if index >= len(args) {
-				return req, errors.New("mcp add headers helper value is required")
-			}
-			req.HeadersHelper = args[index]
-		case strings.HasPrefix(arg, "--headers-helper="):
-			req.HeadersHelper = strings.TrimPrefix(arg, "--headers-helper=")
-		case strings.HasPrefix(arg, "--headersHelper="):
-			req.HeadersHelper = strings.TrimPrefix(arg, "--headersHelper=")
-		case arg == "--tool-call-timeout-ms" || arg == "--toolCallTimeoutMs":
-			index++
-			if index >= len(args) {
-				return req, errors.New("mcp add tool call timeout value is required")
-			}
-			timeout, err := parseMCPToolCallTimeout(args[index])
-			if err != nil {
-				return req, err
-			}
-			req.ToolCallTimeoutMS = timeout
-		case strings.HasPrefix(arg, "--tool-call-timeout-ms="):
-			timeout, err := parseMCPToolCallTimeout(strings.TrimPrefix(arg, "--tool-call-timeout-ms="))
-			if err != nil {
-				return req, err
-			}
-			req.ToolCallTimeoutMS = timeout
-		case strings.HasPrefix(arg, "--toolCallTimeoutMs="):
-			timeout, err := parseMCPToolCallTimeout(strings.TrimPrefix(arg, "--toolCallTimeoutMs="))
-			if err != nil {
-				return req, err
-			}
-			req.ToolCallTimeoutMS = timeout
-		case arg == "--required":
+			break
+		}
+		if arg == "--required" {
 			req.Required = true
-		case arg == "--optional":
+			continue
+		}
+		if arg == "--optional" {
 			req.Required = false
-		case arg == "--env" || arg == "-e":
-			index++
-			if index >= len(args) {
-				return req, errors.New("mcp add env value is required")
-			}
-			req.Env = append(req.Env, args[index])
-		case strings.HasPrefix(arg, "--env="):
-			req.Env = append(req.Env, strings.TrimPrefix(arg, "--env="))
-		default:
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, options)
+		if err != nil {
+			return nil, err
+		}
+		if !handled {
 			positionals = append(positionals, arg)
 		}
 	}
+	return positionals, nil
+}
+
+func mcpAddValueOptions(req *mcpAddRequest) map[string]valueOption {
+	options := map[string]valueOption{
+		"--url":            stringValueOption(&req.URL, "mcp add url value is required"),
+		"--headers-helper": stringValueOption(&req.HeadersHelper, "mcp add headers helper value is required"),
+		"--header": {
+			missing: func(string) error { return errors.New("mcp add header value is required") },
+			set:     func(value string) error { return setMCPAddHeader(req, value) },
+		},
+		"--tool-call-timeout-ms": {
+			missing: func(string) error { return errors.New("mcp add tool call timeout value is required") },
+			set:     func(value string) error { return setMCPAddTimeout(req, value) },
+		},
+		"--env": {
+			missing: func(string) error { return errors.New("mcp add env value is required") },
+			set: func(value string) error {
+				req.Env = append(req.Env, value)
+				return nil
+			},
+		},
+	}
+	options["-H"] = options["--header"]
+	options["--headersHelper"] = options["--headers-helper"]
+	options["--toolCallTimeoutMs"] = options["--tool-call-timeout-ms"]
+	options["-e"] = options["--env"]
+	return options
+}
+
+func setMCPAddHeader(req *mcpAddRequest, value string) error {
+	if req.Headers == nil {
+		req.Headers = map[string]string{}
+	}
+	return addMCPHeader(req.Headers, value)
+}
+
+func setMCPAddTimeout(req *mcpAddRequest, value string) error {
+	timeout, err := parseMCPToolCallTimeout(value)
+	if err != nil {
+		return err
+	}
+	req.ToolCallTimeoutMS = timeout
+	return nil
+}
+
+func finishMCPAddRequest(req mcpAddRequest, positionals []string) (mcpAddRequest, error) {
 	if len(positionals) < 1 {
 		return req, errMCPAddMissingName
 	}
@@ -2442,22 +2440,13 @@ func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 		return req, err
 	}
 	if strings.TrimSpace(req.URL) != "" {
-		if req.ToolCallTimeoutMS > 0 {
-			return req, errors.New("mcp add --tool-call-timeout-ms applies only to stdio servers")
-		}
-		if len(positionals) > 1 {
-			return req, errors.New("mcp add with --url does not accept COMMAND arguments")
-		}
-		if err := validateMCPAddURL(req.URL); err != nil {
+		if err := validateMCPHTTPAdd(req, positionals); err != nil {
 			return req, err
 		}
 		req.URL = strings.TrimSpace(req.URL)
 	} else {
-		if strings.TrimSpace(req.HeadersHelper) != "" {
-			return req, errors.New("mcp add --headers-helper requires --url")
-		}
-		if len(positionals) < 2 {
-			return req, errMCPAddMissingCommand
+		if err := validateMCPStdioAdd(req, positionals); err != nil {
+			return req, err
 		}
 		req.Command = positionals[1]
 		req.Args = append([]string(nil), positionals[2:]...)
@@ -2470,6 +2459,26 @@ func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 		}
 	}
 	return req, nil
+}
+
+func validateMCPHTTPAdd(req mcpAddRequest, positionals []string) error {
+	if req.ToolCallTimeoutMS > 0 {
+		return errors.New("mcp add --tool-call-timeout-ms applies only to stdio servers")
+	}
+	if len(positionals) > 1 {
+		return errors.New("mcp add with --url does not accept COMMAND arguments")
+	}
+	return validateMCPAddURL(req.URL)
+}
+
+func validateMCPStdioAdd(req mcpAddRequest, positionals []string) error {
+	if strings.TrimSpace(req.HeadersHelper) != "" {
+		return errors.New("mcp add --headers-helper requires --url")
+	}
+	if len(positionals) < 2 {
+		return errMCPAddMissingCommand
+	}
+	return nil
 }
 
 func parseMCPToolCallTimeout(value string) (int, error) {
