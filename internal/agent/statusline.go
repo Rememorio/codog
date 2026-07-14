@@ -3058,10 +3058,39 @@ func renderCLIErrorWhenStructured(out io.Writer, err error, format string) error
 
 func buildCLIErrorReport(err error) cliErrorReport {
 	message := strings.TrimSpace(err.Error())
+	groups := []func(error, string) *cliErrorReport{
+		buildCLIErrorReportGroup1,
+		buildCLIErrorReportGroup2,
+		buildCLIErrorReportGroup3,
+		buildCLIErrorReportGroup4,
+		buildCLIErrorReportGroup5,
+	}
+	for _, group := range groups {
+		if report := group(err, message); report != nil {
+			return *report
+		}
+	}
 	kind := "config_load_failed"
 	hint := "Check `codog config paths` and fix the active configuration."
-	finish := func(report cliErrorReport) cliErrorReport {
-		return finalizeCLIErrorReport(err, report)
+	if rest, ok := strings.CutPrefix(message, "invalid_permission_mode:"); ok {
+		kind = "invalid_permission_mode"
+		message = strings.TrimSpace(rest)
+		hint = "Use one of: read-only, workspace-write, danger-full-access, prompt, allow."
+	}
+	if rest, ok := strings.CutPrefix(message, "invalid_extra_body:"); ok {
+		kind = "invalid_extra_body"
+		message = strings.TrimSpace(rest)
+		hint = "Set CODOG_EXTRA_BODY to a JSON object, or move provider-specific fields into the config extraBody object."
+	}
+	return finalizeCLIErrorReport(err, cliErrorReport{
+		Kind: kind, ErrorKind: kind, Status: "error", Message: message, Hint: hint,
+	})
+}
+
+func buildCLIErrorReportGroup1(err error, message string) *cliErrorReport {
+	finish := func(report cliErrorReport) *cliErrorReport {
+		finished := finalizeCLIErrorReport(err, report)
+		return &finished
 	}
 	var formatErr outputFormatError
 	if errors.As(err, &formatErr) {
@@ -3153,6 +3182,14 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			ExpectedWorkspace: mismatchErr.Expected,
 			ActualWorkspace:   mismatchErr.Actual,
 		})
+	}
+	return nil
+}
+
+func buildCLIErrorReportGroup2(err error, message string) *cliErrorReport {
+	finish := func(report cliErrorReport) *cliErrorReport {
+		finished := finalizeCLIErrorReport(err, report)
+		return &finished
 	}
 	if errors.Is(err, session.ErrNoSessions) {
 		report := cliErrorReport{
@@ -3249,6 +3286,14 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Hint:      fmt.Sprintf("Provide a comma-separated tool list, for example `%s`.", example),
 			Argument:  argument,
 		})
+	}
+	return nil
+}
+
+func buildCLIErrorReportGroup3(err error, message string) *cliErrorReport {
+	finish := func(report cliErrorReport) *cliErrorReport {
+		finished := finalizeCLIErrorReport(err, report)
+		return &finished
 	}
 	var requiredArgErr requiredArgumentError
 	if errors.As(err, &requiredArgErr) {
@@ -3371,6 +3416,14 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Hint:      hint,
 		})
 	}
+	return nil
+}
+
+func buildCLIErrorReportGroup4(err error, message string) *cliErrorReport {
+	finish := func(report cliErrorReport) *cliErrorReport {
+		finished := finalizeCLIErrorReport(err, report)
+		return &finished
+	}
 	var cwdErr invalidCWDError
 	if errors.As(err, &cwdErr) {
 		path := strings.TrimSpace(cwdErr.Path)
@@ -3487,6 +3540,14 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Hint:      "Usage: " + usage,
 		})
 	}
+	return nil
+}
+
+func buildCLIErrorReportGroup5(err error, message string) *cliErrorReport {
+	finish := func(report cliErrorReport) *cliErrorReport {
+		finished := finalizeCLIErrorReport(err, report)
+		return &finished
+	}
 	var actionErr unknownActionError
 	if errors.As(err, &actionErr) {
 		command := strings.TrimSpace(actionErr.Command)
@@ -3542,25 +3603,8 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Hint:      fmt.Sprintf("Use `codog --resume %s %s` for a resume slash command, or `codog --resume %s prompt \"...\"` to continue the session with a prompt. Local commands that support sessions accept command-specific `--session` or `--resume` flags after the command.", shellQuote(resume), slashCommand, shellQuote(resume)),
 		})
 	}
-	if rest, ok := strings.CutPrefix(message, "invalid_permission_mode:"); ok {
-		kind = "invalid_permission_mode"
-		message = strings.TrimSpace(rest)
-		hint = "Use one of: read-only, workspace-write, danger-full-access, prompt, allow."
-	}
-	if rest, ok := strings.CutPrefix(message, "invalid_extra_body:"); ok {
-		kind = "invalid_extra_body"
-		message = strings.TrimSpace(rest)
-		hint = "Set CODOG_EXTRA_BODY to a JSON object, or move provider-specific fields into the config extraBody object."
-	}
-	return finish(cliErrorReport{
-		Kind:      kind,
-		ErrorKind: kind,
-		Status:    "error",
-		Message:   message,
-		Hint:      hint,
-	})
+	return nil
 }
-
 func finalizeCLIErrorReport(err error, report cliErrorReport) cliErrorReport {
 	report.Type = "error"
 	if strings.TrimSpace(report.Status) == "" {
