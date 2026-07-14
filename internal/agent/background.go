@@ -1287,240 +1287,284 @@ func (a *App) Agents(args []string) error {
 }
 
 func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides) error {
-	var err error
-	var format string
-	args, format, err = stripJSONOnlyOutputFormat("agents", args)
+	cleanArgs, format, err := stripJSONOnlyOutputFormat("agents", args)
 	if err != nil {
 		return err
 	}
-	if len(args) > 0 {
-		normalizedAction := normalizeAgentsAction(args[0])
-		if normalizedAction != args[0] {
-			args = append([]string{normalizedAction}, args[1:]...)
-		}
-	}
+	args = cleanArgs
 	if len(args) == 0 {
 		return a.listAgents(format, "")
 	}
-	if args[0] == "help" {
-		if len(args) > 1 {
-			return renderCLIError(a.Out, unexpectedExtraArgsError{
-				Command: "agents help",
-				Args:    append([]string(nil), args[1:]...),
-				Usage:   "codog agents help [--json|--output-format text|json]",
-			}, format)
-		}
-		return renderAgentsHelp(a.Out, format)
+	normalizedAction := normalizeAgentsAction(args[0])
+	if normalizedAction != args[0] {
+		args = append([]string{normalizedAction}, args[1:]...)
 	}
-	if args[0] == "list" {
-		filter, err := parseListFilterArgs("agents list", args[1:], "codog agents list [FILTER] [--json|--output-format text|json]", "unknown_option")
-		if err != nil {
-			return renderCLIError(a.Out, err, format)
-		}
-		return a.listAgents(format, filter)
-	}
-	if args[0] == "show" || args[0] == "info" || args[0] == "describe" {
-		if len(args) < 2 {
-			return renderActionError(a.Out, actionErrorReport{
-				Kind:      "agents",
-				Action:    "show",
-				Status:    "error",
-				ErrorKind: "missing_argument",
-				Message:   "agents show requires a name",
-				Hint:      "Usage: codog agents show NAME.",
-			}, format)
-		}
-		if len(args) > 2 {
-			return renderCLIError(a.Out, unexpectedExtraArgsError{
-				Command: "agents show",
-				Args:    append([]string(nil), args[2:]...),
-				Usage:   "codog agents show NAME [--json|--output-format text|json]",
-			}, format)
-		}
-		return a.showAgent(args[1], format)
-	}
-	if args[0] == "create" {
-		if len(args) < 2 {
-			return renderActionError(a.Out, actionErrorReport{
-				Kind:      "agents",
-				Action:    "create",
-				Status:    "error",
-				ErrorKind: "missing_argument",
-				Message:   "agents create requires a name",
-				Hint:      "Usage: codog agents create NAME.",
-			}, format)
-		}
-		if len(args) > 2 {
-			return renderCLIError(a.Out, unexpectedExtraArgsError{
-				Command: "agents create",
-				Args:    append([]string(nil), args[2:]...),
-				Usage:   "codog agents create NAME [--json|--output-format text|json]",
-			}, format)
-		}
-		return a.createAgent(args[1], format)
-	}
-	if args[0] == "runs" || args[0] == "tasks" {
-		filter, err := parseListFilterArgs("agents runs", args[1:], "codog agents runs [AGENT] [--json|--output-format text|json]", "unknown_option")
-		if err != nil {
-			return renderCLIError(a.Out, err, format)
-		}
-		return a.listAgentRuns(format, filter)
-	}
-	if args[0] == "board" || args[0] == "lane-board" || args[0] == "lanes" {
-		stalledAfter, err := parseBackgroundBoardArgs(args[1:])
-		if err != nil {
-			return renderCLIError(a.Out, err, format)
-		}
-		return a.boardAgentRuns(stalledAfter, format)
-	}
-	if args[0] == "status" || args[0] == "run-status" {
-		if len(args) < 2 {
-			return renderActionError(a.Out, actionErrorReport{
-				Kind:      "agents",
-				Action:    "status",
-				Status:    "error",
-				ErrorKind: "missing_argument",
-				Message:   "agents status requires a run id",
-				Hint:      "Usage: codog agents status RUN_ID.",
-			}, format)
-		}
-		if len(args) > 2 {
-			return renderCLIError(a.Out, unexpectedExtraArgsError{
-				Command: "agents status",
-				Args:    append([]string(nil), args[2:]...),
-				Usage:   "codog agents status RUN_ID [--json|--output-format text|json]",
-			}, format)
-		}
-		return a.showAgentRun(args[1], format)
-	}
-	if args[0] == "heartbeat" {
-		id, heartbeat, err := parseAgentRunHeartbeatArgs(args[1:])
-		if err != nil {
-			return renderCLIError(a.Out, err, format)
-		}
-		return a.heartbeatAgentRun(id, heartbeat, format)
-	}
-	if args[0] == "stop" {
-		if len(args) < 2 {
-			return renderActionError(a.Out, actionErrorReport{
-				Kind:      "agents",
-				Action:    "stop",
-				Status:    "error",
-				ErrorKind: "missing_argument",
-				Message:   "agents stop requires a run id",
-				Hint:      "Usage: codog agents stop RUN_ID.",
-			}, format)
-		}
-		if len(args) > 2 {
-			return renderCLIError(a.Out, unexpectedExtraArgsError{
-				Command: "agents stop",
-				Args:    append([]string(nil), args[2:]...),
-				Usage:   "codog agents stop RUN_ID [--json|--output-format text|json]",
-			}, format)
-		}
-		return a.stopAgentRun(args[1], format)
-	}
-	if args[0] == "update" || args[0] == "message" {
-		if len(args) < 3 {
-			return renderActionError(a.Out, actionErrorReport{
-				Kind:      "agents",
-				Action:    "update",
-				Status:    "error",
-				ErrorKind: "missing_argument",
-				Message:   "agents update requires a run id and message",
-				Hint:      "Usage: codog agents update RUN_ID MESSAGE.",
-			}, format)
-		}
-		return a.updateAgentRun(args[1], strings.Join(args[2:], " "), format)
-	}
-	if args[0] == "output" || args[0] == "logs" {
-		if len(args) < 2 {
-			return renderActionError(a.Out, actionErrorReport{
-				Kind:      "agents",
-				Action:    "output",
-				Status:    "error",
-				ErrorKind: "missing_argument",
-				Message:   "agents output requires a run id",
-				Hint:      "Usage: codog agents output RUN_ID [bytes|--bytes N|--limit N].",
-			}, format)
-		}
-		if len(args) > 4 {
-			return renderCLIError(a.Out, unexpectedExtraArgsError{
-				Command: "agents output",
-				Args:    append([]string(nil), args[4:]...),
-				Usage:   "codog agents output RUN_ID [bytes|--bytes N|--limit N] [--json|--output-format text|json]",
-			}, format)
-		}
-		id, limit, err := parseAgentRunOutputArgs(args[1:])
-		if err != nil {
-			return renderCLIError(a.Out, err, format)
-		}
-		return a.outputAgentRun(id, limit, format)
-	}
-	if args[0] == "prune" {
-		options, err := parseBackgroundPruneArgs(args[1:])
-		if err != nil {
-			return renderCLIError(a.Out, err, format)
-		}
-		return a.pruneAgentRuns(options, format)
-	}
-	if args[0] == "run-remove" || args[0] == "run-rm" {
-		if len(args) < 2 {
-			return renderActionError(a.Out, actionErrorReport{
-				Kind:      "agents",
-				Action:    "run-remove",
-				Status:    "error",
-				ErrorKind: "missing_argument",
-				Message:   "agents run-remove requires a run id",
-				Hint:      "Usage: codog agents run-remove RUN_ID.",
-			}, format)
-		}
-		if len(args) > 2 {
-			return renderCLIError(a.Out, unexpectedExtraArgsError{
-				Command: "agents run-remove",
-				Args:    append([]string(nil), args[2:]...),
-				Usage:   "codog agents run-remove RUN_ID [--json|--output-format text|json]",
-			}, format)
-		}
-		return a.removeAgentRun(args[1], format)
-	}
-	if args[0] == "worktrees" {
-		allocations, err := worktree.List(a.Workspace)
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(allocations, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	}
-	if args[0] == "worktree-remove" {
-		if len(args) < 2 {
-			return errors.New("usage: codog agents worktree-remove ID")
-		}
-		allocation, err := worktree.Load(a.Workspace, args[1])
-		if err != nil {
-			return err
-		}
-		if err := worktree.Remove(a.Workspace, args[1]); err != nil {
-			return err
-		}
-		if err := a.runWorktreeRemoveHook(context.Background(), allocation, "manual"); err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(map[string]any{"removed": true, "id": args[1]}, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	}
-	if args[0] != "run" {
+	switch args[0] {
+	case "help":
+		return a.agentsHelpCommand(args, overrides, format)
+	case "list":
+		return a.agentsListCommand(args, overrides, format)
+	case "show":
+		return a.agentsShowCommand(args, overrides, format)
+	case "create":
+		return a.agentsCreateCommand(args, overrides, format)
+	case "runs":
+		return a.agentsRunsCommand(args, overrides, format)
+	case "board":
+		return a.agentsBoardCommand(args, overrides, format)
+	case "status":
+		return a.agentsStatusCommand(args, overrides, format)
+	case "heartbeat":
+		return a.agentsHeartbeatCommand(args, overrides, format)
+	case "stop":
+		return a.agentsStopCommand(args, overrides, format)
+	case "update":
+		return a.agentsUpdateCommand(args, overrides, format)
+	case "output":
+		return a.agentsOutputCommand(args, overrides, format)
+	case "prune":
+		return a.agentsPruneCommand(args, overrides, format)
+	case "run-remove":
+		return a.agentsRunRemoveCommand(args, overrides, format)
+	case "worktrees":
+		return a.agentsWorktreesCommand(args, overrides, format)
+	case "worktree-remove":
+		return a.agentsWorktreeRemoveCommand(args, overrides, format)
+	case "run":
+		return a.agentsRunCommand(args, overrides, format)
+	default:
 		return renderActionError(a.Out, actionErrorReport{
-			Kind:      "agents",
-			Action:    args[0],
-			Status:    "error",
-			ErrorKind: "unknown_agents_subcommand",
-			Message:   fmt.Sprintf("unknown agents command %q", args[0]),
-			Hint:      unknownAgentsCommandHint(args[0]),
+			Kind: "agents", Action: args[0], Status: "error", ErrorKind: "unknown_agents_subcommand",
+			Message: fmt.Sprintf("unknown agents command %q", args[0]), Hint: unknownAgentsCommandHint(args[0]),
 		}, format)
 	}
+}
+
+func (a *App) agentsHelpCommand(args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) > 1 {
+		return renderCLIError(a.Out, unexpectedExtraArgsError{
+			Command: "agents help",
+			Args:    append([]string(nil), args[1:]...),
+			Usage:   "codog agents help [--json|--output-format text|json]",
+		}, format)
+	}
+	return renderAgentsHelp(a.Out, format)
+}
+
+func (a *App) agentsListCommand(args []string, overrides config.FlagOverrides, format string) error {
+	filter, err := parseListFilterArgs("agents list", args[1:], "codog agents list [FILTER] [--json|--output-format text|json]", "unknown_option")
+	if err != nil {
+		return renderCLIError(a.Out, err, format)
+	}
+	return a.listAgents(format, filter)
+}
+
+func (a *App) agentsShowCommand(args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) < 2 {
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "agents",
+			Action:    "show",
+			Status:    "error",
+			ErrorKind: "missing_argument",
+			Message:   "agents show requires a name",
+			Hint:      "Usage: codog agents show NAME.",
+		}, format)
+	}
+	if len(args) > 2 {
+		return renderCLIError(a.Out, unexpectedExtraArgsError{
+			Command: "agents show",
+			Args:    append([]string(nil), args[2:]...),
+			Usage:   "codog agents show NAME [--json|--output-format text|json]",
+		}, format)
+	}
+	return a.showAgent(args[1], format)
+}
+
+func (a *App) agentsCreateCommand(args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) < 2 {
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "agents",
+			Action:    "create",
+			Status:    "error",
+			ErrorKind: "missing_argument",
+			Message:   "agents create requires a name",
+			Hint:      "Usage: codog agents create NAME.",
+		}, format)
+	}
+	if len(args) > 2 {
+		return renderCLIError(a.Out, unexpectedExtraArgsError{
+			Command: "agents create",
+			Args:    append([]string(nil), args[2:]...),
+			Usage:   "codog agents create NAME [--json|--output-format text|json]",
+		}, format)
+	}
+	return a.createAgent(args[1], format)
+}
+
+func (a *App) agentsRunsCommand(args []string, overrides config.FlagOverrides, format string) error {
+	filter, err := parseListFilterArgs("agents runs", args[1:], "codog agents runs [AGENT] [--json|--output-format text|json]", "unknown_option")
+	if err != nil {
+		return renderCLIError(a.Out, err, format)
+	}
+	return a.listAgentRuns(format, filter)
+}
+
+func (a *App) agentsBoardCommand(args []string, overrides config.FlagOverrides, format string) error {
+	stalledAfter, err := parseBackgroundBoardArgs(args[1:])
+	if err != nil {
+		return renderCLIError(a.Out, err, format)
+	}
+	return a.boardAgentRuns(stalledAfter, format)
+}
+
+func (a *App) agentsStatusCommand(args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) < 2 {
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "agents",
+			Action:    "status",
+			Status:    "error",
+			ErrorKind: "missing_argument",
+			Message:   "agents status requires a run id",
+			Hint:      "Usage: codog agents status RUN_ID.",
+		}, format)
+	}
+	if len(args) > 2 {
+		return renderCLIError(a.Out, unexpectedExtraArgsError{
+			Command: "agents status",
+			Args:    append([]string(nil), args[2:]...),
+			Usage:   "codog agents status RUN_ID [--json|--output-format text|json]",
+		}, format)
+	}
+	return a.showAgentRun(args[1], format)
+}
+
+func (a *App) agentsHeartbeatCommand(args []string, overrides config.FlagOverrides, format string) error {
+	id, heartbeat, err := parseAgentRunHeartbeatArgs(args[1:])
+	if err != nil {
+		return renderCLIError(a.Out, err, format)
+	}
+	return a.heartbeatAgentRun(id, heartbeat, format)
+}
+
+func (a *App) agentsStopCommand(args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) < 2 {
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "agents",
+			Action:    "stop",
+			Status:    "error",
+			ErrorKind: "missing_argument",
+			Message:   "agents stop requires a run id",
+			Hint:      "Usage: codog agents stop RUN_ID.",
+		}, format)
+	}
+	if len(args) > 2 {
+		return renderCLIError(a.Out, unexpectedExtraArgsError{
+			Command: "agents stop",
+			Args:    append([]string(nil), args[2:]...),
+			Usage:   "codog agents stop RUN_ID [--json|--output-format text|json]",
+		}, format)
+	}
+	return a.stopAgentRun(args[1], format)
+}
+
+func (a *App) agentsUpdateCommand(args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) < 3 {
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "agents",
+			Action:    "update",
+			Status:    "error",
+			ErrorKind: "missing_argument",
+			Message:   "agents update requires a run id and message",
+			Hint:      "Usage: codog agents update RUN_ID MESSAGE.",
+		}, format)
+	}
+	return a.updateAgentRun(args[1], strings.Join(args[2:], " "), format)
+}
+
+func (a *App) agentsOutputCommand(args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) < 2 {
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "agents",
+			Action:    "output",
+			Status:    "error",
+			ErrorKind: "missing_argument",
+			Message:   "agents output requires a run id",
+			Hint:      "Usage: codog agents output RUN_ID [bytes|--bytes N|--limit N].",
+		}, format)
+	}
+	if len(args) > 4 {
+		return renderCLIError(a.Out, unexpectedExtraArgsError{
+			Command: "agents output",
+			Args:    append([]string(nil), args[4:]...),
+			Usage:   "codog agents output RUN_ID [bytes|--bytes N|--limit N] [--json|--output-format text|json]",
+		}, format)
+	}
+	id, limit, err := parseAgentRunOutputArgs(args[1:])
+	if err != nil {
+		return renderCLIError(a.Out, err, format)
+	}
+	return a.outputAgentRun(id, limit, format)
+}
+
+func (a *App) agentsPruneCommand(args []string, overrides config.FlagOverrides, format string) error {
+	options, err := parseBackgroundPruneArgs(args[1:])
+	if err != nil {
+		return renderCLIError(a.Out, err, format)
+	}
+	return a.pruneAgentRuns(options, format)
+}
+
+func (a *App) agentsRunRemoveCommand(args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) < 2 {
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "agents",
+			Action:    "run-remove",
+			Status:    "error",
+			ErrorKind: "missing_argument",
+			Message:   "agents run-remove requires a run id",
+			Hint:      "Usage: codog agents run-remove RUN_ID.",
+		}, format)
+	}
+	if len(args) > 2 {
+		return renderCLIError(a.Out, unexpectedExtraArgsError{
+			Command: "agents run-remove",
+			Args:    append([]string(nil), args[2:]...),
+			Usage:   "codog agents run-remove RUN_ID [--json|--output-format text|json]",
+		}, format)
+	}
+	return a.removeAgentRun(args[1], format)
+}
+
+func (a *App) agentsWorktreesCommand(args []string, overrides config.FlagOverrides, format string) error {
+	allocations, err := worktree.List(a.Workspace)
+	if err != nil {
+		return err
+	}
+	data, _ := json.MarshalIndent(allocations, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) agentsWorktreeRemoveCommand(args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) < 2 {
+		return errors.New("usage: codog agents worktree-remove ID")
+	}
+	allocation, err := worktree.Load(a.Workspace, args[1])
+	if err != nil {
+		return err
+	}
+	if err := worktree.Remove(a.Workspace, args[1]); err != nil {
+		return err
+	}
+	if err := a.runWorktreeRemoveHook(context.Background(), allocation, "manual"); err != nil {
+		return err
+	}
+	data, _ := json.MarshalIndent(map[string]any{"removed": true, "id": args[1]}, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) agentsRunCommand(args []string, overrides config.FlagOverrides, format string) error {
 	req, err := parseAgentRunArgs(args[1:])
 	if err != nil {
 		return err
