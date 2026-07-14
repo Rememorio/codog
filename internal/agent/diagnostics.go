@@ -3877,97 +3877,125 @@ func (a *App) Branch(args []string) error {
 
 func parseBranchArgs(args []string) (branchRequest, error) {
 	const usage = "codog branch [list|current|create NAME [START]|switch NAME|delete NAME|rename [OLD] NEW|freshness [BRANCH] [BASE]] [--json|--output-format text|json]"
-	req := branchRequest{Format: "text", Action: "list"}
-	var positionals []string
+	parser := branchArgParser{
+		req:   branchRequest{Format: "text", Action: "list"},
+		usage: usage,
+	}
 	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			i++
-			if i >= len(args) {
-				return req, missingFlagValueError{Command: "branch", Flag: arg, Usage: usage}
-			}
-			req.Format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--switch" || arg == "--checkout":
-			req.Switch = true
-		case arg == "--force" || arg == "-f":
-			req.Force = true
-		case arg == "--base":
-			i++
-			if i >= len(args) {
-				return req, missingFlagValueError{Command: "branch", Flag: arg, Usage: usage}
-			}
-			req.Base = args[i]
-		case strings.HasPrefix(arg, "--base="):
-			req.Base = strings.TrimPrefix(arg, "--base=")
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{Command: "branch", Option: arg, Usage: usage}
-		default:
-			positionals = append(positionals, arg)
+		if err := parser.consume(args, &i); err != nil {
+			return parser.req, err
 		}
 	}
-	format, err := normalizeOutputFormat("branch", req.Format, []string{"text", "json"})
+	return parser.finish()
+}
+
+type branchArgParser struct {
+	req         branchRequest
+	positionals []string
+	usage       string
+}
+
+func (p *branchArgParser) consume(args []string, index *int) error {
+	arg := args[*index]
+	switch {
+	case arg == "--json":
+		p.req.Format = "json"
+	case arg == "--output-format" || arg == "-o":
+		*index++
+		if *index >= len(args) {
+			return missingFlagValueError{Command: "branch", Flag: arg, Usage: p.usage}
+		}
+		p.req.Format = args[*index]
+	case strings.HasPrefix(arg, "--output-format="):
+		p.req.Format = strings.TrimPrefix(arg, "--output-format=")
+	case arg == "--switch" || arg == "--checkout":
+		p.req.Switch = true
+	case arg == "--force" || arg == "-f":
+		p.req.Force = true
+	case arg == "--base":
+		*index++
+		if *index >= len(args) {
+			return missingFlagValueError{Command: "branch", Flag: arg, Usage: p.usage}
+		}
+		p.req.Base = args[*index]
+	case strings.HasPrefix(arg, "--base="):
+		p.req.Base = strings.TrimPrefix(arg, "--base=")
+	case strings.HasPrefix(arg, "-"):
+		return unknownOptionError{Command: "branch", Option: arg, Usage: p.usage}
+	default:
+		p.positionals = append(p.positionals, arg)
+	}
+	return nil
+}
+
+func (p *branchArgParser) finish() (branchRequest, error) {
+	format, err := normalizeOutputFormat("branch", p.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return p.req, err
 	}
-	req.Format = format
-	if len(positionals) == 0 {
-		return req, nil
+	p.req.Format = format
+	if len(p.positionals) == 0 {
+		return p.req, nil
 	}
-	req.Action = strings.ToLower(positionals[0])
-	rest := positionals[1:]
-	switch req.Action {
+	return p.parseAction()
+}
+
+func (p *branchArgParser) parseAction() (branchRequest, error) {
+	p.req.Action = strings.ToLower(p.positionals[0])
+	rest := p.positionals[1:]
+	switch p.req.Action {
 	case "list", "show":
-		req.Action = "list"
+		p.req.Action = "list"
 	case "current":
 	case "create", "new":
-		req.Action = "create"
+		p.req.Action = "create"
 		if len(rest) == 0 {
-			return req, requiredArgumentError{Command: "branch create", Argument: "NAME", Usage: usage}
+			return p.req, requiredArgumentError{Command: "branch create", Argument: "NAME", Usage: p.usage}
 		}
-		req.Name = rest[0]
+		p.req.Name = rest[0]
 		if len(rest) > 1 {
-			req.StartPoint = rest[1]
+			p.req.StartPoint = rest[1]
 		}
 	case "switch", "checkout":
-		req.Action = "switch"
+		p.req.Action = "switch"
 		if len(rest) == 0 {
-			return req, requiredArgumentError{Command: "branch switch", Argument: "NAME", Usage: usage}
+			return p.req, requiredArgumentError{Command: "branch switch", Argument: "NAME", Usage: p.usage}
 		}
-		req.Name = rest[0]
+		p.req.Name = rest[0]
 	case "delete", "del", "remove", "rm":
-		req.Action = "delete"
+		p.req.Action = "delete"
 		if len(rest) == 0 {
-			return req, requiredArgumentError{Command: "branch delete", Argument: "NAME", Usage: usage}
+			return p.req, requiredArgumentError{Command: "branch delete", Argument: "NAME", Usage: p.usage}
 		}
-		req.Name = rest[0]
+		p.req.Name = rest[0]
 	case "rename", "mv":
-		req.Action = "rename"
-		switch len(rest) {
-		case 0:
-			return req, requiredArgumentError{Command: "branch rename", Argument: "NEW", Usage: usage}
-		case 1:
-			req.NewName = rest[0]
-		default:
-			req.Name = rest[0]
-			req.NewName = rest[1]
-		}
+		return p.parseRename(rest)
 	case "freshness", "fresh", "stale":
-		req.Action = "freshness"
+		p.req.Action = "freshness"
 		if len(rest) > 0 {
-			req.Name = rest[0]
+			p.req.Name = rest[0]
 		}
 		if len(rest) > 1 {
-			req.Base = rest[1]
+			p.req.Base = rest[1]
 		}
 	default:
-		return req, unexpectedExtraArgsError{Command: "branch", Args: []string{positionals[0]}, Usage: usage}
+		return p.req, unexpectedExtraArgsError{Command: "branch", Args: []string{p.positionals[0]}, Usage: p.usage}
 	}
-	return req, nil
+	return p.req, nil
+}
+
+func (p *branchArgParser) parseRename(rest []string) (branchRequest, error) {
+	p.req.Action = "rename"
+	switch len(rest) {
+	case 0:
+		return p.req, requiredArgumentError{Command: "branch rename", Argument: "NEW", Usage: p.usage}
+	case 1:
+		p.req.NewName = rest[0]
+	default:
+		p.req.Name = rest[0]
+		p.req.NewName = rest[1]
+	}
+	return p.req, nil
 }
 
 func renderBranchReport(out io.Writer, report branchReport) {

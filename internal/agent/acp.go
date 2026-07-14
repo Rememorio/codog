@@ -539,119 +539,101 @@ func renderMemoryCommand(out io.Writer, workspace string, rulesImport memory.Rul
 	if err != nil {
 		return renderMemoryError(out, req.Action, err, req.Format)
 	}
+	runner := memoryCommandRunner{out: out, workspace: workspace, rulesImport: rulesImport}
+	return runner.run(req)
+}
+
+type memoryCommandRunner struct {
+	out         io.Writer
+	workspace   string
+	rulesImport memory.RulesImportOptions
+}
+
+func (r memoryCommandRunner) run(req memoryRequest) error {
 	switch req.Action {
 	case "list":
-		report, err := memory.BuildReportWithRulesImport(workspace, rulesImport)
-		if err != nil {
-			return renderMemoryError(out, req.Action, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(out, string(data))
-			return nil
-		}
-		memory.RenderReport(out, report)
+		return r.list(req)
 	case "show":
-		report, err := memory.ShowWithRulesImport(workspace, strings.Join(req.Rest, " "), rulesImport)
-		if err != nil {
-			return renderMemoryError(out, req.Action, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(out, string(data))
-			return nil
-		}
-		memory.RenderShowReport(out, report)
+		return r.show(req)
 	case "select":
-		report, err := memory.Select(workspace, strings.Join(req.Rest, " "))
-		if err != nil {
-			return renderMemoryError(out, req.Action, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(out, string(data))
-			return nil
-		}
-		memory.RenderSelectionReport(out, report)
+		return r.selectMemory(req)
 	case "add":
-		if len(req.Rest) == 0 {
-			return renderMissingActionArgument(out, "memory", "add", "text", "memory add requires text", "Usage: codog memory add TEXT [--json|--output-format text|json].", req.Format)
-		}
-		report, err := memory.Append(workspace, strings.Join(req.Rest, " "))
-		if err != nil {
-			return renderMemoryError(out, req.Action, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(out, string(data))
-			return nil
-		}
-		memory.RenderAppendReport(out, report)
+		return r.add(req)
 	case "search", "relevant":
-		if len(req.Rest) == 0 {
-			return renderMissingActionArgument(out, "memory", "search", "query", "memory search requires a query", "Usage: codog memory search QUERY [--limit N] [--json|--output-format text|json].", req.Format)
-		}
-		report, err := memory.SearchWithRulesImport(workspace, strings.Join(req.Rest, " "), req.Limit, rulesImport)
-		if err != nil {
-			return renderMemoryError(out, req.Action, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(out, string(data))
-			return nil
-		}
-		memory.RenderSearchReport(out, report)
-	case "path":
-		report, err := memory.Path(workspace, strings.Join(req.Rest, " "))
-		if err != nil {
-			return renderMemoryError(out, req.Action, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(out, string(data))
-			return nil
-		}
-		memory.RenderFileReport(out, report)
-	case "ensure":
-		report, err := memory.Ensure(workspace, strings.Join(req.Rest, " "))
-		if err != nil {
-			return renderMemoryError(out, req.Action, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(out, string(data))
-			return nil
-		}
-		memory.RenderFileReport(out, report)
+		return r.search(req)
+	case "path", "ensure":
+		return r.file(req)
 	case "edit":
-		report, err := memory.Edit(workspace, strings.Join(req.Rest, " "), req.Editor, !req.NoOpen)
-		if err != nil {
-			return renderMemoryError(out, req.Action, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(out, string(data))
-			return nil
-		}
-		memory.RenderFileReport(out, report)
+		return r.edit(req)
 	case "reset":
-		report, err := memory.Reset(workspace, memory.ResetOptions{
-			Target:  strings.Join(req.Rest, " "),
-			All:     req.All,
-			Confirm: req.Confirm,
-		})
-		if err != nil {
-			return renderMemoryError(out, req.Action, err, req.Format)
-		}
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(out, string(data))
-			return nil
-		}
-		memory.RenderResetReport(out, report)
+		return r.reset(req)
 	default:
-		return renderMemoryError(out, req.Action, fmt.Errorf("unknown memory action %q", req.Action), req.Format)
+		return renderMemoryError(r.out, req.Action, fmt.Errorf("unknown memory action %q", req.Action), req.Format)
 	}
+}
+
+func (r memoryCommandRunner) list(req memoryRequest) error {
+	report, err := memory.BuildReportWithRulesImport(r.workspace, r.rulesImport)
+	return renderMemoryResult(r.out, req, report, err, memory.RenderReport)
+}
+
+func (r memoryCommandRunner) show(req memoryRequest) error {
+	report, err := memory.ShowWithRulesImport(r.workspace, strings.Join(req.Rest, " "), r.rulesImport)
+	return renderMemoryResult(r.out, req, report, err, memory.RenderShowReport)
+}
+
+func (r memoryCommandRunner) selectMemory(req memoryRequest) error {
+	report, err := memory.Select(r.workspace, strings.Join(req.Rest, " "))
+	return renderMemoryResult(r.out, req, report, err, memory.RenderSelectionReport)
+}
+
+func (r memoryCommandRunner) add(req memoryRequest) error {
+	if len(req.Rest) == 0 {
+		return renderMissingActionArgument(r.out, "memory", "add", "text", "memory add requires text", "Usage: codog memory add TEXT [--json|--output-format text|json].", req.Format)
+	}
+	report, err := memory.Append(r.workspace, strings.Join(req.Rest, " "))
+	return renderMemoryResult(r.out, req, report, err, memory.RenderAppendReport)
+}
+
+func (r memoryCommandRunner) search(req memoryRequest) error {
+	if len(req.Rest) == 0 {
+		return renderMissingActionArgument(r.out, "memory", "search", "query", "memory search requires a query", "Usage: codog memory search QUERY [--limit N] [--json|--output-format text|json].", req.Format)
+	}
+	report, err := memory.SearchWithRulesImport(r.workspace, strings.Join(req.Rest, " "), req.Limit, r.rulesImport)
+	return renderMemoryResult(r.out, req, report, err, memory.RenderSearchReport)
+}
+
+func (r memoryCommandRunner) file(req memoryRequest) error {
+	var report memory.FileReport
+	var err error
+	if req.Action == "path" {
+		report, err = memory.Path(r.workspace, strings.Join(req.Rest, " "))
+	} else {
+		report, err = memory.Ensure(r.workspace, strings.Join(req.Rest, " "))
+	}
+	return renderMemoryResult(r.out, req, report, err, memory.RenderFileReport)
+}
+
+func (r memoryCommandRunner) edit(req memoryRequest) error {
+	report, err := memory.Edit(r.workspace, strings.Join(req.Rest, " "), req.Editor, !req.NoOpen)
+	return renderMemoryResult(r.out, req, report, err, memory.RenderFileReport)
+}
+
+func (r memoryCommandRunner) reset(req memoryRequest) error {
+	report, err := memory.Reset(r.workspace, memory.ResetOptions{Target: strings.Join(req.Rest, " "), All: req.All, Confirm: req.Confirm})
+	return renderMemoryResult(r.out, req, report, err, memory.RenderResetReport)
+}
+
+func renderMemoryResult[T any](out io.Writer, req memoryRequest, report T, err error, render func(io.Writer, T)) error {
+	if err != nil {
+		return renderMemoryError(out, req.Action, err, req.Format)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	render(out, report)
 	return nil
 }
 

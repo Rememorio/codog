@@ -1009,73 +1009,98 @@ func renderReportSchemaReport(out io.Writer, report reportSchemaReport) {
 	fmt.Fprintln(out, "Report Schema")
 	fmt.Fprintf(out, "  Action           %s\n", report.Action)
 	fmt.Fprintf(out, "  Status           %s\n", report.Status)
-	if report.Registry != nil {
-		fmt.Fprintf(out, "  Schema           %s\n", report.Registry.SchemaVersion)
-		fmt.Fprintf(out, "  Fields           %d\n", len(report.Registry.Fields))
-		for _, field := range report.Registry.Fields {
-			required := "optional"
-			if field.Required {
-				required = "required"
-			}
-			extra := ""
-			if len(field.EnumValues) > 0 {
-				extra = " enum=" + strings.Join(field.EnumValues, "|")
-			}
-			if field.Deprecated {
-				extra += " deprecated"
-			}
-			fmt.Fprintf(out, "    - %s [%s] %s%s\n", field.ID, required, field.FieldFamily, extra)
+	renderReportSchemaRegistry(out, report.Registry)
+	renderCanonicalReport(out, report.Report)
+	renderReportProjection(out, report.Projection)
+	renderReportConformance(out, report.Conformance)
+	renderReportConformanceCases(out, report.ConformanceCases)
+}
+
+func renderReportSchemaRegistry(out io.Writer, registry *reportschema.Registry) {
+	if registry == nil {
+		return
+	}
+	fmt.Fprintf(out, "  Schema           %s\n", registry.SchemaVersion)
+	fmt.Fprintf(out, "  Fields           %d\n", len(registry.Fields))
+	for _, field := range registry.Fields {
+		required := "optional"
+		if field.Required {
+			required = "required"
 		}
-		if len(report.Registry.Reports) > 0 {
-			fmt.Fprintf(out, "  Reports          %d\n", len(report.Registry.Reports))
-			for _, candidate := range report.Registry.Reports {
-				fmt.Fprintf(out, "    - %s %s\n", candidate.ID, candidate.SchemaVersion)
-			}
+		extra := ""
+		if len(field.EnumValues) > 0 {
+			extra = " enum=" + strings.Join(field.EnumValues, "|")
+		}
+		if field.Deprecated {
+			extra += " deprecated"
+		}
+		fmt.Fprintf(out, "    - %s [%s] %s%s\n", field.ID, required, field.FieldFamily, extra)
+	}
+	if len(registry.Reports) > 0 {
+		fmt.Fprintf(out, "  Reports          %d\n", len(registry.Reports))
+		for _, candidate := range registry.Reports {
+			fmt.Fprintf(out, "    - %s %s\n", candidate.ID, candidate.SchemaVersion)
 		}
 	}
-	if report.Report != nil {
-		fmt.Fprintf(out, "  Schema           %s\n", report.Report.SchemaVersion)
-		fmt.Fprintf(out, "  Report ID        %s\n", report.Report.Identity.ReportID)
-		fmt.Fprintf(out, "  Content hash     %s\n", report.Report.Identity.ContentHash)
-		fmt.Fprintf(out, "  Claims           %d\n", len(report.Report.Claims))
+}
+
+func renderCanonicalReport(out io.Writer, report *reportschema.CanonicalReport) {
+	if report == nil {
+		return
 	}
-	if report.Projection != nil {
-		fmt.Fprintf(out, "  Schema           %s\n", report.Projection.SchemaVersion)
-		fmt.Fprintf(out, "  Projection ID    %s\n", report.Projection.ProjectionID)
-		fmt.Fprintf(out, "  View             %s\n", report.Projection.View)
-		fmt.Fprintf(out, "  Consumer         %s\n", report.Projection.Provenance.Consumer)
-		fmt.Fprintf(out, "  Downgraded       %t\n", report.Projection.Provenance.Downgraded)
-		if len(report.Projection.Provenance.OmittedFieldFamilies) > 0 {
-			fmt.Fprintf(out, "  Omitted          %s\n", strings.Join(report.Projection.Provenance.OmittedFieldFamilies, ", "))
-		}
-		if len(report.Projection.Provenance.Redactions) > 0 {
-			fmt.Fprintln(out, "  Redactions")
-			for _, redaction := range report.Projection.Provenance.Redactions {
-				fmt.Fprintf(out, "    - %s %s\n", redaction.FieldPath, redaction.Reason)
-			}
-		}
+	fmt.Fprintf(out, "  Schema           %s\n", report.SchemaVersion)
+	fmt.Fprintf(out, "  Report ID        %s\n", report.Identity.ReportID)
+	fmt.Fprintf(out, "  Content hash     %s\n", report.Identity.ContentHash)
+	fmt.Fprintf(out, "  Claims           %d\n", len(report.Claims))
+}
+
+func renderReportProjection(out io.Writer, projection *reportschema.Projection) {
+	if projection == nil {
+		return
 	}
-	if report.Conformance != nil {
-		fmt.Fprintf(out, "  Schema           %s\n", report.Conformance.SchemaVersion)
-		fmt.Fprintf(out, "  Fixture set      %s\n", report.Conformance.FixtureSet)
-		fmt.Fprintf(out, "  Consumer         %s %s\n", report.Conformance.Consumer.Name, report.Conformance.Consumer.Version)
-		fmt.Fprintf(out, "  Valid            %t\n", report.Conformance.Valid)
-		fmt.Fprintf(out, "  Parse passed     %t\n", report.Conformance.ParsePassed)
-		fmt.Fprintf(out, "  Semantic passed  %t\n", report.Conformance.SemanticPassed)
-		fmt.Fprintf(out, "  Cases            %d/%d\n", report.Conformance.PassedCaseCount, report.Conformance.RequiredCaseCount)
-		if report.Conformance.LastPassed != nil {
-			fmt.Fprintf(out, "  Last passed      %s %s %s\n", report.Conformance.LastPassed.Consumer, report.Conformance.LastPassed.Version, report.Conformance.LastPassed.PassedAt)
-		}
-		for _, err := range report.Conformance.Errors {
-			fmt.Fprintf(out, "  - %s [%s] %s\n", err.Path, err.Kind, err.Message)
+	fmt.Fprintf(out, "  Schema           %s\n", projection.SchemaVersion)
+	fmt.Fprintf(out, "  Projection ID    %s\n", projection.ProjectionID)
+	fmt.Fprintf(out, "  View             %s\n", projection.View)
+	fmt.Fprintf(out, "  Consumer         %s\n", projection.Provenance.Consumer)
+	fmt.Fprintf(out, "  Downgraded       %t\n", projection.Provenance.Downgraded)
+	if len(projection.Provenance.OmittedFieldFamilies) > 0 {
+		fmt.Fprintf(out, "  Omitted          %s\n", strings.Join(projection.Provenance.OmittedFieldFamilies, ", "))
+	}
+	if len(projection.Provenance.Redactions) > 0 {
+		fmt.Fprintln(out, "  Redactions")
+		for _, redaction := range projection.Provenance.Redactions {
+			fmt.Fprintf(out, "    - %s %s\n", redaction.FieldPath, redaction.Reason)
 		}
 	}
-	if len(report.ConformanceCases) > 0 {
-		fmt.Fprintf(out, "  Fixture set      %s\n", reportconformance.FixtureSetVersion)
-		fmt.Fprintf(out, "  Conformance cases %d\n", len(report.ConformanceCases))
-		for _, candidate := range report.ConformanceCases {
-			fmt.Fprintf(out, "    - %s %s %s\n", candidate.Name, candidate.View, candidate.ProjectionID)
-		}
+}
+
+func renderReportConformance(out io.Writer, result *reportconformance.Result) {
+	if result == nil {
+		return
+	}
+	fmt.Fprintf(out, "  Schema           %s\n", result.SchemaVersion)
+	fmt.Fprintf(out, "  Fixture set      %s\n", result.FixtureSet)
+	fmt.Fprintf(out, "  Consumer         %s %s\n", result.Consumer.Name, result.Consumer.Version)
+	fmt.Fprintf(out, "  Valid            %t\n", result.Valid)
+	fmt.Fprintf(out, "  Parse passed     %t\n", result.ParsePassed)
+	fmt.Fprintf(out, "  Semantic passed  %t\n", result.SemanticPassed)
+	fmt.Fprintf(out, "  Cases            %d/%d\n", result.PassedCaseCount, result.RequiredCaseCount)
+	if result.LastPassed != nil {
+		fmt.Fprintf(out, "  Last passed      %s %s %s\n", result.LastPassed.Consumer, result.LastPassed.Version, result.LastPassed.PassedAt)
+	}
+	for _, err := range result.Errors {
+		fmt.Fprintf(out, "  - %s [%s] %s\n", err.Path, err.Kind, err.Message)
+	}
+}
+
+func renderReportConformanceCases(out io.Writer, cases []reportconformance.RequiredCase) {
+	if len(cases) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "  Fixture set      %s\n", reportconformance.FixtureSetVersion)
+	fmt.Fprintf(out, "  Conformance cases %d\n", len(cases))
+	for _, candidate := range cases {
+		fmt.Fprintf(out, "    - %s %s %s\n", candidate.Name, candidate.View, candidate.ProjectionID)
 	}
 }
 
@@ -1132,88 +1157,88 @@ func (a *App) Trust(args []string) error {
 }
 
 func parseTrustArgs(args []string, defaultCWD string) (trustRequest, error) {
-	req := trustRequest{Format: "text", Action: "resolve", CWD: strings.TrimSpace(defaultCWD)}
-	var positionals []string
+	parser := trustArgParser{req: trustRequest{Format: "text", Action: "resolve", CWD: strings.TrimSpace(defaultCWD)}}
 	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			i++
-			if i >= len(args) {
-				return req, errors.New("trust output format is required")
-			}
-			req.Format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--cwd":
-			i++
-			if i >= len(args) {
-				return req, errors.New("trust cwd is required")
-			}
-			req.CWD = args[i]
-		case strings.HasPrefix(arg, "--cwd="):
-			req.CWD = strings.TrimPrefix(arg, "--cwd=")
-		case arg == "--worktree":
-			i++
-			if i >= len(args) {
-				return req, errors.New("trust worktree is required")
-			}
-			req.Worktree = args[i]
-		case strings.HasPrefix(arg, "--worktree="):
-			req.Worktree = strings.TrimPrefix(arg, "--worktree=")
-		case arg == "--screen":
-			i++
-			if i >= len(args) {
-				return req, errors.New("trust screen text is required")
-			}
-			req.Screen = args[i]
-		case strings.HasPrefix(arg, "--screen="):
-			req.Screen = strings.TrimPrefix(arg, "--screen=")
-		case arg == "--allow":
-			i++
-			if i >= len(args) {
-				return req, errors.New("trust allow pattern is required")
-			}
-			req.Allow = append(req.Allow, args[i])
-		case strings.HasPrefix(arg, "--allow="):
-			req.Allow = append(req.Allow, strings.TrimPrefix(arg, "--allow="))
-		case arg == "--deny":
-			i++
-			if i >= len(args) {
-				return req, errors.New("trust deny root is required")
-			}
-			req.Deny = append(req.Deny, args[i])
-		case strings.HasPrefix(arg, "--deny="):
-			req.Deny = append(req.Deny, strings.TrimPrefix(arg, "--deny="))
-		case arg == "--no-events":
-			req.NoEvents = true
-		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown trust flag %q", arg)
-		default:
-			positionals = append(positionals, arg)
+		if err := parser.consume(args, &i); err != nil {
+			return parser.req, err
 		}
 	}
-	normalized, err := normalizeTextOrJSON(req.Format, "trust")
+	return parser.finish()
+}
+
+type trustArgParser struct {
+	req         trustRequest
+	positionals []string
+}
+
+func (p *trustArgParser) consume(args []string, index *int) error {
+	arg := args[*index]
+	switch {
+	case arg == "--json":
+		p.req.Format = "json"
+	case arg == "--output-format" || arg == "-o":
+		return p.consumeValue(args, index, arg, "trust output format is required", func(value string) { p.req.Format = value })
+	case strings.HasPrefix(arg, "--output-format="):
+		p.req.Format = strings.TrimPrefix(arg, "--output-format=")
+	case arg == "--cwd":
+		return p.consumeValue(args, index, arg, "trust cwd is required", func(value string) { p.req.CWD = value })
+	case strings.HasPrefix(arg, "--cwd="):
+		p.req.CWD = strings.TrimPrefix(arg, "--cwd=")
+	case arg == "--worktree":
+		return p.consumeValue(args, index, arg, "trust worktree is required", func(value string) { p.req.Worktree = value })
+	case strings.HasPrefix(arg, "--worktree="):
+		p.req.Worktree = strings.TrimPrefix(arg, "--worktree=")
+	case arg == "--screen":
+		return p.consumeValue(args, index, arg, "trust screen text is required", func(value string) { p.req.Screen = value })
+	case strings.HasPrefix(arg, "--screen="):
+		p.req.Screen = strings.TrimPrefix(arg, "--screen=")
+	case arg == "--allow":
+		return p.consumeValue(args, index, arg, "trust allow pattern is required", func(value string) { p.req.Allow = append(p.req.Allow, value) })
+	case strings.HasPrefix(arg, "--allow="):
+		p.req.Allow = append(p.req.Allow, strings.TrimPrefix(arg, "--allow="))
+	case arg == "--deny":
+		return p.consumeValue(args, index, arg, "trust deny root is required", func(value string) { p.req.Deny = append(p.req.Deny, value) })
+	case strings.HasPrefix(arg, "--deny="):
+		p.req.Deny = append(p.req.Deny, strings.TrimPrefix(arg, "--deny="))
+	case arg == "--no-events":
+		p.req.NoEvents = true
+	case strings.HasPrefix(arg, "-"):
+		return fmt.Errorf("unknown trust flag %q", arg)
+	default:
+		p.positionals = append(p.positionals, arg)
+	}
+	return nil
+}
+
+func (p *trustArgParser) consumeValue(args []string, index *int, _ string, message string, apply func(string)) error {
+	*index++
+	if *index >= len(args) {
+		return errors.New(message)
+	}
+	apply(args[*index])
+	return nil
+}
+
+func (p *trustArgParser) finish() (trustRequest, error) {
+	normalized, err := normalizeTextOrJSON(p.req.Format, "trust")
 	if err != nil {
-		return req, err
+		return p.req, err
 	}
-	req.Format = normalized
-	if len(positionals) > 0 {
-		action := strings.ToLower(strings.TrimSpace(positionals[0]))
+	p.req.Format = normalized
+	if len(p.positionals) > 0 {
+		action := strings.ToLower(strings.TrimSpace(p.positionals[0]))
 		if action == "resolve" || action == "check" || action == "status" {
-			req.Action = "resolve"
-			positionals = positionals[1:]
+			p.req.Action = "resolve"
+			p.positionals = p.positionals[1:]
 		}
 	}
-	if strings.TrimSpace(req.Screen) == "" && len(positionals) > 0 {
-		req.Screen = strings.Join(positionals, " ")
+	if strings.TrimSpace(p.req.Screen) == "" && len(p.positionals) > 0 {
+		p.req.Screen = strings.Join(p.positionals, " ")
 	}
-	if strings.TrimSpace(req.CWD) == "" {
-		return req, errors.New("trust cwd is required")
+	if strings.TrimSpace(p.req.CWD) == "" {
+		return p.req, errors.New("trust cwd is required")
 	}
-	return req, nil
+	return p.req, nil
 }
 
 func trustAllowlistEntries(patterns []string) []trustresolver.AllowlistEntry {

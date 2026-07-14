@@ -1048,86 +1048,105 @@ type capabilitiesRequest struct {
 }
 
 func parseCapabilitiesArgs(args []string) (capabilitiesRequest, error) {
-	req := capabilitiesRequest{Action: "show", Format: "text"}
-	positionals := []string{}
-	usage := "codog capabilities [show|list|resolve NAME|audit] [--commands-snapshot PATH] [--tools-snapshot PATH] [--json|--output-format text|json]"
+	const usage = "codog capabilities [show|list|resolve NAME|audit] [--commands-snapshot PATH] [--tools-snapshot PATH] [--json|--output-format text|json]"
+	parser := capabilitiesArgParser{
+		req:   capabilitiesRequest{Action: "show", Format: "text"},
+		usage: usage,
+	}
 	for index := 0; index < len(args); index++ {
-		arg := strings.TrimSpace(args[index])
-		switch {
-		case arg == "":
-			continue
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "capabilities", Flag: arg, Usage: usage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--commands-snapshot" || arg == "--command-snapshot":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "capabilities audit", Flag: arg, Usage: usage}
-			}
-			req.CommandSnapshot = args[index]
-		case strings.HasPrefix(arg, "--commands-snapshot="):
-			req.CommandSnapshot = strings.TrimPrefix(arg, "--commands-snapshot=")
-		case strings.HasPrefix(arg, "--command-snapshot="):
-			req.CommandSnapshot = strings.TrimPrefix(arg, "--command-snapshot=")
-		case arg == "--tools-snapshot" || arg == "--tool-snapshot":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "capabilities audit", Flag: arg, Usage: usage}
-			}
-			req.ToolSnapshot = args[index]
-		case strings.HasPrefix(arg, "--tools-snapshot="):
-			req.ToolSnapshot = strings.TrimPrefix(arg, "--tools-snapshot=")
-		case strings.HasPrefix(arg, "--tool-snapshot="):
-			req.ToolSnapshot = strings.TrimPrefix(arg, "--tool-snapshot=")
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{Command: "capabilities", Option: arg, Usage: usage}
-		default:
-			positionals = append(positionals, arg)
+		if err := parser.consume(args, &index); err != nil {
+			return parser.req, err
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "capabilities"); err != nil {
-		return req, err
+	return parser.finish()
+}
+
+type capabilitiesArgParser struct {
+	req         capabilitiesRequest
+	positionals []string
+	usage       string
+}
+
+func (p *capabilitiesArgParser) consume(args []string, index *int) error {
+	arg := strings.TrimSpace(args[*index])
+	switch {
+	case arg == "":
+	case arg == "--json":
+		p.req.Format = "json"
+	case arg == "--output-format" || arg == "-o":
+		return p.consumeValue(args, index, arg, "capabilities", func(value string) { p.req.Format = value })
+	case strings.HasPrefix(arg, "--output-format="):
+		p.req.Format = strings.TrimPrefix(arg, "--output-format=")
+	case arg == "--commands-snapshot" || arg == "--command-snapshot":
+		return p.consumeValue(args, index, arg, "capabilities audit", func(value string) { p.req.CommandSnapshot = value })
+	case strings.HasPrefix(arg, "--commands-snapshot="):
+		p.req.CommandSnapshot = strings.TrimPrefix(arg, "--commands-snapshot=")
+	case strings.HasPrefix(arg, "--command-snapshot="):
+		p.req.CommandSnapshot = strings.TrimPrefix(arg, "--command-snapshot=")
+	case arg == "--tools-snapshot" || arg == "--tool-snapshot":
+		return p.consumeValue(args, index, arg, "capabilities audit", func(value string) { p.req.ToolSnapshot = value })
+	case strings.HasPrefix(arg, "--tools-snapshot="):
+		p.req.ToolSnapshot = strings.TrimPrefix(arg, "--tools-snapshot=")
+	case strings.HasPrefix(arg, "--tool-snapshot="):
+		p.req.ToolSnapshot = strings.TrimPrefix(arg, "--tool-snapshot=")
+	case strings.HasPrefix(arg, "-"):
+		return unknownOptionError{Command: "capabilities", Option: arg, Usage: p.usage}
+	default:
+		p.positionals = append(p.positionals, arg)
 	}
-	if len(positionals) == 0 {
-		return req, nil
+	return nil
+}
+
+func (p *capabilitiesArgParser) consumeValue(args []string, index *int, flag string, command string, apply func(string)) error {
+	*index++
+	if *index >= len(args) {
+		return missingFlagValueError{Command: command, Flag: flag, Usage: p.usage}
 	}
-	action := strings.ToLower(positionals[0])
+	apply(args[*index])
+	return nil
+}
+
+func (p *capabilitiesArgParser) finish() (capabilitiesRequest, error) {
+	if err := validateTextOrJSON(p.req.Format, "capabilities"); err != nil {
+		return p.req, err
+	}
+	if len(p.positionals) == 0 {
+		return p.req, nil
+	}
+	return p.parseAction()
+}
+
+func (p *capabilitiesArgParser) parseAction() (capabilitiesRequest, error) {
+	action := strings.ToLower(p.positionals[0])
 	switch action {
 	case "show", "list":
-		if len(positionals) > 1 {
-			return req, unexpectedExtraArgsError{Command: "capabilities " + action, Args: positionals[1:], Usage: usage}
+		if len(p.positionals) > 1 {
+			return p.req, unexpectedExtraArgsError{Command: "capabilities " + action, Args: p.positionals[1:], Usage: p.usage}
 		}
-		req.Action = "show"
+		p.req.Action = "show"
 	case "resolve", "lookup", "find":
-		if len(positionals) < 2 {
-			return req, requiredArgumentError{Command: "capabilities resolve", Argument: "NAME", Usage: usage}
+		if len(p.positionals) < 2 {
+			return p.req, requiredArgumentError{Command: "capabilities resolve", Argument: "NAME", Usage: p.usage}
 		}
-		if len(positionals) > 2 {
-			return req, unexpectedExtraArgsError{Command: "capabilities resolve", Args: positionals[2:], Usage: usage}
+		if len(p.positionals) > 2 {
+			return p.req, unexpectedExtraArgsError{Command: "capabilities resolve", Args: p.positionals[2:], Usage: p.usage}
 		}
-		req.Action = "resolve"
-		req.Query = positionals[1]
+		p.req.Action = "resolve"
+		p.req.Query = p.positionals[1]
 	case "audit":
-		if len(positionals) > 1 {
-			return req, unexpectedExtraArgsError{Command: "capabilities audit", Args: positionals[1:], Usage: usage}
+		if len(p.positionals) > 1 {
+			return p.req, unexpectedExtraArgsError{Command: "capabilities audit", Args: p.positionals[1:], Usage: p.usage}
 		}
-		req.Action = "audit"
+		p.req.Action = "audit"
 	default:
-		return req, unknownOptionError{Command: "capabilities", Option: positionals[0], Usage: usage}
+		return p.req, unknownOptionError{Command: "capabilities", Option: p.positionals[0], Usage: p.usage}
 	}
-	req.CommandSnapshot = strings.TrimSpace(req.CommandSnapshot)
-	req.ToolSnapshot = strings.TrimSpace(req.ToolSnapshot)
-	if req.Action == "audit" && req.CommandSnapshot == "" && req.ToolSnapshot == "" {
-		return req, requiredArgumentError{Command: "capabilities audit", Argument: "--commands-snapshot or --tools-snapshot", Usage: usage}
+	p.req.CommandSnapshot = strings.TrimSpace(p.req.CommandSnapshot)
+	p.req.ToolSnapshot = strings.TrimSpace(p.req.ToolSnapshot)
+	if p.req.Action == "audit" && p.req.CommandSnapshot == "" && p.req.ToolSnapshot == "" {
+		return p.req, requiredArgumentError{Command: "capabilities audit", Argument: "--commands-snapshot or --tools-snapshot", Usage: p.usage}
 	}
-	return req, nil
+	return p.req, nil
 }
 
 func (a *App) capabilitiesReport() capabilitiesReport {

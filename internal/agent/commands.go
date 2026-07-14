@@ -2023,70 +2023,87 @@ func renderMCPShowReport(out io.Writer, format string, report mcpShowReport) {
 }
 
 func renderMCPListReport(out io.Writer, format string, report mcpListReport) {
-	if format == "text" {
-		fmt.Fprintln(out, "MCP")
-		fmt.Fprintf(out, "  Working directory %s\n", report.WorkingDirectory)
-		fmt.Fprintf(out, "  Status           %s\n", report.Status)
-		fmt.Fprintf(out, "  Configured servers %d\n", report.ConfiguredServers)
-		fmt.Fprintf(out, "  Total entries     %d\n", report.TotalConfigured)
-		fmt.Fprintf(out, "  Required entries  %d\n", report.RequiredCount)
-		fmt.Fprintf(out, "  Optional entries  %d\n", report.OptionalCount)
-		fmt.Fprintf(out, "  Invalid entries   %d\n", report.InvalidCount)
-		fmt.Fprintf(out, "  Startup gate      %s", report.Startup.Status)
-		if report.Startup.RequiredFailedCount > 0 {
-			fmt.Fprintf(out, " (%d required failed)", report.Startup.RequiredFailedCount)
-		} else if report.Startup.OptionalFailedCount > 0 {
-			fmt.Fprintf(out, " (%d optional failed)", report.Startup.OptionalFailedCount)
-		}
-		fmt.Fprintln(out)
-		if report.ConfigLoadError != nil {
-			fmt.Fprintf(out, "  Config load      degraded: %s\n", *report.ConfigLoadError)
-			fmt.Fprintln(out, "  Hint             Fix the listed config file or run `codog doctor` for details.")
-		}
-		if len(report.Servers) == 0 {
-			fmt.Fprintln(out, "  No valid MCP servers configured.")
-		} else {
-			fmt.Fprintln(out)
-			for _, server := range report.Servers {
-				transport := "stdio"
-				if strings.TrimSpace(server.URL) != "" {
-					transport = "http"
-				}
-				fmt.Fprintf(out, "  %-16s %-13s %-7s %s\n", server.Name, transport, server.Status, mcpServerStatusSummary(server))
-			}
-		}
-		if len(report.Startup.FailedRequired) > 0 {
-			fmt.Fprintln(out)
-			fmt.Fprintln(out, "  Failed required MCP servers")
-			for _, failure := range report.Startup.FailedRequired {
-				fmt.Fprintf(out, "    - %s: %s\n", failure.Name, mcpStartupFailureSummary(failure))
-			}
-		}
-		if len(report.Startup.FailedOptional) > 0 {
-			fmt.Fprintln(out)
-			fmt.Fprintln(out, "  Failed optional MCP servers")
-			for _, failure := range report.Startup.FailedOptional {
-				fmt.Fprintf(out, "    - %s: %s\n", failure.Name, mcpStartupFailureSummary(failure))
-			}
-		}
-		if len(report.InvalidServers) > 0 {
-			fmt.Fprintln(out)
-			fmt.Fprintln(out, "  Invalid MCP servers")
-			for _, invalid := range report.InvalidServers {
-				fmt.Fprintf(out, "    - %s: %s\n", invalid.Name, invalid.Reason)
-			}
-		}
-		if len(report.NextActions) > 0 {
-			fmt.Fprintln(out)
-			fmt.Fprintln(out, "  Next actions")
-			for _, action := range report.NextActions {
-				fmt.Fprintf(out, "    - %s\n", action)
-			}
-		}
+	if format != "text" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
 		return
 	}
-	data, _ := json.MarshalIndent(report, "", "  ")
-	fmt.Fprintln(out, string(data))
+	renderMCPListSummary(out, report)
+	renderMCPServers(out, report.Servers)
+	renderMCPFailures(out, "Failed required MCP servers", report.Startup.FailedRequired)
+	renderMCPFailures(out, "Failed optional MCP servers", report.Startup.FailedOptional)
+	renderMCPInvalidServers(out, report.InvalidServers)
+	renderMCPNextActions(out, report.NextActions)
+}
+
+func renderMCPListSummary(out io.Writer, report mcpListReport) {
+	fmt.Fprintln(out, "MCP")
+	fmt.Fprintf(out, "  Working directory %s\n", report.WorkingDirectory)
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Configured servers %d\n", report.ConfiguredServers)
+	fmt.Fprintf(out, "  Total entries     %d\n", report.TotalConfigured)
+	fmt.Fprintf(out, "  Required entries  %d\n", report.RequiredCount)
+	fmt.Fprintf(out, "  Optional entries  %d\n", report.OptionalCount)
+	fmt.Fprintf(out, "  Invalid entries   %d\n", report.InvalidCount)
+	fmt.Fprintf(out, "  Startup gate      %s", report.Startup.Status)
+	if report.Startup.RequiredFailedCount > 0 {
+		fmt.Fprintf(out, " (%d required failed)", report.Startup.RequiredFailedCount)
+	} else if report.Startup.OptionalFailedCount > 0 {
+		fmt.Fprintf(out, " (%d optional failed)", report.Startup.OptionalFailedCount)
+	}
+	fmt.Fprintln(out)
+	if report.ConfigLoadError != nil {
+		fmt.Fprintf(out, "  Config load      degraded: %s\n", *report.ConfigLoadError)
+		fmt.Fprintln(out, "  Hint             Fix the listed config file or run `codog doctor` for details.")
+	}
+}
+
+func renderMCPServers(out io.Writer, servers []mcp.ServerStatus) {
+	if len(servers) == 0 {
+		fmt.Fprintln(out, "  No valid MCP servers configured.")
+		return
+	}
+	fmt.Fprintln(out)
+	for _, server := range servers {
+		transport := "stdio"
+		if strings.TrimSpace(server.URL) != "" {
+			transport = "http"
+		}
+		fmt.Fprintf(out, "  %-16s %-13s %-7s %s\n", server.Name, transport, server.Status, mcpServerStatusSummary(server))
+	}
+}
+
+func renderMCPFailures(out io.Writer, title string, failures []mcp.StartupFailure) {
+	if len(failures) == 0 {
+		return
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "  "+title)
+	for _, failure := range failures {
+		fmt.Fprintf(out, "    - %s: %s\n", failure.Name, mcpStartupFailureSummary(failure))
+	}
+}
+
+func renderMCPInvalidServers(out io.Writer, servers []localstatus.ValidationIssue) {
+	if len(servers) == 0 {
+		return
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "  Invalid MCP servers")
+	for _, invalid := range servers {
+		fmt.Fprintf(out, "    - %s: %s\n", invalid.Name, invalid.Reason)
+	}
+}
+
+func renderMCPNextActions(out io.Writer, actions []string) {
+	if len(actions) == 0 {
+		return
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "  Next actions")
+	for _, action := range actions {
+		fmt.Fprintf(out, "    - %s\n", action)
+	}
 }
 
 func mcpStartupFailureSummary(failure mcp.StartupFailure) string {

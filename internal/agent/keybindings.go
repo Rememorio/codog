@@ -2935,65 +2935,76 @@ func (a *App) ExtraUsage(args []string) error {
 }
 
 func parseExtraUsageArgs(args []string) (extraUsageRequest, error) {
-	req := extraUsageRequest{Action: "open", Format: "text", Target: "user", Open: true, Mode: "personal"}
 	const usage = "codog extra-usage [status|list|personal|admin] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
+	parser := extraUsageArgParser{
+		req:   extraUsageRequest{Action: "open", Format: "text", Target: "user", Open: true, Mode: "personal"},
+		usage: usage,
+	}
 	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "extra-usage", Flag: arg, Usage: usage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "extra-usage", Flag: arg, Usage: usage}
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "extra-usage", Flag: arg, Usage: usage}
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		case arg == "--open":
-			req.Open = true
-		case arg == "--no-open":
-			req.Open = false
-		case arg == "--admin":
-			req.Mode = "admin"
-		case arg == "--personal":
-			req.Mode = "personal"
-		case arg == "status" || arg == "list" || arg == "ls":
-			req.Action = "status"
-			req.Open = false
-		case arg == "admin" || arg == "team" || arg == "enterprise" || arg == "org" || arg == "organization":
-			req.Mode = "admin"
-		case arg == "personal" || arg == "user" || arg == "individual":
-			req.Mode = "personal"
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return req, unknownOptionError{Command: "extra-usage", Option: arg, Usage: usage}
-			}
-			return req, unexpectedExtraArgsError{Command: "extra-usage", Args: []string{arg}, Usage: usage}
+		if err := parser.consume(args, &index); err != nil {
+			return parser.req, err
 		}
 	}
-	normalizedFormat, err := normalizeOutputFormat("extra-usage", req.Format, []string{"text", "json"})
+	normalizedFormat, err := normalizeOutputFormat("extra-usage", parser.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = normalizedFormat
-	return req, nil
+	parser.req.Format = normalizedFormat
+	return parser.req, nil
+}
+
+type extraUsageArgParser struct {
+	req   extraUsageRequest
+	usage string
+}
+
+func (p *extraUsageArgParser) consume(args []string, index *int) error {
+	arg := args[*index]
+	switch {
+	case arg == "--json":
+		p.req.Format = "json"
+	case arg == "--output-format" || arg == "-o":
+		return p.consumeValue(args, index, arg, false, func(value string) { p.req.Format = value })
+	case strings.HasPrefix(arg, "--output-format="):
+		p.req.Format = strings.TrimPrefix(arg, "--output-format=")
+	case arg == "--target":
+		return p.consumeValue(args, index, arg, true, func(value string) { p.req.Target = value })
+	case strings.HasPrefix(arg, "--target="):
+		p.req.Target = strings.TrimPrefix(arg, "--target=")
+	case arg == "--path":
+		return p.consumeValue(args, index, arg, true, func(value string) { p.req.Path = value })
+	case strings.HasPrefix(arg, "--path="):
+		p.req.Path = strings.TrimPrefix(arg, "--path=")
+	case arg == "--open":
+		p.req.Open = true
+	case arg == "--no-open":
+		p.req.Open = false
+	case arg == "--admin":
+		p.req.Mode = "admin"
+	case arg == "--personal":
+		p.req.Mode = "personal"
+	case arg == "status" || arg == "list" || arg == "ls":
+		p.req.Action = "status"
+		p.req.Open = false
+	case arg == "admin" || arg == "team" || arg == "enterprise" || arg == "org" || arg == "organization":
+		p.req.Mode = "admin"
+	case arg == "personal" || arg == "user" || arg == "individual":
+		p.req.Mode = "personal"
+	case strings.HasPrefix(arg, "-"):
+		return unknownOptionError{Command: "extra-usage", Option: arg, Usage: p.usage}
+	default:
+		return unexpectedExtraArgsError{Command: "extra-usage", Args: []string{arg}, Usage: p.usage}
+	}
+	return nil
+}
+
+func (p *extraUsageArgParser) consumeValue(args []string, index *int, flag string, rejectFormatFlag bool, apply func(string)) error {
+	*index++
+	if *index >= len(args) || rejectFormatFlag && isOutputFormatFlag(args[*index]) {
+		return missingFlagValueError{Command: "extra-usage", Flag: flag, Usage: p.usage}
+	}
+	apply(args[*index])
+	return nil
 }
 
 func appendExtraUsageNoOpen(args []string) []string {

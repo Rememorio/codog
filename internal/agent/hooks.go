@@ -1735,82 +1735,118 @@ func (a *App) Voice(args []string) error {
 	if err != nil {
 		return err
 	}
+	terminal, err := a.applyVoiceAction(&req)
+	if err != nil || terminal {
+		return err
+	}
+	return a.renderVoiceStatus(req)
+}
+
+func (a *App) applyVoiceAction(req *voiceRequest) (bool, error) {
 	switch req.Action {
 	case "status":
+		return false, nil
 	case "on", "off", "toggle":
-		next := req.Action == "on"
-		if req.Action == "toggle" {
-			next = !boolPtrEnabled(a.Config.VoiceEnabled)
-		}
-		if next && !externalCommandAvailable(a.Config.VoiceCommand) {
-			return requiredArgumentError{Command: "voice on", Argument: "COMMAND", Usage: voiceUsage}
-		}
-		path, err := a.preferenceConfigPath(req.Target, req.Path)
-		if err != nil {
-			return err
-		}
-		if _, err := config.SetFileValue(path, "voice_enabled", next); err != nil {
-			return err
-		}
-		a.Config.VoiceEnabled = &next
-		req.Path = path
+		return false, a.updateVoiceEnabled(req)
 	case "set-command":
-		command := strings.TrimSpace(req.Command)
-		if command == "" {
-			return requiredArgumentError{Command: "voice set-command", Argument: "COMMAND", Usage: voiceUsage}
-		}
-		path, err := a.preferenceConfigPath(req.Target, req.Path)
-		if err != nil {
-			return err
-		}
-		if _, err := config.SetFileValue(path, "voice_command", command); err != nil {
-			return err
-		}
-		a.Config.VoiceCommand = command
-		req.Path = path
+		return false, a.updateVoiceCommand(req)
 	case "clear-command":
-		path, err := a.preferenceConfigPath(req.Target, req.Path)
-		if err != nil {
-			return err
-		}
-		if _, err := config.UnsetFileValue(path, "voice_command"); err != nil {
-			return err
-		}
-		disabled := false
-		if _, err := config.SetFileValue(path, "voice_enabled", disabled); err != nil {
-			return err
-		}
-		a.Config.VoiceCommand = ""
-		a.Config.VoiceEnabled = &disabled
-		req.Path = path
+		return false, a.clearVoiceCommand(req)
 	case "clear":
-		path, err := a.preferenceConfigPath(req.Target, req.Path)
-		if err != nil {
+		return false, a.clearVoice(req)
+	case "test", "transcribe", "listen":
+		return true, a.runAndRenderVoice(*req)
+	default:
+		return true, fmt.Errorf("unknown voice command %q", req.Action)
+	}
+}
+
+func (a *App) updateVoiceEnabled(req *voiceRequest) error {
+	next := req.Action == "on"
+	if req.Action == "toggle" {
+		next = !boolPtrEnabled(a.Config.VoiceEnabled)
+	}
+	if next && !externalCommandAvailable(a.Config.VoiceCommand) {
+		return requiredArgumentError{Command: "voice on", Argument: "COMMAND", Usage: voiceUsage}
+	}
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	if _, err := config.SetFileValue(path, "voice_enabled", next); err != nil {
+		return err
+	}
+	a.Config.VoiceEnabled = &next
+	req.Path = path
+	return nil
+}
+
+func (a *App) updateVoiceCommand(req *voiceRequest) error {
+	command := strings.TrimSpace(req.Command)
+	if command == "" {
+		return requiredArgumentError{Command: "voice set-command", Argument: "COMMAND", Usage: voiceUsage}
+	}
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	if _, err := config.SetFileValue(path, "voice_command", command); err != nil {
+		return err
+	}
+	a.Config.VoiceCommand = command
+	req.Path = path
+	return nil
+}
+
+func (a *App) clearVoiceCommand(req *voiceRequest) error {
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	if _, err := config.UnsetFileValue(path, "voice_command"); err != nil {
+		return err
+	}
+	disabled := false
+	if _, err := config.SetFileValue(path, "voice_enabled", disabled); err != nil {
+		return err
+	}
+	a.Config.VoiceCommand = ""
+	a.Config.VoiceEnabled = &disabled
+	req.Path = path
+	return nil
+}
+
+func (a *App) clearVoice(req *voiceRequest) error {
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	for _, key := range []string{"voice_enabled", "voice_command"} {
+		if _, err := config.UnsetFileValue(path, key); err != nil {
 			return err
 		}
-		for _, key := range []string{"voice_enabled", "voice_command"} {
-			if _, err := config.UnsetFileValue(path, key); err != nil {
-				return err
-			}
-		}
-		a.Config.VoiceEnabled = nil
-		a.Config.VoiceCommand = ""
-		req.Path = path
-	case "test", "transcribe", "listen":
-		report, runErr := a.runVoiceCommand(req)
-		if req.Format == "json" {
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			if runErr != nil {
-				return &ExitError{Code: 1, Err: runErr, Silent: true}
-			}
-		} else {
-			renderVoiceReport(a.Out, report)
-		}
-		return runErr
-	default:
-		return fmt.Errorf("unknown voice command %q", req.Action)
 	}
+	a.Config.VoiceEnabled = nil
+	a.Config.VoiceCommand = ""
+	req.Path = path
+	return nil
+}
+
+func (a *App) runAndRenderVoice(req voiceRequest) error {
+	report, runErr := a.runVoiceCommand(req)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		if runErr != nil {
+			return &ExitError{Code: 1, Err: runErr, Silent: true}
+		}
+		return nil
+	}
+	renderVoiceReport(a.Out, report)
+	return runErr
+}
+
+func (a *App) renderVoiceStatus(req voiceRequest) error {
 	report := a.voiceStatusReport(req.Action, req.Path)
 	if !report.CommandConfigured {
 		report.Message = "Voice mode needs an external STT command before it can be enabled."

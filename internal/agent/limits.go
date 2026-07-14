@@ -1240,51 +1240,61 @@ func joinInts(values []int) string {
 }
 
 func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, error) {
-	id := overrides.SessionID
-	resuming := strings.TrimSpace(overrides.Resume) != ""
 	if strings.TrimSpace(overrides.FromPR) != "" {
-		if strings.TrimSpace(overrides.Resume) != "" {
-			return nil, errors.New("--from-pr cannot be combined with --resume or --continue")
-		}
-		if strings.TrimSpace(overrides.SessionID) != "" && !overrides.ForkSession {
-			return nil, errors.New("--session-id can only be used with --from-pr when --fork-session is also specified")
-		}
-		resolved, err := a.resolveFromPRSession(overrides.FromPR)
+		resolved, err := a.prepareFromPRSession(overrides)
 		if err != nil {
 			return nil, err
 		}
 		overrides.Resume = resolved
-		id = resolved
-		resuming = true
 	}
-	var sess *session.Session
-	var err error
 	if overrides.ForkSession {
-		if strings.TrimSpace(overrides.Resume) == "" {
-			return nil, errors.New("--fork-session requires --resume, --continue, or --from-pr")
+		return a.openForkedSession(overrides)
+	}
+	return a.openStandardSession(overrides)
+}
+
+func (a *App) prepareFromPRSession(overrides config.FlagOverrides) (string, error) {
+	if strings.TrimSpace(overrides.Resume) != "" {
+		return "", errors.New("--from-pr cannot be combined with --resume or --continue")
+	}
+	if strings.TrimSpace(overrides.SessionID) != "" && !overrides.ForkSession {
+		return "", errors.New("--session-id can only be used with --from-pr when --fork-session is also specified")
+	}
+	return a.resolveFromPRSession(overrides.FromPR)
+}
+
+func (a *App) openForkedSession(overrides config.FlagOverrides) (*session.Session, error) {
+	if strings.TrimSpace(overrides.Resume) == "" {
+		return nil, errors.New("--fork-session requires --resume, --continue, or --from-pr")
+	}
+	id := overrides.Resume
+	if id == "true" {
+		id = "latest"
+	}
+	sess, err := a.Sessions.Fork(id, "")
+	if err != nil {
+		return nil, err
+	}
+	if customID := strings.TrimSpace(overrides.SessionID); customID != "" {
+		if _, err := a.Sessions.Rename(sess.ID, customID); err != nil {
+			return nil, err
 		}
-		id = overrides.Resume
-		if id == "true" {
-			id = "latest"
-		}
-		sess, err = a.Sessions.Fork(id, "")
+		sess, err = a.Sessions.OpenExisting(customID)
 		if err != nil {
 			return nil, err
 		}
-		if customID := strings.TrimSpace(overrides.SessionID); customID != "" {
-			if _, err := a.Sessions.Rename(sess.ID, customID); err != nil {
-				return nil, err
-			}
-			sess, err = a.Sessions.OpenExisting(customID)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if err := a.restoreTodosFromSession(sess); err != nil {
-			return nil, err
-		}
-		return a.applyResumeSessionAt(sess, overrides.ResumeSessionAt)
 	}
+	if err := a.restoreTodosFromSession(sess); err != nil {
+		return nil, err
+	}
+	return a.applyResumeSessionAt(sess, overrides.ResumeSessionAt)
+}
+
+func (a *App) openStandardSession(overrides config.FlagOverrides) (*session.Session, error) {
+	id := overrides.SessionID
+	resuming := strings.TrimSpace(overrides.Resume) != ""
+	var sess *session.Session
+	var err error
 	if overrides.Resume != "" {
 		id = overrides.Resume
 		if id == "true" {
@@ -1949,51 +1959,58 @@ func (a *App) watchPathStatePath(sessionID string) string {
 func snapshotWatchPaths(workspace string, paths []string) (map[string]watchPathSnapshot, error) {
 	out := map[string]watchPathSnapshot{}
 	for _, path := range cleanedStrings(paths) {
-		resolved := resolveWatchPath(workspace, path)
-		info, err := os.Stat(resolved)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
+		if err := snapshotWatchPath(workspace, path, out); err != nil {
 			return nil, err
 		}
-		if info.IsDir() {
-			err = filepath.WalkDir(resolved, func(path string, entry os.DirEntry, walkErr error) error {
-				if walkErr != nil {
-					return walkErr
-				}
-				if entry.IsDir() {
-					return nil
-				}
-				info, err := entry.Info()
-				if err != nil {
-					return err
-				}
-				if !info.Mode().IsRegular() {
-					return nil
-				}
-				snapshot, err := snapshotFile(path, info)
-				if err != nil {
-					return err
-				}
-				out[displayWatchPath(workspace, path)] = snapshot
-				return nil
-			})
-			if err != nil {
-				return nil, err
-			}
-			continue
-		}
-		if !info.Mode().IsRegular() {
-			continue
-		}
-		snapshot, err := snapshotFile(resolved, info)
-		if err != nil {
-			return nil, err
-		}
-		out[displayWatchPath(workspace, resolved)] = snapshot
 	}
 	return out, nil
+}
+
+func snapshotWatchPath(workspace string, path string, out map[string]watchPathSnapshot) error {
+	resolved := resolveWatchPath(workspace, path)
+	info, err := os.Stat(resolved)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	collector := watchPathCollector{workspace: workspace, out: out}
+	if info.IsDir() {
+		return filepath.WalkDir(resolved, collector.visit)
+	}
+	return collector.add(resolved, info)
+}
+
+type watchPathCollector struct {
+	workspace string
+	out       map[string]watchPathSnapshot
+}
+
+func (c watchPathCollector) visit(path string, entry os.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		return walkErr
+	}
+	if entry.IsDir() {
+		return nil
+	}
+	info, err := entry.Info()
+	if err != nil {
+		return err
+	}
+	return c.add(path, info)
+}
+
+func (c watchPathCollector) add(path string, info os.FileInfo) error {
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	snapshot, err := snapshotFile(path, info)
+	if err != nil {
+		return err
+	}
+	c.out[displayWatchPath(c.workspace, path)] = snapshot
+	return nil
 }
 
 func resolveWatchPath(workspace string, path string) string {

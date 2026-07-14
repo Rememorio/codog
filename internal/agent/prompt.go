@@ -1930,75 +1930,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 	if a.planModeActive() {
 		a.enterTUIPlanMode(modeState)
 	}
-	submit := func(ctx context.Context, prompt string, attachments []string, emit func(tui.Entry)) (string, error) {
-		var out bytes.Buffer
-		streamOut := tuiStreamWriter{buffer: &out, emit: emit}
-		toolCalls := []runloop.ToolCall{}
-		liveToolEvents := false
-		modeState.Apply(&a.Config)
-		a.Tools.Register(tools.AskUserQuestionTool{
-			In:  &lineAnswerReader{answers: questionAnswers, done: ctx.Done()},
-			Out: io.Discard,
-			OnRequest: func(request tools.UserQuestionRequest) {
-				liveToolEvents = true
-				emit(tui.Entry{
-					Role: "question",
-					Text: renderTUIQuestionRequest(request),
-					Question: &tui.QuestionRequest{
-						Question:  request.Question,
-						Choices:   append([]string(nil), request.Choices...),
-						Default:   request.Default,
-						Questions: tuiQuestions(request.Questions),
-					},
-				})
-			},
-		})
-		defer func() {
-			_ = a.refreshBuiltinToolScope()
-		}()
-		err := a.runSessionTurnWithOptions(ctx, "tui", sess, prompt, "idle", turnOptions{
-			Out:         &streamOut,
-			Attachments: attachments,
-			ConfigurePrompter: func(prompter *tools.Prompter) {
-				prompter.In = &lineAnswerReader{answers: permissionAnswers, done: ctx.Done()}
-				prompter.Err = io.Discard
-				wrapTUIPermissionEvents(prompter, func(entry tui.Entry) {
-					liveToolEvents = true
-					emit(entry)
-				})
-			},
-			OnToolStart: func(call runloop.ToolCall) {
-				if summary := renderTUIToolStart(call); summary != "" {
-					liveToolEvents = true
-					emit(tui.Entry{Role: "tool", Text: summary, Tool: tuiToolActivity(call, "running")})
-				}
-			},
-			OnToolUse: func(call runloop.ToolCall) {
-				toolCalls = append(toolCalls, call)
-				if summary := renderTUIToolSummary([]runloop.ToolCall{call}); summary != "" {
-					liveToolEvents = true
-					status := "success"
-					if call.IsError {
-						status = "error"
-					}
-					emit(tui.Entry{Role: "tool", Text: summary, Tool: tuiToolActivity(call, status)})
-				}
-			},
-		})
-		response := strings.TrimSpace(out.String())
-		if response == "" {
-			response = strings.TrimSpace(lastAssistantText(sess.Messages))
-		}
-		if toolSummary := renderTUIToolSummary(toolCalls); toolSummary != "" && !liveToolEvents {
-			if streamOut.Emitted() {
-				return toolSummary, err
-			}
-			response = strings.TrimSpace(strings.Join([]string{toolSummary, response}, "\n\n"))
-		}
-		if streamOut.Emitted() || liveToolEvents {
-			return "", err
-		}
-		return response, err
+	submitter := tuiTurnSubmitter{
+		app: a, sess: sess, modeState: modeState,
+		permissionAnswers: permissionAnswers, questionAnswers: questionAnswers,
 	}
 	slashHandler := a.tuiSlashHandler(sess, modeState)
 	loopErr := tui.Shell(ctx, tui.ShellOptions{
@@ -2009,7 +1943,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		InitialAttachments:      overrides.InitialAttachments,
 		History:                 history,
 		Entries:                 entries,
-		SubmitStreamAttachments: submit,
+		SubmitStreamAttachments: submitter.submit,
 		Slash:                   slashHandler,
 		SubmitTextInput: func(ctx context.Context, action string, value string) (tui.RuntimeControlResult, error) {
 			return a.submitTUITextInput(ctx, action, value)
@@ -2111,6 +2045,103 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		},
 	})
 	return a.finishREPL(ctx, sess, loopErr)
+}
+
+type tuiTurnSubmitter struct {
+	app               *App
+	sess              *session.Session
+	modeState         *tuiModeState
+	permissionAnswers chan string
+	questionAnswers   chan string
+}
+
+func (s tuiTurnSubmitter) submit(ctx context.Context, prompt string, attachments []string, emit func(tui.Entry)) (string, error) {
+	turn := tuiTurnSubmission{submitter: s, ctx: ctx, emit: emit}
+	return turn.run(prompt, attachments)
+}
+
+type tuiTurnSubmission struct {
+	submitter      tuiTurnSubmitter
+	ctx            context.Context
+	emit           func(tui.Entry)
+	out            bytes.Buffer
+	streamOut      tuiStreamWriter
+	toolCalls      []runloop.ToolCall
+	liveToolEvents bool
+}
+
+func (s *tuiTurnSubmission) run(prompt string, attachments []string) (string, error) {
+	s.streamOut = tuiStreamWriter{buffer: &s.out, emit: s.emit}
+	s.submitter.modeState.Apply(&s.submitter.app.Config)
+	s.submitter.app.Tools.Register(tools.AskUserQuestionTool{
+		In: &lineAnswerReader{answers: s.submitter.questionAnswers, done: s.ctx.Done()}, Out: io.Discard, OnRequest: s.onQuestion,
+	})
+	defer func() { _ = s.submitter.app.refreshBuiltinToolScope() }()
+	err := s.submitter.app.runSessionTurnWithOptions(s.ctx, "tui", s.submitter.sess, prompt, "idle", turnOptions{
+		Out: &s.streamOut, Attachments: attachments,
+		ConfigurePrompter: s.configurePrompter,
+		OnToolStart:       s.onToolStart,
+		OnToolUse:         s.onToolUse,
+	})
+	return s.response(err)
+}
+
+func (s *tuiTurnSubmission) onQuestion(request tools.UserQuestionRequest) {
+	s.liveToolEvents = true
+	s.emit(tui.Entry{
+		Role: "question", Text: renderTUIQuestionRequest(request),
+		Question: &tui.QuestionRequest{
+			Question: request.Question, Choices: append([]string(nil), request.Choices...),
+			Default: request.Default, Questions: tuiQuestions(request.Questions),
+		},
+	})
+}
+
+func (s *tuiTurnSubmission) configurePrompter(prompter *tools.Prompter) {
+	prompter.In = &lineAnswerReader{answers: s.submitter.permissionAnswers, done: s.ctx.Done()}
+	prompter.Err = io.Discard
+	wrapTUIPermissionEvents(prompter, func(entry tui.Entry) {
+		s.liveToolEvents = true
+		s.emit(entry)
+	})
+}
+
+func (s *tuiTurnSubmission) onToolStart(call runloop.ToolCall) {
+	if summary := renderTUIToolStart(call); summary != "" {
+		s.liveToolEvents = true
+		s.emit(tui.Entry{Role: "tool", Text: summary, Tool: tuiToolActivity(call, "running")})
+	}
+}
+
+func (s *tuiTurnSubmission) onToolUse(call runloop.ToolCall) {
+	s.toolCalls = append(s.toolCalls, call)
+	summary := renderTUIToolSummary([]runloop.ToolCall{call})
+	if summary == "" {
+		return
+	}
+	s.liveToolEvents = true
+	status := "success"
+	if call.IsError {
+		status = "error"
+	}
+	s.emit(tui.Entry{Role: "tool", Text: summary, Tool: tuiToolActivity(call, status)})
+}
+
+func (s *tuiTurnSubmission) response(err error) (string, error) {
+	response := strings.TrimSpace(s.out.String())
+	if response == "" {
+		response = strings.TrimSpace(lastAssistantText(s.submitter.sess.Messages))
+	}
+	if toolSummary := renderTUIToolSummary(s.toolCalls); toolSummary != "" && !s.liveToolEvents {
+		if s.streamOut.Emitted() {
+			return toolSummary, err
+		}
+		response = strings.TrimSpace(strings.Join([]string{toolSummary, response}, "\n\n"))
+	}
+	if s.streamOut.Emitted() || s.liveToolEvents {
+		return "", err
+	}
+	return response, err
 }
 
 func resumeSessionChoices(sessions []session.Session) []tui.SessionChoice {
@@ -2603,83 +2634,111 @@ func tuiSessionEntries(sess *session.Session) []tui.Entry {
 	if sess == nil {
 		return nil
 	}
-	sessionLabel := "Session " + sess.ID
+	builder := tuiSessionEntryBuilder{
+		entries:     []tui.Entry{{Role: "system", Text: tuiSessionLabel(sess)}},
+		toolEntries: map[string]int{},
+	}
+	for _, message := range sess.Messages {
+		builder.addMessage(message)
+	}
+	return builder.entries
+}
+
+func tuiSessionLabel(sess *session.Session) string {
+	label := "Session " + sess.ID
 	if title := strings.TrimSpace(sess.Identity.Title); title != "" && title != sess.ID {
-		sessionLabel += " · " + title
+		label += " · " + title
 	}
 	if branch := strings.TrimSpace(sess.Metadata.BranchName); branch != "" {
-		sessionLabel += " · " + branch
+		label += " · " + branch
 	}
 	if tag := strings.TrimSpace(sess.Identity.Tag); tag != "" {
-		sessionLabel += " · #" + tag
+		label += " · #" + tag
 	}
-	entries := []tui.Entry{{Role: "system", Text: sessionLabel}}
-	toolEntries := map[string]int{}
-	for _, message := range sess.Messages {
-		role := strings.ToLower(strings.TrimSpace(message.Role))
-		if role == "" {
-			role = "system"
-		}
-		text := []string{}
-		flushText := func() {
-			joined := strings.TrimSpace(strings.Join(text, "\n"))
-			if joined != "" {
-				entries = append(entries, tui.Entry{Role: role, Text: joined})
-			}
-			text = text[:0]
-		}
-		for _, block := range message.Content {
-			switch strings.ToLower(strings.TrimSpace(block.Type)) {
-			case "text":
-				if value := strings.TrimSpace(block.Text); value != "" {
-					text = append(text, value)
-				}
-			case "image", "document":
-				label := "Image attachment"
-				if strings.EqualFold(strings.TrimSpace(block.Type), "document") {
-					label = "Document attachment"
-				}
-				if block.Source != nil && strings.TrimSpace(block.Source.MediaType) != "" {
-					label += " (" + strings.TrimSpace(block.Source.MediaType) + ")"
-				}
-				text = append(text, label)
-			case "tool_use":
-				flushText()
-				activity := &tui.ToolActivity{
-					ID:     strings.TrimSpace(block.ID),
-					Name:   strings.TrimSpace(block.Name),
-					Input:  strings.TrimSpace(string(block.Input)),
-					Status: "running",
-				}
-				entries = append(entries, tui.Entry{Role: "tool", Tool: activity})
-				if activity.ID != "" {
-					toolEntries[activity.ID] = len(entries) - 1
-				}
-			case "tool_result":
-				flushText()
-				output := strings.TrimSpace(block.Content)
-				status := "success"
-				if block.IsError {
-					status = "error"
-				}
-				if index, ok := toolEntries[strings.TrimSpace(block.ToolUseID)]; ok && entries[index].Tool != nil {
-					entries[index].Tool.Output = output
-					entries[index].Tool.Status = status
-					entries[index].Tool.IsError = block.IsError
-					continue
-				}
-				entries = append(entries, tui.Entry{Role: "tool", Tool: &tui.ToolActivity{
-					ID:      strings.TrimSpace(block.ToolUseID),
-					Name:    "tool",
-					Output:  output,
-					Status:  status,
-					IsError: block.IsError,
-				}})
-			}
-		}
-		flushText()
+	return label
+}
+
+type tuiSessionEntryBuilder struct {
+	entries     []tui.Entry
+	toolEntries map[string]int
+	role        string
+	text        []string
+}
+
+func (b *tuiSessionEntryBuilder) addMessage(message anthropic.Message) {
+	b.role = strings.ToLower(strings.TrimSpace(message.Role))
+	if b.role == "" {
+		b.role = "system"
 	}
-	return entries
+	b.text = b.text[:0]
+	for _, block := range message.Content {
+		b.addBlock(block)
+	}
+	b.flushText()
+}
+
+func (b *tuiSessionEntryBuilder) addBlock(block anthropic.ContentBlock) {
+	switch strings.ToLower(strings.TrimSpace(block.Type)) {
+	case "text":
+		if value := strings.TrimSpace(block.Text); value != "" {
+			b.text = append(b.text, value)
+		}
+	case "image", "document":
+		b.text = append(b.text, tuiAttachmentLabel(block))
+	case "tool_use":
+		b.addToolUse(block)
+	case "tool_result":
+		b.addToolResult(block)
+	}
+}
+
+func tuiAttachmentLabel(block anthropic.ContentBlock) string {
+	label := "Image attachment"
+	if strings.EqualFold(strings.TrimSpace(block.Type), "document") {
+		label = "Document attachment"
+	}
+	if block.Source != nil && strings.TrimSpace(block.Source.MediaType) != "" {
+		label += " (" + strings.TrimSpace(block.Source.MediaType) + ")"
+	}
+	return label
+}
+
+func (b *tuiSessionEntryBuilder) addToolUse(block anthropic.ContentBlock) {
+	b.flushText()
+	activity := &tui.ToolActivity{
+		ID: strings.TrimSpace(block.ID), Name: strings.TrimSpace(block.Name),
+		Input: strings.TrimSpace(string(block.Input)), Status: "running",
+	}
+	b.entries = append(b.entries, tui.Entry{Role: "tool", Tool: activity})
+	if activity.ID != "" {
+		b.toolEntries[activity.ID] = len(b.entries) - 1
+	}
+}
+
+func (b *tuiSessionEntryBuilder) addToolResult(block anthropic.ContentBlock) {
+	b.flushText()
+	output := strings.TrimSpace(block.Content)
+	status := "success"
+	if block.IsError {
+		status = "error"
+	}
+	if index, ok := b.toolEntries[strings.TrimSpace(block.ToolUseID)]; ok && b.entries[index].Tool != nil {
+		b.entries[index].Tool.Output = output
+		b.entries[index].Tool.Status = status
+		b.entries[index].Tool.IsError = block.IsError
+		return
+	}
+	b.entries = append(b.entries, tui.Entry{Role: "tool", Tool: &tui.ToolActivity{
+		ID: strings.TrimSpace(block.ToolUseID), Name: "tool", Output: output, Status: status, IsError: block.IsError,
+	}})
+}
+
+func (b *tuiSessionEntryBuilder) flushText() {
+	joined := strings.TrimSpace(strings.Join(b.text, "\n"))
+	if joined != "" {
+		b.entries = append(b.entries, tui.Entry{Role: b.role, Text: joined})
+	}
+	b.text = b.text[:0]
 }
 
 func (a *App) tuiPermissionSettings(modeState *tuiModeState) tui.PermissionSettings {

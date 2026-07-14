@@ -1468,101 +1468,136 @@ func TestDirectSlashSuggestsProjectCommands(t *testing.T) {
 	require.Contains(t, slashReport.Suggestions, "/team/review")
 }
 
+type resumedRAGQuery struct {
+	Query string `json:"query"`
+	TopK  int    `json:"top_k"`
+}
+
+func stopResumedBackgroundTasks(configHome string) {
+	store := background.NewStore(configHome)
+	tasks, err := store.List()
+	if err != nil {
+		return
+	}
+	for _, task := range tasks {
+		if task.Status == "running" {
+			_, _ = store.Stop(task.ID)
+		}
+	}
+}
+
+func newResumedOAuthServer(t *testing.T, revoked *[]string) *httptest.Server {
+	t.Helper()
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleResumedOAuthRequest(t, server.URL, revoked, w, r)
+	}))
+	return server
+}
+
+func handleResumedOAuthRequest(t *testing.T, serverURL string, revoked *[]string, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	w.Header().Set("content-type", "application/json")
+	switch r.URL.Path {
+	case "/.well-known/oauth-authorization-server":
+		_, _ = w.Write([]byte(`{"authorization_endpoint":"` + serverURL + `/authorize","token_endpoint":"` + serverURL + `/token","device_authorization_endpoint":"` + serverURL + `/device","revocation_endpoint":"` + serverURL + `/revoke"}`))
+	case "/device":
+		require.NoError(t, r.ParseForm())
+		require.Equal(t, "client-resume", r.Form.Get("client_id"))
+		require.Equal(t, "profile", r.Form.Get("scope"))
+		_, _ = w.Write([]byte(`{"device_code":"resume-device-1","user_code":"ABCD-EFGH","verification_uri":"` + serverURL + `/verify","verification_uri_complete":"` + serverURL + `/verify?user_code=ABCD-EFGH","expires_in":600,"interval":1}`))
+	case "/token":
+		handleResumedOAuthToken(t, w, r)
+	case "/revoke":
+		require.NoError(t, r.ParseForm())
+		require.Equal(t, "client-resume", r.Form.Get("client_id"))
+		*revoked = append(*revoked, r.Form.Get("token_type_hint")+":"+r.Form.Get("token"))
+		_, _ = w.Write([]byte(`{}`))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func handleResumedOAuthToken(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	require.NoError(t, r.ParseForm())
+	require.Equal(t, "client-resume", r.Form.Get("client_id"))
+	switch r.Form.Get("grant_type") {
+	case "refresh_token":
+		require.Equal(t, "resume-oauth-refresh-1234", r.Form.Get("refresh_token"))
+		_, _ = w.Write([]byte(`{"access_token":"refreshed-access-1234","refresh_token":"refreshed-refresh-1234","token_type":"Bearer","expires_in":3600}`))
+	case "authorization_code":
+		require.Equal(t, "resume-browser-code-1", r.Form.Get("code"))
+		require.NotEmpty(t, r.Form.Get("code_verifier"))
+		require.Equal(t, "http://127.0.0.1:18080/oauth/callback", r.Form.Get("redirect_uri"))
+		_, _ = w.Write([]byte(`{"access_token":"browser-access-1234","refresh_token":"browser-refresh-1234","token_type":"Bearer","expires_in":3600}`))
+	case oauth.DeviceCodeGrantType:
+		require.Equal(t, "resume-device-1", r.Form.Get("device_code"))
+		_, _ = w.Write([]byte(`{"access_token":"device-access-1234","refresh_token":"device-refresh-1234","token_type":"Bearer","expires_in":3600}`))
+	default:
+		http.Error(w, "unsupported grant", http.StatusBadRequest)
+	}
+}
+
+func newResumedWebServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleResumedWebRequest(t, w, r)
+	}))
+}
+
+func handleResumedWebRequest(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	switch r.URL.Path {
+	case "/page":
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><head><title>Resume Web</title></head><body><p>resumed web fetch body.</p></body></html>`)
+	case "/search":
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<a class="result__a" href="https://example.com/resume">Resume Search</a><div class="result__snippet">A resumed search summary.</div>`)
+	case "/trigger":
+		w.Header().Set("Content-Type", "application/json")
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		fmt.Fprintf(w, `{"method":%q,"body":%q,"source":"resume-trigger"}`, r.Method, string(body))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func newResumedRAGServer(t *testing.T, query *resumedRAGQuery) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/query", r.URL.Path)
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		require.NoError(t, json.NewDecoder(r.Body).Decode(query))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"phase":"1-sqlite","hits":[{"path":"internal/agent/agent.go","score":0.75,"snippet":"func resumedDebugToolCallAllowed(name string) bool {}"}]}`)
+	}))
+}
+
 func TestResumedSlashCLIContracts(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
 	t.Setenv("CODOG_OAUTH_STORAGE", "file")
-	t.Cleanup(func() {
-		store := background.NewStore(configHome)
-		tasks, err := store.List()
-		if err != nil {
-			return
-		}
-		for _, task := range tasks {
-			if task.Status == "running" {
-				_, _ = store.Stop(task.ID)
-			}
-		}
-	})
+	t.Cleanup(func() { stopResumedBackgroundTasks(configHome) })
 	externalContext := filepath.Join(t.TempDir(), "external-context")
 	require.NoError(t, os.MkdirAll(externalContext, 0o755))
 	externalContext, err := filepath.EvalSymlinks(externalContext)
 	require.NoError(t, err)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("USERPROFILE", "")
-	var oauthServer *httptest.Server
 	oauthRevoked := []string{}
-	oauthServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("content-type", "application/json")
-		switch r.URL.Path {
-		case "/.well-known/oauth-authorization-server":
-			_, _ = w.Write([]byte(`{"authorization_endpoint":"` + oauthServer.URL + `/authorize","token_endpoint":"` + oauthServer.URL + `/token","device_authorization_endpoint":"` + oauthServer.URL + `/device","revocation_endpoint":"` + oauthServer.URL + `/revoke"}`))
-		case "/device":
-			require.NoError(t, r.ParseForm())
-			require.Equal(t, "client-resume", r.Form.Get("client_id"))
-			require.Equal(t, "profile", r.Form.Get("scope"))
-			_, _ = w.Write([]byte(`{"device_code":"resume-device-1","user_code":"ABCD-EFGH","verification_uri":"` + oauthServer.URL + `/verify","verification_uri_complete":"` + oauthServer.URL + `/verify?user_code=ABCD-EFGH","expires_in":600,"interval":1}`))
-		case "/token":
-			require.NoError(t, r.ParseForm())
-			require.Equal(t, "client-resume", r.Form.Get("client_id"))
-			switch r.Form.Get("grant_type") {
-			case "refresh_token":
-				require.Equal(t, "resume-oauth-refresh-1234", r.Form.Get("refresh_token"))
-				_, _ = w.Write([]byte(`{"access_token":"refreshed-access-1234","refresh_token":"refreshed-refresh-1234","token_type":"Bearer","expires_in":3600}`))
-			case "authorization_code":
-				require.Equal(t, "resume-browser-code-1", r.Form.Get("code"))
-				require.NotEmpty(t, r.Form.Get("code_verifier"))
-				require.Equal(t, "http://127.0.0.1:18080/oauth/callback", r.Form.Get("redirect_uri"))
-				_, _ = w.Write([]byte(`{"access_token":"browser-access-1234","refresh_token":"browser-refresh-1234","token_type":"Bearer","expires_in":3600}`))
-			case oauth.DeviceCodeGrantType:
-				require.Equal(t, "resume-device-1", r.Form.Get("device_code"))
-				_, _ = w.Write([]byte(`{"access_token":"device-access-1234","refresh_token":"device-refresh-1234","token_type":"Bearer","expires_in":3600}`))
-			default:
-				http.Error(w, "unsupported grant", http.StatusBadRequest)
-			}
-		case "/revoke":
-			require.NoError(t, r.ParseForm())
-			require.Equal(t, "client-resume", r.Form.Get("client_id"))
-			oauthRevoked = append(oauthRevoked, r.Form.Get("token_type_hint")+":"+r.Form.Get("token"))
-			_, _ = w.Write([]byte(`{}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	oauthServer := newResumedOAuthServer(t, &oauthRevoked)
 	t.Cleanup(oauthServer.Close)
 	antTraceServer := httptest.NewServer(mockanthropic.Server{Text: "resumed trace ok"}.Handler())
 	t.Cleanup(antTraceServer.Close)
-	webServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/page":
-			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, `<html><head><title>Resume Web</title></head><body><p>resumed web fetch body.</p></body></html>`)
-		case "/search":
-			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, `<a class="result__a" href="https://example.com/resume">Resume Search</a><div class="result__snippet">A resumed search summary.</div>`)
-		case "/trigger":
-			w.Header().Set("Content-Type", "application/json")
-			body, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
-			fmt.Fprintf(w, `{"method":%q,"body":%q,"source":"resume-trigger"}`, r.Method, string(body))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	webServer := newResumedWebServer(t)
 	t.Cleanup(webServer.Close)
 	t.Setenv("CODOG_WEB_SEARCH_BASE_URL", webServer.URL+"/search")
-	var ragQuery struct {
-		Query string `json:"query"`
-		TopK  int    `json:"top_k"`
-	}
-	ragServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/query", r.URL.Path)
-		require.Equal(t, http.MethodPost, r.Method)
-		require.Equal(t, "application/json", r.Header.Get("Content-Type"))
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&ragQuery))
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"phase":"1-sqlite","hits":[{"path":"internal/agent/agent.go","score":0.75,"snippet":"func resumedDebugToolCallAllowed(name string) bool {}"}]}`)
-	}))
+	var ragQuery resumedRAGQuery
+	ragServer := newResumedRAGServer(t, &ragQuery)
 	t.Cleanup(ragServer.Close)
 	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "default", oauthServer.URL, "client-resume", []string{"profile"})
 	require.NoError(t, err)
