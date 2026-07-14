@@ -3439,51 +3439,63 @@ func renderTelemetryReport(out io.Writer, report telemetryReport) {
 	}
 }
 
+const privacyUsage = "codog privacy-settings [show|set|enable|disable|clear] [KEY] [on|off] [--target user|project|local] [--path PATH] [--output-format text|json]"
+
 func parsePrivacyArgs(args []string) (privacyRequest, error) {
 	req := privacyRequest{Action: "show", Format: "text", Target: "user"}
-	const usage = "codog privacy-settings [show|set|enable|disable|clear] [KEY] [on|off] [--target user|project|local] [--path PATH] [--output-format text|json]"
-	var rest []string
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "privacy-settings", Flag: arg, Usage: usage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "privacy-settings", Flag: arg, Usage: usage}
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "privacy-settings", Flag: arg, Usage: usage}
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return req, unknownOptionError{Command: "privacy-settings", Option: arg, Usage: usage}
-			}
-			rest = append(rest, arg)
-		}
-	}
-	normalizedFormat, err := normalizeOutputFormat("privacy-settings", req.Format, []string{"text", "json"})
+	rest, err := parsePrivacyOptions(args, &req)
 	if err != nil {
 		return req, err
 	}
-	req.Format = normalizedFormat
+	req.Format, err = normalizeOutputFormat("privacy-settings", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
+	}
+	return applyPrivacyAction(req, rest)
+}
+
+func parsePrivacyOptions(args []string, req *privacyRequest) ([]string, error) {
+	options := map[string]valueOption{}
+	addPrivacyOption(options, "--output-format", &req.Format, false)
+	options["-o"] = options["--output-format"]
+	addPrivacyOption(options, "--target", &req.Target, true)
+	addPrivacyOption(options, "--path", &req.Path, true)
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--json" {
+			req.Format = "json"
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, options)
+		if err != nil {
+			return nil, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return nil, unknownOptionError{Command: "privacy-settings", Option: arg, Usage: privacyUsage}
+		}
+		rest = append(rest, arg)
+	}
+	return rest, nil
+}
+
+func addPrivacyOption(options map[string]valueOption, name string, target *string, rejectOutput bool) {
+	options[name] = valueOption{
+		missing: func(flag string) error {
+			return missingFlagValueError{Command: "privacy-settings", Flag: flag, Usage: privacyUsage}
+		},
+		rejectOutputFormat: rejectOutput,
+		set: func(value string) error {
+			*target = value
+			return nil
+		},
+	}
+}
+
+func applyPrivacyAction(req privacyRequest, rest []string) (privacyRequest, error) {
 	if len(rest) == 0 {
 		return req, nil
 	}
@@ -3491,93 +3503,83 @@ func parsePrivacyArgs(args []string) (privacyRequest, error) {
 	switch action {
 	case "show", "status", "list":
 		if len(rest) > 1 {
-			return req, unexpectedExtraArgsError{Command: "privacy-settings " + action, Args: rest[1:], Usage: usage}
+			return req, unexpectedExtraArgsError{Command: "privacy-settings " + action, Args: rest[1:], Usage: privacyUsage}
 		}
 		req.Action = "show"
 		return req, nil
 	case "set":
-		if len(rest) < 3 {
-			if len(rest) < 2 {
-				return req, requiredArgumentError{Command: "privacy-settings set", Argument: "KEY", Usage: usage}
-			}
-			return req, requiredArgumentError{Command: "privacy-settings set", Argument: "VALUE", Usage: usage}
-		}
-		if len(rest) > 3 {
-			return req, unexpectedExtraArgsError{Command: "privacy-settings set", Args: rest[3:], Usage: usage}
-		}
-		key, err := canonicalPrivacyKey(rest[1], usage)
-		if err != nil {
-			return req, err
-		}
-		value, err := parseOnOff(rest[2], usage)
-		if err != nil {
-			return req, err
-		}
-		req.Action = "set"
-		req.Key = key
-		req.Value = value
-		return req, nil
+		return applyPrivacySet(req, rest)
 	case "enable", "enabled", "on":
-		if len(rest) < 2 {
-			return req, requiredArgumentError{Command: "privacy-settings " + action, Argument: "KEY", Usage: usage}
-		}
-		if len(rest) > 2 {
-			return req, unexpectedExtraArgsError{Command: "privacy-settings " + action, Args: rest[2:], Usage: usage}
-		}
-		key, err := canonicalPrivacyKey(rest[1], usage)
-		if err != nil {
-			return req, err
-		}
-		req.Action = "set"
-		req.Key = key
-		req.Value = true
-		return req, nil
+		return applyPrivacyToggle(req, action, rest, true)
 	case "disable", "disabled", "off":
-		if len(rest) < 2 {
-			return req, requiredArgumentError{Command: "privacy-settings " + action, Argument: "KEY", Usage: usage}
-		}
-		if len(rest) > 2 {
-			return req, unexpectedExtraArgsError{Command: "privacy-settings " + action, Args: rest[2:], Usage: usage}
-		}
-		key, err := canonicalPrivacyKey(rest[1], usage)
-		if err != nil {
-			return req, err
-		}
-		req.Action = "set"
-		req.Key = key
-		req.Value = false
-		return req, nil
+		return applyPrivacyToggle(req, action, rest, false)
 	case "clear", "reset", "unset":
-		if len(rest) < 2 {
-			return req, requiredArgumentError{Command: "privacy-settings " + action, Argument: "KEY", Usage: usage}
-		}
-		if len(rest) > 2 {
-			return req, unexpectedExtraArgsError{Command: "privacy-settings " + action, Args: rest[2:], Usage: usage}
-		}
-		key, err := canonicalPrivacyKey(rest[1], usage)
-		if err != nil {
-			return req, err
-		}
-		req.Action = "clear"
-		req.Key = key
-		return req, nil
+		return applyPrivacyClear(req, action, rest)
 	default:
-		if len(rest) != 2 {
-			return req, unexpectedExtraArgsError{Command: "privacy-settings", Args: []string{rest[0]}, Usage: usage}
-		}
-		key, err := canonicalPrivacyKey(rest[0], usage)
-		if err != nil {
-			return req, err
-		}
-		value, err := parseOnOff(rest[1], usage)
-		if err != nil {
-			return req, err
-		}
-		req.Action = "set"
-		req.Key = key
-		req.Value = value
-		return req, nil
+		return applyImplicitPrivacySet(req, rest)
 	}
+}
+
+func applyPrivacySet(req privacyRequest, rest []string) (privacyRequest, error) {
+	if len(rest) < 2 {
+		return req, requiredArgumentError{Command: "privacy-settings set", Argument: "KEY", Usage: privacyUsage}
+	}
+	if len(rest) < 3 {
+		return req, requiredArgumentError{Command: "privacy-settings set", Argument: "VALUE", Usage: privacyUsage}
+	}
+	if len(rest) > 3 {
+		return req, unexpectedExtraArgsError{Command: "privacy-settings set", Args: rest[3:], Usage: privacyUsage}
+	}
+	return setPrivacyRequest(req, rest[1], rest[2])
+}
+
+func applyPrivacyToggle(req privacyRequest, action string, rest []string, value bool) (privacyRequest, error) {
+	key, err := privacyActionKey(action, rest)
+	if err != nil {
+		return req, err
+	}
+	req.Action, req.Key, req.Value = "set", key, value
+	return req, nil
+}
+
+func applyPrivacyClear(req privacyRequest, action string, rest []string) (privacyRequest, error) {
+	key, err := privacyActionKey(action, rest)
+	if err != nil {
+		return req, err
+	}
+	req.Action, req.Key = "clear", key
+	return req, nil
+}
+
+func privacyActionKey(action string, rest []string) (string, error) {
+	command := "privacy-settings " + action
+	if len(rest) < 2 {
+		return "", requiredArgumentError{Command: command, Argument: "KEY", Usage: privacyUsage}
+	}
+	if len(rest) > 2 {
+		return "", unexpectedExtraArgsError{Command: command, Args: rest[2:], Usage: privacyUsage}
+	}
+	return canonicalPrivacyKey(rest[1], privacyUsage)
+}
+
+func applyImplicitPrivacySet(req privacyRequest, rest []string) (privacyRequest, error) {
+	if len(rest) != 2 {
+		return req, unexpectedExtraArgsError{Command: "privacy-settings", Args: []string{rest[0]}, Usage: privacyUsage}
+	}
+	return setPrivacyRequest(req, rest[0], rest[1])
+}
+
+func setPrivacyRequest(req privacyRequest, rawKey, rawValue string) (privacyRequest, error) {
+	key, err := canonicalPrivacyKey(rawKey, privacyUsage)
+	if err != nil {
+		return req, err
+	}
+	value, err := parseOnOff(rawValue, privacyUsage)
+	if err != nil {
+		return req, err
+	}
+	req.Action, req.Key, req.Value = "set", key, value
+	return req, nil
 }
 
 func renderPrivacyReport(out io.Writer, report privacyReport) {
