@@ -5,7 +5,6 @@ gocognit|internal/agent/agent.go|parseRemoteEnvArgs|39
 gocognit|internal/agent/agent.go|parseRemoteSetupArgs|49
 gocognit|internal/agent/agent.go|parseSSHArgs|46
 gocognit|internal/agent/agent.go|parseServerArgs|57
-gocognit|internal/agent/background.go|(*App).Marketplace|78
 gocognit|internal/agent/background.go|parseMarketplaceRemoteArgs|66
 gocognit|internal/agent/background.go|parseMarketplaceSourcesArgs|34
 gocognit|internal/agent/commands.go|(*App).MCP|61

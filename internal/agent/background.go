@@ -2127,197 +2127,285 @@ func renderPluginsListReport(out io.Writer, format string, report pluginsListRep
 }
 
 func (a *App) Marketplace(args []string) error {
-	var err error
-	var format string
-	args, format, err = stripJSONOnlyOutputFormat("marketplace", args)
+	cleanArgs, format, err := stripJSONOnlyOutputFormat("marketplace", args)
 	if err != nil {
 		return err
 	}
-	if len(args) > 0 {
-		normalizedAction := normalizeMarketplaceAction(args[0])
-		if normalizedAction != args[0] {
-			args = append([]string{normalizedAction}, args[1:]...)
-		}
+	args = cleanArgs
+	if len(args) == 0 {
+		return a.marketplaceListCommand(args, format)
 	}
-	if len(args) == 0 || args[0] == "list" {
-		if len(args) > 1 {
-			if option := firstFlagShapedArg(args[1:]); option != "" {
-				return renderCLIError(a.Out, unknownOptionError{
-					Kind:    "cli_parse",
-					Command: "plugins list",
-					Option:  option,
-					Usage:   "codog plugins list [--json|--output-format text|json]",
-				}, format)
-			}
-			return renderCLIError(a.Out, unexpectedExtraArgsError{
-				Command: "plugins list",
-				Args:    append([]string(nil), args[1:]...),
-				Usage:   "codog plugins list [--json|--output-format text|json]",
-			}, format)
-		}
-		return a.listPlugins(format)
+	normalizedAction := normalizeMarketplaceAction(args[0])
+	if normalizedAction != args[0] {
+		args = append([]string{normalizedAction}, args[1:]...)
 	}
-	var payload any
 	switch args[0] {
+	case "list":
+		return a.marketplaceListCommand(args, format)
 	case "sources", "source", "marketplaces", "manage-marketplaces":
-		return a.marketplaceSourcesCommand(args[1:], format)
+		return a.marketplaceSourcesRouteCommand(args, format)
 	case "add-marketplace":
-		return a.marketplaceSourcesCommand(append([]string{"add"}, args[1:]...), format)
+		return a.marketplaceAddMarketplaceCommand(args, format)
 	case "remove-marketplace", "delete-marketplace":
-		return a.marketplaceSourcesCommand(append([]string{"remove"}, args[1:]...), format)
+		return a.marketplaceRemoveMarketplaceCommand(args, format)
 	case "settings":
-		return a.marketplaceSettings(format)
+		return a.marketplaceSettingsCommand(args, format)
 	case "health", "healthcheck", "lifecycle":
-		if args[0] == "lifecycle" && len(args) > 1 {
-			return a.pluginLifecycleRun(context.Background(), args[1:], format)
-		}
-		report := a.pluginHealthReport(args[0])
-		return renderPluginHealthReport(a.Out, report, format)
+		return a.marketplaceHealthCommand(args, format)
 	case "remote", "browse", "discover":
-		structuredRemote := marketplaceRemoteUsesStructuredReport(args[1:])
-		if args[0] != "remote" && len(args) == 1 {
-			structuredRemote = false
-		}
-		if structuredRemote {
-			report, err := a.marketplaceRemoteReport(args[1:])
-			if err != nil {
-				return err
-			}
-			payload = report
-		} else {
-			indexes, err := a.marketplaceRemote(args[1:])
-			if err != nil {
-				return err
-			}
-			payload = indexes
-		}
+		return a.marketplaceRemoteCommand(args, format)
 	case "updates":
-		updates, err := a.marketplaceUpdates(args[1:])
-		if err != nil {
-			return err
-		}
-		payload = updates
+		return a.marketplaceUpdatesCommand(args, format)
 	case "install":
-		if len(args) < 2 {
-			return errors.New("usage: codog marketplace install PATH")
-		}
-		manifest, err := plugins.Install(a.Workspace, args[1])
-		if err != nil {
-			if os.IsNotExist(err) {
-				return renderPluginSourceNotFound(a.Out, args[0], args[1], format)
-			}
-			return err
-		}
-		payload = manifest
+		return a.marketplaceInstallCommand(args, format)
 	case "validate":
-		if len(args) < 2 {
-			return renderActionError(a.Out, actionErrorReport{
-				Kind:      "plugins",
-				Action:    args[0],
-				Status:    "error",
-				ErrorKind: "plugin_source_required",
-				Message:   "plugin validation requires a source path",
-				Hint:      "Usage: codog plugins validate PATH [--json|--output-format text|json]",
-			}, format)
-		}
-		if len(args) > 2 {
-			return renderCLIError(a.Out, unexpectedExtraArgsError{
-				Command: "plugins validate",
-				Args:    append([]string(nil), args[2:]...),
-				Usage:   "codog plugins validate PATH [--json|--output-format text|json]",
-			}, format)
-		}
-		result, err := plugins.Validate(args[1])
-		if err != nil {
-			if os.IsNotExist(err) {
-				return renderPluginSourceNotFound(a.Out, args[0], args[1], format)
-			}
-			return err
-		}
-		return renderPluginValidation(a.Out, args[1], result, format)
+		return a.marketplaceValidateCommand(args, format)
 	case "install-remote":
-		result, err := a.marketplaceInstallRemote(args[1:])
-		if err != nil {
-			return err
-		}
-		payload = result
+		return a.marketplaceInstallRemoteCommand(args, format)
 	case "update":
-		result, err := a.marketplaceUpdate(args[1:])
-		if err != nil {
-			return err
-		}
-		payload = result
+		return a.marketplaceUpdateCommand(args, format)
 	case "enable":
-		if len(args) < 2 {
-			return errors.New("usage: codog marketplace enable ID")
-		}
-		manifest, err := plugins.Enable(a.Workspace, args[1])
-		if err != nil {
-			if os.IsNotExist(err) {
-				return renderPluginNotFound(a.Out, args[0], args[1], format)
-			}
-			return err
-		}
-		payload = manifest
+		return a.marketplaceEnableCommand(args, format)
 	case "disable":
-		if len(args) < 2 {
-			return errors.New("usage: codog marketplace disable ID")
-		}
-		manifest, err := plugins.Disable(a.Workspace, args[1])
-		if err != nil {
-			if os.IsNotExist(err) {
-				return renderPluginNotFound(a.Out, args[0], args[1], format)
-			}
-			return err
-		}
-		payload = manifest
+		return a.marketplaceDisableCommand(args, format)
 	case "remove", "uninstall":
-		if len(args) < 2 {
-			return errors.New("usage: codog marketplace remove ID")
-		}
-		if err := plugins.Remove(a.Workspace, args[1]); err != nil {
-			if os.IsNotExist(err) {
-				return renderPluginNotFound(a.Out, args[0], args[1], format)
-			}
-			return err
-		}
-		payload = map[string]any{"removed": true, "id": args[1]}
+		return a.marketplaceRemoveCommand(args, format)
 	case "show", "info", "describe":
-		if len(args) < 2 {
-			return renderActionError(a.Out, actionErrorReport{
-				Kind:      "plugins",
-				Action:    "show",
-				Status:    "error",
-				ErrorKind: "missing_argument",
-				Message:   "plugins show requires an ID",
-				Hint:      "Usage: codog plugins show ID.",
+		return a.marketplaceShowCommand(args, format)
+	default:
+		return renderActionError(a.Out, actionErrorReport{
+			Kind: "plugins", Action: args[0], Status: "error", ErrorKind: "unknown_plugins_action",
+			Message: fmt.Sprintf("unknown plugins action %q", args[0]), Hint: unknownPluginsActionHint(args[0]),
+		}, format)
+	}
+}
+
+func (a *App) marketplaceListCommand(args []string, format string) error {
+	if len(args) > 1 {
+		if option := firstFlagShapedArg(args[1:]); option != "" {
+			return renderCLIError(a.Out, unknownOptionError{
+				Kind: "cli_parse", Command: "plugins list", Option: option,
+				Usage: "codog plugins list [--json|--output-format text|json]",
 			}, format)
 		}
-		if len(args) > 2 {
-			return renderCLIError(a.Out, unexpectedExtraArgsError{
-				Command: "plugins show",
-				Args:    append([]string(nil), args[2:]...),
-				Usage:   "codog plugins show ID [--json|--output-format text|json]",
-			}, format)
-		}
-		manifest, err := a.findPlugin(args[1])
+		return renderCLIError(a.Out, unexpectedExtraArgsError{
+			Command: "plugins list", Args: append([]string(nil), args[1:]...),
+			Usage: "codog plugins list [--json|--output-format text|json]",
+		}, format)
+	}
+	return a.listPlugins(format)
+}
+
+func (a *App) marketplaceSourcesRouteCommand(args []string, format string) error {
+	return a.marketplaceSourcesCommand(args[1:], format)
+}
+
+func (a *App) marketplaceAddMarketplaceCommand(args []string, format string) error {
+	return a.marketplaceSourcesCommand(append([]string{"add"}, args[1:]...), format)
+}
+
+func (a *App) marketplaceRemoveMarketplaceCommand(args []string, format string) error {
+	return a.marketplaceSourcesCommand(append([]string{"remove"}, args[1:]...), format)
+}
+
+func (a *App) marketplaceSettingsCommand(_ []string, format string) error {
+	return a.marketplaceSettings(format)
+}
+
+func (a *App) marketplaceHealthCommand(args []string, format string) error {
+	if args[0] == "lifecycle" && len(args) > 1 {
+		return a.pluginLifecycleRun(context.Background(), args[1:], format)
+	}
+	report := a.pluginHealthReport(args[0])
+	return renderPluginHealthReport(a.Out, report, format)
+}
+
+func (a *App) marketplaceRemoteCommand(args []string, format string) error {
+	var payload any
+	structuredRemote := marketplaceRemoteUsesStructuredReport(args[1:])
+	if args[0] != "remote" && len(args) == 1 {
+		structuredRemote = false
+	}
+	if structuredRemote {
+		report, err := a.marketplaceRemoteReport(args[1:])
 		if err != nil {
-			if errors.Is(err, errPluginNotFound) {
-				return renderPluginNotFound(a.Out, "show", args[1], format)
-			}
 			return err
 		}
-		payload = map[string]any{"kind": "plugin", "action": "show", "status": "ok", "plugin": manifest}
-	default:
+		payload = report
+	} else {
+		indexes, err := a.marketplaceRemote(args[1:])
+		if err != nil {
+			return err
+		}
+		payload = indexes
+	}
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) marketplaceUpdatesCommand(args []string, format string) error {
+	var payload any
+	updates, err := a.marketplaceUpdates(args[1:])
+	if err != nil {
+		return err
+	}
+	payload = updates
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) marketplaceInstallCommand(args []string, format string) error {
+	var payload any
+	if len(args) < 2 {
+		return errors.New("usage: codog marketplace install PATH")
+	}
+	manifest, err := plugins.Install(a.Workspace, args[1])
+	if err != nil {
+		if os.IsNotExist(err) {
+			return renderPluginSourceNotFound(a.Out, args[0], args[1], format)
+		}
+		return err
+	}
+	payload = manifest
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) marketplaceValidateCommand(args []string, format string) error {
+	if len(args) < 2 {
 		return renderActionError(a.Out, actionErrorReport{
 			Kind:      "plugins",
 			Action:    args[0],
 			Status:    "error",
-			ErrorKind: "unknown_plugins_action",
-			Message:   fmt.Sprintf("unknown plugins action %q", args[0]),
-			Hint:      unknownPluginsActionHint(args[0]),
+			ErrorKind: "plugin_source_required",
+			Message:   "plugin validation requires a source path",
+			Hint:      "Usage: codog plugins validate PATH [--json|--output-format text|json]",
 		}, format)
 	}
+	if len(args) > 2 {
+		return renderCLIError(a.Out, unexpectedExtraArgsError{
+			Command: "plugins validate",
+			Args:    append([]string(nil), args[2:]...),
+			Usage:   "codog plugins validate PATH [--json|--output-format text|json]",
+		}, format)
+	}
+	result, err := plugins.Validate(args[1])
+	if err != nil {
+		if os.IsNotExist(err) {
+			return renderPluginSourceNotFound(a.Out, args[0], args[1], format)
+		}
+		return err
+	}
+	return renderPluginValidation(a.Out, args[1], result, format)
+}
+
+func (a *App) marketplaceInstallRemoteCommand(args []string, format string) error {
+	var payload any
+	result, err := a.marketplaceInstallRemote(args[1:])
+	if err != nil {
+		return err
+	}
+	payload = result
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) marketplaceUpdateCommand(args []string, format string) error {
+	var payload any
+	result, err := a.marketplaceUpdate(args[1:])
+	if err != nil {
+		return err
+	}
+	payload = result
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) marketplaceEnableCommand(args []string, format string) error {
+	var payload any
+	if len(args) < 2 {
+		return errors.New("usage: codog marketplace enable ID")
+	}
+	manifest, err := plugins.Enable(a.Workspace, args[1])
+	if err != nil {
+		if os.IsNotExist(err) {
+			return renderPluginNotFound(a.Out, args[0], args[1], format)
+		}
+		return err
+	}
+	payload = manifest
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) marketplaceDisableCommand(args []string, format string) error {
+	var payload any
+	if len(args) < 2 {
+		return errors.New("usage: codog marketplace disable ID")
+	}
+	manifest, err := plugins.Disable(a.Workspace, args[1])
+	if err != nil {
+		if os.IsNotExist(err) {
+			return renderPluginNotFound(a.Out, args[0], args[1], format)
+		}
+		return err
+	}
+	payload = manifest
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) marketplaceRemoveCommand(args []string, format string) error {
+	var payload any
+	if len(args) < 2 {
+		return errors.New("usage: codog marketplace remove ID")
+	}
+	if err := plugins.Remove(a.Workspace, args[1]); err != nil {
+		if os.IsNotExist(err) {
+			return renderPluginNotFound(a.Out, args[0], args[1], format)
+		}
+		return err
+	}
+	payload = map[string]any{"removed": true, "id": args[1]}
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) marketplaceShowCommand(args []string, format string) error {
+	var payload any
+	if len(args) < 2 {
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "plugins",
+			Action:    "show",
+			Status:    "error",
+			ErrorKind: "missing_argument",
+			Message:   "plugins show requires an ID",
+			Hint:      "Usage: codog plugins show ID.",
+		}, format)
+	}
+	if len(args) > 2 {
+		return renderCLIError(a.Out, unexpectedExtraArgsError{
+			Command: "plugins show",
+			Args:    append([]string(nil), args[2:]...),
+			Usage:   "codog plugins show ID [--json|--output-format text|json]",
+		}, format)
+	}
+	manifest, err := a.findPlugin(args[1])
+	if err != nil {
+		if errors.Is(err, errPluginNotFound) {
+			return renderPluginNotFound(a.Out, "show", args[1], format)
+		}
+		return err
+	}
+	payload = map[string]any{"kind": "plugin", "action": "show", "status": "ok", "plugin": manifest}
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
