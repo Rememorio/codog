@@ -1076,91 +1076,14 @@ func (p *Prompter) Decide(name string, required Permission, input json.RawMessag
 		decision.Reason = "allow_rule"
 		return decision
 	}
-	validationWarning := ""
-	if strings.EqualFold(name, "bash") && effectiveDefaultShell(p.DefaultShell) == "powershell" {
-		result := powershellvalidation.Validate(powershellvalidation.CommandFromInput(input), string(mode), p.Workspace, p.AdditionalDirs)
-		switch result.Severity {
-		case powershellvalidation.SeverityBlock:
-			decision.Reason = "powershell_validation"
-			decision.Message = result.Reason
-			return decision
-		case powershellvalidation.SeverityConfirm:
-			validationWarning = result.Reason
-		case powershellvalidation.SeverityAllow:
-			if mode == PermissionReadOnly && result.Intent == powershellvalidation.IntentReadOnly && !ruleMatches(p.AskRules, name, inputText) {
-				decision.Allowed = true
-				decision.Reason = "powershell_validation_read_only"
-				return decision
-			}
-		}
+	validation := p.validateInvocation(name, mode, input, inputText)
+	if validation.terminal {
+		decision.Allowed = validation.allowed
+		decision.Reason = validation.reason
+		decision.Message = validation.message
+		return decision
 	}
-	if strings.EqualFold(name, "bash") && effectiveDefaultShell(p.DefaultShell) != "powershell" {
-		result := bashvalidation.ValidateWithAdditionalDirs(bashvalidation.CommandFromInput(input), string(mode), p.Workspace, p.AdditionalDirs)
-		switch result.Severity {
-		case bashvalidation.SeverityBlock:
-			decision.Reason = "bash_validation"
-			decision.Message = result.Reason
-			return decision
-		case bashvalidation.SeverityConfirm:
-			validationWarning = result.Reason
-		case bashvalidation.SeverityAllow:
-			if mode == PermissionReadOnly && result.Intent == bashvalidation.IntentReadOnly && !ruleMatches(p.AskRules, name, inputText) {
-				decision.Allowed = true
-				decision.Reason = "bash_validation_read_only"
-				return decision
-			}
-		}
-	}
-	if strings.EqualFold(name, "powershell") {
-		result := powershellvalidation.Validate(powershellvalidation.CommandFromInput(input), string(mode), p.Workspace, p.AdditionalDirs)
-		switch result.Severity {
-		case powershellvalidation.SeverityBlock:
-			decision.Reason = "powershell_validation"
-			decision.Message = result.Reason
-			return decision
-		case powershellvalidation.SeverityConfirm:
-			validationWarning = result.Reason
-		case powershellvalidation.SeverityAllow:
-			if mode == PermissionReadOnly && result.Intent == powershellvalidation.IntentReadOnly && !ruleMatches(p.AskRules, name, inputText) {
-				decision.Allowed = true
-				decision.Reason = "powershell_validation_read_only"
-				return decision
-			}
-		}
-	}
-	if strings.EqualFold(name, "task_create") {
-		if command := bashvalidation.CommandFromInput(input); command != "" {
-			result := bashvalidation.ValidateWithAdditionalDirs(command, string(mode), p.Workspace, p.AdditionalDirs)
-			switch result.Severity {
-			case bashvalidation.SeverityBlock:
-				decision.Reason = "task_create_validation"
-				decision.Message = result.Reason
-				return decision
-			case bashvalidation.SeverityConfirm:
-				validationWarning = result.Reason
-			}
-		}
-	}
-	if strings.EqualFold(name, "repl") {
-		language, code := replPayloadCommand(input)
-		if isShellREPLLanguage(language) && code != "" {
-			result := bashvalidation.ValidateWithAdditionalDirs(code, string(mode), p.Workspace, p.AdditionalDirs)
-			switch result.Severity {
-			case bashvalidation.SeverityBlock:
-				decision.Reason = "repl_validation"
-				decision.Message = result.Reason
-				return decision
-			case bashvalidation.SeverityConfirm:
-				validationWarning = result.Reason
-			case bashvalidation.SeverityAllow:
-				if mode == PermissionReadOnly && result.Intent == bashvalidation.IntentReadOnly && !ruleMatches(p.AskRules, name, inputText) {
-					decision.Allowed = true
-					decision.Reason = "repl_validation_read_only"
-					return decision
-				}
-			}
-		}
-	}
+	validationWarning := validation.warning
 	ask := mode == PermissionPrompt || ruleMatches(p.AskRules, name, inputText)
 	if validationWarning != "" && mode != PermissionAllow {
 		ask = true
@@ -1174,6 +1097,67 @@ func (p *Prompter) Decide(name string, required Permission, input json.RawMessag
 	decision.Reason = "requires_confirmation"
 	decision.Message = validationWarning
 	return decision
+}
+
+type invocationValidation struct {
+	terminal bool
+	allowed  bool
+	reason   string
+	message  string
+	warning  string
+}
+
+func (p *Prompter) validateInvocation(name string, mode Permission, input json.RawMessage, inputText string) invocationValidation {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "bash":
+		if effectiveDefaultShell(p.DefaultShell) == "powershell" {
+			return p.validatePowerShellInvocation(name, mode, input, inputText)
+		}
+		return p.validateBashInvocation(name, mode, bashvalidation.CommandFromInput(input), inputText, "bash_validation", true)
+	case "powershell":
+		return p.validatePowerShellInvocation(name, mode, input, inputText)
+	case "task_create":
+		return p.validateBashInvocation(name, mode, bashvalidation.CommandFromInput(input), inputText, "task_create_validation", false)
+	case "repl":
+		language, code := replPayloadCommand(input)
+		if isShellREPLLanguage(language) {
+			return p.validateBashInvocation(name, mode, code, inputText, "repl_validation", true)
+		}
+	}
+	return invocationValidation{}
+}
+
+func (p *Prompter) validatePowerShellInvocation(name string, mode Permission, input json.RawMessage, inputText string) invocationValidation {
+	result := powershellvalidation.Validate(powershellvalidation.CommandFromInput(input), string(mode), p.Workspace, p.AdditionalDirs)
+	switch result.Severity {
+	case powershellvalidation.SeverityBlock:
+		return invocationValidation{terminal: true, reason: "powershell_validation", message: result.Reason}
+	case powershellvalidation.SeverityConfirm:
+		return invocationValidation{warning: result.Reason}
+	case powershellvalidation.SeverityAllow:
+		if mode == PermissionReadOnly && result.Intent == powershellvalidation.IntentReadOnly && !ruleMatches(p.AskRules, name, inputText) {
+			return invocationValidation{terminal: true, allowed: true, reason: "powershell_validation_read_only"}
+		}
+	}
+	return invocationValidation{}
+}
+
+func (p *Prompter) validateBashInvocation(name string, mode Permission, command string, inputText string, reason string, allowReadOnly bool) invocationValidation {
+	if command == "" {
+		return invocationValidation{}
+	}
+	result := bashvalidation.ValidateWithAdditionalDirs(command, string(mode), p.Workspace, p.AdditionalDirs)
+	switch result.Severity {
+	case bashvalidation.SeverityBlock:
+		return invocationValidation{terminal: true, reason: reason, message: result.Reason}
+	case bashvalidation.SeverityConfirm:
+		return invocationValidation{warning: result.Reason}
+	case bashvalidation.SeverityAllow:
+		if allowReadOnly && mode == PermissionReadOnly && result.Intent == bashvalidation.IntentReadOnly && !ruleMatches(p.AskRules, name, inputText) {
+			return invocationValidation{terminal: true, allowed: true, reason: reason + "_read_only"}
+		}
+	}
+	return invocationValidation{}
 }
 
 func parsePermissionResponse(answer string) PermissionResponse {

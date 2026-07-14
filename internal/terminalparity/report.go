@@ -165,58 +165,104 @@ func Build() Report {
 		RequiredCommandCount:      len(requiredInteractiveCommands),
 		MissingRequiredCommands:   missing,
 		DuplicateSlashCommands:    duplicates,
-		TUISubmitSupported:        submitPreview.Submitted && submitPreview.Prompt == "summarize this repo",
-		TUISlashCompletion:        completionPreview.Value == "/status " || len(completionPreview.Matches) > 0,
-		TUIFullScreenLayout:       strings.Contains(submitPreview.View, "composer") && strings.Contains(submitPreview.View, "Codog TUI"),
-		TUIInlineLayout:           strings.Contains(inlinePreview.View, "codog") && strings.Contains(inlinePreview.View, "❯") && !strings.Contains(inlinePreview.View, "composer"),
+		TUISubmitSupported:        submitPreviewReady(submitPreview),
+		TUISlashCompletion:        completionPreviewReady(completionPreview),
+		TUIFullScreenLayout:       containsAll(submitPreview.View, "composer", "Codog TUI"),
+		TUIInlineLayout:           inlinePreviewReady(inlinePreview),
 		TUIDefaultInline:          true,
-		TUIResumePicker:           resumePreview.MatchCount == 1 && resumePreview.SelectedID == "resume-beta" && strings.Contains(resumePreview.View, "Beta session") && !strings.Contains(resumePreview.View, "Alpha session"),
-		TUIWorkspaceTrustPrompt:   trustPreview.SelectedChoice == 0 && strings.Contains(trustPreview.View, "Accessing workspace:") && strings.Contains(trustPreview.View, "Yes, I trust this folder") && strings.Contains(trustPreview.View, "No, exit"),
+		TUIResumePicker:           resumePreviewReady(resumePreview),
+		TUIWorkspaceTrustPrompt:   trustPreviewReady(trustPreview),
 		TUITranscriptViewport:     strings.Contains(submitPreview.View, "Interactive coding agent ready"),
-		TUILocalHelpPanel:         helpPreview.HelpOpen && strings.Contains(helpPreview.View, "Core commands"),
-		TUISettingsTabs:           settingsPreview.CommandView && strings.Contains(settingsPreview.View, "Status") && strings.Contains(settingsPreview.View, "Config") && strings.Contains(settingsPreview.View, "Usage") && strings.Contains(settingsPreview.View, "Model") && strings.Contains(settingsPreview.View, "glm52"),
-		TUIExtensionTabs:          extensionsPreview.CommandView && strings.Contains(extensionsPreview.View, "Skills") && strings.Contains(extensionsPreview.View, "MCP") && strings.Contains(extensionsPreview.View, "Hooks") && strings.Contains(extensionsPreview.View, "Plugins") && strings.Contains(extensionsPreview.View, "Agents") && strings.Contains(extensionsPreview.View, "local"),
-		TUIRuntimeTabs:            runtimePreview.CommandView && strings.Contains(runtimePreview.View, "Tasks") && strings.Contains(runtimePreview.View, "Teams") && strings.Contains(runtimePreview.View, "Schedules") && strings.Contains(runtimePreview.View, "Agent runs") && strings.Contains(runtimePreview.View, "@reviewer") && strings.Contains(runtimePreview.View, "R refresh"),
-		TUIConversationTabs:       conversationPreview.CommandView && strings.Contains(conversationPreview.View, "History") && strings.Contains(conversationPreview.View, "Sessions") && strings.Contains(conversationPreview.View, "Bookmarks") && strings.Contains(conversationPreview.View, "before-review") && strings.Contains(conversationPreview.View, "R refresh"),
-		TUIMemorySelector:         memoryPreview.CommandView && strings.Contains(memoryPreview.View, "AGENTS.md") && strings.Contains(memoryPreview.View, "V view") && strings.Contains(memoryPreview.View, "R refresh"),
-		TUIExportDialog:           exportPreview.ExportDialog && strings.Contains(exportPreview.View, "Enter filename") && exportPreview.Value == "session.md",
-		TUITextInputDialog:        inputPreview.TextInputDialog && strings.Contains(inputPreview.View, "Enter a directory path") && strings.Contains(inputPreview.View, "Enter confirm"),
-		TUIPreferencePanels:       preferencePreview.CommandView && strings.Contains(preferencePreview.View, "fast mode") && strings.Contains(preferencePreview.View, "> Disabled  current"),
-		TUISideQuestionPanel:      sideQuestionPreview.InformationView && strings.Contains(sideQuestionPreview.View, "The fixture used the wrong path") && strings.Contains(sideQuestionPreview.View, "Enter/Space/Esc close"),
-		TUIStatusBar:              strings.Contains(submitPreview.View, "Enter send") && strings.Contains(submitPreview.View, "Tab") && strings.Contains(submitPreview.View, "Esc"),
+		TUILocalHelpPanel:         previewHasAll(helpPreview.HelpOpen, helpPreview.View, "Core commands"),
+		TUISettingsTabs:           previewHasAll(settingsPreview.CommandView, settingsPreview.View, "Status", "Config", "Usage", "Model", "glm52"),
+		TUIExtensionTabs:          previewHasAll(extensionsPreview.CommandView, extensionsPreview.View, "Skills", "MCP", "Hooks", "Plugins", "Agents", "local"),
+		TUIRuntimeTabs:            previewHasAll(runtimePreview.CommandView, runtimePreview.View, "Tasks", "Teams", "Schedules", "Agent runs", "@reviewer", "R refresh"),
+		TUIConversationTabs:       previewHasAll(conversationPreview.CommandView, conversationPreview.View, "History", "Sessions", "Bookmarks", "before-review", "R refresh"),
+		TUIMemorySelector:         previewHasAll(memoryPreview.CommandView, memoryPreview.View, "AGENTS.md", "V view", "R refresh"),
+		TUIExportDialog:           exportPreviewReady(exportPreview),
+		TUITextInputDialog:        previewHasAll(inputPreview.TextInputDialog, inputPreview.View, "Enter a directory path", "Enter confirm"),
+		TUIPreferencePanels:       previewHasAll(preferencePreview.CommandView, preferencePreview.View, "fast mode", "> Disabled  current"),
+		TUISideQuestionPanel:      previewHasAll(sideQuestionPreview.InformationView, sideQuestionPreview.View, "The fixture used the wrong path", "Enter/Space/Esc close"),
+		TUIStatusBar:              containsAll(submitPreview.View, "Enter send", "Tab", "Esc"),
 		TUIPreviewWidth:           80,
 		TUIPreviewHeight:          24,
-		PermissionCommandsPresent: names["/permissions"] && names["/approve"] && names["/deny"],
-		StatusCommandsPresent:     names["/status"] && names["/statusline"] && names["/doctor"],
-		SessionCommandsPresent:    names["/resume"] && names["/session"] && names["/history"],
+		PermissionCommandsPresent: allNames(names, "/permissions", "/approve", "/deny"),
+		StatusCommandsPresent:     allNames(names, "/status", "/statusline", "/doctor"),
+		SessionCommandsPresent:    allNames(names, "/resume", "/session", "/history"),
 	}
-	if len(report.MissingRequiredCommands) > 0 ||
-		len(report.DuplicateSlashCommands) > 0 ||
-		!report.TUISubmitSupported ||
-		!report.TUISlashCompletion ||
-		!report.TUIFullScreenLayout ||
-		!report.TUIInlineLayout ||
-		!report.TUIDefaultInline ||
-		!report.TUIResumePicker ||
-		!report.TUIWorkspaceTrustPrompt ||
-		!report.TUITranscriptViewport ||
-		!report.TUILocalHelpPanel ||
-		!report.TUISettingsTabs ||
-		!report.TUIExtensionTabs ||
-		!report.TUIRuntimeTabs ||
-		!report.TUIConversationTabs ||
-		!report.TUIMemorySelector ||
-		!report.TUIExportDialog ||
-		!report.TUITextInputDialog ||
-		!report.TUIPreferencePanels ||
-		!report.TUISideQuestionPanel ||
-		!report.TUIStatusBar ||
-		!report.PermissionCommandsPresent ||
-		!report.StatusCommandsPresent ||
-		!report.SessionCommandsPresent {
+	if !report.ready() {
 		report.Status = "gap"
 	}
 	return report
+}
+
+func submitPreviewReady(preview tui.Preview) bool {
+	return preview.Submitted && preview.Prompt == "summarize this repo"
+}
+
+func completionPreviewReady(preview tui.Preview) bool {
+	return preview.Value == "/status " || len(preview.Matches) > 0
+}
+
+func inlinePreviewReady(preview tui.Preview) bool {
+	return containsAll(preview.View, "codog", "❯") && !strings.Contains(preview.View, "composer")
+}
+
+func resumePreviewReady(preview tui.SessionPickerPreview) bool {
+	return preview.MatchCount == 1 && preview.SelectedID == "resume-beta" && containsAll(preview.View, "Beta session") && !strings.Contains(preview.View, "Alpha session")
+}
+
+func trustPreviewReady(preview tui.WorkspaceTrustPreview) bool {
+	return preview.SelectedChoice == 0 && containsAll(preview.View, "Accessing workspace:", "Yes, I trust this folder", "No, exit")
+}
+
+func exportPreviewReady(preview tui.Preview) bool {
+	return preview.ExportDialog && preview.Value == "session.md" && strings.Contains(preview.View, "Enter filename")
+}
+
+func previewHasAll(enabled bool, view string, values ...string) bool {
+	return enabled && containsAll(view, values...)
+}
+
+func containsAll(value string, needles ...string) bool {
+	for _, needle := range needles {
+		if !strings.Contains(value, needle) {
+			return false
+		}
+	}
+	return true
+}
+
+func allNames(names map[string]bool, required ...string) bool {
+	for _, name := range required {
+		if !names[name] {
+			return false
+		}
+	}
+	return true
+}
+
+func (r Report) ready() bool {
+	return r.registryReady() && r.layoutReady() && r.panelReady() && r.commandReady()
+}
+
+func (r Report) registryReady() bool {
+	return len(r.MissingRequiredCommands) == 0 && len(r.DuplicateSlashCommands) == 0
+}
+
+func (r Report) layoutReady() bool {
+	return r.TUISubmitSupported && r.TUISlashCompletion && r.TUIFullScreenLayout && r.TUIInlineLayout &&
+		r.TUIDefaultInline && r.TUIResumePicker && r.TUIWorkspaceTrustPrompt && r.TUITranscriptViewport && r.TUIStatusBar
+}
+
+func (r Report) panelReady() bool {
+	return r.TUILocalHelpPanel && r.TUISettingsTabs && r.TUIExtensionTabs && r.TUIRuntimeTabs &&
+		r.TUIConversationTabs && r.TUIMemorySelector && r.TUIExportDialog && r.TUITextInputDialog &&
+		r.TUIPreferencePanels && r.TUISideQuestionPanel
+}
+
+func (r Report) commandReady() bool {
+	return r.PermissionCommandsPresent && r.StatusCommandsPresent && r.SessionCommandsPresent
 }
 
 // RequiredInteractiveCommands returns the stable command checklist used by

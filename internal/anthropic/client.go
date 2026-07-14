@@ -517,116 +517,144 @@ func openAIMessagesFromAnthropic(msg Message, model string) ([]openAIMessage, er
 	if role == "" {
 		return nil, errors.New("message role is required")
 	}
-	if role == "user" {
-		var out []openAIMessage
-		var text strings.Builder
-		var rich []openAIContentPart
-		hasRichContent := false
-		flushText := func() {
-			value := text.String()
-			if strings.TrimSpace(value) == "" {
-				text.Reset()
-				return
-			}
-			if hasRichContent {
-				rich = append(rich, openAIContentPart{Type: "text", Text: value})
-			} else {
-				out = append(out, openAIMessage{Role: "user", Content: value})
-			}
-			text.Reset()
-		}
-		flushRich := func() {
-			if len(rich) > 0 {
-				out = append(out, openAIMessage{Role: "user", Content: rich})
-				rich = nil
-				hasRichContent = false
-			}
-		}
-		for _, block := range msg.Content {
-			switch block.Type {
-			case "text":
-				if text.Len() > 0 {
-					text.WriteString("\n")
-				}
-				text.WriteString(block.Text)
-			case "image":
-				if block.Source != nil && strings.TrimSpace(block.Source.Data) != "" {
-					hasRichContent = true
-					flushText()
-					rich = append(rich, openAIContentPart{
-						Type:     "image_url",
-						ImageURL: &openAIImageURL{URL: dataURL(block.Source.MediaType, block.Source.Data)},
-					})
-				}
-			case "document":
-				label := strings.TrimSpace(block.Title)
-				if label == "" && block.Source != nil {
-					label = strings.TrimSpace(block.Source.MediaType)
-				}
-				if label == "" {
-					label = "document"
-				}
-				if text.Len() > 0 {
-					text.WriteString("\n")
-				}
-				text.WriteString("[Attached " + label + " omitted by OpenAI-compatible adapter]")
-			case "tool_result":
-				flushText()
-				flushRich()
-				toolMessage := openAIMessage{Role: "tool", ToolCallID: block.ToolUseID, Content: block.Content}
-				if !modelrouting.ModelRejectsIsErrorField(model) {
-					isError := block.IsError
-					toolMessage.IsError = &isError
-				}
-				out = append(out, toolMessage)
-			}
-		}
-		flushText()
-		flushRich()
-		return out, nil
+	switch role {
+	case "user":
+		return openAIUserMessages(msg.Content, model), nil
+	case "assistant":
+		return []openAIMessage{openAIAssistantMessage(msg.Content, model)}, nil
+	default:
+		return []openAIMessage{{Role: role, Content: contentText(msg.Content)}}, nil
 	}
-	if role == "assistant" {
-		var text strings.Builder
-		var thinking strings.Builder
-		var toolCalls []openAIToolCall
-		for _, block := range msg.Content {
-			switch block.Type {
-			case "text":
-				if text.Len() > 0 {
-					text.WriteString("\n")
-				}
-				text.WriteString(block.Text)
-			case "thinking":
-				if thinking.Len() > 0 {
-					thinking.WriteString("\n")
-				}
-				if block.Thinking != "" {
-					thinking.WriteString(block.Thinking)
-				} else {
-					thinking.WriteString(block.Text)
-				}
-			case "tool_use":
-				args := block.Input
-				if len(args) == 0 {
-					args = json.RawMessage(`{}`)
-				}
-				toolCalls = append(toolCalls, openAIToolCall{
-					ID:   block.ID,
-					Type: "function",
-					Function: openAIFunctionCall{
-						Name:      block.Name,
-						Arguments: string(args),
-					},
-				})
-			}
-		}
-		assistant := openAIMessage{Role: "assistant", Content: text.String(), ToolCalls: toolCalls}
-		if modelrouting.RequiresReasoningContentHistory(model) {
-			assistant.ReasoningContent = thinking.String()
-		}
-		return []openAIMessage{assistant}, nil
+}
+
+type openAIUserMessageBuilder struct {
+	model          string
+	out            []openAIMessage
+	text           strings.Builder
+	rich           []openAIContentPart
+	hasRichContent bool
+}
+
+func openAIUserMessages(blocks []ContentBlock, model string) []openAIMessage {
+	builder := openAIUserMessageBuilder{model: model}
+	for _, block := range blocks {
+		builder.add(block)
 	}
-	return []openAIMessage{{Role: role, Content: contentText(msg.Content)}}, nil
+	builder.flushText()
+	builder.flushRich()
+	return builder.out
+}
+
+func (b *openAIUserMessageBuilder) add(block ContentBlock) {
+	switch block.Type {
+	case "text":
+		appendJoinedText(&b.text, block.Text)
+	case "image":
+		b.addImage(block)
+	case "document":
+		appendJoinedText(&b.text, openAIDocumentPlaceholder(block))
+	case "tool_result":
+		b.addToolResult(block)
+	}
+}
+
+func (b *openAIUserMessageBuilder) addImage(block ContentBlock) {
+	if block.Source == nil || strings.TrimSpace(block.Source.Data) == "" {
+		return
+	}
+	b.hasRichContent = true
+	b.flushText()
+	b.rich = append(b.rich, openAIContentPart{
+		Type:     "image_url",
+		ImageURL: &openAIImageURL{URL: dataURL(block.Source.MediaType, block.Source.Data)},
+	})
+}
+
+func (b *openAIUserMessageBuilder) addToolResult(block ContentBlock) {
+	b.flushText()
+	b.flushRich()
+	message := openAIMessage{Role: "tool", ToolCallID: block.ToolUseID, Content: block.Content}
+	if !modelrouting.ModelRejectsIsErrorField(b.model) {
+		isError := block.IsError
+		message.IsError = &isError
+	}
+	b.out = append(b.out, message)
+}
+
+func (b *openAIUserMessageBuilder) flushText() {
+	value := b.text.String()
+	b.text.Reset()
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	if b.hasRichContent {
+		b.rich = append(b.rich, openAIContentPart{Type: "text", Text: value})
+		return
+	}
+	b.out = append(b.out, openAIMessage{Role: "user", Content: value})
+}
+
+func (b *openAIUserMessageBuilder) flushRich() {
+	if len(b.rich) == 0 {
+		return
+	}
+	b.out = append(b.out, openAIMessage{Role: "user", Content: b.rich})
+	b.rich = nil
+	b.hasRichContent = false
+}
+
+func openAIDocumentPlaceholder(block ContentBlock) string {
+	label := strings.TrimSpace(block.Title)
+	if label == "" && block.Source != nil {
+		label = strings.TrimSpace(block.Source.MediaType)
+	}
+	if label == "" {
+		label = "document"
+	}
+	return "[Attached " + label + " omitted by OpenAI-compatible adapter]"
+}
+
+func openAIAssistantMessage(blocks []ContentBlock, model string) openAIMessage {
+	var text strings.Builder
+	var thinking strings.Builder
+	toolCalls := []openAIToolCall{}
+	for _, block := range blocks {
+		switch block.Type {
+		case "text":
+			appendJoinedText(&text, block.Text)
+		case "thinking":
+			appendJoinedText(&thinking, firstNonEmpty(block.Thinking, block.Text))
+		case "tool_use":
+			toolCalls = append(toolCalls, openAIToolCallFromBlock(block))
+		}
+	}
+	message := openAIMessage{Role: "assistant", Content: text.String(), ToolCalls: toolCalls}
+	if modelrouting.RequiresReasoningContentHistory(model) {
+		message.ReasoningContent = thinking.String()
+	}
+	return message
+}
+
+func openAIToolCallFromBlock(block ContentBlock) openAIToolCall {
+	args := block.Input
+	if len(args) == 0 {
+		args = json.RawMessage(`{}`)
+	}
+	return openAIToolCall{
+		ID:   block.ID,
+		Type: "function",
+		Function: openAIFunctionCall{
+			Name:      block.Name,
+			Arguments: string(args),
+		},
+	}
+}
+
+func appendJoinedText(builder *strings.Builder, value string) {
+	if builder.Len() > 0 {
+		builder.WriteString("\n")
+	}
+	builder.WriteString(value)
 }
 
 func dataURL(mediaType string, base64Data string) string {
@@ -1106,91 +1134,128 @@ type openAIToolCallBuilder struct {
 func parseOpenAIStream(r io.Reader, onText func(string)) (AssistantMessage, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-
-	var text strings.Builder
-	var thinking strings.Builder
-	toolCalls := map[int]*openAIToolCallBuilder{}
-	var usage Usage
+	state := openAIStreamState{onText: onText, toolCalls: map[int]*openAIToolCallBuilder{}}
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "event:") {
-			continue
-		}
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "[DONE]" {
-			break
-		}
-		var event openAIStreamEnvelope
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		done, err := state.consumeLine(scanner.Text())
+		if err != nil {
 			return AssistantMessage{}, err
 		}
-		if event.Usage.PromptTokens != 0 || event.Usage.CompletionTokens != 0 {
-			usage = usageFromOpenAI(event.Usage)
-		}
-		for _, choice := range event.Choices {
-			deltaThinking := firstNonEmpty(choice.Delta.ReasoningContent, choice.Delta.Reasoning, choice.Delta.Thinking.Content)
-			if deltaThinking != "" {
-				thinking.WriteString(deltaThinking)
-			}
-			if choice.Delta.Content != "" {
-				text.WriteString(choice.Delta.Content)
-				if onText != nil {
-					onText(choice.Delta.Content)
-				}
-			}
-			for _, toolDelta := range choice.Delta.ToolCalls {
-				builder := toolCalls[toolDelta.Index]
-				if builder == nil {
-					builder = &openAIToolCallBuilder{}
-					toolCalls[toolDelta.Index] = builder
-				}
-				if toolDelta.ID != "" {
-					builder.id = toolDelta.ID
-				}
-				if toolDelta.Function.Name != "" {
-					builder.name = toolDelta.Function.Name
-				}
-				if toolDelta.Function.Arguments != "" {
-					builder.arguments.WriteString(toolDelta.Function.Arguments)
-				}
-			}
+		if done {
+			break
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return AssistantMessage{}, err
 	}
+	blocks, err := state.blocks()
+	if err != nil {
+		return AssistantMessage{}, err
+	}
+	return AssistantMessage{Blocks: blocks, Usage: state.usage}, nil
+}
+
+type openAIStreamState struct {
+	text      strings.Builder
+	thinking  strings.Builder
+	toolCalls map[int]*openAIToolCallBuilder
+	usage     Usage
+	onText    func(string)
+}
+
+func (s *openAIStreamState) consumeLine(raw string) (bool, error) {
+	line := strings.TrimSpace(raw)
+	if line == "" || strings.HasPrefix(line, "event:") || !strings.HasPrefix(line, "data:") {
+		return false, nil
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	if payload == "[DONE]" {
+		return true, nil
+	}
+	var event openAIStreamEnvelope
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		return false, err
+	}
+	s.apply(event)
+	return false, nil
+}
+
+func (s *openAIStreamState) apply(event openAIStreamEnvelope) {
+	if event.Usage.PromptTokens != 0 || event.Usage.CompletionTokens != 0 {
+		s.usage = usageFromOpenAI(event.Usage)
+	}
+	for _, choice := range event.Choices {
+		s.applyChoice(
+			choice.Delta.Content,
+			firstNonEmpty(choice.Delta.ReasoningContent, choice.Delta.Reasoning, choice.Delta.Thinking.Content),
+			choice.Delta.ToolCalls,
+		)
+	}
+}
+
+func (s *openAIStreamState) applyChoice(content string, thinking string, toolDeltas []openAIToolCallDelta) {
+	if thinking != "" {
+		s.thinking.WriteString(thinking)
+	}
+	if content != "" {
+		s.text.WriteString(content)
+		if s.onText != nil {
+			s.onText(content)
+		}
+	}
+	for _, delta := range toolDeltas {
+		s.applyToolDelta(delta)
+	}
+}
+
+func (s *openAIStreamState) applyToolDelta(delta openAIToolCallDelta) {
+	builder := s.toolCalls[delta.Index]
+	if builder == nil {
+		builder = &openAIToolCallBuilder{}
+		s.toolCalls[delta.Index] = builder
+	}
+	if delta.ID != "" {
+		builder.id = delta.ID
+	}
+	if delta.Function.Name != "" {
+		builder.name = delta.Function.Name
+	}
+	if delta.Function.Arguments != "" {
+		builder.arguments.WriteString(delta.Function.Arguments)
+	}
+}
+
+func (s *openAIStreamState) blocks() ([]ContentBlock, error) {
 	blocks := []ContentBlock{}
-	if thinking.Len() > 0 {
-		blocks = append(blocks, ContentBlock{Type: "thinking", Thinking: thinking.String()})
+	if s.thinking.Len() > 0 {
+		blocks = append(blocks, ContentBlock{Type: "thinking", Thinking: s.thinking.String()})
 	}
-	if text.Len() > 0 {
-		blocks = append(blocks, ContentBlock{Type: "text", Text: text.String()})
+	if s.text.Len() > 0 {
+		blocks = append(blocks, ContentBlock{Type: "text", Text: s.text.String()})
 	}
-	indices := make([]int, 0, len(toolCalls))
-	for index := range toolCalls {
+	indices := make([]int, 0, len(s.toolCalls))
+	for index := range s.toolCalls {
 		indices = append(indices, index)
 	}
 	sort.Ints(indices)
 	for _, index := range indices {
-		builder := toolCalls[index]
-		args := strings.TrimSpace(builder.arguments.String())
-		if args == "" {
-			args = "{}"
+		block, err := openAIToolUseBlock(index, s.toolCalls[index])
+		if err != nil {
+			return nil, err
 		}
-		if !json.Valid([]byte(args)) {
-			return AssistantMessage{}, fmt.Errorf("openai-compatible tool call %d arguments are not valid JSON", index)
-		}
-		blocks = append(blocks, ContentBlock{
-			Type:  "tool_use",
-			ID:    builder.id,
-			Name:  builder.name,
-			Input: json.RawMessage(args),
-		})
+		blocks = append(blocks, block)
 	}
-	return AssistantMessage{Blocks: blocks, Usage: usage}, nil
+	return blocks, nil
+}
+
+func openAIToolUseBlock(index int, builder *openAIToolCallBuilder) (ContentBlock, error) {
+	args := strings.TrimSpace(builder.arguments.String())
+	if args == "" {
+		args = "{}"
+	}
+	if !json.Valid([]byte(args)) {
+		return ContentBlock{}, fmt.Errorf("openai-compatible tool call %d arguments are not valid JSON", index)
+	}
+	return ContentBlock{Type: "tool_use", ID: builder.id, Name: builder.name, Input: json.RawMessage(args)}, nil
 }
 
 func firstNonEmpty(values ...string) string {

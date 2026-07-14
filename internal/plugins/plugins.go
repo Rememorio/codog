@@ -166,14 +166,28 @@ func Load(workspace string) ([]Manifest, error) {
 // A session plugin replaces an installed plugin with the same id without
 // changing the workspace installation.
 func LoadWithDirs(workspace string, pluginDirs []string) ([]Manifest, error) {
-	root := Root(workspace)
-	entries, err := os.ReadDir(root)
+	manifests, err := loadInstalledManifests(workspace)
 	if err != nil {
-		if os.IsNotExist(err) {
-			entries = nil
-		} else {
+		return nil, err
+	}
+	for _, source := range pluginDirs {
+		manifest, ok, err := loadSessionManifest(workspace, source)
+		if err != nil {
 			return nil, err
 		}
+		if ok {
+			manifests = replaceManifest(manifests, manifest)
+		}
+	}
+	sort.Slice(manifests, func(i, j int) bool { return manifests[i].ID < manifests[j].ID })
+	return manifests, nil
+}
+
+func loadInstalledManifests(workspace string) ([]Manifest, error) {
+	root := Root(workspace)
+	entries, err := os.ReadDir(root)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
 	}
 	manifests := []Manifest{}
 	for _, entry := range entries {
@@ -192,47 +206,47 @@ func LoadWithDirs(workspace string, pluginDirs []string) ([]Manifest, error) {
 		}
 		manifests = append(manifests, manifest)
 	}
-	for _, source := range pluginDirs {
-		source = strings.TrimSpace(source)
-		if source == "" {
-			continue
-		}
-		dir, _, err := pluginManifestSource(source)
-		if err != nil {
-			return nil, fmt.Errorf("session plugin %q: %w", source, err)
-		}
-		dir, err = filepath.Abs(dir)
-		if err != nil {
-			return nil, fmt.Errorf("session plugin %q: %w", source, err)
-		}
-		validation, err := Validate(dir)
-		if err != nil {
-			return nil, fmt.Errorf("session plugin %q: %w", source, err)
-		}
-		if !validation.Success {
-			return nil, fmt.Errorf("session plugin %q: %w", source, validationFailure(validation))
-		}
-		manifest, err := LoadManifest(dir)
-		if err != nil {
-			return nil, fmt.Errorf("session plugin %q: %w", source, err)
-		}
-		manifest.Enabled = true
-		manifest.Session = true
-		manifest.DataPath = DataDir(workspace, manifest.ID)
-		replaced := false
-		for index := range manifests {
-			if strings.EqualFold(manifests[index].ID, manifest.ID) {
-				manifests[index] = manifest
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
-			manifests = append(manifests, manifest)
+	return manifests, nil
+}
+
+func loadSessionManifest(workspace string, source string) (Manifest, bool, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return Manifest{}, false, nil
+	}
+	dir, _, err := pluginManifestSource(source)
+	if err != nil {
+		return Manifest{}, false, fmt.Errorf("session plugin %q: %w", source, err)
+	}
+	dir, err = filepath.Abs(dir)
+	if err != nil {
+		return Manifest{}, false, fmt.Errorf("session plugin %q: %w", source, err)
+	}
+	validation, err := Validate(dir)
+	if err != nil {
+		return Manifest{}, false, fmt.Errorf("session plugin %q: %w", source, err)
+	}
+	if !validation.Success {
+		return Manifest{}, false, fmt.Errorf("session plugin %q: %w", source, validationFailure(validation))
+	}
+	manifest, err := LoadManifest(dir)
+	if err != nil {
+		return Manifest{}, false, fmt.Errorf("session plugin %q: %w", source, err)
+	}
+	manifest.Enabled = true
+	manifest.Session = true
+	manifest.DataPath = DataDir(workspace, manifest.ID)
+	return manifest, true, nil
+}
+
+func replaceManifest(manifests []Manifest, replacement Manifest) []Manifest {
+	for index := range manifests {
+		if strings.EqualFold(manifests[index].ID, replacement.ID) {
+			manifests[index] = replacement
+			return manifests
 		}
 	}
-	sort.Slice(manifests, func(i, j int) bool { return manifests[i].ID < manifests[j].ID })
-	return manifests, nil
+	return append(manifests, replacement)
 }
 
 func Validate(source string) (ValidationResult, error) {
@@ -324,6 +338,12 @@ func (r *ValidationResult) validateManifestFields(fields map[string]json.RawMess
 }
 
 func (r *ValidationResult) validateManifest(manifest Manifest, fields map[string]json.RawMessage) {
+	r.validateManifestMetadata(manifest, fields)
+	r.validateManifestTools(manifest.Tools)
+	r.validateManifestComponents(manifest)
+}
+
+func (r *ValidationResult) validateManifestMetadata(manifest Manifest, fields map[string]json.RawMessage) {
 	if _, ok := fields["id"]; !ok {
 		r.addWarning("id", "no plugin id specified; install will use the plugin directory name", "missing_id")
 	}
@@ -339,9 +359,11 @@ func (r *ValidationResult) validateManifest(manifest Manifest, fields map[string
 	if manifest.Name != "" && !isKebabCase(manifest.Name) {
 		r.addWarning("name", fmt.Sprintf("plugin name %q is not kebab-case", manifest.Name), "non_kebab_name")
 	}
+}
 
+func (r *ValidationResult) validateManifestTools(tools []ToolManifest) {
 	seenTools := map[string]bool{}
-	for index, tool := range manifest.Tools {
+	for index, tool := range tools {
 		basePath := fmt.Sprintf("tools[%d]", index)
 		name := strings.TrimSpace(tool.Name)
 		if name == "" {
@@ -358,6 +380,9 @@ func (r *ValidationResult) validateManifest(manifest Manifest, fields map[string
 			r.addError(basePath+".permission", fmt.Sprintf("unknown tool permission %q", tool.Permission), "invalid_tool_permission")
 		}
 	}
+}
+
+func (r *ValidationResult) validateManifestComponents(manifest Manifest) {
 	for index, command := range manifest.Commands {
 		r.validateComponentPath(fmt.Sprintf("commands[%d]", index), command)
 	}

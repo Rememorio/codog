@@ -145,6 +145,31 @@ func ValidateJSON(data []byte) (Result, error) {
 }
 
 func Validate(bundle Bundle) Result {
+	errors := validateBundleMetadata(bundle)
+	cases, caseErrors := indexBundleCases(bundle.Cases)
+	errors = append(errors, caseErrors...)
+	required := RequiredCases()
+	passedCases, requiredErrors := validateRequiredCases(required, cases)
+	errors = append(errors, requiredErrors...)
+	sortConformanceErrors(errors)
+	parsePassed, semanticPassed := conformancePassStatus(errors)
+	valid := len(errors) == 0
+	result := Result{
+		Kind: "report_consumer_conformance", SchemaVersion: ResultSchemaVersion, FixtureSet: FixtureSetVersion,
+		Consumer: bundle.Consumer, Valid: valid, ParsePassed: parsePassed, SemanticPassed: semanticPassed,
+		RequiredCaseCount: len(required), PassedCaseCount: passedCases, ErrorCount: len(errors),
+		Errors: errors, RequiredCases: required,
+	}
+	if valid {
+		result.LastPassed = &LastPassed{
+			Consumer: strings.TrimSpace(bundle.Consumer.Name), Version: strings.TrimSpace(bundle.Consumer.Version),
+			FixtureSet: FixtureSetVersion, PassedAt: strings.TrimSpace(bundle.PassedAt),
+		}
+	}
+	return result
+}
+
+func validateBundleMetadata(bundle Bundle) []Error {
 	errors := []Error{}
 	if strings.TrimSpace(bundle.SchemaVersion) != BundleSchemaVersion {
 		errors = append(errors, Error{Path: "/schema_version", Kind: "parse", Message: fmt.Sprintf("expected %q", BundleSchemaVersion)})
@@ -163,8 +188,13 @@ func Validate(bundle Bundle) Result {
 			errors = append(errors, Error{Path: "/passed_at", Kind: "parse", Message: "must be RFC3339 timestamp"})
 		}
 	}
+	return errors
+}
+
+func indexBundleCases(entries []CaseResult) (map[string]CaseResult, []Error) {
 	cases := map[string]CaseResult{}
-	for index, candidate := range bundle.Cases {
+	errors := []Error{}
+	for index, candidate := range entries {
 		name := strings.TrimSpace(candidate.Name)
 		if name == "" {
 			errors = append(errors, Error{Path: fmt.Sprintf("/cases/%d/name", index), Kind: "parse", Message: "required string field missing"})
@@ -176,8 +206,12 @@ func Validate(bundle Bundle) Result {
 		}
 		cases[name] = candidate
 	}
-	required := RequiredCases()
+	return cases, errors
+}
+
+func validateRequiredCases(required []RequiredCase, cases map[string]CaseResult) (int, []Error) {
 	passedCases := 0
+	errors := []Error{}
 	for _, req := range required {
 		candidate, ok := cases[req.Name]
 		if !ok {
@@ -203,12 +237,19 @@ func Validate(bundle Bundle) Result {
 			passedCases++
 		}
 	}
+	return passedCases, errors
+}
+
+func sortConformanceErrors(errors []Error) {
 	sort.Slice(errors, func(i, j int) bool {
 		if errors[i].Path == errors[j].Path {
 			return errors[i].Kind < errors[j].Kind
 		}
 		return errors[i].Path < errors[j].Path
 	})
+}
+
+func conformancePassStatus(errors []Error) (bool, bool) {
 	parsePassed := true
 	semanticPassed := true
 	for _, err := range errors {
@@ -219,30 +260,7 @@ func Validate(bundle Bundle) Result {
 			semanticPassed = false
 		}
 	}
-	valid := len(errors) == 0
-	result := Result{
-		Kind:              "report_consumer_conformance",
-		SchemaVersion:     ResultSchemaVersion,
-		FixtureSet:        FixtureSetVersion,
-		Consumer:          bundle.Consumer,
-		Valid:             valid,
-		ParsePassed:       parsePassed,
-		SemanticPassed:    semanticPassed,
-		RequiredCaseCount: len(required),
-		PassedCaseCount:   passedCases,
-		ErrorCount:        len(errors),
-		Errors:            errors,
-		RequiredCases:     required,
-	}
-	if valid {
-		result.LastPassed = &LastPassed{
-			Consumer:   strings.TrimSpace(bundle.Consumer.Name),
-			Version:    strings.TrimSpace(bundle.Consumer.Version),
-			FixtureSet: FixtureSetVersion,
-			PassedAt:   strings.TrimSpace(bundle.PassedAt),
-		}
-	}
-	return result
+	return parsePassed, semanticPassed
 }
 
 func semanticCheck(checks SemanticChecks, name string) bool {

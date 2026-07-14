@@ -121,82 +121,8 @@ func readReference(token string, roots []string) Reference {
 
 func readDirectoryReference(ref *Reference, path string, roots []string) {
 	ref.Directory = true
-	totalBytes := 0
-	err := filepath.WalkDir(path, func(current string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if current == path {
-			return nil
-		}
-		rel, err := filepath.Rel(path, current)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if entry.IsDir() {
-			if strings.HasPrefix(entry.Name(), ".") {
-				ref.Skipped = append(ref.Skipped, rel+"/")
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if strings.HasPrefix(entry.Name(), ".") {
-			ref.Skipped = append(ref.Skipped, rel)
-			return nil
-		}
-		if len(ref.Files) >= maxDirectoryFileCount {
-			ref.Skipped = append(ref.Skipped, rel)
-			return nil
-		}
-		resolved, err := filepath.EvalSymlinks(current)
-		if err != nil {
-			ref.Skipped = append(ref.Skipped, rel)
-			return nil
-		}
-		if !pathWithin(path, resolved) || !pathWithinAny(roots, resolved) {
-			ref.Skipped = append(ref.Skipped, rel)
-			return nil
-		}
-		info, err := os.Stat(resolved)
-		if err != nil || info.IsDir() {
-			ref.Skipped = append(ref.Skipped, rel)
-			return nil
-		}
-		if info.Size() > maxFileBytes || totalBytes >= maxDirectoryBytes {
-			ref.Skipped = append(ref.Skipped, rel)
-			return nil
-		}
-		data, err := os.ReadFile(resolved)
-		if err != nil {
-			ref.Skipped = append(ref.Skipped, rel)
-			return nil
-		}
-		if !utf8.Valid(data) {
-			ref.Skipped = append(ref.Skipped, rel)
-			return nil
-		}
-		truncated := false
-		if totalBytes+len(data) > maxDirectoryBytes {
-			available := maxDirectoryBytes - totalBytes
-			if available <= 0 {
-				ref.Skipped = append(ref.Skipped, rel)
-				return nil
-			}
-			data = data[:available]
-			truncated = true
-		}
-		totalBytes += len(data)
-		ref.Bytes += len(data)
-		ref.Truncated = ref.Truncated || truncated
-		ref.Files = append(ref.Files, DirectoryFile{
-			Path:      rel,
-			Bytes:     int(info.Size()),
-			Truncated: truncated,
-			Body:      string(data),
-		})
-		return nil
-	})
+	collector := directoryReferenceCollector{ref: ref, root: path, roots: roots}
+	err := filepath.WalkDir(path, collector.visit)
 	if err != nil {
 		ref.Error = err.Error()
 		return
@@ -204,6 +130,79 @@ func readDirectoryReference(ref *Reference, path string, roots []string) {
 	if len(ref.Files) == 0 {
 		ref.Error = "directory has no supported text files"
 	}
+}
+
+type directoryReferenceCollector struct {
+	ref        *Reference
+	root       string
+	roots      []string
+	totalBytes int
+}
+
+func (c *directoryReferenceCollector) visit(current string, entry os.DirEntry, walkErr error) error {
+	if walkErr != nil || current == c.root {
+		return walkErr
+	}
+	rel, err := filepath.Rel(c.root, current)
+	if err != nil {
+		return err
+	}
+	rel = filepath.ToSlash(rel)
+	if entry.IsDir() {
+		return c.visitDirectory(entry, rel)
+	}
+	if strings.HasPrefix(entry.Name(), ".") || len(c.ref.Files) >= maxDirectoryFileCount {
+		c.skip(rel)
+		return nil
+	}
+	return c.visitFile(current, rel)
+}
+
+func (c *directoryReferenceCollector) visitDirectory(entry os.DirEntry, rel string) error {
+	if strings.HasPrefix(entry.Name(), ".") {
+		c.skip(rel + "/")
+		return filepath.SkipDir
+	}
+	return nil
+}
+
+func (c *directoryReferenceCollector) visitFile(current string, rel string) error {
+	resolved, err := filepath.EvalSymlinks(current)
+	if err != nil || !pathWithin(c.root, resolved) || !pathWithinAny(c.roots, resolved) {
+		c.skip(rel)
+		return nil
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || info.IsDir() || info.Size() > maxFileBytes || c.totalBytes >= maxDirectoryBytes {
+		c.skip(rel)
+		return nil
+	}
+	data, err := os.ReadFile(resolved)
+	if err != nil || !utf8.Valid(data) {
+		c.skip(rel)
+		return nil
+	}
+	data, truncated := c.truncate(data)
+	c.totalBytes += len(data)
+	c.ref.Bytes += len(data)
+	c.ref.Truncated = c.ref.Truncated || truncated
+	c.ref.Files = append(c.ref.Files, DirectoryFile{Path: rel, Bytes: int(info.Size()), Truncated: truncated, Body: string(data)})
+	return nil
+}
+
+func (c *directoryReferenceCollector) truncate(data []byte) ([]byte, bool) {
+	if c.totalBytes+len(data) <= maxDirectoryBytes {
+		return data, false
+	}
+	available := maxDirectoryBytes - c.totalBytes
+	if available <= 0 {
+		return nil, false
+	}
+	return data[:available], true
+}
+
+func (c *directoryReferenceCollector) skip(path string) {
+	c.ref.Skipped = append(c.ref.Skipped, path)
 }
 
 func resolvePath(requested string, roots []string) (string, error) {

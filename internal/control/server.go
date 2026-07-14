@@ -324,76 +324,102 @@ func (s Server) routes(w http.ResponseWriter, r *http.Request) {
 func (s Server) state(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		state, err := s.readState()
-		if err != nil {
-			writeError(w, err, http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, s.decorateState(state))
+		s.getState(w)
 	case http.MethodPost:
-		var payload struct {
-			Heartbeat      bool     `json:"heartbeat"`
-			LastError      *string  `json:"last_error"`
-			Failure        *Failure `json:"failure"`
-			FailureCode    string   `json:"failure_code"`
-			FailureMessage string   `json:"failure_message"`
-			Retryable      *bool    `json:"retryable"`
-			ClearFailure   bool     `json:"clear_failure"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			writeError(w, err, http.StatusBadRequest)
-			return
-		}
-		state, err := s.readState()
-		if err != nil {
-			writeError(w, err, http.StatusInternalServerError)
-			return
-		}
-		now := s.now()
-		if payload.Heartbeat {
-			state.HeartbeatAt = now
-		}
-		if payload.ClearFailure {
-			state.LastError = ""
-			state.Failure = nil
-		}
-		if payload.LastError != nil {
-			state.LastError = *payload.LastError
-			if *payload.LastError == "" {
-				state.Failure = nil
-			} else if payload.Failure == nil && payload.FailureCode == "" && payload.FailureMessage == "" {
-				state.Failure = &Failure{Code: "remote_error", Message: *payload.LastError, At: now}
-			}
-		}
-		if payload.Failure != nil {
-			failure := *payload.Failure
-			if failure.At.IsZero() {
-				failure.At = now
-			}
-			state.Failure = &failure
-			state.LastError = failure.Message
-		}
-		if payload.FailureCode != "" || payload.FailureMessage != "" {
-			retryable := false
-			if payload.Retryable != nil {
-				retryable = *payload.Retryable
-			}
-			message := payload.FailureMessage
-			if message == "" && payload.LastError != nil {
-				message = *payload.LastError
-			}
-			state.Failure = &Failure{Code: payload.FailureCode, Message: message, Retryable: retryable, At: now}
-			state.LastError = message
-		}
-		state.UpdatedAt = now
-		if err := s.writeState(state); err != nil {
-			writeError(w, err, http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, s.decorateState(state))
+		s.postState(w, r)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+type stateUpdatePayload struct {
+	Heartbeat      bool     `json:"heartbeat"`
+	LastError      *string  `json:"last_error"`
+	Failure        *Failure `json:"failure"`
+	FailureCode    string   `json:"failure_code"`
+	FailureMessage string   `json:"failure_message"`
+	Retryable      *bool    `json:"retryable"`
+	ClearFailure   bool     `json:"clear_failure"`
+}
+
+func (s Server) getState(w http.ResponseWriter) {
+	state, err := s.readState()
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, s.decorateState(state))
+}
+
+func (s Server) postState(w http.ResponseWriter, r *http.Request) {
+	var payload stateUpdatePayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	state, err := s.readState()
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	now := s.now()
+	applyStateUpdate(&state, payload, now)
+	if err := s.writeState(state); err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, s.decorateState(state))
+}
+
+func applyStateUpdate(state *State, payload stateUpdatePayload, now time.Time) {
+	if payload.Heartbeat {
+		state.HeartbeatAt = now
+	}
+	if payload.ClearFailure {
+		state.LastError = ""
+		state.Failure = nil
+	}
+	applyStateLastError(state, payload, now)
+	applyStateFailure(state, payload.Failure, now)
+	applyStateFailureFields(state, payload, now)
+	state.UpdatedAt = now
+}
+
+func applyStateLastError(state *State, payload stateUpdatePayload, now time.Time) {
+	if payload.LastError == nil {
+		return
+	}
+	state.LastError = *payload.LastError
+	if *payload.LastError == "" {
+		state.Failure = nil
+	} else if payload.Failure == nil && payload.FailureCode == "" && payload.FailureMessage == "" {
+		state.Failure = &Failure{Code: "remote_error", Message: *payload.LastError, At: now}
+	}
+}
+
+func applyStateFailure(state *State, update *Failure, now time.Time) {
+	if update == nil {
+		return
+	}
+	failure := *update
+	if failure.At.IsZero() {
+		failure.At = now
+	}
+	state.Failure = &failure
+	state.LastError = failure.Message
+}
+
+func applyStateFailureFields(state *State, payload stateUpdatePayload, now time.Time) {
+	if payload.FailureCode == "" && payload.FailureMessage == "" {
+		return
+	}
+	retryable := payload.Retryable != nil && *payload.Retryable
+	message := payload.FailureMessage
+	if message == "" && payload.LastError != nil {
+		message = *payload.LastError
+	}
+	state.Failure = &Failure{Code: payload.FailureCode, Message: message, Retryable: retryable, At: now}
+	state.LastError = message
 }
 
 func (s Server) sessions(w http.ResponseWriter, r *http.Request) {

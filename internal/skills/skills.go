@@ -375,58 +375,61 @@ func load(configHome, workspace string, extraRoots []root, manifests []plugins.M
 			}
 			return nil, err
 		}
-		err := filepath.WalkDir(root.path, func(path string, entry os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if entry.IsDir() {
-				if path != root.path && strings.HasPrefix(entry.Name(), ".") {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if !isSkillFile(root, path, entry.Name()) {
-				return nil
-			}
-			name, err := skillName(root, path)
-			if err != nil {
-				return err
-			}
-			if name == "" {
-				return nil
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			out = append(out, parseDocumentFromRoot(name, path, root, string(data)))
-			return nil
-		})
+		collector := skillCollector{root: root, out: &out}
+		err := filepath.WalkDir(root.path, collector.visit)
 		if err != nil {
 			return nil, err
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if strings.EqualFold(out[i].Name, out[j].Name) {
-			leftSource := sourceRank(out[i].Source)
-			rightSource := sourceRank(out[j].Source)
-			if leftSource == rightSource {
-				leftOrigin := originRank(out[i].Origin)
-				rightOrigin := originRank(out[j].Origin)
-				if leftOrigin == rightOrigin {
-					if out[i].priority != out[j].priority {
-						return out[i].priority < out[j].priority
-					}
-					return out[i].Path < out[j].Path
-				}
-				return leftOrigin < rightOrigin
-			}
-			return leftSource < rightSource
-		}
-		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
-	})
+	sort.Slice(out, func(i, j int) bool { return skillLess(out[i], out[j]) })
 	annotateActiveSkills(out)
 	return out, nil
+}
+
+type skillCollector struct {
+	root root
+	out  *[]Skill
+}
+
+func (c skillCollector) visit(path string, entry os.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		return walkErr
+	}
+	if entry.IsDir() {
+		if path != c.root.path && strings.HasPrefix(entry.Name(), ".") {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	if !isSkillFile(c.root, path, entry.Name()) {
+		return nil
+	}
+	name, err := skillName(c.root, path)
+	if err != nil || name == "" {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	*c.out = append(*c.out, parseDocumentFromRoot(name, path, c.root, string(data)))
+	return nil
+}
+
+func skillLess(left Skill, right Skill) bool {
+	if !strings.EqualFold(left.Name, right.Name) {
+		return strings.ToLower(left.Name) < strings.ToLower(right.Name)
+	}
+	if sourceRank(left.Source) != sourceRank(right.Source) {
+		return sourceRank(left.Source) < sourceRank(right.Source)
+	}
+	if originRank(left.Origin) != originRank(right.Origin) {
+		return originRank(left.Origin) < originRank(right.Origin)
+	}
+	if left.priority != right.priority {
+		return left.priority < right.priority
+	}
+	return left.Path < right.Path
 }
 
 func dynamicSkillRootsForPaths(workspace string, paths []string) []root {

@@ -110,56 +110,8 @@ func Build(workspace string, opts Options) (Report, error) {
 			return Report{}, err
 		}
 	}
-	err = filepath.WalkDir(start, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if path == start {
-			return nil
-		}
-		rel := displayPath(root, path)
-		if entry.IsDir() {
-			if sink, ok := scopeRiskSinkForDir(rel, entry.Name()); ok {
-				addScopeRiskSink(&report.ScopeRisk, sink)
-			}
-			if skipDir(entry.Name(), opts.IncludeHidden) {
-				return filepath.SkipDir
-			}
-			if ignoreMatcher != nil && ignoreMatcher.Ignored(path, true) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !opts.IncludeHidden && strings.HasPrefix(entry.Name(), ".") {
-			return nil
-		}
-		if ignoreMatcher != nil && ignoreMatcher.Ignored(path, false) {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if sink, ok := scopeRiskSinkForFile(rel, entry.Name(), info.Size()); ok {
-			addScopeRiskSink(&report.ScopeRisk, sink)
-		}
-		if opts.Glob != "" && !matchesGlob(opts.Glob, rel, filepath.Base(path)) {
-			return nil
-		}
-		report.Total++
-		report.Bytes += info.Size()
-		if len(report.Files) >= limit {
-			report.Truncated = true
-			return nil
-		}
-		report.Files = append(report.Files, Entry{
-			Path:  rel,
-			Size:  info.Size(),
-			Ext:   strings.TrimPrefix(filepath.Ext(path), "."),
-			Depth: depth(rel),
-		})
-		return nil
-	})
+	collector := inventoryCollector{root: root, start: start, opts: opts, limit: limit, report: &report, ignore: ignoreMatcher}
+	err = filepath.WalkDir(start, collector.visit)
 	if err != nil {
 		return Report{}, err
 	}
@@ -169,6 +121,62 @@ func Build(workspace string, opts Options) (Report, error) {
 	}
 	finalizeScopeRisk(&report.ScopeRisk)
 	return report, nil
+}
+
+type inventoryCollector struct {
+	root   string
+	start  string
+	opts   Options
+	limit  int
+	report *Report
+	ignore *gitignore.Matcher
+}
+
+func (c *inventoryCollector) visit(path string, entry os.DirEntry, walkErr error) error {
+	if walkErr != nil || path == c.start {
+		return walkErr
+	}
+	rel := displayPath(c.root, path)
+	if entry.IsDir() {
+		return c.visitDir(path, rel, entry)
+	}
+	if !c.opts.IncludeHidden && strings.HasPrefix(entry.Name(), ".") || c.ignore != nil && c.ignore.Ignored(path, false) {
+		return nil
+	}
+	return c.visitFile(path, rel, entry)
+}
+
+func (c *inventoryCollector) visitDir(path string, rel string, entry os.DirEntry) error {
+	if sink, ok := scopeRiskSinkForDir(rel, entry.Name()); ok {
+		addScopeRiskSink(&c.report.ScopeRisk, sink)
+	}
+	if skipDir(entry.Name(), c.opts.IncludeHidden) || c.ignore != nil && c.ignore.Ignored(path, true) {
+		return filepath.SkipDir
+	}
+	return nil
+}
+
+func (c *inventoryCollector) visitFile(path string, rel string, entry os.DirEntry) error {
+	info, err := entry.Info()
+	if err != nil {
+		return err
+	}
+	if sink, ok := scopeRiskSinkForFile(rel, entry.Name(), info.Size()); ok {
+		addScopeRiskSink(&c.report.ScopeRisk, sink)
+	}
+	if c.opts.Glob != "" && !matchesGlob(c.opts.Glob, rel, filepath.Base(path)) {
+		return nil
+	}
+	c.report.Total++
+	c.report.Bytes += info.Size()
+	if len(c.report.Files) >= c.limit {
+		c.report.Truncated = true
+		return nil
+	}
+	c.report.Files = append(c.report.Files, Entry{
+		Path: rel, Size: info.Size(), Ext: strings.TrimPrefix(filepath.Ext(path), "."), Depth: depth(rel),
+	})
+	return nil
 }
 
 func RenderText(w io.Writer, report Report) {

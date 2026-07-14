@@ -976,68 +976,81 @@ func discoverBetweenWithRulesImport(workspace string, boundary string, rulesImpo
 	seen := map[string]struct{}{}
 	var files []File
 	for _, dir := range dirs {
-		for _, name := range CandidateNames {
-			path, ok, err := resolveCandidatePath(dir, name)
-			if err != nil {
-				return nil, err
-			}
-			if !ok {
-				continue
-			}
-			key := canonicalPath(path)
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			file, ok, err := readCandidate(path, dir, name)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				files = append(files, file)
-				seen[key] = struct{}{}
-			}
+		standard, err := discoverStandardMemory(dir, seen)
+		if err != nil {
+			return nil, err
 		}
-		for _, name := range clawRuleDirs {
-			next, err := readRuleDir(dir, name, seen)
+		files = append(files, standard...)
+		framework, err := discoverFrameworkMemory(dir, rulesImport, seen)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, framework...)
+	}
+	return files, nil
+}
+
+func discoverStandardMemory(dir string, seen map[string]struct{}) ([]File, error) {
+	files := []File{}
+	for _, name := range CandidateNames {
+		file, ok, err := readUniqueMemoryCandidate(dir, name, seen)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			files = append(files, file)
+		}
+	}
+	for _, name := range clawRuleDirs {
+		next, err := readRuleDir(dir, name, seen)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, next...)
+	}
+	return files, nil
+}
+
+func discoverFrameworkMemory(dir string, rulesImport RulesImportOptions, seen map[string]struct{}) ([]File, error) {
+	files := []File{}
+	for _, rule := range frameworkRules {
+		if !rulesImport.ShouldImport(rule.Framework) {
+			continue
+		}
+		if rule.IsDir {
+			next, err := readRuleDir(dir, rule.Path, seen)
 			if err != nil {
 				return nil, err
 			}
 			files = append(files, next...)
+			continue
 		}
-		for _, rule := range frameworkRules {
-			if !rulesImport.ShouldImport(rule.Framework) {
-				continue
-			}
-			if rule.IsDir {
-				next, err := readRuleDir(dir, rule.Path, seen)
-				if err != nil {
-					return nil, err
-				}
-				files = append(files, next...)
-				continue
-			}
-			path, ok, err := resolveCandidatePath(dir, rule.Path)
-			if err != nil {
-				return nil, err
-			}
-			if !ok {
-				continue
-			}
-			key := canonicalPath(path)
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			file, ok, err := readCandidate(path, dir, rule.Path)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				files = append(files, file)
-				seen[key] = struct{}{}
-			}
+		file, ok, err := readUniqueMemoryCandidate(dir, rule.Path, seen)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			files = append(files, file)
 		}
 	}
 	return files, nil
+}
+
+func readUniqueMemoryCandidate(dir string, name string, seen map[string]struct{}) (File, bool, error) {
+	path, ok, err := resolveCandidatePath(dir, name)
+	if err != nil || !ok {
+		return File{}, false, err
+	}
+	key := canonicalPath(path)
+	if _, exists := seen[key]; exists {
+		return File{}, false, nil
+	}
+	file, ok, err := readCandidate(path, dir, name)
+	if err != nil || !ok {
+		return File{}, false, err
+	}
+	seen[key] = struct{}{}
+	return file, true, nil
 }
 
 func readRuleDir(scope string, name string, seen map[string]struct{}) ([]File, error) {

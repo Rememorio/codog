@@ -212,67 +212,84 @@ func (s Service) Search(options SearchOptions) (SearchResult, error) {
 			return SearchResult{}, err
 		}
 	}
-	matches := []SearchMatch{}
-	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, err := s.Rel(path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		if shouldSkipPath(rel, entry, options.IncludeHidden) {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		if options.Glob != "" {
-			ok, err := PatternMatch(options.Glob, rel, entry.Name())
-			if err != nil || !ok {
-				return err
-			}
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if len(data) > 1024*1024 || bytes.IndexByte(data, 0) >= 0 {
-			return nil
-		}
-		for i, line := range strings.Split(string(data), "\n") {
-			column := 0
-			found := false
-			if expr != nil {
-				loc := expr.FindStringIndex(line)
-				if loc != nil {
-					found = true
-					column = loc[0] + 1
-				}
-			} else if idx := strings.Index(line, options.Query); idx >= 0 {
-				found = true
-				column = idx + 1
-			}
-			if !found {
-				continue
-			}
-			matches = append(matches, SearchMatch{Path: rel, Line: i + 1, Text: line, Column: column})
-			if len(matches) >= limit {
-				return filepath.SkipAll
-			}
-		}
-		return nil
-	})
+	collector := workspaceSearchCollector{service: s, options: options, expr: expr, limit: limit}
+	err = filepath.WalkDir(root, collector.visit)
 	if err != nil {
 		return SearchResult{}, err
 	}
-	return SearchResult{Matches: matches, Truncated: len(matches) >= limit}, nil
+	return SearchResult{Matches: collector.matches, Truncated: len(collector.matches) >= limit}, nil
+}
+
+type workspaceSearchCollector struct {
+	service Service
+	options SearchOptions
+	expr    *regexp.Regexp
+	limit   int
+	matches []SearchMatch
+}
+
+func (c *workspaceSearchCollector) visit(path string, entry os.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		return walkErr
+	}
+	rel, err := c.service.Rel(path)
+	if err != nil || rel == "." {
+		return err
+	}
+	if shouldSkipPath(rel, entry, c.options.IncludeHidden) {
+		if entry.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	if entry.IsDir() {
+		return nil
+	}
+	matched, err := c.matchesGlob(rel, entry.Name())
+	if err != nil || !matched {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if len(data) > 1024*1024 || bytes.IndexByte(data, 0) >= 0 {
+		return nil
+	}
+	return c.collectLines(rel, string(data))
+}
+
+func (c *workspaceSearchCollector) matchesGlob(rel string, name string) (bool, error) {
+	if c.options.Glob == "" {
+		return true, nil
+	}
+	return PatternMatch(c.options.Glob, rel, name)
+}
+
+func (c *workspaceSearchCollector) collectLines(rel string, content string) error {
+	for index, line := range strings.Split(content, "\n") {
+		column, found := c.matchColumn(line)
+		if !found {
+			continue
+		}
+		c.matches = append(c.matches, SearchMatch{Path: rel, Line: index + 1, Text: line, Column: column})
+		if len(c.matches) >= c.limit {
+			return filepath.SkipAll
+		}
+	}
+	return nil
+}
+
+func (c *workspaceSearchCollector) matchColumn(line string) (int, bool) {
+	if c.expr != nil {
+		location := c.expr.FindStringIndex(line)
+		if location != nil {
+			return location[0] + 1, true
+		}
+		return 0, false
+	}
+	index := strings.Index(line, c.options.Query)
+	return index + 1, index >= 0
 }
 
 // Read returns a bounded byte window from a workspace file.

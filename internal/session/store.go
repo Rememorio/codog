@@ -2505,49 +2505,54 @@ func (s *Store) removeSessionFiles(shouldRemove func(os.FileInfo) bool) error {
 	if shouldRemove == nil {
 		return nil
 	}
-	seen := map[string]struct{}{}
+	remover := sessionFileRemover{shouldRemove: shouldRemove, seen: map[string]struct{}{}}
 	for _, root := range s.sessionDirs() {
 		if strings.TrimSpace(root) == "" {
 			continue
 		}
-		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-			if err != nil {
-				if os.IsNotExist(err) {
-					return nil
-				}
-				return err
-			}
-			if entry.IsDir() {
-				return nil
-			}
-			if !isSessionFileName(entry.Name()) && !isRotatedSessionLogName(entry.Name()) {
-				return nil
-			}
-			clean := filepath.Clean(path)
-			if _, ok := seen[clean]; ok {
-				return nil
-			}
-			seen[clean] = struct{}{}
-			info, err := entry.Info()
-			if err != nil {
-				if os.IsNotExist(err) {
-					return nil
-				}
-				return err
-			}
-			if shouldRemove(info) {
-				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-					return err
-				}
-			}
-			return nil
-		})
+		err := filepath.WalkDir(root, remover.visit)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
 			return err
 		}
+	}
+	return nil
+}
+
+type sessionFileRemover struct {
+	shouldRemove func(os.FileInfo) bool
+	seen         map[string]struct{}
+}
+
+func (r *sessionFileRemover) visit(path string, entry os.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		if os.IsNotExist(walkErr) {
+			return nil
+		}
+		return walkErr
+	}
+	if entry.IsDir() || !isSessionFileName(entry.Name()) && !isRotatedSessionLogName(entry.Name()) {
+		return nil
+	}
+	clean := filepath.Clean(path)
+	if _, ok := r.seen[clean]; ok {
+		return nil
+	}
+	r.seen[clean] = struct{}{}
+	info, err := entry.Info()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !r.shouldRemove(info) {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }

@@ -214,76 +214,15 @@ func (s Store) File(filing Filing) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	item, err := s.Get(id)
-	created := false
+	item, created, err := s.loadOrCreateFiling(id, filing)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return Result{}, err
-		}
-		created = true
-		item = Item{
-			ID:                id,
-			Title:             filing.Title,
-			Description:       filing.Description,
-			DedupeKey:         filing.DedupeKey,
-			State:             filing.State,
-			CreatedAt:         filing.Now,
-			UpdatedAt:         filing.Now,
-			LastStateChangeAt: filing.Now,
-			Lineage:           []string{id},
-		}
-		applyPriority(&item, filing)
-	} else {
-		if filing.Title != "" {
-			item.Title = filing.Title
-		}
-		if filing.Description != "" {
-			item.Description = filing.Description
-		}
-		if filing.DedupeKey != "" {
-			item.DedupeKey = filing.DedupeKey
-		}
-		item.UpdatedAt = filing.Now
-		if filing.State != "" && item.State != filing.State {
-			item.State = filing.State
-			item.LastStateChangeAt = filing.Now
-		}
-		applyPriority(&item, filing)
+		return Result{}, err
 	}
 	ensurePriorityDefaults(&item, filing.Now)
-	proposedID := stableID(filing.Title, filing.Description)
-	item.SameRootCause = mergeStrings(item.SameRootCause, withoutString(filing.SameRootCause, item.ID))
-	if dedupeMerged && proposedID != item.ID {
-		item.SameRootCause = mergeStrings(item.SameRootCause, []string{proposedID})
-	}
-	item.Supersedes = mergeStrings(item.Supersedes, filing.Supersedes)
-	item.Related = mergeStrings(item.Related, filing.Related)
-	if dedupeMerged {
-		item.Lineage = mergeStrings(item.Lineage, []string{proposedID})
-	}
-	evidence, err := normalizeEvidence(filing.Evidence, filing.Now)
-	if err != nil {
+	mergeFilingRelationships(&item, filing, dedupeMerged)
+	if err := applyFilingArtifacts(&item, filing); err != nil {
 		return Result{}, err
 	}
-	item.Evidence = mergeEvidence(item.Evidence, evidence)
-	handoff, err := normalizeHandoff(filing.Handoff, filing.Now)
-	if err != nil {
-		return Result{}, err
-	}
-	if handoff != nil {
-		item.Handoff = handoff
-	}
-	implementation, err := normalizeImplementationLinks(filing.Implementation, filing.Now)
-	if err != nil {
-		return Result{}, err
-	}
-	item.Implementation = mergeImplementationLinks(item.Implementation, implementation)
-	results, err := normalizeExecutionResults(filing.ExecutionResults, filing.Now)
-	if err != nil {
-		return Result{}, err
-	}
-	item.ExecutionResults = mergeExecutionResults(item.ExecutionResults, results)
-	applyExecutionResultState(&item, results, filing.Now)
 	if filing.SupersededBy != "" {
 		item.SupersededBy = filing.SupersededBy
 		if item.State != StateSuperseded {
@@ -308,6 +247,82 @@ func (s Store) File(filing Filing) (Result, error) {
 		action = "roadmap_duplicate_merged"
 	}
 	return Result{Kind: "roadmap_pinpoint", Action: action, ItemID: item.ID, State: item.State, Item: item, Created: created}, nil
+}
+
+func (s Store) loadOrCreateFiling(id string, filing Filing) (Item, bool, error) {
+	item, err := s.Get(id)
+	if err == nil {
+		updateFiledItem(&item, filing)
+		return item, false, nil
+	}
+	if !os.IsNotExist(err) {
+		return Item{}, false, err
+	}
+	item = Item{
+		ID: id, Title: filing.Title, Description: filing.Description, DedupeKey: filing.DedupeKey,
+		State: filing.State, CreatedAt: filing.Now, UpdatedAt: filing.Now,
+		LastStateChangeAt: filing.Now, Lineage: []string{id},
+	}
+	applyPriority(&item, filing)
+	return item, true, nil
+}
+
+func updateFiledItem(item *Item, filing Filing) {
+	if filing.Title != "" {
+		item.Title = filing.Title
+	}
+	if filing.Description != "" {
+		item.Description = filing.Description
+	}
+	if filing.DedupeKey != "" {
+		item.DedupeKey = filing.DedupeKey
+	}
+	item.UpdatedAt = filing.Now
+	if filing.State != "" && item.State != filing.State {
+		item.State = filing.State
+		item.LastStateChangeAt = filing.Now
+	}
+	applyPriority(item, filing)
+}
+
+func mergeFilingRelationships(item *Item, filing Filing, dedupeMerged bool) {
+	proposedID := stableID(filing.Title, filing.Description)
+	item.SameRootCause = mergeStrings(item.SameRootCause, withoutString(filing.SameRootCause, item.ID))
+	if dedupeMerged && proposedID != item.ID {
+		item.SameRootCause = mergeStrings(item.SameRootCause, []string{proposedID})
+	}
+	item.Supersedes = mergeStrings(item.Supersedes, filing.Supersedes)
+	item.Related = mergeStrings(item.Related, filing.Related)
+	if dedupeMerged {
+		item.Lineage = mergeStrings(item.Lineage, []string{proposedID})
+	}
+}
+
+func applyFilingArtifacts(item *Item, filing Filing) error {
+	evidence, err := normalizeEvidence(filing.Evidence, filing.Now)
+	if err != nil {
+		return err
+	}
+	item.Evidence = mergeEvidence(item.Evidence, evidence)
+	handoff, err := normalizeHandoff(filing.Handoff, filing.Now)
+	if err != nil {
+		return err
+	}
+	if handoff != nil {
+		item.Handoff = handoff
+	}
+	implementation, err := normalizeImplementationLinks(filing.Implementation, filing.Now)
+	if err != nil {
+		return err
+	}
+	item.Implementation = mergeImplementationLinks(item.Implementation, implementation)
+	results, err := normalizeExecutionResults(filing.ExecutionResults, filing.Now)
+	if err != nil {
+		return err
+	}
+	item.ExecutionResults = mergeExecutionResults(item.ExecutionResults, results)
+	applyExecutionResultState(item, results, filing.Now)
+	return nil
 }
 
 // Get loads one item by id.

@@ -997,6 +997,15 @@ func defaultString(value string, fallback string) string {
 
 // RenderText writes a human-readable status snapshot.
 func RenderText(w io.Writer, snapshot Snapshot) {
+	renderStatusHeader(w, snapshot)
+	renderStatusSession(w, snapshot.Session)
+	renderStatusGit(w, snapshot.Git)
+	renderStatusValidation(w, snapshot)
+	renderStatusPreflight(w, snapshot.BootPreflight)
+	renderStatusRuntime(w, snapshot)
+}
+
+func renderStatusHeader(w io.Writer, snapshot Snapshot) {
 	fmt.Fprintln(w, "Status")
 	fmt.Fprintf(w, "  Version          %s\n", snapshot.Version)
 	fmt.Fprintf(w, "  Status           %s\n", snapshot.Status)
@@ -1014,54 +1023,51 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 		fmt.Fprintln(w, "  Plan             inactive")
 	}
 	fmt.Fprintf(w, "  Auth configured  %t\n", snapshot.Config.AuthConfigured)
-	if snapshot.Session.Active {
-		fmt.Fprintf(w, "  Session          %s (%d messages)\n", snapshot.Session.ID, snapshot.Session.MessageCount)
-		if snapshot.Session.Lifecycle != nil && snapshot.Session.Lifecycle.Signal != "" {
-			fmt.Fprintf(w, "  Session state    %s\n", snapshot.Session.Lifecycle.Signal)
+}
+
+func renderStatusSession(w io.Writer, session SessionStatus) {
+	if session.Active {
+		fmt.Fprintf(w, "  Session          %s (%d messages)\n", session.ID, session.MessageCount)
+		if session.Lifecycle != nil && session.Lifecycle.Signal != "" {
+			fmt.Fprintf(w, "  Session state    %s\n", session.Lifecycle.Signal)
 		}
-		if snapshot.Session.ParentSessionID != "" {
-			fmt.Fprintf(w, "  Session parent   %s\n", snapshot.Session.ParentSessionID)
+		if session.ParentSessionID != "" {
+			fmt.Fprintf(w, "  Session parent   %s\n", session.ParentSessionID)
 		}
-		if snapshot.Session.BranchName != "" {
-			fmt.Fprintf(w, "  Session branch   %s\n", snapshot.Session.BranchName)
+		if session.BranchName != "" {
+			fmt.Fprintf(w, "  Session branch   %s\n", session.BranchName)
 		}
 	} else {
-		fmt.Fprintf(w, "  Session          none (%d saved)\n", snapshot.Session.SavedCount)
+		fmt.Fprintf(w, "  Session          none (%d saved)\n", session.SavedCount)
 	}
-	if snapshot.Session.NamespacePath != "" {
-		scope := snapshot.Session.NamespacePath
-		if snapshot.Session.Workspace != "" {
-			scope += " workspace=" + snapshot.Session.Workspace
+	if session.NamespacePath != "" {
+		scope := session.NamespacePath
+		if session.Workspace != "" {
+			scope += " workspace=" + session.Workspace
 		}
-		if snapshot.Session.WorkspaceFingerprint != "" {
-			scope += " fingerprint=" + snapshot.Session.WorkspaceFingerprint
+		if session.WorkspaceFingerprint != "" {
+			scope += " fingerprint=" + session.WorkspaceFingerprint
 		}
 		fmt.Fprintf(w, "  Session scope    %s\n", scope)
 	}
-	if snapshot.Git.Available {
+}
+
+func renderStatusGit(w io.Writer, git GitStatus) {
+	if git.Available {
 		fmt.Fprintf(w, "  Git              branch=%s clean=%t staged=%d unstaged=%d untracked=%d conflicts=%d\n",
-			snapshot.Git.Branch,
-			snapshot.Git.Clean,
-			snapshot.Git.Staged,
-			snapshot.Git.Unstaged,
-			snapshot.Git.Untracked,
-			snapshot.Git.Conflicts,
+			git.Branch, git.Clean, git.Staged, git.Unstaged, git.Untracked, git.Conflicts,
 		)
-		if snapshot.Git.HeadShortSHA != "" || snapshot.Git.IsDetached || snapshot.Git.IsBare || snapshot.Git.IsWorktree {
-			ref := snapshot.Git.HeadRef
-			if ref == "" && snapshot.Git.IsDetached {
+		if git.HeadShortSHA != "" || git.IsDetached || git.IsBare || git.IsWorktree {
+			ref := git.HeadRef
+			if ref == "" && git.IsDetached {
 				ref = "detached"
 			}
 			fmt.Fprintf(w, "  Git head         ref=%s sha=%s detached=%t bare=%t worktree=%t\n",
-				ref,
-				snapshot.Git.HeadShortSHA,
-				snapshot.Git.IsDetached,
-				snapshot.Git.IsBare,
-				snapshot.Git.IsWorktree,
+				ref, git.HeadShortSHA, git.IsDetached, git.IsBare, git.IsWorktree,
 			)
 		}
-		if snapshot.Git.Freshness != nil {
-			freshness := snapshot.Git.Freshness
+		if git.Freshness != nil {
+			freshness := git.Freshness
 			upstream := ""
 			if freshness.HasUpstream {
 				upstream = " upstream=" + freshness.Upstream
@@ -1074,8 +1080,8 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 				freshness.Behind,
 			)
 		}
-		if snapshot.Git.BaseCommit != nil {
-			check := snapshot.Git.BaseCommit
+		if git.BaseCommit != nil {
+			check := git.BaseCommit
 			fmt.Fprintf(w, "  Git base         status=%s matches=%t expected=%s actual=%s\n",
 				check.Status,
 				check.Matches,
@@ -1083,8 +1089,8 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 				check.Actual,
 			)
 		}
-		if snapshot.Git.Operation != nil {
-			operation := snapshot.Git.Operation
+		if git.Operation != nil {
+			operation := git.Operation
 			fmt.Fprintf(w, "  Git operation    kind=%s paused=%t resume=%s abort=%s\n",
 				operation.Kind,
 				operation.Paused,
@@ -1093,8 +1099,11 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 			)
 		}
 	} else {
-		fmt.Fprintf(w, "  Git              unavailable: %s\n", snapshot.Git.Error)
+		fmt.Fprintf(w, "  Git              unavailable: %s\n", git.Error)
 	}
+}
+
+func renderStatusValidation(w io.Writer, snapshot Snapshot) {
 	if snapshot.ConfigValidation.FileCount > 0 || snapshot.ConfigValidation.ErrorCount > 0 || snapshot.ConfigValidation.WarningCount > 0 {
 		fmt.Fprintf(w, "  Config validation status=%s files=%d present=%d errors=%d warnings=%d\n",
 			snapshot.ConfigValidation.Status,
@@ -1115,21 +1124,23 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 	if snapshot.HookValidation.ValidCount > 0 || snapshot.HookValidation.InvalidCount > 0 {
 		fmt.Fprintf(w, "  Hook validation  valid=%d invalid=%d\n", snapshot.HookValidation.ValidCount, snapshot.HookValidation.InvalidCount)
 	}
+}
+
+func renderStatusPreflight(w io.Writer, preflight BootPreflightStatus) {
 	fmt.Fprintf(w, "  Boot preflight   repo=%t trust=%t mcp=%t plugins=%t\n",
-		snapshot.BootPreflight.Repo.GitAvailable,
-		snapshot.BootPreflight.Trust.Allowed,
-		snapshot.BootPreflight.MCPStartup.Eligible,
-		snapshot.BootPreflight.PluginStartup.Eligible,
+		preflight.Repo.GitAvailable, preflight.Trust.Allowed, preflight.MCPStartup.Eligible, preflight.PluginStartup.Eligible,
 	)
-	if snapshot.BootPreflight.LastFailedBootReason != "" {
-		fmt.Fprintf(w, "  Last boot error  %s\n", snapshot.BootPreflight.LastFailedBootReason)
+	if preflight.LastFailedBootReason != "" {
+		fmt.Fprintf(w, "  Last boot error  %s\n", preflight.LastFailedBootReason)
 	}
-	if len(snapshot.BootPreflight.RequiredBinaries) != 0 {
+	if len(preflight.RequiredBinaries) != 0 {
 		fmt.Fprintf(w, "  Required bins    available=%d/%d\n",
-			availableBinaryCount(snapshot.BootPreflight.RequiredBinaries),
-			len(snapshot.BootPreflight.RequiredBinaries),
+			availableBinaryCount(preflight.RequiredBinaries), len(preflight.RequiredBinaries),
 		)
 	}
+}
+
+func renderStatusRuntime(w io.Writer, snapshot Snapshot) {
 	fmt.Fprintf(w, "  Sandbox          available=%t default=%s\n", snapshot.Sandbox.Available, snapshot.Sandbox.Default)
 	if snapshot.LaneBoard.Available {
 		fmt.Fprintf(w, "  Task lanes       active=%d blocked=%d finished=%d\n",

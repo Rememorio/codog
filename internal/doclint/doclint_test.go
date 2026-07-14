@@ -366,28 +366,53 @@ func requirePackageTests(t *testing.T, pkg string, dir string) {
 func requireExportedDocComments(t *testing.T, pkg string, files []*ast.File) {
 	t.Helper()
 	for _, file := range files {
-		for _, decl := range file.Decls {
-			switch decl := decl.(type) {
-			case *ast.FuncDecl:
-				if decl.Name.IsExported() {
-					requireNamedDoc(t, pkg, decl.Name.Name, decl.Doc)
-				}
-			case *ast.GenDecl:
-				for _, spec := range decl.Specs {
-					switch spec := spec.(type) {
-					case *ast.TypeSpec:
-						if spec.Name.IsExported() {
-							requireNamedDoc(t, pkg, spec.Name.Name, firstDoc(spec.Doc, decl.Doc))
-						}
-					case *ast.ValueSpec:
-						for _, name := range spec.Names {
-							if name.IsExported() {
-								requireNamedDoc(t, pkg, name.Name, firstDoc(spec.Doc, decl.Doc))
-							}
-						}
-					}
-				}
-			}
+		requireFileExportedDocComments(t, pkg, file)
+	}
+}
+
+func requireFileExportedDocComments(t *testing.T, pkg string, file *ast.File) {
+	t.Helper()
+	for _, decl := range file.Decls {
+		switch decl := decl.(type) {
+		case *ast.FuncDecl:
+			requireFuncDocComment(t, pkg, decl)
+		case *ast.GenDecl:
+			requireGenDeclDocComments(t, pkg, decl)
+		}
+	}
+}
+
+func requireFuncDocComment(t *testing.T, pkg string, decl *ast.FuncDecl) {
+	t.Helper()
+	if decl.Name.IsExported() {
+		requireNamedDoc(t, pkg, decl.Name.Name, decl.Doc)
+	}
+}
+
+func requireGenDeclDocComments(t *testing.T, pkg string, decl *ast.GenDecl) {
+	t.Helper()
+	for _, rawSpec := range decl.Specs {
+		switch spec := rawSpec.(type) {
+		case *ast.TypeSpec:
+			requireTypeDocComment(t, pkg, spec, decl.Doc)
+		case *ast.ValueSpec:
+			requireValueDocComments(t, pkg, spec, decl.Doc)
+		}
+	}
+}
+
+func requireTypeDocComment(t *testing.T, pkg string, spec *ast.TypeSpec, declDoc *ast.CommentGroup) {
+	t.Helper()
+	if spec.Name.IsExported() {
+		requireNamedDoc(t, pkg, spec.Name.Name, firstDoc(spec.Doc, declDoc))
+	}
+}
+
+func requireValueDocComments(t *testing.T, pkg string, spec *ast.ValueSpec, declDoc *ast.CommentGroup) {
+	t.Helper()
+	for _, name := range spec.Names {
+		if name.IsExported() {
+			requireNamedDoc(t, pkg, name.Name, firstDoc(spec.Doc, declDoc))
 		}
 	}
 }

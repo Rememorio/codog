@@ -518,64 +518,22 @@ func (s *SandboxConfig) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	readBoolAlias := func(target **bool, keys ...string) error {
-		for _, key := range keys {
-			value, ok := raw[key]
-			if !ok {
-				continue
-			}
-			var parsed bool
-			if err := json.Unmarshal(value, &parsed); err != nil {
-				return fmt.Errorf("invalid sandbox.%s: %w", key, err)
-			}
-			*target = &parsed
-		}
-		return nil
-	}
-	readStringAlias := func(target *string, keys ...string) error {
-		for _, key := range keys {
-			value, ok := raw[key]
-			if !ok {
-				continue
-			}
-			var parsed string
-			if err := json.Unmarshal(value, &parsed); err != nil {
-				return fmt.Errorf("invalid sandbox.%s: %w", key, err)
-			}
-			*target = parsed
-		}
-		return nil
-	}
-	readStringArrayAlias := func(target *[]string, keys ...string) error {
-		for _, key := range keys {
-			value, ok := raw[key]
-			if !ok {
-				continue
-			}
-			var parsed []string
-			if err := json.Unmarshal(value, &parsed); err != nil {
-				return fmt.Errorf("invalid sandbox.%s: %w", key, err)
-			}
-			*target = parsed
-		}
-		return nil
-	}
-	if err := readBoolAlias(&parsed.Enabled, "enabled"); err != nil {
+	if err := decodeJSONPointerAlias(raw, "sandbox", &parsed.Enabled, nil, "enabled"); err != nil {
 		return err
 	}
-	if err := readStringAlias(&parsed.Strategy, "strategy"); err != nil {
+	if err := decodeJSONAlias(raw, "sandbox", &parsed.Strategy, nil, "strategy"); err != nil {
 		return err
 	}
-	if err := readBoolAlias(&parsed.NamespaceRestrictions, "namespaceRestrictions", "namespace_restrictions"); err != nil {
+	if err := decodeJSONPointerAlias(raw, "sandbox", &parsed.NamespaceRestrictions, nil, "namespaceRestrictions", "namespace_restrictions"); err != nil {
 		return err
 	}
-	if err := readBoolAlias(&parsed.NetworkIsolation, "networkIsolation", "network_isolation", "isolateNetwork", "isolate_network"); err != nil {
+	if err := decodeJSONPointerAlias(raw, "sandbox", &parsed.NetworkIsolation, nil, "networkIsolation", "network_isolation", "isolateNetwork", "isolate_network"); err != nil {
 		return err
 	}
-	if err := readStringAlias(&parsed.FilesystemMode, "filesystemMode", "filesystem_mode"); err != nil {
+	if err := decodeJSONAlias(raw, "sandbox", &parsed.FilesystemMode, nil, "filesystemMode", "filesystem_mode"); err != nil {
 		return err
 	}
-	if err := readStringArrayAlias(&parsed.AllowedMounts, "allowedMounts", "allowed_mounts"); err != nil {
+	if err := decodeJSONAlias(raw, "sandbox", &parsed.AllowedMounts, nil, "allowedMounts", "allowed_mounts"); err != nil {
 		return err
 	}
 	*s = SandboxConfig(parsed)
@@ -701,109 +659,70 @@ func (c *CompatibilityConfig) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	readIntAlias := func(target *int, present *bool, keys ...string) error {
-		for _, key := range keys {
-			value, ok := raw[key]
-			if !ok {
-				continue
-			}
-			var parsed int
-			if err := json.Unmarshal(value, &parsed); err != nil {
-				return fmt.Errorf("invalid compatibility.%s: %w", key, err)
-			}
-			*target = parsed
-			*present = true
-		}
-		return nil
-	}
-	readStringAlias := func(target *string, present *bool, keys ...string) error {
-		for _, key := range keys {
-			value, ok := raw[key]
-			if !ok {
-				continue
-			}
-			var parsed string
-			if err := json.Unmarshal(value, &parsed); err != nil {
-				return fmt.Errorf("invalid compatibility.%s: %w", key, err)
-			}
-			*target = parsed
-			*present = true
-		}
-		return nil
-	}
-	readBoolAlias := func(target **bool, present *bool, keys ...string) error {
-		for _, key := range keys {
-			value, ok := raw[key]
-			if !ok {
-				continue
-			}
-			var parsed bool
-			if err := json.Unmarshal(value, &parsed); err != nil {
-				return fmt.Errorf("invalid compatibility.%s: %w", key, err)
-			}
-			*target = &parsed
-			*present = true
-		}
-		return nil
-	}
-	readIntPtrAlias := func(target **int, present *bool, keys ...string) error {
-		for _, key := range keys {
-			value, ok := raw[key]
-			if !ok {
-				continue
-			}
-			var parsed int
-			if err := json.Unmarshal(value, &parsed); err != nil {
-				return fmt.Errorf("invalid compatibility.%s: %w", key, err)
-			}
-			*target = &parsed
-			*present = true
-		}
-		return nil
-	}
-	readEligibilityCacheAlias := func(target *map[string]GuestPassEligibilityCacheEntry, present *bool, keys ...string) error {
-		for _, key := range keys {
-			value, ok := raw[key]
-			if !ok {
-				continue
-			}
-			var parsed map[string]GuestPassEligibilityCacheEntry
-			if err := json.Unmarshal(value, &parsed); err != nil {
-				return fmt.Errorf("invalid compatibility.%s: %w", key, err)
-			}
-			*target = parsed
-			*present = true
-		}
-		return nil
-	}
-	if err := readIntAlias(&parsed.SlackAppInstallCount, &parsed.slackAppInstallSet, "slackAppInstallCount", "slack_app_install_count"); err != nil {
+	if err := decodeJSONAlias(raw, "compatibility", &parsed.SlackAppInstallCount, &parsed.slackAppInstallSet, "slackAppInstallCount", "slack_app_install_count"); err != nil {
 		return err
 	}
-	if err := readIntAlias(&parsed.StickerOrderCount, &parsed.stickerOrderSet, "stickerOrderCount", "sticker_order_count"); err != nil {
+	if err := decodeJSONAlias(raw, "compatibility", &parsed.StickerOrderCount, &parsed.stickerOrderSet, "stickerOrderCount", "sticker_order_count"); err != nil {
 		return err
 	}
-	if err := readIntAlias(&parsed.ExtraUsageVisitCount, &parsed.extraUsageVisitSet, "extraUsageVisitCount", "extra_usage_visit_count"); err != nil {
+	if err := decodeJSONAlias(raw, "compatibility", &parsed.ExtraUsageVisitCount, &parsed.extraUsageVisitSet, "extraUsageVisitCount", "extra_usage_visit_count"); err != nil {
 		return err
 	}
-	if err := readStringAlias(&parsed.GuestPassReferralURL, &parsed.guestPassReferralURLSet, "guestPassReferralURL", "guest_pass_referral_url"); err != nil {
+	if err := decodeJSONAlias(raw, "compatibility", &parsed.GuestPassReferralURL, &parsed.guestPassReferralURLSet, "guestPassReferralURL", "guest_pass_referral_url"); err != nil {
 		return err
 	}
-	if err := readIntAlias(&parsed.GuestPassVisitCount, &parsed.guestPassVisitSet, "guestPassVisitCount", "guest_pass_visit_count"); err != nil {
+	if err := decodeJSONAlias(raw, "compatibility", &parsed.GuestPassVisitCount, &parsed.guestPassVisitSet, "guestPassVisitCount", "guest_pass_visit_count"); err != nil {
 		return err
 	}
-	if err := readEligibilityCacheAlias(&parsed.GuestPassEligibilityCache, &parsed.guestPassEligibilitySet, "guestPassEligibilityCache", "guest_pass_eligibility_cache", "passesEligibilityCache", "passes_eligibility_cache"); err != nil {
+	if err := decodeJSONAlias(raw, "compatibility", &parsed.GuestPassEligibilityCache, &parsed.guestPassEligibilitySet, "guestPassEligibilityCache", "guest_pass_eligibility_cache", "passesEligibilityCache", "passes_eligibility_cache"); err != nil {
 		return err
 	}
-	if err := readBoolAlias(&parsed.HasVisitedPasses, &parsed.hasVisitedPassesSet, "hasVisitedPasses", "has_visited_passes"); err != nil {
+	if err := decodeJSONPointerAlias(raw, "compatibility", &parsed.HasVisitedPasses, &parsed.hasVisitedPassesSet, "hasVisitedPasses", "has_visited_passes"); err != nil {
 		return err
 	}
-	if err := readIntAlias(&parsed.PassesUpsellSeenCount, &parsed.passesUpsellSeenSet, "passesUpsellSeenCount", "passes_upsell_seen_count"); err != nil {
+	if err := decodeJSONAlias(raw, "compatibility", &parsed.PassesUpsellSeenCount, &parsed.passesUpsellSeenSet, "passesUpsellSeenCount", "passes_upsell_seen_count"); err != nil {
 		return err
 	}
-	if err := readIntPtrAlias(&parsed.PassesLastSeenRemaining, &parsed.passesLastSeenSet, "passesLastSeenRemaining", "passes_last_seen_remaining"); err != nil {
+	if err := decodeJSONPointerAlias(raw, "compatibility", &parsed.PassesLastSeenRemaining, &parsed.passesLastSeenSet, "passesLastSeenRemaining", "passes_last_seen_remaining"); err != nil {
 		return err
 	}
 	*c = CompatibilityConfig(parsed)
+	return nil
+}
+
+func decodeJSONAlias[T any](raw map[string]json.RawMessage, namespace string, target *T, present *bool, keys ...string) error {
+	for _, key := range keys {
+		value, ok := raw[key]
+		if !ok {
+			continue
+		}
+		var parsed T
+		if err := json.Unmarshal(value, &parsed); err != nil {
+			return fmt.Errorf("invalid %s.%s: %w", namespace, key, err)
+		}
+		*target = parsed
+		if present != nil {
+			*present = true
+		}
+	}
+	return nil
+}
+
+func decodeJSONPointerAlias[T any](raw map[string]json.RawMessage, namespace string, target **T, present *bool, keys ...string) error {
+	for _, key := range keys {
+		value, ok := raw[key]
+		if !ok {
+			continue
+		}
+		var parsed T
+		if err := json.Unmarshal(value, &parsed); err != nil {
+			return fmt.Errorf("invalid %s.%s: %w", namespace, key, err)
+		}
+		*target = &parsed
+		if present != nil {
+			*present = true
+		}
+	}
 	return nil
 }
 
@@ -1222,117 +1141,137 @@ type nestedMCPConfig struct {
 	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
 }
 
+type configAliases struct {
+	PermissionModeCamel string                     `json:"permissionMode,omitempty"`
+	PermissionRules     PermissionRules            `json:"permissions,omitempty"`
+	AllowedTools        []string                   `json:"allowedTools,omitempty"`
+	DisallowedTools     []string                   `json:"disallowedTools,omitempty"`
+	Background          BackgroundConfig           `json:"background,omitempty"`
+	Compatibility       CompatibilityConfig        `json:"compatibility,omitempty"`
+	EditorBridge        EditorBridgeConfig         `json:"editor_bridge,omitempty"`
+	Enterprise          EnterpriseConfig           `json:"enterprise,omitempty"`
+	MCPServers          map[string]MCPServerConfig `json:"mcpServers,omitempty"`
+	MCP                 nestedMCPConfig            `json:"mcp,omitempty"`
+	Marketplace         MarketplaceConfig          `json:"marketplace,omitempty"`
+	Preferences         PreferencesConfig          `json:"preferences,omitempty"`
+	Sandbox             SandboxConfig              `json:"sandbox,omitempty"`
+	Remote              RemoteConfig               `json:"remote,omitempty"`
+	Updater             UpdaterConfig              `json:"updater,omitempty"`
+}
+
 func (c *Config) UnmarshalJSON(data []byte) error {
 	type plain Config
 	var parsed plain
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return err
 	}
-	var aliases struct {
-		PermissionModeCamel string                     `json:"permissionMode,omitempty"`
-		PermissionRules     PermissionRules            `json:"permissions,omitempty"`
-		AllowedTools        []string                   `json:"allowedTools,omitempty"`
-		DisallowedTools     []string                   `json:"disallowedTools,omitempty"`
-		Background          BackgroundConfig           `json:"background,omitempty"`
-		Compatibility       CompatibilityConfig        `json:"compatibility,omitempty"`
-		EditorBridge        EditorBridgeConfig         `json:"editor_bridge,omitempty"`
-		Enterprise          EnterpriseConfig           `json:"enterprise,omitempty"`
-		MCPServers          map[string]MCPServerConfig `json:"mcpServers,omitempty"`
-		MCP                 nestedMCPConfig            `json:"mcp,omitempty"`
-		Marketplace         MarketplaceConfig          `json:"marketplace,omitempty"`
-		Preferences         PreferencesConfig          `json:"preferences,omitempty"`
-		Sandbox             SandboxConfig              `json:"sandbox,omitempty"`
-		Remote              RemoteConfig               `json:"remote,omitempty"`
-		Updater             UpdaterConfig              `json:"updater,omitempty"`
-	}
+	var aliases configAliases
 	if err := json.Unmarshal(data, &aliases); err != nil {
 		return err
 	}
-	rawPermissionMode := ""
+	result := Config(parsed)
+	normalizeConfigPermissionAliases(&result, aliases, rawConfigPermissionMode(data))
+	mergeConfigMCPAliases(&result, aliases)
+	mergeConfigLegacyAliases(&result, aliases)
+	*c = result
+	return nil
+}
+
+func rawConfigPermissionMode(data []byte) string {
 	var rawFields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &rawFields); err == nil {
 		if raw, ok := rawFields["permission_mode"]; ok {
-			rawPermissionMode, _ = parseJSONString(raw)
+			value, _ := parseJSONString(raw)
+			return value
 		} else if raw, ok := rawFields["permissionMode"]; ok {
-			rawPermissionMode, _ = parseJSONString(raw)
+			value, _ := parseJSONString(raw)
+			return value
 		}
 	}
-	if parsed.PermissionMode == "" {
-		parsed.PermissionMode = aliases.PermissionModeCamel
+	return ""
+}
+
+func normalizeConfigPermissionAliases(cfg *Config, aliases configAliases, rawPermissionMode string) {
+	if cfg.PermissionMode == "" {
+		cfg.PermissionMode = aliases.PermissionModeCamel
 	}
-	if parsed.AdvisorModel == "" {
-		parsed.AdvisorModel = parsed.SubagentModel
+	if cfg.AdvisorModel == "" {
+		cfg.AdvisorModel = cfg.SubagentModel
 	}
-	parsed.SubagentModel = ""
+	cfg.SubagentModel = ""
 	if permissionRulesSet(aliases.PermissionRules) {
-		mergePermissionRules(&parsed.PermissionRules, aliases.PermissionRules)
+		mergePermissionRules(&cfg.PermissionRules, aliases.PermissionRules)
 	}
-	parsed.PermissionRules.Allow = mergeStringLists(parsed.PermissionRules.Allow, aliases.AllowedTools)
-	parsed.PermissionRules.DeniedTools = mergeStringLists(parsed.PermissionRules.DeniedTools, aliases.DisallowedTools)
-	if parsed.PermissionMode == "" && parsed.PermissionRules.DefaultMode != "" {
-		mode, planMode, _, ok := mapClaudePermissionDefaultMode(parsed.PermissionRules.DefaultMode)
+	cfg.PermissionRules.Allow = mergeStringLists(cfg.PermissionRules.Allow, aliases.AllowedTools)
+	cfg.PermissionRules.DeniedTools = mergeStringLists(cfg.PermissionRules.DeniedTools, aliases.DisallowedTools)
+	if cfg.PermissionMode == "" && cfg.PermissionRules.DefaultMode != "" {
+		mode, planMode, _, ok := mapClaudePermissionDefaultMode(cfg.PermissionRules.DefaultMode)
 		if ok {
-			parsed.PermissionMode = mode
-			parsed.PlanMode = planMode
-			rawPermissionMode = parsed.PermissionRules.DefaultMode
+			cfg.PermissionMode = mode
+			cfg.PlanMode = planMode
+			rawPermissionMode = cfg.PermissionRules.DefaultMode
 		}
 	}
-	if parsed.PermissionMode != "" {
-		parsed.PermissionModeRaw = rawPermissionMode
-		if parsed.PermissionModeRaw == "" {
-			parsed.PermissionModeRaw = parsed.PermissionMode
+	if cfg.PermissionMode != "" {
+		cfg.PermissionModeRaw = rawPermissionMode
+		if cfg.PermissionModeRaw == "" {
+			cfg.PermissionModeRaw = cfg.PermissionMode
 		}
-		parsed.PermissionModeSource = "config"
+		cfg.PermissionModeSource = "config"
 	}
+}
+
+func mergeConfigMCPAliases(cfg *Config, aliases configAliases) {
 	if len(aliases.MCP.Servers) != 0 || len(aliases.MCPServers) != 0 {
-		if parsed.MCPServers == nil {
-			parsed.MCPServers = map[string]MCPServerConfig{}
+		if cfg.MCPServers == nil {
+			cfg.MCPServers = map[string]MCPServerConfig{}
 		}
 		for name, server := range aliases.MCP.Servers {
-			if _, exists := parsed.MCPServers[name]; !exists {
-				parsed.MCPServers[name] = server
+			if _, exists := cfg.MCPServers[name]; !exists {
+				cfg.MCPServers[name] = server
 			}
 		}
 		for name, server := range aliases.MCPServers {
-			parsed.MCPServers[name] = server
+			cfg.MCPServers[name] = server
 		}
 	}
+}
+
+func mergeConfigLegacyAliases(cfg *Config, aliases configAliases) {
 	if enterpriseConfigSet(aliases.Enterprise) {
-		mergeEnterpriseConfigIntoFuture(&parsed.Future, aliases.Enterprise)
+		mergeEnterpriseConfigIntoFuture(&cfg.Future, aliases.Enterprise)
 	}
 	if editorBridgeConfigSet(aliases.EditorBridge) {
-		mergeEditorBridgeConfigIntoFuture(&parsed.Future, aliases.EditorBridge)
+		mergeEditorBridgeConfigIntoFuture(&cfg.Future, aliases.EditorBridge)
 	}
 	if sandboxConfigSet(aliases.Sandbox) {
-		mergeSandboxConfig(&parsed.Future.Sandbox, aliases.Sandbox)
+		mergeSandboxConfig(&cfg.Future.Sandbox, aliases.Sandbox)
 	}
-	if strings.TrimSpace(parsed.Future.Sandbox.Strategy) != "" && parsed.Future.SandboxStrategy == "" {
-		parsed.Future.SandboxStrategy = parsed.Future.Sandbox.Strategy
+	if strings.TrimSpace(cfg.Future.Sandbox.Strategy) != "" && cfg.Future.SandboxStrategy == "" {
+		cfg.Future.SandboxStrategy = cfg.Future.Sandbox.Strategy
 	}
-	parsed.Future.Sandbox.Strategy = ""
+	cfg.Future.Sandbox.Strategy = ""
 	if strings.TrimSpace(aliases.Sandbox.Strategy) != "" {
-		parsed.Future.SandboxStrategy = aliases.Sandbox.Strategy
+		cfg.Future.SandboxStrategy = aliases.Sandbox.Strategy
 	}
 	if remoteConfigSet(aliases.Remote) {
-		mergeRemoteConfigIntoFuture(&parsed.Future, aliases.Remote)
+		mergeRemoteConfigIntoFuture(&cfg.Future, aliases.Remote)
 	}
 	if marketplaceConfigSet(aliases.Marketplace) {
-		mergeMarketplaceConfigIntoFuture(&parsed.Future, aliases.Marketplace)
+		mergeMarketplaceConfigIntoFuture(&cfg.Future, aliases.Marketplace)
 	}
 	if updaterConfigSet(aliases.Updater) {
-		mergeUpdaterConfigIntoFuture(&parsed.Future, aliases.Updater)
+		mergeUpdaterConfigIntoFuture(&cfg.Future, aliases.Updater)
 	}
 	if preferencesConfigSet(aliases.Preferences) {
-		mergePreferencesConfigIntoFuture(&parsed.Future, aliases.Preferences)
+		mergePreferencesConfigIntoFuture(&cfg.Future, aliases.Preferences)
 	}
 	if compatibilityConfigSet(aliases.Compatibility) {
-		mergeCompatibilityConfigIntoFuture(&parsed.Future, aliases.Compatibility)
+		mergeCompatibilityConfigIntoFuture(&cfg.Future, aliases.Compatibility)
 	}
 	if backgroundConfigSet(aliases.Background) {
-		mergeBackgroundConfigIntoFuture(&parsed.Future, aliases.Background)
+		mergeBackgroundConfigIntoFuture(&cfg.Future, aliases.Background)
 	}
-	*c = Config(parsed)
-	return nil
 }
 
 type MutationReport struct {
@@ -2297,81 +2236,19 @@ func parseJSONStringSlice(data json.RawMessage) []string {
 }
 
 func merge(dst *Config, src Config) {
-	if src.APIKey != "" {
-		dst.APIKey = src.APIKey
+	mergeCoreConfig(dst, src)
+	mergePermissionConfig(dst, src)
+	mergeWorkspaceConfig(dst, src)
+	mergeProviderConfig(dst, src)
+	mergeCollectionConfig(dst, src)
+	mergeHookConfig(&dst.Hooks, src.Hooks)
+	mergeMCPServers(dst, src.MCPServers)
+	if futureConfigSet(src.Future) {
+		mergeFutureConfig(&dst.Future, src.Future)
 	}
-	if src.APIKeyHelper != "" {
-		dst.APIKeyHelper = src.APIKeyHelper
-	}
-	if src.AuthToken != "" {
-		dst.AuthToken = src.AuthToken
-	}
-	if src.OAuthProfile != "" {
-		dst.OAuthProfile = src.OAuthProfile
-	}
-	if src.ForceLoginMethod != "" {
-		dst.ForceLoginMethod = src.ForceLoginMethod
-	}
-	if src.ForceLoginOrgUUID != "" {
-		dst.ForceLoginOrgUUID = src.ForceLoginOrgUUID
-	}
-	if src.BaseURL != "" {
-		dst.BaseURL = src.BaseURL
-	}
-	if src.Model != "" {
-		dst.Model = src.Model
-	}
-	if src.SystemPrompt != "" {
-		dst.SystemPrompt = src.SystemPrompt
-	}
-	if src.AppendSystemPrompt != "" {
-		dst.AppendSystemPrompt = joinPromptAppend(dst.AppendSystemPrompt, src.AppendSystemPrompt)
-	}
-	if src.Language != "" {
-		dst.Language = src.Language
-	}
-	if src.Theme != "" {
-		dst.Theme = src.Theme
-	}
-	if src.EditorMode != "" {
-		dst.EditorMode = src.EditorMode
-	}
-	if src.DefaultShell != "" {
-		dst.DefaultShell = src.DefaultShell
-	}
-	if src.AdvisorModel != "" {
-		dst.AdvisorModel = src.AdvisorModel
-	}
-	if src.ReasoningEffort != "" {
-		dst.ReasoningEffort = src.ReasoningEffort
-	}
-	if src.FastMode != nil {
-		value := *src.FastMode
-		dst.FastMode = &value
-	}
-	if src.VoiceEnabled != nil {
-		value := *src.VoiceEnabled
-		dst.VoiceEnabled = &value
-	}
-	if src.VoiceCommand != "" {
-		dst.VoiceCommand = src.VoiceCommand
-	}
-	if src.SpeechCommand != "" {
-		dst.SpeechCommand = src.SpeechCommand
-	}
-	if src.MaxTokens != 0 {
-		dst.MaxTokens = src.MaxTokens
-	}
-	if src.MaxTurns != 0 {
-		dst.MaxTurns = src.MaxTurns
-	}
-	if src.Temperature != nil {
-		value := *src.Temperature
-		dst.Temperature = &value
-	}
-	if len(src.ExtraBody) != 0 {
-		dst.ExtraBody = cloneJSONMap(src.ExtraBody)
-	}
+}
+
+func mergePermissionConfig(dst *Config, src Config) {
 	if src.PermissionMode != "" {
 		dst.PermissionMode = src.PermissionMode
 		dst.PermissionModeRaw = defaultString(src.PermissionModeRaw, src.PermissionMode)
@@ -2397,6 +2274,9 @@ func merge(dst *Config, src Config) {
 			dst.AdditionalDirs = mergeStringLists(dst.AdditionalDirs, src.PermissionRules.AdditionalDirectories)
 		}
 	}
+}
+
+func mergeWorkspaceConfig(dst *Config, src Config) {
 	if src.ConfigHome != "" {
 		dst.ConfigHome = expandHome(src.ConfigHome)
 	}
@@ -2446,6 +2326,9 @@ func merge(dst *Config, src Config) {
 	if src.DisabledMCPJSONServers != nil {
 		dst.DisabledMCPJSONServers = mergeStringLists(dst.DisabledMCPJSONServers, src.DisabledMCPJSONServers)
 	}
+}
+
+func mergeProviderConfig(dst *Config, src Config) {
 	if rateLimitConfigSet(src.RateLimit) {
 		mergeRateLimitConfig(&dst.RateLimit, src.RateLimit)
 	}
@@ -2459,6 +2342,9 @@ func merge(dst *Config, src Config) {
 		next := src.RulesImport.normalized()
 		dst.RulesImport = &next
 	}
+}
+
+func mergeCollectionConfig(dst *Config, src Config) {
 	if len(src.Env) != 0 {
 		if dst.Env == nil {
 			dst.Env = map[string]string{}
@@ -2488,17 +2374,73 @@ func merge(dst *Config, src Config) {
 	if len(src.EnabledSkills) != 0 {
 		dst.EnabledSkills = append([]string(nil), src.EnabledSkills...)
 	}
-	mergeHookConfig(&dst.Hooks, src.Hooks)
-	if len(src.MCPServers) != 0 {
+}
+
+func mergeMCPServers(dst *Config, servers map[string]MCPServerConfig) {
+	if len(servers) != 0 {
 		if dst.MCPServers == nil {
 			dst.MCPServers = map[string]MCPServerConfig{}
 		}
-		for name, server := range src.MCPServers {
+		for name, server := range servers {
 			dst.MCPServers[name] = server
 		}
 	}
-	if futureConfigSet(src.Future) {
-		mergeFutureConfig(&dst.Future, src.Future)
+}
+
+func mergeCoreConfig(dst *Config, src Config) {
+	mergeStringValue(&dst.APIKey, src.APIKey)
+	mergeStringValue(&dst.APIKeyHelper, src.APIKeyHelper)
+	mergeStringValue(&dst.AuthToken, src.AuthToken)
+	mergeStringValue(&dst.OAuthProfile, src.OAuthProfile)
+	mergeStringValue(&dst.ForceLoginMethod, src.ForceLoginMethod)
+	mergeStringValue(&dst.ForceLoginOrgUUID, src.ForceLoginOrgUUID)
+	mergeStringValue(&dst.BaseURL, src.BaseURL)
+	mergeStringValue(&dst.Model, src.Model)
+	mergeStringValue(&dst.SystemPrompt, src.SystemPrompt)
+	if src.AppendSystemPrompt != "" {
+		dst.AppendSystemPrompt = joinPromptAppend(dst.AppendSystemPrompt, src.AppendSystemPrompt)
+	}
+	mergeStringValue(&dst.Language, src.Language)
+	mergeStringValue(&dst.Theme, src.Theme)
+	mergeStringValue(&dst.EditorMode, src.EditorMode)
+	mergeStringValue(&dst.DefaultShell, src.DefaultShell)
+	mergeStringValue(&dst.AdvisorModel, src.AdvisorModel)
+	mergeStringValue(&dst.ReasoningEffort, src.ReasoningEffort)
+	mergeBoolPointer(&dst.FastMode, src.FastMode)
+	mergeBoolPointer(&dst.VoiceEnabled, src.VoiceEnabled)
+	mergeStringValue(&dst.VoiceCommand, src.VoiceCommand)
+	mergeStringValue(&dst.SpeechCommand, src.SpeechCommand)
+	mergeIntValue(&dst.MaxTokens, src.MaxTokens)
+	mergeIntValue(&dst.MaxTurns, src.MaxTurns)
+	mergeFloatPointer(&dst.Temperature, src.Temperature)
+	if len(src.ExtraBody) != 0 {
+		dst.ExtraBody = cloneJSONMap(src.ExtraBody)
+	}
+}
+
+func mergeStringValue(target *string, value string) {
+	if value != "" {
+		*target = value
+	}
+}
+
+func mergeIntValue(target *int, value int) {
+	if value != 0 {
+		*target = value
+	}
+}
+
+func mergeBoolPointer(target **bool, source *bool) {
+	if source != nil {
+		value := *source
+		*target = &value
+	}
+}
+
+func mergeFloatPointer(target **float64, source *float64) {
+	if source != nil {
+		value := *source
+		*target = &value
 	}
 }
 
@@ -2975,121 +2917,43 @@ func stringListContains(values []string, needle string) bool {
 }
 
 func mergeHookConfig(dst *HookConfig, src HookConfig) {
-	if len(src.PreToolUseCommands) != 0 {
-		dst.PreToolUseCommands = mergeHookCommands(dst.PreToolUseCommands, src.PreToolUseCommands)
-	} else if len(src.PreToolUse) != 0 {
-		dst.PreToolUseCommands = mergeHookCommands(dst.PreToolUseCommands, hookCommandsFromStrings(src.PreToolUse))
+	mergeHookEvent(&dst.PreToolUseCommands, src.PreToolUseCommands, src.PreToolUse)
+	mergeHookEvent(&dst.PostToolUseCommands, src.PostToolUseCommands, src.PostToolUse)
+	mergeHookEvent(&dst.PostToolUseFailureCommands, src.PostToolUseFailureCommands, src.PostToolUseFailure)
+	mergeHookEvent(&dst.PermissionRequestCommands, src.PermissionRequestCommands, src.PermissionRequest)
+	mergeHookEvent(&dst.PermissionDeniedCommands, src.PermissionDeniedCommands, src.PermissionDenied)
+	mergeHookEvent(&dst.UserPromptSubmitCommands, src.UserPromptSubmitCommands, src.UserPromptSubmit)
+	mergeHookEvent(&dst.SessionStartCommands, src.SessionStartCommands, src.SessionStart)
+	mergeHookEvent(&dst.SessionEndCommands, src.SessionEndCommands, src.SessionEnd)
+	mergeHookEvent(&dst.SetupCommands, src.SetupCommands, src.Setup)
+	mergeHookEvent(&dst.StopCommands, src.StopCommands, src.Stop)
+	mergeHookEvent(&dst.StopFailureCommands, src.StopFailureCommands, src.StopFailure)
+	mergeHookEvent(&dst.PreCompactCommands, src.PreCompactCommands, src.PreCompact)
+	mergeHookEvent(&dst.PostCompactCommands, src.PostCompactCommands, src.PostCompact)
+	mergeHookEvent(&dst.NotificationCommands, src.NotificationCommands, src.Notification)
+	mergeHookEvent(&dst.SubagentStartCommands, src.SubagentStartCommands, src.SubagentStart)
+	mergeHookEvent(&dst.SubagentStopCommands, src.SubagentStopCommands, src.SubagentStop)
+	mergeHookEvent(&dst.WorktreeCreateCommands, src.WorktreeCreateCommands, src.WorktreeCreate)
+	mergeHookEvent(&dst.WorktreeRemoveCommands, src.WorktreeRemoveCommands, src.WorktreeRemove)
+	mergeHookEvent(&dst.CwdChangedCommands, src.CwdChangedCommands, src.CwdChanged)
+	mergeHookEvent(&dst.TaskCreatedCommands, src.TaskCreatedCommands, src.TaskCreated)
+	mergeHookEvent(&dst.TaskCompletedCommands, src.TaskCompletedCommands, src.TaskCompleted)
+	mergeHookEvent(&dst.InstructionsLoadedCommands, src.InstructionsLoadedCommands, src.InstructionsLoaded)
+	mergeHookEvent(&dst.FileChangedCommands, src.FileChangedCommands, src.FileChanged)
+	syncLegacyHookCommands(dst)
+}
+
+func mergeHookEvent(dst *[]HookCommand, structured []HookCommand, legacy []string) {
+	source := structured
+	if len(source) == 0 && len(legacy) != 0 {
+		source = hookCommandsFromStrings(legacy)
 	}
-	if len(src.PostToolUseCommands) != 0 {
-		dst.PostToolUseCommands = mergeHookCommands(dst.PostToolUseCommands, src.PostToolUseCommands)
-	} else if len(src.PostToolUse) != 0 {
-		dst.PostToolUseCommands = mergeHookCommands(dst.PostToolUseCommands, hookCommandsFromStrings(src.PostToolUse))
+	if len(source) != 0 {
+		*dst = mergeHookCommands(*dst, source)
 	}
-	if len(src.PostToolUseFailureCommands) != 0 {
-		dst.PostToolUseFailureCommands = mergeHookCommands(dst.PostToolUseFailureCommands, src.PostToolUseFailureCommands)
-	} else if len(src.PostToolUseFailure) != 0 {
-		dst.PostToolUseFailureCommands = mergeHookCommands(dst.PostToolUseFailureCommands, hookCommandsFromStrings(src.PostToolUseFailure))
-	}
-	if len(src.PermissionRequestCommands) != 0 {
-		dst.PermissionRequestCommands = mergeHookCommands(dst.PermissionRequestCommands, src.PermissionRequestCommands)
-	} else if len(src.PermissionRequest) != 0 {
-		dst.PermissionRequestCommands = mergeHookCommands(dst.PermissionRequestCommands, hookCommandsFromStrings(src.PermissionRequest))
-	}
-	if len(src.PermissionDeniedCommands) != 0 {
-		dst.PermissionDeniedCommands = mergeHookCommands(dst.PermissionDeniedCommands, src.PermissionDeniedCommands)
-	} else if len(src.PermissionDenied) != 0 {
-		dst.PermissionDeniedCommands = mergeHookCommands(dst.PermissionDeniedCommands, hookCommandsFromStrings(src.PermissionDenied))
-	}
-	if len(src.UserPromptSubmitCommands) != 0 {
-		dst.UserPromptSubmitCommands = mergeHookCommands(dst.UserPromptSubmitCommands, src.UserPromptSubmitCommands)
-	} else if len(src.UserPromptSubmit) != 0 {
-		dst.UserPromptSubmitCommands = mergeHookCommands(dst.UserPromptSubmitCommands, hookCommandsFromStrings(src.UserPromptSubmit))
-	}
-	if len(src.SessionStartCommands) != 0 {
-		dst.SessionStartCommands = mergeHookCommands(dst.SessionStartCommands, src.SessionStartCommands)
-	} else if len(src.SessionStart) != 0 {
-		dst.SessionStartCommands = mergeHookCommands(dst.SessionStartCommands, hookCommandsFromStrings(src.SessionStart))
-	}
-	if len(src.SessionEndCommands) != 0 {
-		dst.SessionEndCommands = mergeHookCommands(dst.SessionEndCommands, src.SessionEndCommands)
-	} else if len(src.SessionEnd) != 0 {
-		dst.SessionEndCommands = mergeHookCommands(dst.SessionEndCommands, hookCommandsFromStrings(src.SessionEnd))
-	}
-	if len(src.SetupCommands) != 0 {
-		dst.SetupCommands = mergeHookCommands(dst.SetupCommands, src.SetupCommands)
-	} else if len(src.Setup) != 0 {
-		dst.SetupCommands = mergeHookCommands(dst.SetupCommands, hookCommandsFromStrings(src.Setup))
-	}
-	if len(src.StopCommands) != 0 {
-		dst.StopCommands = mergeHookCommands(dst.StopCommands, src.StopCommands)
-	} else if len(src.Stop) != 0 {
-		dst.StopCommands = mergeHookCommands(dst.StopCommands, hookCommandsFromStrings(src.Stop))
-	}
-	if len(src.StopFailureCommands) != 0 {
-		dst.StopFailureCommands = mergeHookCommands(dst.StopFailureCommands, src.StopFailureCommands)
-	} else if len(src.StopFailure) != 0 {
-		dst.StopFailureCommands = mergeHookCommands(dst.StopFailureCommands, hookCommandsFromStrings(src.StopFailure))
-	}
-	if len(src.PreCompactCommands) != 0 {
-		dst.PreCompactCommands = mergeHookCommands(dst.PreCompactCommands, src.PreCompactCommands)
-	} else if len(src.PreCompact) != 0 {
-		dst.PreCompactCommands = mergeHookCommands(dst.PreCompactCommands, hookCommandsFromStrings(src.PreCompact))
-	}
-	if len(src.PostCompactCommands) != 0 {
-		dst.PostCompactCommands = mergeHookCommands(dst.PostCompactCommands, src.PostCompactCommands)
-	} else if len(src.PostCompact) != 0 {
-		dst.PostCompactCommands = mergeHookCommands(dst.PostCompactCommands, hookCommandsFromStrings(src.PostCompact))
-	}
-	if len(src.NotificationCommands) != 0 {
-		dst.NotificationCommands = mergeHookCommands(dst.NotificationCommands, src.NotificationCommands)
-	} else if len(src.Notification) != 0 {
-		dst.NotificationCommands = mergeHookCommands(dst.NotificationCommands, hookCommandsFromStrings(src.Notification))
-	}
-	if len(src.SubagentStartCommands) != 0 {
-		dst.SubagentStartCommands = mergeHookCommands(dst.SubagentStartCommands, src.SubagentStartCommands)
-	} else if len(src.SubagentStart) != 0 {
-		dst.SubagentStartCommands = mergeHookCommands(dst.SubagentStartCommands, hookCommandsFromStrings(src.SubagentStart))
-	}
-	if len(src.SubagentStopCommands) != 0 {
-		dst.SubagentStopCommands = mergeHookCommands(dst.SubagentStopCommands, src.SubagentStopCommands)
-	} else if len(src.SubagentStop) != 0 {
-		dst.SubagentStopCommands = mergeHookCommands(dst.SubagentStopCommands, hookCommandsFromStrings(src.SubagentStop))
-	}
-	if len(src.WorktreeCreateCommands) != 0 {
-		dst.WorktreeCreateCommands = mergeHookCommands(dst.WorktreeCreateCommands, src.WorktreeCreateCommands)
-	} else if len(src.WorktreeCreate) != 0 {
-		dst.WorktreeCreateCommands = mergeHookCommands(dst.WorktreeCreateCommands, hookCommandsFromStrings(src.WorktreeCreate))
-	}
-	if len(src.WorktreeRemoveCommands) != 0 {
-		dst.WorktreeRemoveCommands = mergeHookCommands(dst.WorktreeRemoveCommands, src.WorktreeRemoveCommands)
-	} else if len(src.WorktreeRemove) != 0 {
-		dst.WorktreeRemoveCommands = mergeHookCommands(dst.WorktreeRemoveCommands, hookCommandsFromStrings(src.WorktreeRemove))
-	}
-	if len(src.CwdChangedCommands) != 0 {
-		dst.CwdChangedCommands = mergeHookCommands(dst.CwdChangedCommands, src.CwdChangedCommands)
-	} else if len(src.CwdChanged) != 0 {
-		dst.CwdChangedCommands = mergeHookCommands(dst.CwdChangedCommands, hookCommandsFromStrings(src.CwdChanged))
-	}
-	if len(src.TaskCreatedCommands) != 0 {
-		dst.TaskCreatedCommands = mergeHookCommands(dst.TaskCreatedCommands, src.TaskCreatedCommands)
-	} else if len(src.TaskCreated) != 0 {
-		dst.TaskCreatedCommands = mergeHookCommands(dst.TaskCreatedCommands, hookCommandsFromStrings(src.TaskCreated))
-	}
-	if len(src.TaskCompletedCommands) != 0 {
-		dst.TaskCompletedCommands = mergeHookCommands(dst.TaskCompletedCommands, src.TaskCompletedCommands)
-	} else if len(src.TaskCompleted) != 0 {
-		dst.TaskCompletedCommands = mergeHookCommands(dst.TaskCompletedCommands, hookCommandsFromStrings(src.TaskCompleted))
-	}
-	if len(src.InstructionsLoadedCommands) != 0 {
-		dst.InstructionsLoadedCommands = mergeHookCommands(dst.InstructionsLoadedCommands, src.InstructionsLoadedCommands)
-	} else if len(src.InstructionsLoaded) != 0 {
-		dst.InstructionsLoadedCommands = mergeHookCommands(dst.InstructionsLoadedCommands, hookCommandsFromStrings(src.InstructionsLoaded))
-	}
-	if len(src.FileChangedCommands) != 0 {
-		dst.FileChangedCommands = mergeHookCommands(dst.FileChangedCommands, src.FileChangedCommands)
-	} else if len(src.FileChanged) != 0 {
-		dst.FileChangedCommands = mergeHookCommands(dst.FileChangedCommands, hookCommandsFromStrings(src.FileChanged))
-	}
+}
+
+func syncLegacyHookCommands(dst *HookConfig) {
 	dst.PreToolUse = hookCommandStrings(dst.PreToolUseCommands)
 	dst.PostToolUse = hookCommandStrings(dst.PostToolUseCommands)
 	dst.PostToolUseFailure = hookCommandStrings(dst.PostToolUseFailureCommands)
@@ -3202,7 +3066,17 @@ func applyEnv(cfg *Config) error {
 	genericAPIKeySet := strings.TrimSpace(lookup("CODOG_API_KEY")) != ""
 	genericAuthTokenSet := strings.TrimSpace(lookup("CODOG_AUTH_TOKEN")) != ""
 	genericCredentialSet := genericAPIKeySet || genericAuthTokenSet
+	applyProviderEnvironment(cfg, lookup, genericBaseURLSet, genericCredentialSet)
+	applyPresentationEnvironment(cfg, lookup)
+	if err := applyRuntimeEnvironment(cfg, lookup); err != nil {
+		return err
+	}
+	applyPreferenceEnvironment(cfg, lookup)
+	applyLimitEnvironment(cfg, lookup)
+	return nil
+}
 
+func applyProviderEnvironment(cfg *Config, lookup func(string) string, genericBaseURLSet bool, genericCredentialSet bool) {
 	if value := lookup("ANTHROPIC_API_KEY"); value != "" {
 		cfg.APIKey = value
 	}
@@ -3229,6 +3103,9 @@ func applyEnv(cfg *Config) error {
 	if value, _ := lookupFirstEnv(lookup, "CODOG_ADVISOR_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"); value != "" {
 		cfg.AdvisorModel = value
 	}
+}
+
+func applyPresentationEnvironment(cfg *Config, lookup func(string) string) {
 	if value := lookup("CODOG_SYSTEM_PROMPT"); value != "" {
 		cfg.SystemPrompt = value
 	}
@@ -3253,6 +3130,9 @@ func applyEnv(cfg *Config) error {
 	if value := lookup("CODOG_OAUTH_PROFILE"); value != "" {
 		cfg.OAuthProfile = value
 	}
+}
+
+func applyRuntimeEnvironment(cfg *Config, lookup func(string) string) error {
 	if value, _ := lookupFirstEnv(lookup, "CODOG_TEMPERATURE", "ANTHROPIC_TEMPERATURE"); value != "" {
 		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
 			cfg.Temperature = &parsed
@@ -3277,6 +3157,10 @@ func applyEnv(cfg *Config) error {
 	if value := lookup("CODOG_SPEECH_COMMAND"); value != "" {
 		cfg.SpeechCommand = value
 	}
+	return nil
+}
+
+func applyPreferenceEnvironment(cfg *Config, lookup func(string) string) {
 	if value := lookup("CODOG_PERMISSION_MODE"); value != "" {
 		cfg.PermissionMode = value
 		cfg.PermissionModeRaw = value
@@ -3302,6 +3186,9 @@ func applyEnv(cfg *Config) error {
 	if value, _ := lookupFirstEnv(lookup, "CODOG_CONFIG_HOME", "CLAUDE_CONFIG_HOME", "CLAUDE_CONFIG_DIR"); value != "" {
 		cfg.ConfigHome = expandHome(value)
 	}
+}
+
+func applyLimitEnvironment(cfg *Config, lookup func(string) string) {
 	if value := lookup("CODOG_MAX_TURNS"); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
 			cfg.MaxTurns = parsed
@@ -3343,10 +3230,23 @@ func applyEnv(cfg *Config) error {
 	if value := lookup("CODOG_ADDITIONAL_DIRS"); value != "" {
 		cfg.AdditionalDirs = splitPathList(value)
 	}
-	return nil
 }
 
 func applyRoutedProviderEnv(cfg *Config, genericBaseURLSet bool, genericCredentialSet bool, lookup func(string) string) {
+	if applyLocalProviderEnvironment(cfg, genericBaseURLSet, genericCredentialSet, lookup) {
+		return
+	}
+	switch modelrouting.ProviderForModel(cfg.Model) {
+	case modelrouting.ProviderOpenAI:
+		applyOpenAIEnvironment(cfg, genericBaseURLSet, genericCredentialSet, lookup)
+	case modelrouting.ProviderXAI:
+		applyProviderEnvironmentDefaults(cfg, genericBaseURLSet, genericCredentialSet, lookup("XAI_API_KEY"), lookup("XAI_BASE_URL"), modelrouting.DefaultXAIBaseURL)
+	case modelrouting.ProviderDashScope:
+		applyProviderEnvironmentDefaults(cfg, genericBaseURLSet, genericCredentialSet, lookup("DASHSCOPE_API_KEY"), lookup("DASHSCOPE_BASE_URL"), modelrouting.DefaultDashScopeBaseURL)
+	}
+}
+
+func applyLocalProviderEnvironment(cfg *Config, genericBaseURLSet bool, genericCredentialSet bool, lookup func(string) string) bool {
 	if ollamaHost := strings.TrimSpace(lookup("OLLAMA_HOST")); ollamaHost != "" && !genericBaseURLSet {
 		cfg.RuntimeProvider = modelrouting.ProviderOpenAI
 		cfg.RuntimeProviderSource = "OLLAMA_HOST"
@@ -3355,7 +3255,7 @@ func applyRoutedProviderEnv(cfg *Config, genericBaseURLSet bool, genericCredenti
 			cfg.APIKey = ""
 		}
 		cfg.BaseURL = strings.TrimRight(ollamaHost, "/") + "/v1"
-		return
+		return true
 	}
 	if openAIBaseURL := strings.TrimSpace(lookup("OPENAI_BASE_URL")); openAIBaseURL != "" &&
 		modelrouting.ProviderForModel(cfg.Model) == modelrouting.ProviderAnthropic &&
@@ -3368,48 +3268,39 @@ func applyRoutedProviderEnv(cfg *Config, genericBaseURLSet bool, genericCredenti
 			cfg.APIKey = strings.TrimSpace(lookup("OPENAI_API_KEY"))
 		}
 		cfg.BaseURL = openAIBaseURL
+		return true
+	}
+	return false
+}
+
+func applyOpenAIEnvironment(cfg *Config, genericBaseURLSet bool, genericCredentialSet bool, lookup func(string) string) {
+	if !genericCredentialSet {
+		cfg.AuthToken = ""
+		cfg.APIKey = strings.TrimSpace(lookup("OPENAI_API_KEY"))
+	}
+	if genericBaseURLSet {
 		return
 	}
+	switch {
+	case strings.TrimSpace(lookup("OLLAMA_HOST")) != "":
+		cfg.BaseURL = strings.TrimRight(strings.TrimSpace(lookup("OLLAMA_HOST")), "/") + "/v1"
+	case strings.TrimSpace(lookup("OPENAI_BASE_URL")) != "":
+		cfg.BaseURL = strings.TrimSpace(lookup("OPENAI_BASE_URL"))
+	default:
+		cfg.BaseURL = modelrouting.DefaultOpenAIBaseURL
+	}
+}
 
-	switch modelrouting.ProviderForModel(cfg.Model) {
-	case modelrouting.ProviderOpenAI:
-		if !genericCredentialSet {
-			cfg.AuthToken = ""
-			cfg.APIKey = strings.TrimSpace(lookup("OPENAI_API_KEY"))
-		}
-		if !genericBaseURLSet {
-			switch {
-			case strings.TrimSpace(lookup("OLLAMA_HOST")) != "":
-				cfg.BaseURL = strings.TrimRight(strings.TrimSpace(lookup("OLLAMA_HOST")), "/") + "/v1"
-			case strings.TrimSpace(lookup("OPENAI_BASE_URL")) != "":
-				cfg.BaseURL = strings.TrimSpace(lookup("OPENAI_BASE_URL"))
-			default:
-				cfg.BaseURL = modelrouting.DefaultOpenAIBaseURL
-			}
-		}
-	case modelrouting.ProviderXAI:
-		if !genericCredentialSet {
-			cfg.AuthToken = ""
-			cfg.APIKey = strings.TrimSpace(lookup("XAI_API_KEY"))
-		}
-		if !genericBaseURLSet {
-			if value := strings.TrimSpace(lookup("XAI_BASE_URL")); value != "" {
-				cfg.BaseURL = value
-			} else {
-				cfg.BaseURL = modelrouting.DefaultXAIBaseURL
-			}
-		}
-	case modelrouting.ProviderDashScope:
-		if !genericCredentialSet {
-			cfg.AuthToken = ""
-			cfg.APIKey = strings.TrimSpace(lookup("DASHSCOPE_API_KEY"))
-		}
-		if !genericBaseURLSet {
-			if value := strings.TrimSpace(lookup("DASHSCOPE_BASE_URL")); value != "" {
-				cfg.BaseURL = value
-			} else {
-				cfg.BaseURL = modelrouting.DefaultDashScopeBaseURL
-			}
+func applyProviderEnvironmentDefaults(cfg *Config, genericBaseURLSet bool, genericCredentialSet bool, apiKey string, baseURL string, defaultBaseURL string) {
+	if !genericCredentialSet {
+		cfg.AuthToken = ""
+		cfg.APIKey = strings.TrimSpace(apiKey)
+	}
+	if !genericBaseURLSet {
+		if value := strings.TrimSpace(baseURL); value != "" {
+			cfg.BaseURL = value
+		} else {
+			cfg.BaseURL = defaultBaseURL
 		}
 	}
 }
@@ -3427,6 +3318,24 @@ func applyRoutedProviderEnvFromCurrentEnvironment(cfg *Config) {
 }
 
 func applyFlags(cfg *Config, overrides FlagOverrides) error {
+	if err := applyModelFlags(cfg, overrides); err != nil {
+		return err
+	}
+	if err := applyPromptFlags(cfg, overrides); err != nil {
+		return err
+	}
+	applyPermissionFlags(cfg, overrides)
+	if err := applyDebugFlags(cfg, overrides); err != nil {
+		return err
+	}
+	if err := applyMCPFlags(cfg, overrides); err != nil {
+		return err
+	}
+	applyLimitFlags(cfg, overrides)
+	return nil
+}
+
+func applyModelFlags(cfg *Config, overrides FlagOverrides) error {
 	if overrides.Model != "" {
 		cfg.Model = overrides.Model
 		cfg.ModelEnvVar = ""
@@ -3446,6 +3355,10 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 	if overrides.BaseURL != "" {
 		cfg.BaseURL = overrides.BaseURL
 	}
+	return nil
+}
+
+func applyPromptFlags(cfg *Config, overrides FlagOverrides) error {
 	if overrides.SystemPrompt != "" && overrides.SystemPromptFile != "" {
 		return errors.New("cannot use both --system-prompt and --system-prompt-file")
 	}
@@ -3472,6 +3385,10 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 		}
 		cfg.AppendSystemPrompt = joinPromptAppend(cfg.AppendSystemPrompt, value)
 	}
+	return nil
+}
+
+func applyPermissionFlags(cfg *Config, overrides FlagOverrides) {
 	if overrides.PermissionMode != "" {
 		cfg.PermissionMode = overrides.PermissionMode
 		cfg.PermissionModeRaw = overrides.PermissionMode
@@ -3506,6 +3423,9 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 		cfg.ToolNames = append([]string(nil), overrides.ToolNames...)
 		cfg.ToolNamesSet = true
 	}
+}
+
+func applyDebugFlags(cfg *Config, overrides FlagOverrides) error {
 	if overrides.Debug {
 		cfg.Debug = true
 	}
@@ -3523,6 +3443,10 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 		}
 		cfg.DebugFile = debugFile
 	}
+	return nil
+}
+
+func applyMCPFlags(cfg *Config, overrides FlagOverrides) error {
 	if overrides.StrictMCPConfig {
 		cfg.MCPServers = map[string]MCPServerConfig{}
 	}
@@ -3538,6 +3462,10 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 			cfg.MCPServers[name] = server
 		}
 	}
+	return nil
+}
+
+func applyLimitFlags(cfg *Config, overrides FlagOverrides) {
 	if overrides.MaxTurns != 0 {
 		cfg.MaxTurns = overrides.MaxTurns
 	}
@@ -3548,7 +3476,6 @@ func applyFlags(cfg *Config, overrides FlagOverrides) error {
 		value := *overrides.Temperature
 		cfg.Temperature = &value
 	}
-	return nil
 }
 
 func parseExtraBody(value string) (map[string]any, error) {

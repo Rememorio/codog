@@ -1317,53 +1317,96 @@ func (s Store) Watch(ctx context.Context, id string, options WatchOptions, emit 
 	if err != nil {
 		return err
 	}
-	events := 0
-	if err := emit(WatchEvent{Type: "status", ID: id, Status: task.Status, Error: task.Error, Task: &task, Provenance: taskProvenance(task), ScopeBinding: NormalizeScopeBinding(task.ScopeBinding)}); err != nil {
+	state := watchState{id: id, offset: offset, maxEvents: options.MaxEvents, emit: emit}
+	if err := state.emitStatus(task); err != nil {
 		return err
 	}
-	events++
-	if options.MaxEvents > 0 && events >= options.MaxEvents {
+	if state.complete() {
 		return nil
 	}
 	lastStatus := task.Status
 	for {
-		nextOffset, data, err := s.readLogFrom(task.LogPath, offset)
+		done, nextStatus, err := s.watchIteration(ctx, id, options.Interval, task, lastStatus, &state)
 		if err != nil {
 			return err
 		}
-		if data != "" {
-			offset = nextOffset
-			if err := emit(WatchEvent{Type: "log", ID: id, Offset: offset, Data: data, Provenance: taskProvenance(task), ScopeBinding: NormalizeScopeBinding(task.ScopeBinding)}); err != nil {
-				return err
-			}
-			events++
-			if options.MaxEvents > 0 && events >= options.MaxEvents {
-				return nil
-			}
-		}
-		task, err = s.Status(id)
-		if err != nil {
-			return err
-		}
-		if task.Status != lastStatus {
-			if err := emit(WatchEvent{Type: "status", ID: id, Status: task.Status, Error: task.Error, Task: &task, Provenance: taskProvenance(task), ScopeBinding: NormalizeScopeBinding(task.ScopeBinding)}); err != nil {
-				return err
-			}
-			events++
-			lastStatus = task.Status
-			if options.MaxEvents > 0 && events >= options.MaxEvents {
-				return nil
-			}
-		}
-		if !IsActiveStatus(task.Status) {
+		if done {
 			return nil
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(options.Interval):
+		task = nextStatus
+		lastStatus = task.Status
+	}
+}
+
+func (s Store) watchIteration(ctx context.Context, id string, interval time.Duration, task Task, lastStatus string, state *watchState) (bool, Task, error) {
+	nextOffset, data, err := s.readLogFrom(task.LogPath, state.offset)
+	if err != nil {
+		return false, task, err
+	}
+	if data != "" {
+		if err := state.emitLog(task, nextOffset, data); err != nil {
+			return false, task, err
+		}
+		if state.complete() {
+			return true, task, nil
 		}
 	}
+	task, err = s.Status(id)
+	if err != nil {
+		return false, task, err
+	}
+	if task.Status != lastStatus {
+		if err := state.emitStatus(task); err != nil {
+			return false, task, err
+		}
+		if state.complete() {
+			return true, task, nil
+		}
+	}
+	if !IsActiveStatus(task.Status) {
+		return true, task, nil
+	}
+	select {
+	case <-ctx.Done():
+		return false, task, ctx.Err()
+	case <-time.After(interval):
+		return false, task, nil
+	}
+}
+
+type watchState struct {
+	id        string
+	offset    int64
+	events    int
+	maxEvents int
+	emit      func(WatchEvent) error
+}
+
+func (s *watchState) emitStatus(task Task) error {
+	err := s.emit(WatchEvent{
+		Type: "status", ID: s.id, Status: task.Status, Error: task.Error, Task: &task,
+		Provenance: taskProvenance(task), ScopeBinding: NormalizeScopeBinding(task.ScopeBinding),
+	})
+	if err == nil {
+		s.events++
+	}
+	return err
+}
+
+func (s *watchState) emitLog(task Task, offset int64, data string) error {
+	s.offset = offset
+	err := s.emit(WatchEvent{
+		Type: "log", ID: s.id, Offset: offset, Data: data,
+		Provenance: taskProvenance(task), ScopeBinding: NormalizeScopeBinding(task.ScopeBinding),
+	})
+	if err == nil {
+		s.events++
+	}
+	return err
+}
+
+func (s watchState) complete() bool {
+	return s.maxEvents > 0 && s.events >= s.maxEvents
 }
 
 func (s Store) readLogFrom(path string, offset int64) (int64, string, error) {

@@ -1105,22 +1105,24 @@ func cloneBoolPointer(value *bool) *bool {
 	return &cloned
 }
 
+type bashPayload struct {
+	Command                   string   `json:"command"`
+	Timeout                   int      `json:"timeout"`
+	TimeoutMS                 int      `json:"timeout_ms"`
+	RunInBackground           bool     `json:"run_in_background"`
+	DangerouslyDisableSandbox bool     `json:"dangerouslyDisableSandbox"`
+	NamespaceRestrictions     *bool    `json:"namespaceRestrictions"`
+	NamespaceRestrictionsAlt  *bool    `json:"namespace_restrictions"`
+	IsolateNetwork            *bool    `json:"isolateNetwork"`
+	IsolateNetworkAlt         *bool    `json:"isolate_network"`
+	FilesystemMode            string   `json:"filesystemMode"`
+	FilesystemModeAlt         string   `json:"filesystem_mode"`
+	AllowedMounts             []string `json:"allowedMounts"`
+	AllowedMountsAlt          []string `json:"allowed_mounts"`
+}
+
 func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
-	var payload struct {
-		Command                   string   `json:"command"`
-		Timeout                   int      `json:"timeout"`
-		TimeoutMS                 int      `json:"timeout_ms"`
-		RunInBackground           bool     `json:"run_in_background"`
-		DangerouslyDisableSandbox bool     `json:"dangerouslyDisableSandbox"`
-		NamespaceRestrictions     *bool    `json:"namespaceRestrictions"`
-		NamespaceRestrictionsAlt  *bool    `json:"namespace_restrictions"`
-		IsolateNetwork            *bool    `json:"isolateNetwork"`
-		IsolateNetworkAlt         *bool    `json:"isolate_network"`
-		FilesystemMode            string   `json:"filesystemMode"`
-		FilesystemModeAlt         string   `json:"filesystem_mode"`
-		AllowedMounts             []string `json:"allowedMounts"`
-		AllowedMountsAlt          []string `json:"allowed_mounts"`
-	}
+	var payload bashPayload
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
@@ -1163,27 +1165,35 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		return "", err
 	}
 	if payload.RunInBackground {
-		env, err := toolEnvironment(ctx, t.ConfigHome, t.ConfigEnv)
-		if err != nil {
-			return "", err
-		}
-		task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(shellCommandLine(command, args), cwd, background.RunOptions{Kind: "bash", Env: env})
-		if err != nil {
-			return "", err
-		}
-		result := bashOutputContractFields(payload.DangerouslyDisableSandbox)
-		result["background"] = true
-		result["task"] = task
-		result["backgroundTaskId"] = task.ID
-		result["backgroundedByUser"] = false
-		result["assistantAutoBackgrounded"] = false
-		result["noOutputExpected"] = true
-		result["sandboxStatus"] = sandboxStatus
-		if effectiveSandbox != "" {
-			result["sandbox"] = effectiveSandbox
-		}
-		return pretty(result), nil
+		return t.executeBackgroundBash(ctx, payload, cwd, command, args, effectiveSandbox, sandboxStatus)
 	}
+	return t.executeForegroundBash(ctx, payload, cwd, cwdProbePath, command, args, effectiveSandbox, sandboxStatus)
+}
+
+func (t BashTool) executeBackgroundBash(ctx context.Context, payload bashPayload, cwd string, command string, args []string, effectiveSandbox string, sandboxStatus sandbox.SandboxExecutionStatus) (string, error) {
+	env, err := toolEnvironment(ctx, t.ConfigHome, t.ConfigEnv)
+	if err != nil {
+		return "", err
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(shellCommandLine(command, args), cwd, background.RunOptions{Kind: "bash", Env: env})
+	if err != nil {
+		return "", err
+	}
+	result := bashOutputContractFields(payload.DangerouslyDisableSandbox)
+	result["background"] = true
+	result["task"] = task
+	result["backgroundTaskId"] = task.ID
+	result["backgroundedByUser"] = false
+	result["assistantAutoBackgrounded"] = false
+	result["noOutputExpected"] = true
+	result["sandboxStatus"] = sandboxStatus
+	if effectiveSandbox != "" {
+		result["sandbox"] = effectiveSandbox
+	}
+	return pretty(result), nil
+}
+
+func (t BashTool) executeForegroundBash(ctx context.Context, payload bashPayload, cwd string, cwdProbePath string, command string, args []string, effectiveSandbox string, sandboxStatus sandbox.SandboxExecutionStatus) (string, error) {
 	timeoutMS := payload.TimeoutMS
 	if timeoutMS <= 0 {
 		timeoutMS = payload.Timeout

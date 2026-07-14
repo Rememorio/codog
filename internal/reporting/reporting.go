@@ -411,64 +411,24 @@ func projectionEquivalenceHash(schemaVersion string, inputs ReportProjectionIden
 }
 
 func (s Store) GenerateWithOptions(channel string, now time.Time, options GenerateOptions) (Report, error) {
-	channel = strings.TrimSpace(channel)
-	if channel == "" {
-		return Report{}, errors.New("reporting channel is required")
-	}
-	options.TriggerID = strings.TrimSpace(options.TriggerID)
-	options.CheckedSurfaces = cleanStrings(options.CheckedSurfaces)
-	options.CheckedWindow = strings.TrimSpace(options.CheckedWindow)
-	options.NegativeQueries = cleanNegativeQueries(options.NegativeQueries)
-	if options.FreshnessTTL <= 0 {
-		options.FreshnessTTL = DefaultFreshnessTTL
-	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	} else {
-		now = now.UTC()
+	channel, now, options, err := normalizeGenerateInputs(channel, now, options)
+	if err != nil {
+		return Report{}, err
 	}
 	items, err := s.Roadmap.List()
 	if err != nil {
 		return Report{}, err
 	}
-	summaries := make([]ItemSummary, 0, len(items))
-	claims := []ClaimSummary{}
-	hashes := make(map[string]string, len(items))
-	for _, item := range items {
-		summary, err := summarizeItem(item, now, options.FreshnessTTL)
-		if err != nil {
-			return Report{}, err
-		}
-		summaries = append(summaries, summary)
-		claims = append(claims, summary.Claims...)
-		hashes[item.ID] = summary.Fingerprint
+	summaries, claims, hashes, err := summarizeRoadmapItems(items, now, options.FreshnessTTL)
+	if err != nil {
+		return Report{}, err
 	}
 	cursor, err := s.GetCursor(channel)
 	if err != nil && !os.IsNotExist(err) {
 		return Report{}, err
 	}
-	if cursor.ItemHashes == nil {
-		cursor.ItemHashes = map[string]string{}
-	}
-	if cursor.FieldHashes == nil {
-		cursor.FieldHashes = map[string]string{}
-	}
-	newItems := []ItemSummary{}
-	changedItems := []ItemSummary{}
-	unchangedCount := 0
-	freshnessCounts := map[string]int{}
-	for _, summary := range summaries {
-		freshnessCounts[summary.Freshness]++
-		previous, ok := cursor.ItemHashes[summary.ID]
-		switch {
-		case !ok:
-			newItems = append(newItems, summary)
-		case previous != summary.Fingerprint:
-			changedItems = append(changedItems, summary)
-		default:
-			unchangedCount++
-		}
-	}
+	normalizeReportingCursor(&cursor)
+	newItems, changedItems, unchangedCount, freshnessCounts := classifyReportSummaries(summaries, cursor.ItemHashes)
 	snapshot := Snapshot{
 		SchemaVersion: SnapshotSchemaVersion,
 		Channel:       channel,
@@ -580,6 +540,71 @@ func (s Store) GenerateWithOptions(channel string, now time.Time, options Genera
 		return Report{}, err
 	}
 	return report, nil
+}
+
+func normalizeGenerateInputs(channel string, now time.Time, options GenerateOptions) (string, time.Time, GenerateOptions, error) {
+	channel = strings.TrimSpace(channel)
+	if channel == "" {
+		return "", time.Time{}, options, errors.New("reporting channel is required")
+	}
+	options.TriggerID = strings.TrimSpace(options.TriggerID)
+	options.CheckedSurfaces = cleanStrings(options.CheckedSurfaces)
+	options.CheckedWindow = strings.TrimSpace(options.CheckedWindow)
+	options.NegativeQueries = cleanNegativeQueries(options.NegativeQueries)
+	if options.FreshnessTTL <= 0 {
+		options.FreshnessTTL = DefaultFreshnessTTL
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+	return channel, now, options, nil
+}
+
+func summarizeRoadmapItems(items []roadmap.Item, now time.Time, freshnessTTL time.Duration) ([]ItemSummary, []ClaimSummary, map[string]string, error) {
+	summaries := make([]ItemSummary, 0, len(items))
+	claims := []ClaimSummary{}
+	hashes := make(map[string]string, len(items))
+	for _, item := range items {
+		summary, err := summarizeItem(item, now, freshnessTTL)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		summaries = append(summaries, summary)
+		claims = append(claims, summary.Claims...)
+		hashes[item.ID] = summary.Fingerprint
+	}
+	return summaries, claims, hashes, nil
+}
+
+func normalizeReportingCursor(cursor *Cursor) {
+	if cursor.ItemHashes == nil {
+		cursor.ItemHashes = map[string]string{}
+	}
+	if cursor.FieldHashes == nil {
+		cursor.FieldHashes = map[string]string{}
+	}
+}
+
+func classifyReportSummaries(summaries []ItemSummary, previousHashes map[string]string) ([]ItemSummary, []ItemSummary, int, map[string]int) {
+	newItems := []ItemSummary{}
+	changedItems := []ItemSummary{}
+	unchangedCount := 0
+	freshnessCounts := map[string]int{}
+	for _, summary := range summaries {
+		freshnessCounts[summary.Freshness]++
+		previous, ok := previousHashes[summary.ID]
+		switch {
+		case !ok:
+			newItems = append(newItems, summary)
+		case previous != summary.Fingerprint:
+			changedItems = append(changedItems, summary)
+		default:
+			unchangedCount++
+		}
+	}
+	return newItems, changedItems, unchangedCount, freshnessCounts
 }
 
 func reportSchemaCompatibility() reportschema.CompatibilityGuidance {
