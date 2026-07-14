@@ -3,6 +3,7 @@ package bridge
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -202,13 +203,19 @@ func TestBridgeSessionPromptStartsBackgroundTask(t *testing.T) {
 	require.Contains(t, out.String(), `"kind":"prompt"`)
 	require.Contains(t, out.String(), `"session_id":"ide-session"`)
 
-	tasks, err := background.NewStore(configHome).List()
+	backgroundStore := background.NewStore(configHome)
+	tasks, err := backgroundStore.List()
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	require.Eventually(t, func() bool {
-		logs, err := background.NewStore(configHome).Logs(tasks[0].ID, 4096)
+		logs, err := backgroundStore.Logs(tasks[0].ID, 4096)
 		return err == nil && strings.Contains(logs, "bridge-prompt:--resume ide-session prompt summarize selection")
 	}, 20*time.Second, 50*time.Millisecond)
+	waitCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	completed, err := backgroundStore.Wait(waitCtx, tasks[0].ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", completed.Status)
 }
 
 func TestBridgeFileReadWriteEdit(t *testing.T) {

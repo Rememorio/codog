@@ -225,6 +225,11 @@ var taskMutationLockRegistry = struct {
 	locks map[string]*taskMutationLock
 }{locks: map[string]*taskMutationLock{}}
 
+var taskCompletionWaitRegistry = struct {
+	sync.Mutex
+	waits map[string]chan struct{}
+}{waits: map[string]chan struct{}{}}
+
 func NewStore(configHome string) Store {
 	return Store{Dir: filepath.Join(configHome, "background")}
 }
@@ -486,7 +491,8 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 		_ = cmd.Wait()
 		return Task{}, err
 	}
-	go s.waitForCompletion(task.ID, cmd)
+	done := registerTaskCompletionWait(s.Dir, task.ID)
+	go s.waitForCompletion(task.ID, cmd, done)
 	return task, nil
 }
 
@@ -498,7 +504,8 @@ func newTaskID() (string, error) {
 	return time.Now().UTC().Format("20060102T150405.000000000Z") + "-" + hex.EncodeToString(suffix[:]), nil
 }
 
-func (s Store) waitForCompletion(id string, cmd *exec.Cmd) {
+func (s Store) waitForCompletion(id string, cmd *exec.Cmd, done chan struct{}) {
+	defer finishTaskCompletionWait(s.Dir, id, done)
 	waitErr := cmd.Wait()
 	completion := taskCompletion{CompletedAt: time.Now().UTC()}
 	if cmd.ProcessState != nil {
@@ -1151,6 +1158,42 @@ func (s Store) Status(id string) (Task, error) {
 	return task, nil
 }
 
+// Wait blocks until a task reaches a terminal state and local completion
+// bookkeeping has finished.
+func (s Store) Wait(ctx context.Context, id string) (Task, error) {
+	id, err := validateTaskID(id)
+	if err != nil {
+		return Task{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if done, ok := taskCompletionWait(s.Dir, id); ok {
+		select {
+		case <-ctx.Done():
+			return Task{}, ctx.Err()
+		case <-done:
+			return s.Status(id)
+		}
+	}
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		task, err := s.Status(id)
+		if err != nil {
+			return Task{}, err
+		}
+		if !IsActiveStatus(task.Status) {
+			return task, nil
+		}
+		select {
+		case <-ctx.Done():
+			return Task{}, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func normalizeTaskHeartbeat(task *Task) {
 	if task != nil && task.Heartbeat != nil {
 		task.Heartbeat.Provenance = NormalizeEventProvenance(task.Heartbeat.Provenance)
@@ -1392,11 +1435,7 @@ func (s Store) mutateTask(id string, mutate func(*Task) (bool, error)) (Task, er
 }
 
 func (s Store) acquireLocalTaskMutationLock(id string) func() {
-	dir, err := filepath.Abs(s.Dir)
-	if err != nil {
-		dir = filepath.Clean(s.Dir)
-	}
-	key := dir + "\x00" + id
+	key := taskStoreKey(s.Dir, id)
 	taskMutationLockRegistry.Lock()
 	lock := taskMutationLockRegistry.locks[key]
 	if lock == nil {
@@ -1415,6 +1454,39 @@ func (s Store) acquireLocalTaskMutationLock(id string) func() {
 		}
 		taskMutationLockRegistry.Unlock()
 	}
+}
+
+func registerTaskCompletionWait(dir string, id string) chan struct{} {
+	done := make(chan struct{})
+	taskCompletionWaitRegistry.Lock()
+	taskCompletionWaitRegistry.waits[taskStoreKey(dir, id)] = done
+	taskCompletionWaitRegistry.Unlock()
+	return done
+}
+
+func finishTaskCompletionWait(dir string, id string, done chan struct{}) {
+	key := taskStoreKey(dir, id)
+	taskCompletionWaitRegistry.Lock()
+	if taskCompletionWaitRegistry.waits[key] == done {
+		close(done)
+		delete(taskCompletionWaitRegistry.waits, key)
+	}
+	taskCompletionWaitRegistry.Unlock()
+}
+
+func taskCompletionWait(dir string, id string) (<-chan struct{}, bool) {
+	taskCompletionWaitRegistry.Lock()
+	done, ok := taskCompletionWaitRegistry.waits[taskStoreKey(dir, id)]
+	taskCompletionWaitRegistry.Unlock()
+	return done, ok
+}
+
+func taskStoreKey(dir string, id string) string {
+	absolute, err := filepath.Abs(dir)
+	if err != nil {
+		absolute = filepath.Clean(dir)
+	}
+	return absolute + "\x00" + id
 }
 
 func (s Store) acquireTaskMutationLock(id string, createParents bool) (func(), error) {

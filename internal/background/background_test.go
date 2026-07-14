@@ -190,6 +190,44 @@ func TestRunRecordsExitCode(t *testing.T) {
 	}, 2*time.Second, 50*time.Millisecond)
 }
 
+func TestWaitReturnsAfterCompletionBookkeeping(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	store := Store{Dir: t.TempDir()}
+	task, err := store.Run("printf done", t.TempDir())
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	completed, err := store.Wait(ctx, task.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, "completed", completed.Status)
+	require.NoFileExists(t, store.completionPath(task.ID))
+}
+
+func TestWaitHonorsContextCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sleep")
+	}
+	store := Store{Dir: t.TempDir()}
+	task, err := store.Run("sleep 30", t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = store.Stop(task.ID)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, _ = store.Wait(ctx, task.ID)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = store.Wait(ctx, task.ID)
+
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 func TestRestartTaskReusesCommandAndWorkspace(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX sh")
