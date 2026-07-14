@@ -33,12 +33,8 @@ gocognit|internal/agent/limits.go|parseAntTraceArgs|41
 gocognit|internal/agent/limits.go|parseMockLimitsArgs|42
 gocognit|internal/agent/limits.go|snapshotWatchPaths|34
 gocognit|internal/agent/prompt.go|(*App).TUI|31
-gocognit|internal/agent/prompt.go|(*App).promptWithOutputOptions|62
-gocognit|internal/agent/prompt.go|(*App).tuiInteractiveSlashResult|72
-gocognit|internal/agent/prompt.go|(*App).tuiSlashHandler|47
 gocognit|internal/agent/prompt.go|parsePromptArgs|42
 gocognit|internal/agent/prompt.go|tuiSessionEntries|42
-gocognit|internal/agent/prompt.go|validateJSONSchemaObject|56
 gocognit|internal/agent/remote.go|(*App).Updater|47
 gocognit|internal/agent/remote.go|parseBackgroundHeartbeatArgs|41
 gocognit|internal/agent/remote.go|parseBackgroundRunArgs|58

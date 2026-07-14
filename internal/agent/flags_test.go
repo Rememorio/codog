@@ -1603,6 +1603,99 @@ func TestPromptJSONSchemaValidation(t *testing.T) {
 	require.Equal(t, "--json-schema", flagErr.Flag)
 }
 
+func TestPromptJSONSchemaValidationBoundaries(t *testing.T) {
+	tests := []struct {
+		name     string
+		response string
+		schema   string
+		path     string
+		reason   string
+	}{
+		{name: "false schema", response: `null`, schema: `false`, path: "$", reason: "rejects all"},
+		{name: "invalid schema value", response: `null`, schema: `[]`, path: "$", reason: "object or boolean"},
+		{name: "enum must be array", response: `"codog"`, schema: `{"enum":"codog"}`, path: "$", reason: "enum must be an array"},
+		{name: "enum mismatch", response: `"other"`, schema: `{"enum":["codog"]}`, path: "$", reason: "not in enum"},
+		{name: "type must be string", response: `1`, schema: `{"type":1}`, path: "$", reason: "type must be a string"},
+		{name: "type array values", response: `1`, schema: `{"type":["number",1]}`, path: "$", reason: "contain strings"},
+		{name: "required must be array", response: `{}`, schema: `{"required":"name"}`, path: "$", reason: "required must be an array"},
+		{name: "required values", response: `{}`, schema: `{"required":[1]}`, path: "$", reason: "required must contain strings"},
+		{name: "properties must be object", response: `{}`, schema: `{"properties":[]}`, path: "$", reason: "properties must be an object"},
+		{name: "additional property", response: `{"extra":true}`, schema: `{"properties":{},"additionalProperties":false}`, path: "$.extra", reason: "not allowed"},
+		{name: "array item", response: `[1]`, schema: `{"items":{"type":"string"}}`, path: "$[0]", reason: "expected string"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validatePromptJSONSchema(test.response, test.schema)
+			require.Error(t, err)
+			var schemaErr promptJSONSchemaValidationError
+			require.ErrorAs(t, err, &schemaErr)
+			require.Equal(t, test.path, schemaErr.Path)
+			require.Contains(t, schemaErr.Reason, test.reason)
+		})
+	}
+
+	require.NoError(t, validatePromptJSONSchema(`null`, `true`))
+	require.NoError(t, validatePromptJSONSchema(`7`, `{"type":["string","integer"]}`))
+	require.NoError(t, validatePromptJSONSchema(`"value"`, `{"required":["name"],"properties":{"name":{"type":"string"}},"items":{"type":"number"}}`))
+}
+
+func TestPromptOutputHelperBoundaries(t *testing.T) {
+	format, err := normalizePromptOutputFormat("  JSON ")
+	require.NoError(t, err)
+	require.Equal(t, "json", format)
+	format, err = normalizePromptOutputFormat("")
+	require.NoError(t, err)
+	require.Equal(t, "text", format)
+	_, err = normalizePromptOutputFormat("yaml")
+	require.EqualError(t, err, `unknown prompt output format "yaml"`)
+
+	var out bytes.Buffer
+	var capture bytes.Buffer
+	app := &App{Out: &out}
+	sess := &session.Session{ID: "prompt-output"}
+
+	writer, err := app.promptTurnOutput("text", false, turnOptions{}, sess, &capture)
+	require.NoError(t, err)
+	require.Same(t, &out, writer)
+	writer, err = app.promptTurnOutput("json", false, turnOptions{}, sess, &capture)
+	require.NoError(t, err)
+	require.Same(t, &capture, writer)
+	writer, err = app.promptTurnOutput("text", true, turnOptions{}, sess, &capture)
+	require.NoError(t, err)
+	require.Same(t, &capture, writer)
+
+	replay := promptStreamJSONReplayMessage{
+		Message: anthropic.TextMessage("user", "replayed prompt"),
+	}
+	writer, err = app.promptTurnOutput("stream-json", false, turnOptions{ReplayUserMessages: []promptStreamJSONReplayMessage{replay}}, sess, &capture)
+	require.NoError(t, err)
+	require.IsType(t, promptStreamJSONWriter{}, writer)
+	require.Contains(t, out.String(), `"type":"start"`)
+	require.Contains(t, out.String(), `"type":"user"`)
+	require.Contains(t, out.String(), `"isReplay":true`)
+}
+
+func TestRenderCompactPromptResultFormats(t *testing.T) {
+	report := promptCompactReport{Message: "done", Compact: true, Model: "mock"}
+
+	for _, test := range []struct {
+		format   string
+		contains string
+	}{
+		{format: "text", contains: "done"},
+		{format: "json", contains: `"compact": true`},
+		{format: "stream-json", contains: `"type":"result"`},
+	} {
+		t.Run(test.format, func(t *testing.T) {
+			var out bytes.Buffer
+			app := &App{Out: &out}
+			require.NoError(t, app.renderCompactPromptResult(report, test.format))
+			require.Contains(t, out.String(), test.contains)
+		})
+	}
+}
+
 func TestReadPromptStreamJSONInputExtractsSDKUserMessages(t *testing.T) {
 	input := strings.Join([]string{
 		`{"type":"system","subtype":"init"}`,

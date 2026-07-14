@@ -192,14 +192,9 @@ func (a *App) promptWithOutput(ctx context.Context, input string, overrides conf
 }
 
 func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrides config.FlagOverrides, format string, compact bool, opts turnOptions) error {
-	format = strings.TrimSpace(strings.ToLower(format))
-	if format == "" {
-		format = "text"
-	}
-	switch format {
-	case "text", "json", "stream-json":
-	default:
-		return fmt.Errorf("unknown prompt output format %q", format)
+	format, err := normalizePromptOutputFormat(format)
+	if err != nil {
+		return err
 	}
 	if strings.TrimSpace(input) == "" {
 		return errors.New("prompt is empty")
@@ -211,118 +206,166 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 	if restoreSessions != nil {
 		defer restoreSessions()
 	}
-	sess, err := a.openSession(overrides)
+	sess, err := a.openPromptSession(ctx, input, overrides, format)
 	if err != nil {
-		if strings.TrimSpace(overrides.Resume) == "" {
-			return err
-		}
-		return renderSessionRestoreError(a.Out, "prompt", overrides.Resume, err, format)
-	}
-	if err := a.ensureSessionIdentity(sess, "prompt", input, overrides.SessionName); err != nil {
-		return err
-	}
-	if err := a.runSessionStartHook(ctx, sess, sessionStartSource(overrides)); err != nil {
 		return err
 	}
 	priorMessageCount := len(sess.Messages)
 	var streamCapture bytes.Buffer
-	var turnOut = a.Out
-	if compact {
-		turnOut = &streamCapture
-	} else if format == "json" {
-		turnOut = &streamCapture
-	} else if format == "stream-json" {
-		writer := promptStreamJSONWriter{Out: a.Out, IncludeDeltas: opts.IncludePartialMessages || opts.Verbose}
-		if err := writer.Event("start", map[string]any{
-			"session_id": sess.ID,
-			"mode":       "prompt",
-		}); err != nil {
-			return err
-		}
-		for _, message := range opts.ReplayUserMessages {
-			payload := message
-			payload.IsReplay = true
-			if err := writer.Event("user", map[string]any{
-				"session_id":         sess.ID,
-				"message":            payload.Message,
-				"parent_tool_use_id": payload.ParentToolUseID,
-				"isReplay":           payload.IsReplay,
-			}); err != nil {
-				return err
-			}
-		}
-		turnOut = writer
+	turnOut, err := a.promptTurnOutput(format, compact, opts, sess, &streamCapture)
+	if err != nil {
+		return err
 	}
 	turnOpts := opts
 	turnOpts.Out = turnOut
-	var runErr error
-	if overrides.MaxBudgetUSD != nil && *overrides.MaxBudgetUSD > 0 {
-		turnOpts.MaxBudgetUSD = *overrides.MaxBudgetUSD
-		if priorCost, ok := a.sessionActualCostUSD(sess.ID, a.Config.Model); ok {
-			turnOpts.PriorCostUSD = priorCost
-			if priorCost >= turnOpts.MaxBudgetUSD {
-				runErr = runloop.BudgetExceededError{LimitUSD: turnOpts.MaxBudgetUSD, CostUSD: priorCost}
-			}
-		}
-	}
-	if runErr == nil {
-		runErr = a.runSessionTurnWithOptions(ctx, "prompt", sess, input, "completed", turnOpts)
-	}
-	endReason := "completed"
-	if runErr != nil {
-		endReason = "error"
-	}
-	if endErr := a.runSessionEndHook(ctx, sess, endReason); endErr != nil {
-		if runErr != nil {
-			if a.Err != nil {
-				fmt.Fprintf(a.Err, "session end hook error: %v\n", endErr)
-			}
-			return runErr
-		}
-		return endErr
+	runErr := a.runPromptTurn(ctx, sess, input, overrides, turnOpts)
+	endReason, err := a.finishPromptSession(ctx, sess, runErr)
+	if err != nil {
+		return err
 	}
 	if runErr != nil {
-		if format == "json" {
-			return renderCLIError(a.Out, runErr, format)
-		}
-		return runErr
+		return a.renderPromptRunError(runErr, format)
 	}
-	if strings.TrimSpace(opts.JSONSchema) != "" {
-		response := strings.TrimSpace(streamCapture.String())
-		if response == "" {
-			response = strings.TrimSpace(lastAssistantText(sess.Messages))
+	if err := a.validatePromptResponse(sess, streamCapture.String(), opts.JSONSchema, format); err != nil {
+		return err
+	}
+	return a.renderPromptResult(sess, streamCapture.String(), overrides, format, compact, endReason, priorMessageCount, opts.Verbose)
+}
+
+func normalizePromptOutputFormat(format string) (string, error) {
+	format = strings.TrimSpace(strings.ToLower(format))
+	if format == "" {
+		return "text", nil
+	}
+	switch format {
+	case "text", "json", "stream-json":
+		return format, nil
+	default:
+		return "", fmt.Errorf("unknown prompt output format %q", format)
+	}
+}
+
+func (a *App) openPromptSession(ctx context.Context, input string, overrides config.FlagOverrides, format string) (*session.Session, error) {
+	sess, err := a.openSession(overrides)
+	if err != nil {
+		if strings.TrimSpace(overrides.Resume) == "" {
+			return nil, err
 		}
-		if err := validatePromptJSONSchema(response, opts.JSONSchema); err != nil {
-			if format == "stream-json" {
-				writer := promptStreamJSONWriter{Out: a.Out}
-				if writeErr := writer.Event("error", buildCLIErrorReport(err)); writeErr != nil {
-					return writeErr
-				}
-				return &ExitError{Code: 1, Err: err, Silent: true}
-			}
-			if format == "json" {
-				return renderCLIError(a.Out, err, format)
-			}
+		return nil, renderSessionRestoreError(a.Out, "prompt", overrides.Resume, err, format)
+	}
+	if err := a.ensureSessionIdentity(sess, "prompt", input, overrides.SessionName); err != nil {
+		return nil, err
+	}
+	if err := a.runSessionStartHook(ctx, sess, sessionStartSource(overrides)); err != nil {
+		return nil, err
+	}
+	return sess, nil
+}
+
+func (a *App) promptTurnOutput(format string, compact bool, opts turnOptions, sess *session.Session, capture *bytes.Buffer) (io.Writer, error) {
+	if compact || format == "json" {
+		return capture, nil
+	}
+	if format != "stream-json" {
+		return a.Out, nil
+	}
+	writer := promptStreamJSONWriter{Out: a.Out, IncludeDeltas: opts.IncludePartialMessages || opts.Verbose}
+	if err := writer.Event("start", map[string]any{"session_id": sess.ID, "mode": "prompt"}); err != nil {
+		return nil, err
+	}
+	if err := writePromptReplayEvents(writer, sess.ID, opts.ReplayUserMessages); err != nil {
+		return nil, err
+	}
+	return writer, nil
+}
+
+func writePromptReplayEvents(writer promptStreamJSONWriter, sessionID string, messages []promptStreamJSONReplayMessage) error {
+	for _, message := range messages {
+		if err := writer.Event("user", map[string]any{
+			"session_id":         sessionID,
+			"message":            message.Message,
+			"parent_tool_use_id": message.ParentToolUseID,
+			"isReplay":           true,
+		}); err != nil {
 			return err
 		}
 	}
-	if compact {
-		report := promptCompactOutputReport(a.Sessions, sess, a.Config.Model, priorMessageCount)
-		switch format {
-		case "json":
-			data, _ := json.MarshalIndent(report, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		case "stream-json":
-			writer := promptStreamJSONWriter{Out: a.Out}
-			return writer.Event("result", report)
-		default:
-			fmt.Fprintln(a.Out, report.Message)
-			return nil
+	return nil
+}
+
+func (a *App) runPromptTurn(ctx context.Context, sess *session.Session, input string, overrides config.FlagOverrides, opts turnOptions) error {
+	if overrides.MaxBudgetUSD != nil && *overrides.MaxBudgetUSD > 0 {
+		opts.MaxBudgetUSD = *overrides.MaxBudgetUSD
+		if priorCost, ok := a.sessionActualCostUSD(sess.ID, a.Config.Model); ok {
+			opts.PriorCostUSD = priorCost
+			if priorCost >= opts.MaxBudgetUSD {
+				return runloop.BudgetExceededError{LimitUSD: opts.MaxBudgetUSD, CostUSD: priorCost}
+			}
 		}
 	}
+	return a.runSessionTurnWithOptions(ctx, "prompt", sess, input, "completed", opts)
+}
+
+func (a *App) finishPromptSession(ctx context.Context, sess *session.Session, runErr error) (string, error) {
+	reason := "completed"
+	if runErr != nil {
+		reason = "error"
+	}
+	endErr := a.runSessionEndHook(ctx, sess, reason)
+	if endErr == nil {
+		return reason, nil
+	}
+	if runErr == nil {
+		return reason, endErr
+	}
+	if a.Err != nil {
+		fmt.Fprintf(a.Err, "session end hook error: %v\n", endErr)
+	}
+	return reason, runErr
+}
+
+func (a *App) renderPromptRunError(runErr error, format string) error {
+	if format == "json" {
+		return renderCLIError(a.Out, runErr, format)
+	}
+	return runErr
+}
+
+func (a *App) validatePromptResponse(sess *session.Session, streamed string, rawSchema string, format string) error {
+	if strings.TrimSpace(rawSchema) == "" {
+		return nil
+	}
+	response := strings.TrimSpace(streamed)
+	if response == "" {
+		response = strings.TrimSpace(lastAssistantText(sess.Messages))
+	}
+	if err := validatePromptJSONSchema(response, rawSchema); err != nil {
+		return a.renderPromptSchemaError(err, format)
+	}
+	return nil
+}
+
+func (a *App) renderPromptSchemaError(err error, format string) error {
+	if format == "stream-json" {
+		writer := promptStreamJSONWriter{Out: a.Out}
+		if writeErr := writer.Event("error", buildCLIErrorReport(err)); writeErr != nil {
+			return writeErr
+		}
+		return &ExitError{Code: 1, Err: err, Silent: true}
+	}
+	if format == "json" {
+		return renderCLIError(a.Out, err, format)
+	}
+	return err
+}
+
+func (a *App) renderPromptResult(sess *session.Session, streamed string, overrides config.FlagOverrides, format string, compact bool, endReason string, priorMessageCount int, verbose bool) error {
+	if compact {
+		report := promptCompactOutputReport(a.Sessions, sess, a.Config.Model, priorMessageCount)
+		return a.renderCompactPromptResult(report, format)
+	}
 	if format == "json" || format == "stream-json" {
-		report := promptOutputReportWithOptions(a.Sessions, sess, a.Config.Model, streamCapture.String(), endReason, opts.Verbose)
+		report := promptOutputReportWithOptions(a.Sessions, sess, a.Config.Model, streamed, endReason, verbose)
 		if format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
 			fmt.Fprintln(a.Out, string(data))
@@ -335,6 +378,20 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 		fmt.Fprintf(a.Err, "\n\nsession: %s\n", sess.ID)
 	}
 	return nil
+}
+
+func (a *App) renderCompactPromptResult(report promptCompactReport, format string) error {
+	switch format {
+	case "json":
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "stream-json":
+		return (promptStreamJSONWriter{Out: a.Out}).Event("result", report)
+	default:
+		fmt.Fprintln(a.Out, report.Message)
+		return nil
+	}
 }
 
 func (a *App) disableSessionPersistenceForPrompt(disabled bool) func() {
@@ -548,81 +605,132 @@ func validateJSONSchemaValue(value any, schema any, path string) error {
 }
 
 func validateJSONSchemaObject(value any, schema map[string]any, path string) error {
-	if enumValues, ok := schema["enum"]; ok {
-		values, ok := enumValues.([]any)
-		if !ok {
-			return promptJSONSchemaValidationError{Path: path, Reason: "schema enum must be an array"}
-		}
-		matched := false
-		for _, candidate := range values {
-			if jsonValuesEqual(value, candidate) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return promptJSONSchemaValidationError{Path: path, Reason: "value is not in enum"}
+	validators := []func(any, map[string]any, string) error{
+		validateJSONSchemaEnum,
+		validateJSONSchemaType,
+		validateJSONSchemaRequired,
+		validateJSONSchemaProperties,
+		validateJSONSchemaItems,
+	}
+	for _, validate := range validators {
+		if err := validate(value, schema, path); err != nil {
+			return err
 		}
 	}
-	if rawType, ok := schema["type"]; ok {
-		allowed, err := schemaTypeNames(rawType)
-		if err != nil {
-			return promptJSONSchemaValidationError{Path: path, Reason: err.Error()}
-		}
-		if !jsonValueMatchesAnyType(value, allowed) {
-			return promptJSONSchemaValidationError{Path: path, Reason: fmt.Sprintf("expected %s, got %s", strings.Join(allowed, " or "), jsonValueTypeName(value))}
-		}
+	return nil
+}
+
+func validateJSONSchemaEnum(value any, schema map[string]any, path string) error {
+	raw, exists := schema["enum"]
+	if !exists {
+		return nil
 	}
-	if requiredRaw, ok := schema["required"]; ok {
-		objectValue, ok := value.(map[string]any)
-		if !ok {
+	values, ok := raw.([]any)
+	if !ok {
+		return promptJSONSchemaValidationError{Path: path, Reason: "schema enum must be an array"}
+	}
+	for _, candidate := range values {
+		if jsonValuesEqual(value, candidate) {
 			return nil
 		}
-		required, err := schemaStringArray(requiredRaw, "required")
-		if err != nil {
-			return promptJSONSchemaValidationError{Path: path, Reason: err.Error()}
-		}
-		for _, name := range required {
-			if _, ok := objectValue[name]; !ok {
-				return promptJSONSchemaValidationError{Path: joinJSONPath(path, name), Reason: "required property is missing"}
-			}
+	}
+	return promptJSONSchemaValidationError{Path: path, Reason: "value is not in enum"}
+}
+
+func validateJSONSchemaType(value any, schema map[string]any, path string) error {
+	raw, exists := schema["type"]
+	if !exists {
+		return nil
+	}
+	allowed, err := schemaTypeNames(raw)
+	if err != nil {
+		return promptJSONSchemaValidationError{Path: path, Reason: err.Error()}
+	}
+	if jsonValueMatchesAnyType(value, allowed) {
+		return nil
+	}
+	reason := fmt.Sprintf("expected %s, got %s", strings.Join(allowed, " or "), jsonValueTypeName(value))
+	return promptJSONSchemaValidationError{Path: path, Reason: reason}
+}
+
+func validateJSONSchemaRequired(value any, schema map[string]any, path string) error {
+	raw, exists := schema["required"]
+	if !exists {
+		return nil
+	}
+	objectValue, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	required, err := schemaStringArray(raw, "required")
+	if err != nil {
+		return promptJSONSchemaValidationError{Path: path, Reason: err.Error()}
+	}
+	for _, name := range required {
+		if _, exists := objectValue[name]; !exists {
+			return promptJSONSchemaValidationError{Path: joinJSONPath(path, name), Reason: "required property is missing"}
 		}
 	}
-	if propertiesRaw, ok := schema["properties"]; ok {
-		objectValue, ok := value.(map[string]any)
-		if !ok {
-			return nil
+	return nil
+}
+
+func validateJSONSchemaProperties(value any, schema map[string]any, path string) error {
+	raw, exists := schema["properties"]
+	if !exists {
+		return nil
+	}
+	objectValue, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	properties, ok := raw.(map[string]any)
+	if !ok {
+		return promptJSONSchemaValidationError{Path: path, Reason: "schema properties must be an object"}
+	}
+	if err := validateJSONSchemaPropertyValues(objectValue, properties, path); err != nil {
+		return err
+	}
+	return validateJSONSchemaAdditionalProperties(objectValue, properties, schema, path)
+}
+
+func validateJSONSchemaPropertyValues(value map[string]any, properties map[string]any, path string) error {
+	for name, propertySchema := range properties {
+		propertyValue, exists := value[name]
+		if !exists {
+			continue
 		}
-		properties, ok := propertiesRaw.(map[string]any)
-		if !ok {
-			return promptJSONSchemaValidationError{Path: path, Reason: "schema properties must be an object"}
-		}
-		for name, propertySchema := range properties {
-			propertyValue, ok := objectValue[name]
-			if !ok {
-				continue
-			}
-			if err := validateJSONSchemaValue(propertyValue, propertySchema, joinJSONPath(path, name)); err != nil {
-				return err
-			}
-		}
-		if additional, ok := schema["additionalProperties"].(bool); ok && !additional {
-			for name := range objectValue {
-				if _, known := properties[name]; !known {
-					return promptJSONSchemaValidationError{Path: joinJSONPath(path, name), Reason: "additional property is not allowed"}
-				}
-			}
+		if err := validateJSONSchemaValue(propertyValue, propertySchema, joinJSONPath(path, name)); err != nil {
+			return err
 		}
 	}
-	if itemsRaw, ok := schema["items"]; ok {
-		arrayValue, ok := value.([]any)
-		if !ok {
-			return nil
+	return nil
+}
+
+func validateJSONSchemaAdditionalProperties(value map[string]any, properties map[string]any, schema map[string]any, path string) error {
+	additional, explicitlyBoolean := schema["additionalProperties"].(bool)
+	if !explicitlyBoolean || additional {
+		return nil
+	}
+	for name := range value {
+		if _, known := properties[name]; !known {
+			return promptJSONSchemaValidationError{Path: joinJSONPath(path, name), Reason: "additional property is not allowed"}
 		}
-		for index, item := range arrayValue {
-			if err := validateJSONSchemaValue(item, itemsRaw, fmt.Sprintf("%s[%d]", path, index)); err != nil {
-				return err
-			}
+	}
+	return nil
+}
+
+func validateJSONSchemaItems(value any, schema map[string]any, path string) error {
+	itemsSchema, exists := schema["items"]
+	if !exists {
+		return nil
+	}
+	arrayValue, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	for index, item := range arrayValue {
+		if err := validateJSONSchemaValue(item, itemsSchema, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -2008,174 +2116,252 @@ func resumeSessionChoices(sessions []session.Session) []tui.SessionChoice {
 
 func (a *App) tuiSlashHandler(sess *session.Session, modeState *tuiModeState) tui.SlashFunc {
 	return func(ctx context.Context, line string) (tui.SlashResult, error) {
-		if result, handled, err := a.tuiInteractiveSlashResult(ctx, line, sess, modeState); handled {
-			return result, err
-		}
-		if isBareTUIResumeCommand(line) {
-			choices, err := a.tuiResumeSessionChoices(sess.ID)
-			if err != nil {
-				return tui.SlashResult{Handled: true}, err
-			}
-			if len(choices) == 0 {
-				return tui.SlashResult{Output: "No conversations found to resume.", Handled: true}, nil
-			}
-			return tui.SlashResult{Handled: true, SessionChoices: choices}, nil
-		}
-
-		trackSession := tuiSlashMayChangeSession(line)
-		before := ""
-		if trackSession {
-			before = tuiSessionRevision(sess)
-		}
-		var out bytes.Buffer
-		oldOut, oldErr := a.Out, a.Err
-		a.Out, a.Err = &out, &out
-		defer func() {
-			a.Out, a.Err = oldOut, oldErr
-		}()
-		handled := a.handleSlash(ctx, line, sess)
-		result := tui.SlashResult{Output: strings.TrimSpace(out.String()), Handled: handled}
-		if handled && !strings.HasPrefix(strings.ToLower(result.Output), "error:") {
-			a.syncTUIPlanModeAfterSlash(line, modeState)
-		}
-		if handled && result.Output != "" && !strings.HasPrefix(strings.ToLower(result.Output), "error:") {
-			if view, ok := a.tuiPreferenceRefreshView(line); ok {
-				result.CommandView = view
-				result.Output = ""
-			} else if selectedTab, ok := tuiRuntimeRefreshTab(line); ok {
-				view := a.tuiRuntimeCommandView(sess, selectedTab)
-				result.CommandView = &view
-				result.Output = ""
-			} else if selectedTab, ok := tuiExtensionsRefreshTab(line); ok {
-				view := a.tuiExtensionsCommandView(selectedTab)
-				result.CommandView = &view
-				result.Output = ""
-			} else if selectedTab, ok := tuiConversationRefreshTab(line); ok {
-				view := a.tuiConversationCommandView(sess, selectedTab)
-				result.CommandView = &view
-				result.Output = ""
-			} else if tuiMemoryRefresh(line) {
-				if view, viewErr := a.tuiMemoryCommandView(); viewErr == nil {
-					result.CommandView = view
-					result.Output = ""
-				}
-			} else if tuiIDERefresh(line) {
-				if view, viewErr := a.tuiIDECommandView(); viewErr == nil {
-					result.CommandView = view
-					result.Output = ""
-				}
-			}
-		}
-		if handled && result.Output != "" {
-			if view, ok := tuiSideQuestionInformation(line, result.Output); ok {
-				result.Information = &view
-				result.Output = ""
-			} else if title, ok := tuiExtensionInformationTitle(line); ok {
-				view := tui.InformationView{Title: title, Lines: tuiReportLines(result.Output, title)}
-				result.Information = &view
-				result.Output = ""
-			}
-		}
-		if handled && trackSession && before != tuiSessionRevision(sess) {
-			state := a.tuiSessionState(sess)
-			result.Session = &state
-			if tuiSlashOutputIsPersisted(line) {
-				result.Output = ""
-			}
-		}
-		return result, nil
+		return a.handleTUISlash(ctx, line, sess, modeState)
 	}
 }
 
-func (a *App) tuiInteractiveSlashResult(ctx context.Context, line string, sess *session.Session, modeState *tuiModeState) (tui.SlashResult, bool, error) {
+func (a *App) handleTUISlash(ctx context.Context, line string, sess *session.Session, modeState *tuiModeState) (tui.SlashResult, error) {
+	if result, handled, err := a.tuiInteractiveSlashResult(ctx, line, sess, modeState); handled {
+		return result, err
+	}
+	if isBareTUIResumeCommand(line) {
+		return a.tuiResumeSlashResult(sess)
+	}
+	result, revision := a.executeTUISlash(ctx, line, sess, modeState)
+	a.decorateTUISlashResult(&result, line, sess)
+	a.syncTUISlashSession(&result, line, sess, revision)
+	return result, nil
+}
+
+func (a *App) tuiResumeSlashResult(sess *session.Session) (tui.SlashResult, error) {
+	choices, err := a.tuiResumeSessionChoices(sess.ID)
+	if err != nil {
+		return tui.SlashResult{Handled: true}, err
+	}
+	if len(choices) == 0 {
+		return tui.SlashResult{Output: "No conversations found to resume.", Handled: true}, nil
+	}
+	return tui.SlashResult{Handled: true, SessionChoices: choices}, nil
+}
+
+func (a *App) executeTUISlash(ctx context.Context, line string, sess *session.Session, modeState *tuiModeState) (tui.SlashResult, string) {
+	revision := ""
+	if tuiSlashMayChangeSession(line) {
+		revision = tuiSessionRevision(sess)
+	}
+	var out bytes.Buffer
+	oldOut, oldErr := a.Out, a.Err
+	a.Out, a.Err = &out, &out
+	handled := a.handleSlash(ctx, line, sess)
+	a.Out, a.Err = oldOut, oldErr
+	result := tui.SlashResult{Output: strings.TrimSpace(out.String()), Handled: handled}
+	if handled && !tuiSlashOutputIsError(result.Output) {
+		a.syncTUIPlanModeAfterSlash(line, modeState)
+	}
+	return result, revision
+}
+
+func (a *App) decorateTUISlashResult(result *tui.SlashResult, line string, sess *session.Session) {
+	if !result.Handled || result.Output == "" || tuiSlashOutputIsError(result.Output) {
+		return
+	}
+	if a.setTUISlashCommandView(result, line, sess) {
+		return
+	}
+	setTUISlashInformation(result, line)
+}
+
+func (a *App) setTUISlashCommandView(result *tui.SlashResult, line string, sess *session.Session) bool {
+	if view, ok := a.tuiPreferenceRefreshView(line); ok {
+		result.CommandView = view
+	} else if selectedTab, ok := tuiRuntimeRefreshTab(line); ok {
+		view := a.tuiRuntimeCommandView(sess, selectedTab)
+		result.CommandView = &view
+	} else if selectedTab, ok := tuiExtensionsRefreshTab(line); ok {
+		view := a.tuiExtensionsCommandView(selectedTab)
+		result.CommandView = &view
+	} else if selectedTab, ok := tuiConversationRefreshTab(line); ok {
+		view := a.tuiConversationCommandView(sess, selectedTab)
+		result.CommandView = &view
+	} else if !a.setTUISlashWorkspaceView(result, line) {
+		return false
+	}
+	result.Output = ""
+	return true
+}
+
+func (a *App) setTUISlashWorkspaceView(result *tui.SlashResult, line string) bool {
+	if tuiMemoryRefresh(line) {
+		view, err := a.tuiMemoryCommandView()
+		if err == nil {
+			result.CommandView = view
+		}
+		return err == nil
+	}
+	if tuiIDERefresh(line) {
+		view, err := a.tuiIDECommandView()
+		if err == nil {
+			result.CommandView = view
+		}
+		return err == nil
+	}
+	return false
+}
+
+func setTUISlashInformation(result *tui.SlashResult, line string) {
+	if view, ok := tuiSideQuestionInformation(line, result.Output); ok {
+		result.Information = &view
+		result.Output = ""
+		return
+	}
+	if title, ok := tuiExtensionInformationTitle(line); ok {
+		view := tui.InformationView{Title: title, Lines: tuiReportLines(result.Output, title)}
+		result.Information = &view
+		result.Output = ""
+	}
+}
+
+func (a *App) syncTUISlashSession(result *tui.SlashResult, line string, sess *session.Session, before string) {
+	if !result.Handled || before == "" || before == tuiSessionRevision(sess) {
+		return
+	}
+	state := a.tuiSessionState(sess)
+	result.Session = &state
+	if tuiSlashOutputIsPersisted(line) {
+		result.Output = ""
+	}
+}
+
+func tuiSlashOutputIsError(output string) bool {
+	return strings.HasPrefix(strings.ToLower(output), "error:")
+}
+
+type tuiSlashRequest struct {
+	command string
+	args    []string
+	rawArgs string
+}
+
+func parseTUISlashRequest(line string) (tuiSlashRequest, bool) {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
-		return tui.SlashResult{}, false, nil
+		return tuiSlashRequest{}, false
 	}
 	command := fields[0]
 	if mapped := slashCommandName(command); mapped != "" {
 		command = slashSwitchName(mapped)
 	}
-	args := fields[1:]
-	rawArgs := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), fields[0]))
-	switch command {
+	return tuiSlashRequest{
+		command: command,
+		args:    fields[1:],
+		rawArgs: strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), fields[0])),
+	}, true
+}
+
+func (a *App) tuiInteractiveSlashResult(ctx context.Context, line string, sess *session.Session, modeState *tuiModeState) (tui.SlashResult, bool, error) {
+	req, ok := parseTUISlashRequest(line)
+	if !ok {
+		return tui.SlashResult{}, false, nil
+	}
+	if result, handled, err := a.tuiNavigationSlashResult(req, sess, modeState); handled {
+		return result, true, err
+	}
+	if result, handled, err := a.tuiWorkspaceSlashResult(req, sess); handled {
+		return result, true, err
+	}
+	return a.tuiSessionControlSlashResult(ctx, req, sess, modeState)
+}
+
+func (a *App) tuiNavigationSlashResult(req tuiSlashRequest, sess *session.Session, modeState *tuiModeState) (tui.SlashResult, bool, error) {
+	switch req.command {
 	case "/status", "/config", "/usage":
-		if len(args) == 0 {
-			selectedTab := 0
-			switch command {
-			case "/config":
-				selectedTab = 1
-			case "/usage":
-				selectedTab = 2
-			}
+		if len(req.args) == 0 {
+			selectedTab := tuiSettingsTab(req.command)
 			view := a.tuiSettingsCommandView(sess, modeState, selectedTab)
 			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
 		}
 	case "/skill", "/skills", "/mcp", "/hooks", "/plugin", "/plugins", "/marketplace":
-		if len(args) == 0 {
-			selectedTab := tuiExtensionTab(command)
+		if len(req.args) == 0 {
+			selectedTab := tuiExtensionTab(req.command)
 			view := a.tuiExtensionsCommandView(selectedTab)
 			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
 		}
 	case "/agents":
-		return a.tuiAgentsSlashResult(args, sess)
+		return a.tuiAgentsSlashResult(req.args, sess)
 	case "/subagent":
-		return a.tuiSubagentSlashResult(args, sess)
+		return a.tuiSubagentSlashResult(req.args, sess)
 	case "/background", "/tasks", "/bashes":
-		return a.tuiBackgroundSlashResult(args, sess)
+		return a.tuiBackgroundSlashResult(req.args, sess)
 	case "/team":
-		return a.tuiTeamSlashResult(args, sess)
+		return a.tuiTeamSlashResult(req.args, sess)
 	case "/cron":
-		return a.tuiCronSlashResult(args, sess)
+		return a.tuiCronSlashResult(req.args, sess)
 	case "/history":
-		if len(args) == 0 {
+		if len(req.args) == 0 {
 			view := a.tuiConversationCommandView(sess, 0)
 			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
 		}
 	case "/sessions":
-		if len(args) == 0 || (len(args) == 1 && normalizeSessionAction(args[0]) == "list") {
+		if len(req.args) == 0 || (len(req.args) == 1 && normalizeSessionAction(req.args[0]) == "list") {
 			view := a.tuiConversationCommandView(sess, 1)
 			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
 		}
 	case "/bookmarks":
-		return a.tuiBookmarksSlashResult(args, sess)
+		return a.tuiBookmarksSlashResult(req.args, sess)
 	case "/rewind":
-		if len(args) == 0 {
+		if len(req.args) == 0 {
 			return tui.SlashResult{Handled: true, OpenMessageActions: true}, true, nil
 		}
+	}
+	return tui.SlashResult{}, false, nil
+}
+
+func tuiSettingsTab(command string) int {
+	switch command {
+	case "/config":
+		return 1
+	case "/usage":
+		return 2
+	default:
+		return 0
+	}
+}
+
+func (a *App) tuiWorkspaceSlashResult(req tuiSlashRequest, sess *session.Session) (tui.SlashResult, bool, error) {
+	switch req.command {
 	case "/memory":
-		return a.tuiMemorySlashResult(args)
+		return a.tuiMemorySlashResult(req.args)
 	case "/doctor":
-		if len(args) == 0 {
+		if len(req.args) == 0 {
 			view, err := a.tuiDoctorInformation()
 			return tui.SlashResult{Handled: true, Information: view}, true, err
 		}
 	case "/statusline":
-		if !tuiSlashRequestsJSON(args) {
-			return tui.SlashResult{Handled: true, Query: a.tuiStatuslineSetupQuery(rawArgs)}, true, nil
+		if !tuiSlashRequestsJSON(req.args) {
+			return tui.SlashResult{Handled: true, Query: a.tuiStatuslineSetupQuery(req.rawArgs)}, true, nil
 		}
 	case "/files":
-		if len(args) == 0 {
+		if len(req.args) == 0 {
 			view := a.tuiFilesInformation(sess)
 			return tui.SlashResult{Handled: true, Information: &view}, true, nil
 		}
 	case "/terminal-setup":
-		if len(args) == 0 {
+		if len(req.args) == 0 {
 			view, err := a.tuiTerminalSetupCommandView()
 			return tui.SlashResult{Handled: true, CommandView: view}, true, err
 		}
 	case "/keybindings":
-		if len(args) == 0 {
+		if len(req.args) == 0 {
 			view, err := a.tuiKeybindingsCommandView()
 			return tui.SlashResult{Handled: true, CommandView: view}, true, err
 		}
 	case "/ide":
-		if len(args) == 0 || (len(args) == 1 && strings.EqualFold(strings.TrimSpace(args[0]), "status")) {
+		if len(req.args) == 0 || (len(req.args) == 1 && strings.EqualFold(strings.TrimSpace(req.args[0]), "status")) {
 			view, err := a.tuiIDECommandView()
 			return tui.SlashResult{Handled: true, CommandView: view}, true, err
 		}
 	case "/export":
-		if len(args) == 0 {
+		if len(req.args) == 0 {
 			filename := "conversation.md"
 			if sess != nil && strings.TrimSpace(sess.ID) != "" {
 				filename = safeTUIExportName(sess.ID) + ".md"
@@ -2183,32 +2369,8 @@ func (a *App) tuiInteractiveSlashResult(ctx context.Context, line string, sess *
 			dialog := tui.ExportDialog{DefaultFilename: filename}
 			return tui.SlashResult{Handled: true, ExportDialog: &dialog}, true, nil
 		}
-	case "/theme", "/color":
-		if len(args) == 0 {
-			return tui.SlashResult{Handled: true, OpenThemePicker: true}, true, nil
-		}
-	case "/fast":
-		if len(args) == 0 {
-			view := a.tuiFastCommandView()
-			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
-		}
-	case "/output-style":
-		if len(args) == 0 {
-			view, err := a.tuiOutputStyleCommandView()
-			return tui.SlashResult{Handled: true, CommandView: view}, true, err
-		}
-	case "/sandbox":
-		if len(args) == 0 {
-			view := a.tuiSandboxCommandView()
-			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
-		}
-	case "/stats":
-		if len(args) == 0 {
-			view := a.tuiSettingsCommandView(sess, modeState, 2)
-			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
-		}
 	case "/add-dir":
-		if len(args) == 0 {
+		if len(req.args) == 0 {
 			dialog := tui.TextInputDialog{
 				Title:  "Add working directory",
 				Prompt: "Enter an absolute or workspace-relative directory path:",
@@ -2216,55 +2378,98 @@ func (a *App) tuiInteractiveSlashResult(ctx context.Context, line string, sess *
 			}
 			return tui.SlashResult{Handled: true, TextInputDialog: &dialog}, true, nil
 		}
-	case "/rename":
-		if !tuiSlashHasStructuredFlags(args) {
-			return a.renameTUISession(sess, rawArgs)
+	}
+	return tui.SlashResult{}, false, nil
+}
+
+func (a *App) tuiSessionControlSlashResult(ctx context.Context, req tuiSlashRequest, sess *session.Session, modeState *tuiModeState) (tui.SlashResult, bool, error) {
+	if result, handled, err := a.tuiDisplayControlSlashResult(req, sess, modeState); handled {
+		return result, true, err
+	}
+	return a.tuiConversationActionSlashResult(ctx, req, sess, modeState)
+}
+
+func (a *App) tuiDisplayControlSlashResult(req tuiSlashRequest, sess *session.Session, modeState *tuiModeState) (tui.SlashResult, bool, error) {
+	switch req.command {
+	case "/theme", "/color":
+		if len(req.args) == 0 {
+			return tui.SlashResult{Handled: true, OpenThemePicker: true}, true, nil
 		}
-	case "/branch":
-		if !tuiSlashHasStructuredFlags(args) {
-			return a.branchTUISession(ctx, sess, rawArgs)
+	case "/fast":
+		if len(req.args) == 0 {
+			view := a.tuiFastCommandView()
+			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
 		}
-	case "/tag":
-		return a.tagTUISession(sess, rawArgs)
-	case "/conversation-tag":
-		return a.completeTUISessionTag(sess, args)
-	case "/plan", "/ultraplan":
-		return a.tuiPlanSlashResult(rawArgs, modeState)
-	case "/compact":
-		if len(args) == 0 {
-			return tui.SlashResult{Handled: true, RuntimeAction: "compact"}, true, nil
+	case "/output-style":
+		if len(req.args) == 0 {
+			view, err := a.tuiOutputStyleCommandView()
+			return tui.SlashResult{Handled: true, CommandView: view}, true, err
 		}
-	case "/copy":
-		if len(args) == 0 {
-			return tui.SlashResult{Handled: true, RuntimeAction: "copy"}, true, nil
+	case "/sandbox":
+		if len(req.args) == 0 {
+			view := a.tuiSandboxCommandView()
+			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+		}
+	case "/stats":
+		if len(req.args) == 0 {
+			view := a.tuiSettingsCommandView(sess, modeState, 2)
+			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
 		}
 	case "/model":
-		if len(args) == 0 {
+		if len(req.args) == 0 {
 			return tui.SlashResult{Handled: true, OpenModelPicker: true}, true, nil
 		}
 	case "/todos":
-		if len(args) == 0 {
+		if len(req.args) == 0 {
 			return tui.SlashResult{Handled: true, OpenTodos: true}, true, nil
 		}
 	case "/permissions":
-		if len(args) == 0 {
+		if len(req.args) == 0 {
 			settings := a.tuiPermissionSettings(modeState)
 			return tui.SlashResult{Handled: true, PermissionSettings: &settings}, true, nil
 		}
 	case "/context":
-		if len(args) == 0 {
+		if len(req.args) == 0 {
 			view := a.tuiContextInformation(sess)
 			return tui.SlashResult{Handled: true, Information: &view}, true, nil
 		}
+	}
+	return tui.SlashResult{}, false, nil
+}
+
+func (a *App) tuiConversationActionSlashResult(ctx context.Context, req tuiSlashRequest, sess *session.Session, modeState *tuiModeState) (tui.SlashResult, bool, error) {
+	switch req.command {
+	case "/rename":
+		if !tuiSlashHasStructuredFlags(req.args) {
+			return a.renameTUISession(sess, req.rawArgs)
+		}
+	case "/branch":
+		if !tuiSlashHasStructuredFlags(req.args) {
+			return a.branchTUISession(ctx, sess, req.rawArgs)
+		}
+	case "/tag":
+		return a.tagTUISession(sess, req.rawArgs)
+	case "/conversation-tag":
+		return a.completeTUISessionTag(sess, req.args)
+	case "/plan", "/ultraplan":
+		return a.tuiPlanSlashResult(req.rawArgs, modeState)
+	case "/compact":
+		if len(req.args) == 0 {
+			return tui.SlashResult{Handled: true, RuntimeAction: "compact"}, true, nil
+		}
+	case "/copy":
+		if len(req.args) == 0 {
+			return tui.SlashResult{Handled: true, RuntimeAction: "copy"}, true, nil
+		}
 	case "/diff":
-		req, err := parseDiffArgs(args)
+		diffReq, err := parseDiffArgs(req.args)
 		if err != nil {
 			return tui.SlashResult{Handled: true}, true, err
 		}
-		if req.Format == "json" {
+		if diffReq.Format == "json" {
 			return tui.SlashResult{}, false, nil
 		}
-		view, err := a.tuiDiffView(req)
+		view, err := a.tuiDiffView(diffReq)
 		if err != nil {
 			return tui.SlashResult{Handled: true}, true, err
 		}
