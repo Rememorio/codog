@@ -2,7 +2,6 @@ package codeintel
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,7 +14,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/Rememorio/codog/internal/toolnames"
@@ -656,345 +654,15 @@ func (s LSPStore) Query(ctx context.Context, language string, request LSPQueryRe
 }
 
 func runLSPQuery(ctx context.Context, workspace string, command string, language string, request LSPQueryRequest) (LSPQueryResult, error) {
-	action, err := NormalizeLSPAction(request.Action)
+	run, err := newLSPQueryRun(ctx, workspace, command, language, request)
 	if err != nil {
 		return LSPQueryResult{}, err
 	}
-	actionInfo, err := lookupLSPActionInfo(action)
-	if err != nil {
+	defer run.close()
+	if err := run.start(); err != nil {
 		return LSPQueryResult{}, err
 	}
-	if strings.TrimSpace(command) == "" {
-		return LSPQueryResult{}, errors.New("lsp command is required")
-	}
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		timeout := 10 * time.Second
-		if action == "diagnostics" {
-			timeout = 3 * time.Second
-		}
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	path := ""
-	rel := ""
-	data := []byte(nil)
-	if actionInfo.RequiresDocument {
-		path, rel, err = resolveWorkspaceFile(workspace, request.Path)
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-		data, err = os.ReadFile(path)
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-	}
-	cmd := lspShellCommand(ctx, command)
-	cmd.Dir = workspace
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return LSPQueryResult{}, err
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return LSPQueryResult{}, err
-	}
-	if err := cmd.Start(); err != nil {
-		return LSPQueryResult{}, err
-	}
-	client := &lspClient{stdin: stdin, stdout: bufio.NewReader(stdout), workspace: workspace, applyWorkspaceEdits: request.Apply}
-	wait := func() error {
-		err := cmd.Wait()
-		if err != nil && strings.TrimSpace(stderr.String()) != "" {
-			return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
-		}
-		return err
-	}
-	defer func() {
-		_, _ = client.request("shutdown", nil)
-		_ = client.notify("exit", nil)
-		_ = stdin.Close()
-		_ = wait()
-	}()
-	rootURI := fileURI(workspace)
-	if _, err := client.request("initialize", map[string]any{
-		"processId": nil,
-		"rootUri":   rootURI,
-		"capabilities": map[string]any{
-			"textDocument": map[string]any{},
-			"workspace":    map[string]any{},
-		},
-		"clientInfo": map[string]any{"name": "codog"},
-	}); err != nil {
-		return LSPQueryResult{}, err
-	}
-	if err := client.notify("initialized", map[string]any{}); err != nil {
-		return LSPQueryResult{}, err
-	}
-	uri := ""
-	if actionInfo.RequiresDocument {
-		uri = fileURI(path)
-		if err := client.notify("textDocument/didOpen", map[string]any{
-			"textDocument": map[string]any{
-				"uri":        uri,
-				"languageId": languageID(language, path),
-				"version":    1,
-				"text":       string(data),
-			},
-		}); err != nil {
-			return LSPQueryResult{}, err
-		}
-	}
-	if action == "diagnostics" {
-		diagnostics, err := client.waitForDiagnostics(uri)
-		if err != nil {
-			if ctx.Err() != nil {
-				diagnostics = []LSPDiagnostic{}
-			} else {
-				return LSPQueryResult{}, err
-			}
-		}
-		return LSPQueryResult{
-			Kind:        "lsp_query",
-			Language:    language,
-			Action:      action,
-			Method:      "textDocument/publishDiagnostics",
-			Path:        rel,
-			Result:      diagnostics,
-			Diagnostics: diagnostics,
-		}, nil
-	}
-	if action == "code-lens-resolve" {
-		decoded, err := runLSPCodeLensResolveQuery(client, uri, request.Line, request.Character)
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-		return LSPQueryResult{
-			Kind:     "lsp_query",
-			Language: language,
-			Action:   action,
-			Method:   "codeLens/resolve",
-			Path:     rel,
-			Result:   decoded,
-		}, nil
-	}
-	if action == "code-action-resolve" {
-		title := request.CodeActionTitle
-		if strings.TrimSpace(title) == "" {
-			title = request.Query
-		}
-		decoded, err := runLSPCodeActionResolveQuery(client, uri, request.Line, request.Character, title)
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-		return LSPQueryResult{
-			Kind:     "lsp_query",
-			Language: language,
-			Action:   action,
-			Method:   "codeAction/resolve",
-			Path:     rel,
-			Result:   decoded,
-		}, nil
-	}
-	if action == "document-link-resolve" {
-		decoded, err := runLSPDocumentLinkResolveQuery(client, uri, request.Line, request.Character)
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-		return LSPQueryResult{
-			Kind:     "lsp_query",
-			Language: language,
-			Action:   action,
-			Method:   "documentLink/resolve",
-			Path:     rel,
-			Result:   decoded,
-		}, nil
-	}
-	if action == "inlay-hint-resolve" {
-		decoded, err := runLSPInlayHintResolveQuery(client, uri, request.Line, request.Character)
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-		return LSPQueryResult{
-			Kind:     "lsp_query",
-			Language: language,
-			Action:   action,
-			Method:   "inlayHint/resolve",
-			Path:     rel,
-			Result:   decoded,
-		}, nil
-	}
-	if action == "completion-item-resolve" {
-		decoded, err := runLSPCompletionItemResolveQuery(client, uri, request.Line, request.Character, request.Query)
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-		return LSPQueryResult{
-			Kind:     "lsp_query",
-			Language: language,
-			Action:   action,
-			Method:   "completionItem/resolve",
-			Path:     rel,
-			Result:   decoded,
-		}, nil
-	}
-	if action == "workspace-symbol-resolve" {
-		decoded, err := runLSPWorkspaceSymbolResolveQuery(client, request.Query)
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-		return LSPQueryResult{
-			Kind:     "lsp_query",
-			Language: language,
-			Action:   action,
-			Method:   "workspaceSymbol/resolve",
-			Path:     rel,
-			Result:   decoded,
-		}, nil
-	}
-	if strings.HasPrefix(action, "call-hierarchy") || action == "prepare-call-hierarchy" {
-		method, decoded, err := runLSPHierarchyQuery(client, hierarchyQuerySpec{
-			Action:        action,
-			URI:           uri,
-			Line:          request.Line,
-			Character:     request.Character,
-			PrepareAction: "prepare-call-hierarchy",
-			PrepareMethod: "textDocument/prepareCallHierarchy",
-			IncomingName:  "call-hierarchy-incoming",
-			Incoming:      "callHierarchy/incomingCalls",
-			Outgoing:      "callHierarchy/outgoingCalls",
-			CallKey:       "calls",
-		})
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-		return LSPQueryResult{
-			Kind:     "lsp_query",
-			Language: language,
-			Action:   action,
-			Method:   method,
-			Path:     rel,
-			Result:   decoded,
-		}, nil
-	}
-	if strings.HasPrefix(action, "type-hierarchy") || action == "prepare-type-hierarchy" {
-		method, decoded, err := runLSPHierarchyQuery(client, hierarchyQuerySpec{
-			Action:        action,
-			URI:           uri,
-			Line:          request.Line,
-			Character:     request.Character,
-			PrepareAction: "prepare-type-hierarchy",
-			PrepareMethod: "textDocument/prepareTypeHierarchy",
-			IncomingName:  "type-hierarchy-supertypes",
-			Incoming:      "typeHierarchy/supertypes",
-			Outgoing:      "typeHierarchy/subtypes",
-			CallKey:       "types",
-		})
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-		return LSPQueryResult{
-			Kind:     "lsp_query",
-			Language: language,
-			Action:   action,
-			Method:   method,
-			Path:     rel,
-			Result:   decoded,
-		}, nil
-	}
-	if action == "color-presentation" {
-		decoded, err := runLSPColorPresentationQuery(client, uri, request.Line, request.Character)
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-		return LSPQueryResult{
-			Kind:     "lsp_query",
-			Language: language,
-			Action:   action,
-			Method:   "textDocument/colorPresentation",
-			Path:     rel,
-			Result:   decoded,
-		}, nil
-	}
-	method, params, err := lspMethodParams(action, uri, request.Line, request.Character, request.NewName, request.Query, request.Arguments)
-	if err != nil {
-		return LSPQueryResult{}, err
-	}
-	raw, err := client.request(method, params)
-	if err != nil {
-		return LSPQueryResult{}, err
-	}
-	var decoded any
-	if len(raw) > 0 && string(raw) != "null" {
-		if err := json.Unmarshal(raw, &decoded); err != nil {
-			return LSPQueryResult{}, err
-		}
-	}
-	result := LSPQueryResult{
-		Kind:     "lsp_query",
-		Language: language,
-		Action:   action,
-		Method:   method,
-		Path:     rel,
-		Result:   decoded,
-	}
-	mergeLSPClientWorkspaceEdits(client, &result)
-	mergeLSPClientNotifications(client, &result)
-	if isLSPFormattingAction(action) && len(raw) > 0 && string(raw) != "null" {
-		var edits []lspTextEdit
-		if err := json.Unmarshal(raw, &edits); err != nil {
-			return LSPQueryResult{}, err
-		}
-		formatted, err := applyLSPTextEdits(string(data), edits)
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-		result.TextEdits = len(edits)
-		result.Content = formatted
-		result.Changed = formatted != string(data)
-	}
-	if action == "rename" && len(raw) > 0 && string(raw) != "null" {
-		var edit lspWorkspaceEdit
-		if err := json.Unmarshal(raw, &edit); err != nil {
-			return LSPQueryResult{}, err
-		}
-		fileEdits, textEdits, err := summarizeLSPWorkspaceEdit(workspace, edit)
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-		result.FileEdits = len(fileEdits)
-		result.TextEdits = textEdits
-		result.Edits = fileEdits
-		result.Changed = textEdits > 0
-		if request.Apply && result.Changed {
-			if err := applyLSPFileEdits(fileEdits); err != nil {
-				return LSPQueryResult{}, err
-			}
-			result.Applied = true
-		}
-	}
-	if action == "code-action" && len(raw) > 0 && string(raw) != "null" {
-		fileEdits, textEdits, actionEdits, err := summarizeLSPCodeActionEdits(workspace, raw, request.CodeActionTitle)
-		if err != nil {
-			return LSPQueryResult{}, err
-		}
-		result.FileEdits = len(fileEdits)
-		result.TextEdits = textEdits
-		result.Edits = fileEdits
-		result.Changed = textEdits > 0
-		if request.Apply {
-			if actionEdits != 1 {
-				return LSPQueryResult{}, fmt.Errorf("lsp code-action apply requires exactly one matching edit-bearing action, got %d", actionEdits)
-			}
-			if err := applyLSPFileEdits(fileEdits); err != nil {
-				return LSPQueryResult{}, err
-			}
-			result.Applied = true
-		}
-	}
-	return result, nil
+	return run.execute()
 }
 
 func isLSPFormattingAction(action string) bool {
@@ -1658,21 +1326,17 @@ func decodeLSPParams(params any, out any) error {
 func lspMethodParams(action string, uri string, line int, character int, newName string, query string, arguments []any) (string, any, error) {
 	position := map[string]any{"line": max(0, line), "character": max(0, character)}
 	textDocument := map[string]any{"uri": uri}
+	if method, ok := lspPositionMethods[action]; ok {
+		return method, map[string]any{"textDocument": textDocument, "position": position}, nil
+	}
+	if method, ok := lspDocumentMethods[action]; ok {
+		return method, map[string]any{"textDocument": textDocument}, nil
+	}
 	switch action {
 	case "document-diagnostic":
 		return "textDocument/diagnostic", map[string]any{"textDocument": textDocument}, nil
 	case "workspace-diagnostic":
 		return "workspace/diagnostic", map[string]any{"previousResultIds": []any{}}, nil
-	case "hover":
-		return "textDocument/hover", map[string]any{"textDocument": textDocument, "position": position}, nil
-	case "definition":
-		return "textDocument/definition", map[string]any{"textDocument": textDocument, "position": position}, nil
-	case "declaration":
-		return "textDocument/declaration", map[string]any{"textDocument": textDocument, "position": position}, nil
-	case "implementation":
-		return "textDocument/implementation", map[string]any{"textDocument": textDocument, "position": position}, nil
-	case "type-definition":
-		return "textDocument/typeDefinition", map[string]any{"textDocument": textDocument, "position": position}, nil
 	case "references":
 		return "textDocument/references", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"includeDeclaration": true}}, nil
 	case "rename":
@@ -1681,28 +1345,16 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 			return "", nil, errors.New("new_name is required for lsp rename")
 		}
 		return "textDocument/rename", map[string]any{"textDocument": textDocument, "position": position, "newName": newName}, nil
-	case "prepare-rename":
-		return "textDocument/prepareRename", map[string]any{"textDocument": textDocument, "position": position}, nil
 	case "code-action":
 		return "textDocument/codeAction", map[string]any{
 			"textDocument": textDocument,
 			"range":        map[string]any{"start": position, "end": position},
 			"context":      map[string]any{"diagnostics": []any{}},
 		}, nil
-	case "code-lens":
-		return "textDocument/codeLens", map[string]any{"textDocument": textDocument}, nil
 	case "completion":
 		return "textDocument/completion", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
-	case "document-highlight":
-		return "textDocument/documentHighlight", map[string]any{"textDocument": textDocument, "position": position}, nil
 	case "selection-range":
 		return "textDocument/selectionRange", map[string]any{"textDocument": textDocument, "positions": []any{position}}, nil
-	case "folding-range":
-		return "textDocument/foldingRange", map[string]any{"textDocument": textDocument}, nil
-	case "document-link":
-		return "textDocument/documentLink", map[string]any{"textDocument": textDocument}, nil
-	case "document-color":
-		return "textDocument/documentColor", map[string]any{"textDocument": textDocument}, nil
 	case "inlay-hint":
 		line = max(0, line)
 		start := map[string]any{"line": line, "character": 0}
@@ -1724,12 +1376,6 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 			"range":        valueRange,
 			"context":      map[string]any{"frameId": frameID, "stoppedLocation": stoppedLocation},
 		}, nil
-	case "linked-editing-range":
-		return "textDocument/linkedEditingRange", map[string]any{"textDocument": textDocument, "position": position}, nil
-	case "moniker":
-		return "textDocument/moniker", map[string]any{"textDocument": textDocument, "position": position}, nil
-	case "semantic-tokens":
-		return "textDocument/semanticTokens/full", map[string]any{"textDocument": textDocument}, nil
 	case "semantic-tokens-range":
 		line = max(0, line)
 		start := map[string]any{"line": line, "character": 0}
@@ -1754,8 +1400,6 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 		return "workspace/executeCommand", map[string]any{"command": command, "arguments": arguments}, nil
 	case "signature-help":
 		return "textDocument/signatureHelp", map[string]any{"textDocument": textDocument, "position": position, "context": map[string]any{"triggerKind": 1}}, nil
-	case "symbols":
-		return "textDocument/documentSymbol", map[string]any{"textDocument": textDocument}, nil
 	case "format":
 		return "textDocument/formatting", map[string]any{"textDocument": textDocument, "options": map[string]any{"tabSize": 4, "insertSpaces": false}}, nil
 	case "range-format":
@@ -1771,6 +1415,27 @@ func lspMethodParams(action string, uri string, line int, character int, newName
 	default:
 		return "", nil, lspActionError("unsupported", action)
 	}
+}
+
+var lspPositionMethods = map[string]string{
+	"hover":                "textDocument/hover",
+	"definition":           "textDocument/definition",
+	"declaration":          "textDocument/declaration",
+	"implementation":       "textDocument/implementation",
+	"type-definition":      "textDocument/typeDefinition",
+	"prepare-rename":       "textDocument/prepareRename",
+	"document-highlight":   "textDocument/documentHighlight",
+	"linked-editing-range": "textDocument/linkedEditingRange",
+	"moniker":              "textDocument/moniker",
+}
+
+var lspDocumentMethods = map[string]string{
+	"code-lens":       "textDocument/codeLens",
+	"folding-range":   "textDocument/foldingRange",
+	"document-link":   "textDocument/documentLink",
+	"document-color":  "textDocument/documentColor",
+	"semantic-tokens": "textDocument/semanticTokens/full",
+	"symbols":         "textDocument/documentSymbol",
 }
 
 func firstLSPTriggerCharacter(query string) string {

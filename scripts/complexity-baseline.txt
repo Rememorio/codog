@@ -92,7 +92,6 @@ gocognit|internal/codeintel/codeintel.go|RenameSymbol|31
 gocognit|internal/codeintel/codeintel.go|semanticClassifierForFile|39
 gocognit|internal/codeintel/codeintel.go|typeHierarchyItems|46
 gocognit|internal/codeintel/codeintel_test.go|TestFakeLSPServer|32
-gocognit|internal/codeintel/lsp_client.go|runLSPQuery|96
 gocognit|internal/config/config.go|(*CompatibilityConfig).UnmarshalJSON|51
 gocognit|internal/config/config.go|(*Config).UnmarshalJSON|39
 gocognit|internal/config/config.go|(*SandboxConfig).UnmarshalJSON|32
@@ -174,7 +173,6 @@ gocyclo|internal/agent/git.go|parseTrustArgs|32
 gocyclo|internal/agent/keybindings.go|parseExtraUsageArgs|32
 gocyclo|internal/agent/statusline.go|parseCapabilitiesArgs|31
 gocyclo|internal/bridge/stdio_test.go|TestBridgeFakeLSPServer|55
-gocyclo|internal/codeintel/lsp_client.go|lspMethodParams|39
 gocyclo|internal/harness/recovery.go|reportBackpressureScenario|55
 gocyclo|internal/plugins/plugins.go|(*ValidationResult).validateManifest|34
 gocyclo|internal/terminalparity/report.go|Build|78
