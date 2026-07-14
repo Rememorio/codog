@@ -187,6 +187,7 @@ type cliRun struct {
 	workspace     string
 	format        string
 	app           *App
+	getwd         func() (string, error)
 }
 
 func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrides) error {
@@ -525,7 +526,11 @@ func (r *cliRun) loadConfig() (bool, error) {
 		return true, r.renderConfigLoadError(err)
 	}
 	applyStoredOAuthToken(&cfg, time.Now().UTC())
-	workspace, err := os.Getwd()
+	getwd := r.getwd
+	if getwd == nil {
+		getwd = os.Getwd
+	}
+	workspace, err := getwd()
 	if err != nil {
 		return true, err
 	}

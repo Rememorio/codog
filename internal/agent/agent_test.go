@@ -3171,6 +3171,44 @@ func TestBootstrapPlanDegradesOnMalformedConfigFile(t *testing.T) {
 	require.Contains(t, configPhase.Evidence["config_load_error"], "broken.json")
 }
 
+func TestCLIRunLoadConfigStopsWhenWorkingDirectoryIsUnavailable(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{}"), 0o644))
+
+	run := &cliRun{
+		overrides: config.FlagOverrides{ConfigPath: configPath},
+		getwd: func() (string, error) {
+			return "", os.ErrNotExist
+		},
+	}
+	handled, err := run.loadConfig()
+
+	require.True(t, handled)
+	require.Error(t, err)
+}
+
+func TestCLIRunLoadConfigStopsAtBroadWorkspaceGuard(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Chdir(home)
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{}"), 0o644))
+
+	run := &cliRun{
+		overrides: config.FlagOverrides{ConfigPath: configPath},
+		command:   "prompt",
+		rest:      []string{"hello"},
+		format:    "text",
+	}
+	handled, err := run.loadConfig()
+
+	require.True(t, handled)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+}
+
 func TestDeferredInitCommandReportsTrustGatedStartup(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()
