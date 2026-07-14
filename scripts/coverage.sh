@@ -67,7 +67,7 @@ case "${base}" in
 esac
 
 git cat-file -e "${base}^{commit}" 2>/dev/null || die "base revision is unavailable: ${base}"
-git diff --unified=0 --no-renames --diff-filter=AM "${base}...HEAD" -- '*.go' ':!*_test.go' >"${diff_file}"
+git diff --unified=0 --find-renames --diff-filter=AMR "${base}...HEAD" -- '*.go' ':!*_test.go' >"${diff_file}"
 
 step "changed-line coverage"
 go run ./internal/coveragecheck/cmd \

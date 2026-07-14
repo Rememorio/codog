@@ -104,10 +104,29 @@ func TestBridgeInitialize(t *testing.T) {
 }
 
 func TestBridgeUnknownMethodWithinNamespace(t *testing.T) {
-	result, rpcErr := (Server{}).handle(Request{Method: "diagnostics/unknown"})
+	for _, namespace := range []string{
+		"workspace",
+		"sessions",
+		"file",
+		"editor",
+		"bridge",
+		"diagnostics",
+		"code",
+		"notebook",
+		"lsp",
+		"mcp",
+		"background",
+		"agent-runs",
+		"unknown",
+	} {
+		t.Run(namespace, func(t *testing.T) {
+			method := namespace + "/unknown"
+			result, rpcErr := (Server{}).handle(Request{Method: method})
 
-	require.Nil(t, result)
-	require.Equal(t, &Error{Code: -32601, Message: "method not found: diagnostics/unknown"}, rpcErr)
+			require.Nil(t, result)
+			require.Equal(t, &Error{Code: -32601, Message: "method not found: " + method}, rpcErr)
+		})
+	}
 }
 
 func TestBridgeSessionMutations(t *testing.T) {
