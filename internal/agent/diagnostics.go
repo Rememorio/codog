@@ -332,95 +332,101 @@ func (a *App) APIKey(args []string) error {
 
 func parseAPIKeyArgs(args []string) (apiKeyRequest, error) {
 	req := apiKeyRequest{Action: "status", Format: "text", Target: "user"}
-	const usage = "codog api-key [status|set|clear] [KEY] [--key KEY] [--target user|project|local] [--path PATH] [--output-format text|json]"
-	var rest []string
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "api-key", Flag: arg, Usage: usage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "api-key", Flag: arg, Usage: usage}
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "api-key", Flag: arg, Usage: usage}
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		case arg == "--key":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "api-key", Flag: arg, Usage: usage}
-			}
-			req.Key = strings.TrimSpace(args[index])
-		case strings.HasPrefix(arg, "--key="):
-			req.Key = strings.TrimSpace(strings.TrimPrefix(arg, "--key="))
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return req, unknownOptionError{Command: "api-key", Option: arg, Usage: usage}
-			}
-			rest = append(rest, arg)
-		}
+	rest, err := parseAPIKeyOptions(args, &req)
+	if err != nil {
+		return req, err
 	}
 	normalizedFormat, err := normalizeOutputFormat("api-key", req.Format, []string{"text", "json"})
 	if err != nil {
 		return req, err
 	}
 	req.Format = normalizedFormat
+	return finishAPIKeyRequest(req, rest)
+}
+
+const apiKeyUsage = "codog api-key [status|set|clear] [KEY] [--key KEY] [--target user|project|local] [--path PATH] [--output-format text|json]"
+
+func parseAPIKeyOptions(args []string, req *apiKeyRequest) ([]string, error) {
+	var rest []string
+	missing := func(flag string) error {
+		return missingFlagValueError{Command: "api-key", Flag: flag, Usage: apiKeyUsage}
+	}
+	stringOption := func(target *string, rejectOutputFormat bool, trim bool) valueOption {
+		return valueOption{missing: missing, rejectOutputFormat: rejectOutputFormat, set: func(value string) error {
+			if trim {
+				value = strings.TrimSpace(value)
+			}
+			*target = value
+			return nil
+		}}
+	}
+	options := map[string]valueOption{
+		"--output-format": stringOption(&req.Format, false, false),
+		"-o":              stringOption(&req.Format, false, false),
+		"--target":        stringOption(&req.Target, true, false),
+		"--path":          stringOption(&req.Path, true, false),
+		"--key":           stringOption(&req.Key, true, true),
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--json" {
+			req.Format = "json"
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, options)
+		if err != nil {
+			return rest, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return rest, unknownOptionError{Command: "api-key", Option: arg, Usage: apiKeyUsage}
+		}
+		rest = append(rest, arg)
+	}
+	return rest, nil
+}
+
+func finishAPIKeyRequest(req apiKeyRequest, rest []string) (apiKeyRequest, error) {
 	if len(rest) == 0 {
 		if req.Key != "" {
 			req.Action = "set"
 		}
-		return validateAPIKeyRequest(req, usage)
+		return validateAPIKeyRequest(req, apiKeyUsage)
 	}
 	switch strings.ToLower(rest[0]) {
 	case "status", "show":
 		req.Action = "status"
 		if len(rest) > 1 {
-			return req, unexpectedExtraArgsError{Command: "api-key " + strings.ToLower(rest[0]), Args: rest[1:], Usage: usage}
+			return req, unexpectedExtraArgsError{Command: "api-key " + strings.ToLower(rest[0]), Args: rest[1:], Usage: apiKeyUsage}
 		}
 	case "set":
 		req.Action = "set"
 		if req.Key == "" {
 			if len(rest) != 2 {
-				return req, requiredArgumentError{Command: "api-key set", Argument: "KEY", Usage: usage}
+				return req, requiredArgumentError{Command: "api-key set", Argument: "KEY", Usage: apiKeyUsage}
 			}
 			req.Key = strings.TrimSpace(rest[1])
 		} else if len(rest) > 1 {
-			return req, unexpectedExtraArgsError{Command: "api-key set", Args: rest[1:], Usage: usage}
+			return req, unexpectedExtraArgsError{Command: "api-key set", Args: rest[1:], Usage: apiKeyUsage}
 		}
 	case "clear", "unset", "reset", "remove":
 		req.Action = "clear"
 		if len(rest) > 1 {
-			return req, unexpectedExtraArgsError{Command: "api-key " + strings.ToLower(rest[0]), Args: rest[1:], Usage: usage}
+			return req, unexpectedExtraArgsError{Command: "api-key " + strings.ToLower(rest[0]), Args: rest[1:], Usage: apiKeyUsage}
 		}
 	default:
 		req.Action = "set"
 		if req.Key != "" {
-			return req, unexpectedExtraArgsError{Command: "api-key", Args: rest, Usage: usage}
+			return req, unexpectedExtraArgsError{Command: "api-key", Args: rest, Usage: apiKeyUsage}
 		}
 		if len(rest) != 1 {
-			return req, unexpectedExtraArgsError{Command: "api-key", Args: rest[1:], Usage: usage}
+			return req, unexpectedExtraArgsError{Command: "api-key", Args: rest[1:], Usage: apiKeyUsage}
 		}
 		req.Key = strings.TrimSpace(rest[0])
 	}
-	return validateAPIKeyRequest(req, usage)
+	return validateAPIKeyRequest(req, apiKeyUsage)
 }
 
 func validateAPIKeyRequest(req apiKeyRequest, usage string) (apiKeyRequest, error) {
@@ -1238,49 +1244,21 @@ func (a *App) Temperature(args []string) error {
 
 func parseTemperatureArgs(args []string) (temperatureRequest, error) {
 	req := temperatureRequest{Action: "status", Format: "text", Target: "user"}
-	const usage = "codog temperature [status|set|clear] [VALUE] [--target user|project|local] [--path PATH] [--output-format text|json]"
-	var rest []string
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "temperature", Flag: arg, Usage: usage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "temperature", Flag: arg, Usage: usage}
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "temperature", Flag: arg, Usage: usage}
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return req, unknownOptionError{Command: "temperature", Option: arg, Usage: usage}
-			}
-			rest = append(rest, arg)
-		}
+	rest, err := parsePreferenceOptions(args, "temperature", temperatureUsage, &req.Format, &req.Target, &req.Path)
+	if err != nil {
+		return req, err
 	}
 	normalizedFormat, err := normalizeOutputFormat("temperature", req.Format, []string{"text", "json"})
 	if err != nil {
 		return req, err
 	}
 	req.Format = normalizedFormat
+	return finishTemperatureRequest(req, rest)
+}
+
+const temperatureUsage = "codog temperature [status|set|clear] [VALUE] [--target user|project|local] [--path PATH] [--output-format text|json]"
+
+func finishTemperatureRequest(req temperatureRequest, rest []string) (temperatureRequest, error) {
 	if len(rest) == 0 {
 		return req, nil
 	}
@@ -1288,22 +1266,22 @@ func parseTemperatureArgs(args []string) (temperatureRequest, error) {
 	case "status", "show":
 		req.Action = "status"
 		if len(rest) > 1 {
-			return req, unexpectedExtraArgsError{Command: "temperature " + strings.ToLower(rest[0]), Args: rest[1:], Usage: usage}
+			return req, unexpectedExtraArgsError{Command: "temperature " + strings.ToLower(rest[0]), Args: rest[1:], Usage: temperatureUsage}
 		}
 	case "clear", "unset", "reset", "default":
 		req.Action = "clear"
 		if len(rest) > 1 {
-			return req, unexpectedExtraArgsError{Command: "temperature " + strings.ToLower(rest[0]), Args: rest[1:], Usage: usage}
+			return req, unexpectedExtraArgsError{Command: "temperature " + strings.ToLower(rest[0]), Args: rest[1:], Usage: temperatureUsage}
 		}
 	case "set":
 		req.Action = "set"
 		if len(rest) != 2 {
 			if len(rest) < 2 {
-				return req, requiredArgumentError{Command: "temperature set", Argument: "VALUE", Usage: usage}
+				return req, requiredArgumentError{Command: "temperature set", Argument: "VALUE", Usage: temperatureUsage}
 			}
-			return req, unexpectedExtraArgsError{Command: "temperature set", Args: rest[2:], Usage: usage}
+			return req, unexpectedExtraArgsError{Command: "temperature set", Args: rest[2:], Usage: temperatureUsage}
 		}
-		value, err := parseTemperatureValue(rest[1], usage)
+		value, err := parseTemperatureValue(rest[1], temperatureUsage)
 		if err != nil {
 			return req, err
 		}
@@ -1311,9 +1289,9 @@ func parseTemperatureArgs(args []string) (temperatureRequest, error) {
 	default:
 		req.Action = "set"
 		if len(rest) != 1 {
-			return req, unexpectedExtraArgsError{Command: "temperature", Args: rest[1:], Usage: usage}
+			return req, unexpectedExtraArgsError{Command: "temperature", Args: rest[1:], Usage: temperatureUsage}
 		}
-		value, err := parseTemperatureValue(rest[0], usage)
+		value, err := parseTemperatureValue(rest[0], temperatureUsage)
 		if err != nil {
 			return req, err
 		}
@@ -1742,116 +1720,122 @@ func (a *App) Permissions(args []string) error {
 }
 
 func parsePermissionsArgs(args []string) (permissionsRequest, error) {
-	req := permissionsRequest{Action: "show", Target: "user"}
-	positionals := []string{}
+	parser := permissionsArgParser{req: permissionsRequest{Action: "show", Target: "user"}}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, errors.New("permissions output format is required")
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if index >= len(args) {
-				return req, errors.New("permissions target is required")
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) {
-				return req, errors.New("permissions config path is required")
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown permissions flag %q", arg)
-		default:
-			positionals = append(positionals, arg)
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, fmt.Errorf("unknown permissions flag %q", arg)
+		}
+		parser.positionals = append(parser.positionals, arg)
+	}
+	if err := parser.finish(); err != nil {
+		return parser.req, err
+	}
+	return parser.req, nil
+}
+
+const permissionsUsage = "codog permissions [show|MODE|set MODE|clear] [--target user|project|local] [--json|--output-format text|json]"
+const permissionsSetUsage = "codog permissions set MODE [--target user|project|local] [--json|--output-format text|json]"
+
+type permissionsArgParser struct {
+	req         permissionsRequest
+	positionals []string
+}
+
+func (p *permissionsArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": stringValueOption(&p.req.Format, "permissions output format is required"),
+		"-o":              stringValueOption(&p.req.Format, "permissions output format is required"),
+		"--target":        stringValueOption(&p.req.Target, "permissions target is required"),
+		"--path":          stringValueOption(&p.req.Path, "permissions config path is required"),
+	}
+}
+
+func (p *permissionsArgParser) finish() error {
+	if len(p.positionals) == 0 {
+		p.req.Format = firstNonEmpty(p.req.Format, "json")
+		return validateTextOrJSON(p.req.Format, "permissions")
+	}
+	if err := p.applyAction(); err != nil {
+		return err
+	}
+	if p.req.Action == "set" && !validPermissionMode(p.req.Mode) {
+		return invalidFlagValueError{
+			Flag:    "mode",
+			Value:   p.req.Mode,
+			Message: fmt.Sprintf("unknown permission mode: %s", p.req.Mode),
+			Hint:    unknownPermissionModeHint(p.req.Mode),
+			Usage:   permissionsUsage,
 		}
 	}
-	if len(positionals) == 0 {
-		req.Format = firstNonEmpty(req.Format, "json")
-		if err := validateTextOrJSON(req.Format, "permissions"); err != nil {
-			return req, err
-		}
-		return req, nil
+	if p.req.Action == "set" {
+		p.req.Mode, _ = config.NormalizePermissionModeLabel(p.req.Mode)
 	}
-	switch strings.ToLower(strings.TrimSpace(positionals[0])) {
+	if p.req.Format == "" {
+		p.req.Format = "text"
+		if p.req.Action == "show" {
+			p.req.Format = "json"
+		}
+	}
+	return validateTextOrJSON(p.req.Format, "permissions")
+}
+
+func (p *permissionsArgParser) applyAction() error {
+	switch strings.ToLower(strings.TrimSpace(p.positionals[0])) {
 	case "show", "status", "list":
-		if len(positionals) > 1 {
-			return req, unexpectedExtraArgsError{
+		if len(p.positionals) > 1 {
+			return unexpectedExtraArgsError{
 				Command: "permissions show",
-				Args:    append([]string(nil), positionals[1:]...),
-				Usage:   "codog permissions [show|MODE|set MODE|clear] [--target user|project|local] [--json|--output-format text|json]",
+				Args:    append([]string(nil), p.positionals[1:]...),
+				Usage:   permissionsUsage,
 			}
 		}
-		req.Action = "show"
+		p.req.Action = "show"
 	case "mode", "set":
-		if len(positionals) < 2 {
-			return req, requiredArgumentError{Command: "permissions set", Argument: "MODE", Usage: "codog permissions set MODE [--target user|project|local] [--json|--output-format text|json]"}
+		if len(p.positionals) < 2 {
+			return requiredArgumentError{Command: "permissions set", Argument: "MODE", Usage: permissionsSetUsage}
 		}
-		if len(positionals) > 2 {
-			return req, unexpectedExtraArgsError{
+		if len(p.positionals) > 2 {
+			return unexpectedExtraArgsError{
 				Command: "permissions set",
-				Args:    append([]string(nil), positionals[2:]...),
-				Usage:   "codog permissions set MODE [--target user|project|local] [--json|--output-format text|json]",
+				Args:    append([]string(nil), p.positionals[2:]...),
+				Usage:   permissionsSetUsage,
 			}
 		}
-		req.Action = "set"
-		req.Mode = positionals[1]
+		p.req.Action = "set"
+		p.req.Mode = p.positionals[1]
 	case "clear", "reset", "unset", "default":
-		if len(positionals) > 1 {
-			return req, unexpectedExtraArgsError{
+		if len(p.positionals) > 1 {
+			return unexpectedExtraArgsError{
 				Command: "permissions clear",
-				Args:    append([]string(nil), positionals[1:]...),
+				Args:    append([]string(nil), p.positionals[1:]...),
 				Usage:   "codog permissions clear [--target user|project|local] [--json|--output-format text|json]",
 			}
 		}
-		req.Action = "clear"
+		p.req.Action = "clear"
 	default:
-		if len(positionals) > 1 {
-			return req, unexpectedExtraArgsError{
+		if len(p.positionals) > 1 {
+			return unexpectedExtraArgsError{
 				Command: "permissions",
-				Args:    append([]string(nil), positionals[1:]...),
-				Usage:   "codog permissions [show|MODE|set MODE|clear] [--target user|project|local] [--json|--output-format text|json]",
+				Args:    append([]string(nil), p.positionals[1:]...),
+				Usage:   permissionsUsage,
 			}
 		}
-		req.Action = "set"
-		req.Mode = positionals[0]
+		p.req.Action = "set"
+		p.req.Mode = p.positionals[0]
 	}
-	if req.Action == "set" && !validPermissionMode(req.Mode) {
-		return req, invalidFlagValueError{
-			Flag:    "mode",
-			Value:   req.Mode,
-			Message: fmt.Sprintf("unknown permission mode: %s", req.Mode),
-			Hint:    unknownPermissionModeHint(req.Mode),
-			Usage:   "codog permissions [show|MODE|set MODE|clear] [--target user|project|local] [--json|--output-format text|json]",
-		}
-	}
-	if req.Action == "set" {
-		req.Mode, _ = config.NormalizePermissionModeLabel(req.Mode)
-	}
-	if req.Format == "" {
-		if req.Action == "show" {
-			req.Format = "json"
-		} else {
-			req.Format = "text"
-		}
-	}
-	if err := validateTextOrJSON(req.Format, "permissions"); err != nil {
-		return req, err
-	}
-	return req, nil
+	return nil
 }
 
 func renderPermissionsReport(out io.Writer, report permissionsReport, format string) error {

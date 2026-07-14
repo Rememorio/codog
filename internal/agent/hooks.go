@@ -952,64 +952,19 @@ func (a *App) Theme(args []string) error {
 
 func parseThemeArgs(args []string) (themeRequest, error) {
 	req := themeRequest{Action: "status", Format: "text", Target: "user"}
-	var rest []string
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{
-					Command: "theme",
-					Flag:    arg,
-					Usage:   themeUsage,
-				}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{
-					Command: "theme",
-					Flag:    arg,
-					Usage:   themeUsage,
-				}
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{
-					Command: "theme",
-					Flag:    arg,
-					Usage:   themeUsage,
-				}
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return req, unknownOptionError{
-					Command: "theme",
-					Option:  arg,
-					Usage:   themeUsage,
-				}
-			}
-			rest = append(rest, arg)
-		}
+	rest, err := parsePreferenceOptions(args, "theme", themeUsage, &req.Format, &req.Target, &req.Path)
+	if err != nil {
+		return req, err
 	}
 	normalizedFormat, err := normalizeOutputFormat("theme", req.Format, []string{"text", "json"})
 	if err != nil {
 		return req, err
 	}
 	req.Format = normalizedFormat
+	return finishThemeRequest(req, rest)
+}
+
+func finishThemeRequest(req themeRequest, rest []string) (themeRequest, error) {
 	if len(rest) == 0 {
 		return req, nil
 	}
@@ -1473,64 +1428,19 @@ func (a *App) reasoningEffort(args []string, kind string, title string) error {
 func parseEffortArgs(args []string, command string) (effortRequest, error) {
 	req := effortRequest{Action: "status", Format: "text", Target: "user"}
 	usage := effortCommandUsage(command)
-	var rest []string
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{
-					Command: command,
-					Flag:    arg,
-					Usage:   usage,
-				}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{
-					Command: command,
-					Flag:    arg,
-					Usage:   usage,
-				}
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{
-					Command: command,
-					Flag:    arg,
-					Usage:   usage,
-				}
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return req, unknownOptionError{
-					Command: command,
-					Option:  arg,
-					Usage:   usage,
-				}
-			}
-			rest = append(rest, arg)
-		}
+	rest, err := parsePreferenceOptions(args, command, usage, &req.Format, &req.Target, &req.Path)
+	if err != nil {
+		return req, err
 	}
 	normalizedFormat, err := normalizeOutputFormat(command, req.Format, []string{"text", "json"})
 	if err != nil {
 		return req, err
 	}
 	req.Format = normalizedFormat
+	return finishEffortRequest(req, rest, command, usage)
+}
+
+func finishEffortRequest(req effortRequest, rest []string, command string, usage string) (effortRequest, error) {
 	if len(rest) == 0 {
 		return req, nil
 	}

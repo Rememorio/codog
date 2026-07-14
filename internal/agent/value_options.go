@@ -37,3 +37,41 @@ func stringValueOption(target *string, missing string) valueOption {
 		return nil
 	}}
 }
+
+func parsePreferenceOptions(args []string, command string, usage string, format *string, target *string, path *string) ([]string, error) {
+	var rest []string
+	missing := func(flag string) error {
+		return missingFlagValueError{Command: command, Flag: flag, Usage: usage}
+	}
+	stringOption := func(destination *string, rejectOutputFormat bool) valueOption {
+		return valueOption{missing: missing, rejectOutputFormat: rejectOutputFormat, set: func(value string) error {
+			*destination = value
+			return nil
+		}}
+	}
+	options := map[string]valueOption{
+		"--output-format": stringOption(format, false),
+		"-o":              stringOption(format, false),
+		"--target":        stringOption(target, true),
+		"--path":          stringOption(path, true),
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--json" {
+			*format = "json"
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, options)
+		if err != nil {
+			return rest, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return rest, unknownOptionError{Command: command, Option: arg, Usage: usage}
+		}
+		rest = append(rest, arg)
+	}
+	return rest, nil
+}

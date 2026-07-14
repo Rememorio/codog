@@ -279,128 +279,87 @@ func antTraceAuthConfigured(cfg config.Config, client *anthropic.Client) bool {
 const antTraceUsage = "codog ant-trace [--no-request] [--message TEXT] [--timeout-ms N] [--write|--output PATH] [--output-format text|json]"
 
 func parseAntTraceArgs(args []string) (antTraceRequest, error) {
-	req := antTraceRequest{Format: "text", TimeoutMS: 15000}
-	messageParts := []string{}
+	parser := antTraceArgParser{req: antTraceRequest{Format: "text", TimeoutMS: 15000}}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{
-					Command: "ant-trace",
-					Flag:    arg,
-					Usage:   antTraceUsage,
-				}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--no-request" || arg == "--skip-request":
-			req.NoRequest = true
-		case arg == "--write":
-			req.Write = true
-		case arg == "--message":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{
-					Command: "ant-trace",
-					Flag:    arg,
-					Usage:   antTraceUsage,
-				}
-			}
-			req.Message = args[index]
-		case strings.HasPrefix(arg, "--message="):
-			req.Message = strings.TrimPrefix(arg, "--message=")
-		case arg == "--timeout-ms":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{
-					Command: "ant-trace",
-					Flag:    arg,
-					Usage:   antTraceUsage,
-				}
-			}
-			value, err := parseAntTraceTimeoutMS(args[index])
-			if err != nil {
-				return req, err
-			}
-			req.TimeoutMS = value
-		case strings.HasPrefix(arg, "--timeout-ms="):
-			value, err := parseAntTraceTimeoutMS(strings.TrimPrefix(arg, "--timeout-ms="))
-			if err != nil {
-				return req, err
-			}
-			req.TimeoutMS = value
-		case arg == "--model":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{
-					Command: "ant-trace",
-					Flag:    arg,
-					Usage:   antTraceUsage,
-				}
-			}
-			req.Model = args[index]
-		case strings.HasPrefix(arg, "--model="):
-			req.Model = strings.TrimPrefix(arg, "--model=")
-		case arg == "--base-url":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{
-					Command: "ant-trace",
-					Flag:    arg,
-					Usage:   antTraceUsage,
-				}
-			}
-			req.BaseURL = args[index]
-		case strings.HasPrefix(arg, "--base-url="):
-			req.BaseURL = strings.TrimPrefix(arg, "--base-url=")
-		case arg == "--provider":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{
-					Command: "ant-trace",
-					Flag:    arg,
-					Usage:   antTraceUsage,
-				}
-			}
-			req.Provider = args[index]
-		case strings.HasPrefix(arg, "--provider="):
-			req.Provider = strings.TrimPrefix(arg, "--provider=")
-		case arg == "--output":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{
-					Command: "ant-trace",
-					Flag:    arg,
-					Usage:   antTraceUsage,
-				}
-			}
-			req.Output = args[index]
-		case strings.HasPrefix(arg, "--output="):
-			req.Output = strings.TrimPrefix(arg, "--output=")
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{
-				Command: "ant-trace",
-				Option:  arg,
-				Usage:   antTraceUsage,
-			}
-		default:
-			messageParts = append(messageParts, arg)
+		if parser.consumeBoolean(arg) {
+			continue
 		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "ant-trace", Option: arg, Usage: antTraceUsage}
+		}
+		parser.messageParts = append(parser.messageParts, arg)
 	}
-	normalizedFormat, err := normalizeOutputFormat("ant-trace", req.Format, []string{"text", "json"})
+	normalizedFormat, err := normalizeOutputFormat("ant-trace", parser.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = normalizedFormat
-	if strings.TrimSpace(req.Message) == "" && len(messageParts) > 0 {
-		req.Message = strings.Join(messageParts, " ")
+	parser.req.Format = normalizedFormat
+	if strings.TrimSpace(parser.req.Message) == "" && len(parser.messageParts) > 0 {
+		parser.req.Message = strings.Join(parser.messageParts, " ")
 	}
-	return req, nil
+	return parser.req, nil
+}
+
+type antTraceArgParser struct {
+	req          antTraceRequest
+	messageParts []string
+}
+
+func (p *antTraceArgParser) consumeBoolean(arg string) bool {
+	switch arg {
+	case "--json":
+		p.req.Format = "json"
+	case "--no-request", "--skip-request":
+		p.req.NoRequest = true
+	case "--write":
+		p.req.Write = true
+	default:
+		return false
+	}
+	return true
+}
+
+func (p *antTraceArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format, false),
+		"-o":              p.stringOption(&p.req.Format, false),
+		"--message":       p.stringOption(&p.req.Message, true),
+		"--timeout-ms":    p.timeoutOption(),
+		"--model":         p.stringOption(&p.req.Model, true),
+		"--base-url":      p.stringOption(&p.req.BaseURL, true),
+		"--provider":      p.stringOption(&p.req.Provider, true),
+		"--output":        p.stringOption(&p.req.Output, true),
+	}
+}
+
+func (p *antTraceArgParser) stringOption(target *string, rejectOutputFormat bool) valueOption {
+	return valueOption{missing: antTraceMissingValue, rejectOutputFormat: rejectOutputFormat, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func (p *antTraceArgParser) timeoutOption() valueOption {
+	return valueOption{missing: antTraceMissingValue, rejectOutputFormat: true, set: func(value string) error {
+		parsed, err := parseAntTraceTimeoutMS(value)
+		if err != nil {
+			return err
+		}
+		p.req.TimeoutMS = parsed
+		return nil
+	}}
+}
+
+func antTraceMissingValue(flag string) error {
+	return missingFlagValueError{Command: "ant-trace", Flag: flag, Usage: antTraceUsage}
 }
 
 func parseAntTraceTimeoutMS(raw string) (int, error) {
@@ -686,156 +645,111 @@ func mockParityCapabilityCounts(coverage []harness.CapabilityCoverage, passingSt
 }
 
 func parseMockLimitsArgs(args []string) (mockLimitsRequest, error) {
-	const usage = "codog mock-limits [serve|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--output-format text|json]"
-	req := mockLimitsRequest{Action: "show", Format: "text", Addr: ":8089", Failures: 2, RetryAfterMS: 1000, Text: "mock response after rate limits"}
-	var rest []string
+	parser := mockLimitsArgParser{req: mockLimitsRequest{Action: "show", Format: "text", Addr: ":8089", Failures: 2, RetryAfterMS: 1000, Text: "mock response after rate limits"}}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{
-					Command: "mock-limits",
-					Flag:    arg,
-					Usage:   usage,
-				}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--addr":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{
-					Command: "mock-limits",
-					Flag:    arg,
-					Usage:   usage,
-				}
-			}
-			req.Addr = args[index]
-		case strings.HasPrefix(arg, "--addr="):
-			req.Addr = strings.TrimPrefix(arg, "--addr=")
-		case arg == "--failures":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{
-					Command: "mock-limits",
-					Flag:    arg,
-					Usage:   usage,
-				}
-			}
-			value, err := strconv.Atoi(args[index])
-			if err != nil {
-				return req, invalidFlagValueError{
-					Flag:    arg,
-					Value:   args[index],
-					Message: "mock-limits failures must be an integer",
-					Usage:   usage,
-				}
-			}
-			req.Failures = value
-		case strings.HasPrefix(arg, "--failures="):
-			raw := strings.TrimPrefix(arg, "--failures=")
-			value, err := strconv.Atoi(raw)
-			if err != nil {
-				return req, invalidFlagValueError{
-					Flag:    "--failures",
-					Value:   raw,
-					Message: "mock-limits failures must be an integer",
-					Usage:   usage,
-				}
-			}
-			req.Failures = value
-		case arg == "--retry-after-ms":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{
-					Command: "mock-limits",
-					Flag:    arg,
-					Usage:   usage,
-				}
-			}
-			value, err := strconv.Atoi(args[index])
-			if err != nil {
-				return req, invalidFlagValueError{
-					Flag:    arg,
-					Value:   args[index],
-					Message: "mock-limits retry-after must be an integer",
-					Usage:   usage,
-				}
-			}
-			req.RetryAfterMS = value
-		case strings.HasPrefix(arg, "--retry-after-ms="):
-			raw := strings.TrimPrefix(arg, "--retry-after-ms=")
-			value, err := strconv.Atoi(raw)
-			if err != nil {
-				return req, invalidFlagValueError{
-					Flag:    "--retry-after-ms",
-					Value:   raw,
-					Message: "mock-limits retry-after must be an integer",
-					Usage:   usage,
-				}
-			}
-			req.RetryAfterMS = value
-		case arg == "--text":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{
-					Command: "mock-limits",
-					Flag:    arg,
-					Usage:   usage,
-				}
-			}
-			req.Text = args[index]
-		case strings.HasPrefix(arg, "--text="):
-			req.Text = strings.TrimPrefix(arg, "--text=")
-		default:
-			rest = append(rest, arg)
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
 		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		parser.rest = append(parser.rest, arg)
 	}
-	normalizedFormat, err := normalizeOutputFormat("mock-limits", req.Format, []string{"text", "json"})
+	normalizedFormat, err := normalizeOutputFormat("mock-limits", parser.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = normalizedFormat
-	for _, arg := range rest {
+	parser.req.Format = normalizedFormat
+	if err := parser.finish(); err != nil {
+		return parser.req, err
+	}
+	return parser.req, nil
+}
+
+const mockLimitsUsage = "codog mock-limits [serve|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--output-format text|json]"
+
+type mockLimitsArgParser struct {
+	req  mockLimitsRequest
+	rest []string
+}
+
+func (p *mockLimitsArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format, false),
+		"-o":              p.stringOption(&p.req.Format, false),
+		"--addr":          p.stringOption(&p.req.Addr, false),
+		"--failures":      p.intOption(&p.req.Failures, "--failures", "mock-limits failures must be an integer"),
+		"--retry-after-ms": p.intOption(
+			&p.req.RetryAfterMS, "--retry-after-ms", "mock-limits retry-after must be an integer",
+		),
+		"--text": p.stringOption(&p.req.Text, false),
+	}
+}
+
+func (p *mockLimitsArgParser) stringOption(target *string, rejectOutputFormat bool) valueOption {
+	return valueOption{missing: mockLimitsMissingValue, rejectOutputFormat: rejectOutputFormat, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func (p *mockLimitsArgParser) intOption(target *int, flag string, message string) valueOption {
+	return valueOption{missing: mockLimitsMissingValue, rejectOutputFormat: true, set: func(value string) error {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return invalidFlagValueError{Flag: flag, Value: value, Message: message, Usage: mockLimitsUsage}
+		}
+		*target = parsed
+		return nil
+	}}
+}
+
+func mockLimitsMissingValue(flag string) error {
+	return missingFlagValueError{Command: "mock-limits", Flag: flag, Usage: mockLimitsUsage}
+}
+
+func (p *mockLimitsArgParser) finish() error {
+	for _, arg := range p.rest {
 		normalized := strings.ToLower(strings.TrimSpace(arg))
 		switch {
 		case normalized == "show" || normalized == "status" || normalized == "plan":
-			req.Action = "show"
+			p.req.Action = "show"
 		case normalized == "serve" || normalized == "server" || normalized == "start":
-			req.Action = "serve"
+			p.req.Action = "serve"
 		case strings.HasPrefix(arg, ":") || strings.Contains(arg, ":"):
-			req.Action = "serve"
-			req.Addr = arg
+			p.req.Action = "serve"
+			p.req.Addr = arg
 		default:
-			return req, unexpectedExtraArgsError{
+			return unexpectedExtraArgsError{
 				Command: "mock-limits",
 				Args:    []string{arg},
-				Usage:   usage,
+				Usage:   mockLimitsUsage,
 			}
 		}
 	}
-	if req.Failures < 0 {
-		return req, invalidFlagValueError{
+	if p.req.Failures < 0 {
+		return invalidFlagValueError{
 			Flag:    "--failures",
-			Value:   strconv.Itoa(req.Failures),
+			Value:   strconv.Itoa(p.req.Failures),
 			Message: "mock-limits failures must be non-negative",
-			Usage:   usage,
+			Usage:   mockLimitsUsage,
 		}
 	}
-	if req.RetryAfterMS < 0 {
-		return req, invalidFlagValueError{
+	if p.req.RetryAfterMS < 0 {
+		return invalidFlagValueError{
 			Flag:    "--retry-after-ms",
-			Value:   strconv.Itoa(req.RetryAfterMS),
+			Value:   strconv.Itoa(p.req.RetryAfterMS),
 			Message: "mock-limits retry-after must be non-negative",
-			Usage:   usage,
+			Usage:   mockLimitsUsage,
 		}
 	}
-	return req, nil
+	return nil
 }
 
 func isOutputFormatFlag(arg string) bool {

@@ -1015,87 +1015,91 @@ func (a *App) Mobile(args []string, overrides config.FlagOverrides) error {
 }
 
 func parseMobileHandoffArgs(args []string, overrides config.FlagOverrides) (mobileHandoffRequest, error) {
-	req := mobileHandoffRequest{Action: "handoff", Platform: "all", Format: "text", Addr: "127.0.0.1:8791"}
-	req.SessionID = firstNonEmpty(overrides.Resume, overrides.SessionID)
-	platformSet := false
-	actionSet := false
+	parser := mobileHandoffArgParser{req: mobileHandoffRequest{Action: "handoff", Platform: "all", Format: "text", Addr: "127.0.0.1:8791"}}
+	parser.req.SessionID = firstNonEmpty(overrides.Resume, overrides.SessionID)
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "mobile", Flag: arg, Usage: mobileHandoffUsage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--addr":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "mobile", Flag: arg, Usage: mobileHandoffUsage}
-			}
-			req.Addr = args[index]
-		case strings.HasPrefix(arg, "--addr="):
-			req.Addr = strings.TrimPrefix(arg, "--addr=")
-		case arg == "--session":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "mobile", Flag: arg, Usage: mobileHandoffUsage}
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--session="):
-			req.SessionID = strings.TrimPrefix(arg, "--session=")
-		case arg == "--resume":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "mobile", Flag: arg, Usage: mobileHandoffUsage}
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--resume="):
-			req.SessionID = strings.TrimPrefix(arg, "--resume=")
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{Command: "mobile", Option: arg, Usage: mobileHandoffUsage}
-		default:
-			normalized := strings.ToLower(arg)
-			switch normalized {
-			case "handoff", "show":
-				if actionSet {
-					return req, unexpectedExtraArgsError{Command: "mobile", Args: []string{arg}, Usage: mobileHandoffUsage}
-				}
-				req.Action = "handoff"
-				actionSet = true
-			case "status", "list":
-				if actionSet {
-					return req, unexpectedExtraArgsError{Command: "mobile", Args: []string{arg}, Usage: mobileHandoffUsage}
-				}
-				req.Action = "status"
-				actionSet = true
-			case "clear", "remove":
-				if actionSet {
-					return req, unexpectedExtraArgsError{Command: "mobile", Args: []string{arg}, Usage: mobileHandoffUsage}
-				}
-				req.Action = "clear"
-				actionSet = true
-			case "all", "ios", "android":
-				if platformSet {
-					return req, unexpectedExtraArgsError{Command: "mobile", Args: []string{arg}, Usage: mobileHandoffUsage}
-				}
-				req.Platform = normalized
-				platformSet = true
-			default:
-				return req, unexpectedExtraArgsError{Command: "mobile", Args: []string{arg}, Usage: mobileHandoffUsage}
-			}
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "mobile", Option: arg, Usage: mobileHandoffUsage}
+		}
+		if err := parser.consumePositional(arg); err != nil {
+			return parser.req, err
 		}
 	}
-	normalizedFormat, err := normalizeOutputFormat("mobile", req.Format, []string{"text", "json"})
+	normalizedFormat, err := normalizeOutputFormat("mobile", parser.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = normalizedFormat
-	return req, nil
+	parser.req.Format = normalizedFormat
+	return parser.req, nil
+}
+
+type mobileHandoffArgParser struct {
+	req         mobileHandoffRequest
+	actionSet   bool
+	platformSet bool
+}
+
+func (p *mobileHandoffArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format, false),
+		"-o":              p.stringOption(&p.req.Format, false),
+		"--addr":          p.stringOption(&p.req.Addr, true),
+		"--session":       p.stringOption(&p.req.SessionID, true),
+		"--resume":        p.stringOption(&p.req.SessionID, true),
+	}
+}
+
+func (p *mobileHandoffArgParser) stringOption(target *string, rejectOutputFormat bool) valueOption {
+	return valueOption{missing: func(flag string) error {
+		return missingFlagValueError{Command: "mobile", Flag: flag, Usage: mobileHandoffUsage}
+	}, rejectOutputFormat: rejectOutputFormat, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func (p *mobileHandoffArgParser) consumePositional(arg string) error {
+	normalized := strings.ToLower(arg)
+	switch normalized {
+	case "handoff", "show", "status", "list", "clear", "remove":
+		if p.actionSet {
+			return unexpectedExtraArgsError{Command: "mobile", Args: []string{arg}, Usage: mobileHandoffUsage}
+		}
+		p.req.Action = normalizeMobileAction(normalized)
+		p.actionSet = true
+	case "all", "ios", "android":
+		if p.platformSet {
+			return unexpectedExtraArgsError{Command: "mobile", Args: []string{arg}, Usage: mobileHandoffUsage}
+		}
+		p.req.Platform = normalized
+		p.platformSet = true
+	default:
+		return unexpectedExtraArgsError{Command: "mobile", Args: []string{arg}, Usage: mobileHandoffUsage}
+	}
+	return nil
+}
+
+func normalizeMobileAction(action string) string {
+	switch action {
+	case "handoff", "show":
+		return "handoff"
+	case "status", "list":
+		return "status"
+	default:
+		return "clear"
+	}
 }
 
 func renderMobileHandoffReport(out io.Writer, report mobileHandoffReport) {
@@ -2522,105 +2526,132 @@ func parseCronArgsWithDefault(args []string, defaultFormat string) (cronRequest,
 	if strings.TrimSpace(defaultFormat) == "" {
 		defaultFormat = "text"
 	}
-	req := cronRequest{Action: "list", Format: defaultFormat}
-	actionSet := false
-	positionals := []string{}
+	parser := cronArgParser{req: cronRequest{Action: "list", Format: defaultFormat}}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			i++
-			if i >= len(args) {
-				return req, missingFlagValueError{Command: "cron", Flag: arg, Usage: cronUsage}
-			}
-			req.Format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--description" || arg == "-d":
-			i++
-			if i >= len(args) || isOutputFormatFlag(args[i]) {
-				return req, missingFlagValueError{Command: "cron", Flag: arg, Usage: cronUsage}
-			}
-			req.Description = args[i]
-		case strings.HasPrefix(arg, "--description="):
-			req.Description = strings.TrimPrefix(arg, "--description=")
-		case arg == "--now":
-			i++
-			if i >= len(args) || isOutputFormatFlag(args[i]) {
-				return req, missingFlagValueError{Command: "cron", Flag: arg, Usage: cronUsage}
-			}
-			parsed, err := time.Parse(time.RFC3339, args[i])
-			if err != nil {
-				return req, invalidFlagValueError{Flag: "--now", Value: args[i], Message: "cron now timestamp must be RFC3339", Usage: cronUsage}
-			}
-			req.Now = parsed
-		case strings.HasPrefix(arg, "--now="):
-			value := strings.TrimPrefix(arg, "--now=")
-			parsed, err := time.Parse(time.RFC3339, value)
-			if err != nil {
-				return req, invalidFlagValueError{Flag: "--now", Value: value, Message: "cron now timestamp must be RFC3339", Usage: cronUsage}
-			}
-			req.Now = parsed
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{Command: "cron", Option: arg, Usage: cronUsage}
-		case !actionSet && isCronAction(arg):
-			req.Action = normalizeCronAction(arg)
-			actionSet = true
-		case !actionSet:
-			return req, unknownActionError{
-				Command:     "cron",
-				Action:      arg,
-				Expected:    append([]string(nil), cronActionCandidates...),
-				Suggestions: toolnames.Suggestions(arg, cronActionCandidates, 4),
-				Usage:       cronUsage,
-			}
-		default:
-			positionals = append(positionals, arg)
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
+		}
+		handled, err := consumeValueOption(args, &i, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "cron", Option: arg, Usage: cronUsage}
+		}
+		if err := parser.consumePositional(arg); err != nil {
+			return parser.req, err
 		}
 	}
-	format, err := normalizeOutputFormat("cron", req.Format, []string{"text", "json"})
+	format, err := normalizeOutputFormat("cron", parser.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = format
-	switch req.Action {
+	parser.req.Format = format
+	if err := parser.finish(); err != nil {
+		return parser.req, err
+	}
+	return parser.req, nil
+}
+
+type cronArgParser struct {
+	req         cronRequest
+	actionSet   bool
+	positionals []string
+}
+
+func (p *cronArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format, false),
+		"-o":              p.stringOption(&p.req.Format, false),
+		"--description":   p.stringOption(&p.req.Description, true),
+		"-d":              p.stringOption(&p.req.Description, true),
+		"--now":           p.nowOption(),
+	}
+}
+
+func (p *cronArgParser) stringOption(target *string, rejectOutputFormat bool) valueOption {
+	return valueOption{missing: cronMissingValue, rejectOutputFormat: rejectOutputFormat, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func (p *cronArgParser) nowOption() valueOption {
+	return valueOption{missing: cronMissingValue, rejectOutputFormat: true, set: func(value string) error {
+		parsed, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			return invalidFlagValueError{Flag: "--now", Value: value, Message: "cron now timestamp must be RFC3339", Usage: cronUsage}
+		}
+		p.req.Now = parsed
+		return nil
+	}}
+}
+
+func cronMissingValue(flag string) error {
+	return missingFlagValueError{Command: "cron", Flag: flag, Usage: cronUsage}
+}
+
+func (p *cronArgParser) consumePositional(arg string) error {
+	if p.actionSet {
+		p.positionals = append(p.positionals, arg)
+		return nil
+	}
+	if !isCronAction(arg) {
+		return unknownActionError{
+			Command:     "cron",
+			Action:      arg,
+			Expected:    append([]string(nil), cronActionCandidates...),
+			Suggestions: toolnames.Suggestions(arg, cronActionCandidates, 4),
+			Usage:       cronUsage,
+		}
+	}
+	p.req.Action = normalizeCronAction(arg)
+	p.actionSet = true
+	return nil
+}
+
+func (p *cronArgParser) finish() error {
+	switch p.req.Action {
 	case "list":
-		if len(positionals) != 0 {
+		if len(p.positionals) != 0 {
 			command := "cron list"
-			if !actionSet {
+			if !p.actionSet {
 				command = "cron"
 			}
-			return req, unexpectedExtraArgsError{
+			return unexpectedExtraArgsError{
 				Command: command,
-				Args:    append([]string(nil), positionals...),
+				Args:    append([]string(nil), p.positionals...),
 				Usage:   cronUsage,
 			}
 		}
 	case "create":
-		if len(positionals) < 2 {
-			return req, requiredArgumentError{Command: "cron create", Argument: "SCHEDULE PROMPT", Usage: cronUsage}
+		if len(p.positionals) < 2 {
+			return requiredArgumentError{Command: "cron create", Argument: "SCHEDULE PROMPT", Usage: cronUsage}
 		}
-		req.Schedule = positionals[0]
-		req.Prompt = strings.Join(positionals[1:], " ")
+		p.req.Schedule = p.positionals[0]
+		p.req.Prompt = strings.Join(p.positionals[1:], " ")
 	case "show", "delete", "enable", "disable", "mark-run":
-		if len(positionals) != 1 {
-			return req, requiredArgumentError{Command: "cron " + req.Action, Argument: "CRON_ID", Usage: cronUsage}
+		if len(p.positionals) != 1 {
+			return requiredArgumentError{Command: "cron " + p.req.Action, Argument: "CRON_ID", Usage: cronUsage}
 		}
-		req.ID = positionals[0]
+		p.req.ID = p.positionals[0]
 	case "due", "run-due":
-		if len(positionals) != 0 {
-			return req, unexpectedExtraArgsError{Command: "cron " + req.Action, Args: append([]string(nil), positionals...), Usage: cronUsage}
+		if len(p.positionals) != 0 {
+			return unexpectedExtraArgsError{Command: "cron " + p.req.Action, Args: append([]string(nil), p.positionals...), Usage: cronUsage}
 		}
 	default:
-		return req, unexpectedExtraArgsError{
+		return unexpectedExtraArgsError{
 			Command: "cron",
-			Args:    []string{req.Action},
+			Args:    []string{p.req.Action},
 			Usage:   cronUsage,
 		}
 	}
-	return req, nil
+	return nil
 }
 
 const cronUsage = "codog cron [list|ls|show|get|create|add|new|delete|remove|rm|enable|disable|due|mark-run|mark|touch|run-due|run] [ARGS...] [--json|--output-format text|json]"
@@ -4069,95 +4100,71 @@ func parseBackgroundHeartbeatArgs(args []string) (string, background.LaneHeartbe
 		return "", background.LaneHeartbeat{}, errors.New("task id is required")
 	}
 	heartbeat := background.LaneHeartbeat{TransportAlive: true}
-	args = args[1:]
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--status":
-			i++
-			if i >= len(args) {
-				return "", heartbeat, errors.New("missing value for --status")
-			}
-			heartbeat.Status = args[i]
-		case strings.HasPrefix(arg, "--status="):
-			heartbeat.Status = strings.TrimPrefix(arg, "--status=")
-		case arg == "--transport-alive":
-			i++
-			if i >= len(args) {
-				return "", heartbeat, errors.New("missing value for --transport-alive")
-			}
-			parsed, err := strconv.ParseBool(args[i])
-			if err != nil {
-				return "", heartbeat, err
-			}
-			heartbeat.TransportAlive = parsed
-		case strings.HasPrefix(arg, "--transport-alive="):
-			parsed, err := strconv.ParseBool(strings.TrimPrefix(arg, "--transport-alive="))
-			if err != nil {
-				return "", heartbeat, err
-			}
-			heartbeat.TransportAlive = parsed
-		case arg == "--dead":
+	parser := backgroundHeartbeatArgParser{heartbeat: &heartbeat}
+	heartbeatArgs := args[1:]
+	for i := 0; i < len(heartbeatArgs); i++ {
+		arg := heartbeatArgs[i]
+		if arg == "--dead" {
 			heartbeat.TransportAlive = false
-		case arg == "--observed-at":
-			i++
-			if i >= len(args) {
-				return "", heartbeat, errors.New("missing value for --observed-at")
-			}
-			observedAt, err := time.Parse(time.RFC3339, args[i])
-			if err != nil {
-				return "", heartbeat, err
-			}
-			heartbeat.ObservedAt = observedAt
-		case strings.HasPrefix(arg, "--observed-at="):
-			observedAt, err := time.Parse(time.RFC3339, strings.TrimPrefix(arg, "--observed-at="))
-			if err != nil {
-				return "", heartbeat, err
-			}
-			heartbeat.ObservedAt = observedAt
-		case arg == "--source-kind":
-			i++
-			if i >= len(args) {
-				return "", heartbeat, errors.New("missing value for --source-kind")
-			}
-			heartbeat.Provenance.SourceKind = args[i]
-		case strings.HasPrefix(arg, "--source-kind="):
-			heartbeat.Provenance.SourceKind = strings.TrimPrefix(arg, "--source-kind=")
-		case arg == "--environment":
-			i++
-			if i >= len(args) {
-				return "", heartbeat, errors.New("missing value for --environment")
-			}
-			heartbeat.Provenance.Environment = args[i]
-		case strings.HasPrefix(arg, "--environment="):
-			heartbeat.Provenance.Environment = strings.TrimPrefix(arg, "--environment=")
-		case arg == "--channel":
-			i++
-			if i >= len(args) {
-				return "", heartbeat, errors.New("missing value for --channel")
-			}
-			heartbeat.Provenance.Channel = args[i]
-		case strings.HasPrefix(arg, "--channel="):
-			heartbeat.Provenance.Channel = strings.TrimPrefix(arg, "--channel=")
-		case arg == "--emitter":
-			i++
-			if i >= len(args) {
-				return "", heartbeat, errors.New("missing value for --emitter")
-			}
-			heartbeat.Provenance.Emitter = args[i]
-		case strings.HasPrefix(arg, "--emitter="):
-			heartbeat.Provenance.Emitter = strings.TrimPrefix(arg, "--emitter=")
-		case arg == "--confidence":
-			i++
-			if i >= len(args) {
-				return "", heartbeat, errors.New("missing value for --confidence")
-			}
-			heartbeat.Provenance.Confidence = args[i]
-		case strings.HasPrefix(arg, "--confidence="):
-			heartbeat.Provenance.Confidence = strings.TrimPrefix(arg, "--confidence=")
-		default:
+			continue
+		}
+		handled, err := consumeValueOption(heartbeatArgs, &i, parser.valueOptions())
+		if err != nil {
+			return "", heartbeat, err
+		}
+		if !handled {
 			return "", heartbeat, fmt.Errorf("unknown heartbeat argument %q", arg)
 		}
 	}
 	return id, heartbeat, nil
+}
+
+type backgroundHeartbeatArgParser struct {
+	heartbeat *background.LaneHeartbeat
+}
+
+func (p *backgroundHeartbeatArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--status":          p.stringOption(&p.heartbeat.Status),
+		"--transport-alive": p.boolOption(),
+		"--observed-at":     p.timeOption(),
+		"--source-kind":     p.stringOption(&p.heartbeat.Provenance.SourceKind),
+		"--environment":     p.stringOption(&p.heartbeat.Provenance.Environment),
+		"--channel":         p.stringOption(&p.heartbeat.Provenance.Channel),
+		"--emitter":         p.stringOption(&p.heartbeat.Provenance.Emitter),
+		"--confidence":      p.stringOption(&p.heartbeat.Provenance.Confidence),
+	}
+}
+
+func (p *backgroundHeartbeatArgParser) stringOption(target *string) valueOption {
+	return valueOption{missing: heartbeatMissingValue, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func (p *backgroundHeartbeatArgParser) boolOption() valueOption {
+	return valueOption{missing: heartbeatMissingValue, set: func(value string) error {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return err
+		}
+		p.heartbeat.TransportAlive = parsed
+		return nil
+	}}
+}
+
+func (p *backgroundHeartbeatArgParser) timeOption() valueOption {
+	return valueOption{missing: heartbeatMissingValue, set: func(value string) error {
+		observedAt, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			return err
+		}
+		p.heartbeat.ObservedAt = observedAt
+		return nil
+	}}
+}
+
+func heartbeatMissingValue(flag string) error {
+	return fmt.Errorf("missing value for %s", flag)
 }
