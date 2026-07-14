@@ -267,448 +267,29 @@ func ScenarioManifest() Manifest {
 // loop without contacting an external provider.
 func Run(ctx context.Context) (Report, error) {
 	scenarios := []scenario{
-		{
-			name:   "streaming_text",
-			turns:  []mockanthropic.Turn{{Text: "streaming harness ok"}},
-			prompt: "stream text",
-			verify: func(_ string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "streaming harness ok") {
-					return fmt.Errorf("missing streamed text")
-				}
-				if len(result.ToolCalls) != 0 {
-					return fmt.Errorf("expected no tool calls, got %d", len(result.ToolCalls))
-				}
-				return nil
-			},
-		},
-		{
-			name:   "prompt_attachments_roundtrip",
-			turns:  []mockanthropic.Turn{{Text: "attachment harness ok"}},
-			prompt: "describe attached image",
-			userContent: []anthropic.ContentBlock{
-				{Type: "text", Text: "describe attached image"},
-				{Type: "image", Title: "pixel.png", Source: &anthropic.ContentSource{Type: "base64", MediaType: "image/png", Data: "aW1n"}},
-			},
-			verify: func(_ string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "attachment harness ok") {
-					return fmt.Errorf("missing attachment response")
-				}
-				if len(result.Messages) == 0 || len(result.Messages[0].Content) != 2 {
-					return fmt.Errorf("expected structured attachment content in first user message")
-				}
-				return nil
-			},
-			verifyRequests: func(requests []anthropic.Request) error {
-				if len(requests) == 0 {
-					return fmt.Errorf("expected provider request")
-				}
-				content := requests[0].Messages[0].Content
-				if len(content) != 2 || content[1].Type != "image" {
-					return fmt.Errorf("expected image content block in provider request")
-				}
-				if content[1].Source == nil || content[1].Source.MediaType != "image/png" || content[1].Source.Data == "" {
-					return fmt.Errorf("expected base64 image source in provider request")
-				}
-				return nil
-			},
-		},
+		inlineStreamingTextScenario(),
+		inlinePromptAttachmentsRoundtripScenario(),
 		promptDirectoryAttachmentScenario(),
-		{
-			name: "read_file_roundtrip",
-			turns: []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{{
-					ID:    "tool-1",
-					Name:  "read_file",
-					Input: json.RawMessage(`{"path":"README.md"}`),
-				}}},
-				{Text: "codog harness ok"},
-			},
-			prompt: "read file",
-			setup: func(workspace string) error {
-				return os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Harness\n"), 0o644)
-			},
-			verify: func(_ string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "codog harness ok") {
-					return fmt.Errorf("missing final read_file response")
-				}
-				return expectToolCalls(result, 1, false)
-			},
-		},
-		{
-			name:       "write_file_allowed",
-			permission: tools.PermissionWorkspace,
-			turns: []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{{
-					ID:    "tool-1",
-					Name:  "write_file",
-					Input: json.RawMessage(`{"path":"created.txt","content":"created by harness\n"}`),
-				}}},
-				{Text: "write harness ok"},
-			},
-			prompt: "write file",
-			verify: func(workspace string, result runloop.TurnResult, _ string) error {
-				if err := expectToolCalls(result, 1, false); err != nil {
-					return err
-				}
-				data, err := os.ReadFile(filepath.Join(workspace, "created.txt"))
-				if err != nil {
-					return err
-				}
-				if string(data) != "created by harness\n" {
-					return fmt.Errorf("unexpected file content %q", string(data))
-				}
-				return nil
-			},
-		},
-		{
-			name:       "write_file_denied",
-			permission: tools.PermissionReadOnly,
-			turns: []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{{
-					ID:    "tool-1",
-					Name:  "write_file",
-					Input: json.RawMessage(`{"path":"denied.txt","content":"nope\n"}`),
-				}}},
-				{Text: "denied harness ok"},
-			},
-			prompt:   "deny write",
-			promptIn: "n\n",
-			verify: func(workspace string, result runloop.TurnResult, _ string) error {
-				if err := expectToolCalls(result, 1, true); err != nil {
-					return err
-				}
-				if _, err := os.Stat(filepath.Join(workspace, "denied.txt")); !os.IsNotExist(err) {
-					return fmt.Errorf("denied file exists or stat failed: %v", err)
-				}
-				return nil
-			},
-		},
-		{
-			name:       "pre_tool_hook_updates_input",
-			permission: tools.PermissionReadOnly,
-			hooks: config.HookConfig{
-				PreToolUseCommands: []config.HookCommand{{
-					Matcher: "write_file",
-					Command: `printf '%s' '{"systemMessage":"updated","hookSpecificOutput":{"permissionDecision":"allow","permissionDecisionReason":"hook ok","updatedInput":{"path":"hooked.txt","content":"hooked by harness\n"}}}'`,
-				}},
-			},
-			turns: []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{{
-					ID:    "tool-1",
-					Name:  "write_file",
-					Input: json.RawMessage(`{"path":"original.txt","content":"original\n"}`),
-				}}},
-				{Text: "pre hook harness ok"},
-			},
-			prompt: "rewrite with hook",
-			verify: func(workspace string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "pre hook harness ok") {
-					return fmt.Errorf("missing pre-tool hook final response")
-				}
-				if err := expectToolCalls(result, 1, false); err != nil {
-					return err
-				}
-				if result.ToolCalls[0].Input != `{"path":"hooked.txt","content":"hooked by harness\n"}` {
-					return fmt.Errorf("tool input was not updated by hook: %s", result.ToolCalls[0].Input)
-				}
-				if _, err := os.Stat(filepath.Join(workspace, "original.txt")); !os.IsNotExist(err) {
-					return fmt.Errorf("original file exists or stat failed: %v", err)
-				}
-				data, err := os.ReadFile(filepath.Join(workspace, "hooked.txt"))
-				if err != nil {
-					return err
-				}
-				if string(data) != "hooked by harness\n" {
-					return fmt.Errorf("unexpected hooked file content %q", string(data))
-				}
-				return nil
-			},
-		},
-		{
-			name: "user_prompt_hook_adds_context",
-			hooks: config.HookConfig{
-				UserPromptSubmitCommands: []config.HookCommand{{
-					Command: `printf '%s' '{"systemMessage":"prompt parity note","hookSpecificOutput":{"additionalContext":"prompt parity context"}}'`,
-				}},
-			},
-			turns:  []mockanthropic.Turn{{Text: "prompt hook harness ok"}},
-			prompt: "prompt hook context",
-			verify: func(_ string, _ runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "prompt hook harness ok") {
-					return fmt.Errorf("missing prompt hook final response")
-				}
-				return nil
-			},
-			verifyRequests: func(requests []anthropic.Request) error {
-				if len(requests) != 1 {
-					return fmt.Errorf("expected 1 prompt hook request, got %d", len(requests))
-				}
-				if len(requests[0].Messages) != 2 {
-					return fmt.Errorf("expected prompt hook feedback message, got %d messages", len(requests[0].Messages))
-				}
-				feedback := requests[0].Messages[1].Content[0].Text
-				if !strings.Contains(feedback, "prompt parity note") ||
-					!strings.Contains(feedback, "prompt parity context") {
-					return fmt.Errorf("missing prompt hook feedback in request")
-				}
-				return nil
-			},
-		},
-		{
-			name: "stop_hook_adds_feedback",
-			hooks: config.HookConfig{
-				StopCommands: []config.HookCommand{{
-					Command: `printf '%s' '{"systemMessage":"stop parity note","hookSpecificOutput":{"additionalContext":"stop parity context"}}'`,
-				}},
-			},
-			turns:  []mockanthropic.Turn{{Text: "stop hook harness ok"}},
-			prompt: "stop hook feedback",
-			verify: func(_ string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "stop hook harness ok") {
-					return fmt.Errorf("missing stop hook final response")
-				}
-				if !slices.Equal(result.StopHookFeedback, []string{"stop parity note", "stop parity context"}) {
-					return fmt.Errorf("unexpected stop hook feedback: %#v", result.StopHookFeedback)
-				}
-				return nil
-			},
-		},
-		{
-			name:       "post_tool_hook_blocks_result",
-			permission: tools.PermissionWorkspace,
-			hooks: config.HookConfig{
-				PostToolUseCommands: []config.HookCommand{{
-					Matcher: "write_file",
-					Command: `printf '%s' '{"continue":false,"reason":"post hook blocked result"}'`,
-				}},
-			},
-			turns: []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{{
-					ID:    "tool-1",
-					Name:  "write_file",
-					Input: json.RawMessage(`{"path":"post-hook.txt","content":"written before post hook\n"}`),
-				}}},
-				{Text: "post hook block harness ok"},
-			},
-			prompt: "write with post hook",
-			verify: func(workspace string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "post hook block harness ok") {
-					return fmt.Errorf("missing post-tool hook final response")
-				}
-				if err := expectToolCalls(result, 1, true); err != nil {
-					return err
-				}
-				if !strings.Contains(result.ToolCalls[0].Output, "Hook feedback (error):\npost hook blocked result") {
-					return fmt.Errorf("post-tool hook denial was not surfaced: %s", result.ToolCalls[0].Output)
-				}
-				data, err := os.ReadFile(filepath.Join(workspace, "post-hook.txt"))
-				if err != nil {
-					return err
-				}
-				if string(data) != "written before post hook\n" {
-					return fmt.Errorf("unexpected post-hook file content %q", string(data))
-				}
-				return nil
-			},
-		},
-		{
-			name: "post_tool_hook_adds_feedback",
-			hooks: config.HookConfig{
-				PostToolUseCommands: []config.HookCommand{{
-					Matcher: "read_file",
-					Command: `printf '%s' '{"systemMessage":"post feedback"}'`,
-				}},
-			},
-			turns: []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{{
-					ID:    "tool-1",
-					Name:  "read_file",
-					Input: json.RawMessage(`{"path":"feedback.txt"}`),
-				}}},
-				{Text: "post feedback harness ok"},
-			},
-			prompt: "read with post feedback",
-			setup: func(workspace string) error {
-				return os.WriteFile(filepath.Join(workspace, "feedback.txt"), []byte("feedback file\n"), 0o644)
-			},
-			verify: func(_ string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "post feedback harness ok") {
-					return fmt.Errorf("missing post feedback final response")
-				}
-				if err := expectToolCalls(result, 1, false); err != nil {
-					return err
-				}
-				if !strings.Contains(result.ToolCalls[0].Output, "Hook feedback:\npost feedback") {
-					return fmt.Errorf("post-tool hook feedback was not surfaced: %s", result.ToolCalls[0].Output)
-				}
-				return nil
-			},
-		},
-		{
-			name:       "file_changed_hook_adds_feedback",
-			permission: tools.PermissionWorkspace,
-			hooks: config.HookConfig{
-				FileChangedCommands: []config.HookCommand{{
-					Matcher: "write_file",
-					Command: `printf '%s' '{"systemMessage":"file changed feedback"}'`,
-				}},
-			},
-			turns: []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{{
-					ID:    "tool-1",
-					Name:  "write_file",
-					Input: json.RawMessage(`{"path":"file-hook.txt","content":"file hook\n"}`),
-				}}},
-				{Text: "file changed feedback harness ok"},
-			},
-			prompt: "write with file changed hook",
-			verify: func(workspace string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "file changed feedback harness ok") {
-					return fmt.Errorf("missing file changed hook final response")
-				}
-				if err := expectToolCalls(result, 1, false); err != nil {
-					return err
-				}
-				if !strings.Contains(result.ToolCalls[0].Output, "Hook feedback:\nfile changed feedback") {
-					return fmt.Errorf("file-changed hook feedback was not surfaced: %s", result.ToolCalls[0].Output)
-				}
-				data, err := os.ReadFile(filepath.Join(workspace, "file-hook.txt"))
-				if err != nil {
-					return err
-				}
-				if string(data) != "file hook\n" {
-					return fmt.Errorf("unexpected file hook content %q", string(data))
-				}
-				return nil
-			},
-		},
-		{
-			name: "multi_tool_turn_roundtrip",
-			turns: []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{
-					{ID: "tool-1", Name: "read_file", Input: json.RawMessage(`{"path":"README.md"}`)},
-					{ID: "tool-2", Name: "grep", Input: json.RawMessage(`{"pattern":"Needle","path":"."}`)},
-				}},
-				{Text: "multi tool harness ok"},
-			},
-			prompt: "use multiple tools",
-			setup: func(workspace string) error {
-				return os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Harness\nNeedle\n"), 0o644)
-			},
-			verify: func(_ string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "multi tool harness ok") {
-					return fmt.Errorf("missing multi-tool final response")
-				}
-				return expectToolCalls(result, 2, false)
-			},
-		},
-		{
-			name: "grep_chunk_assembly",
-			turns: []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{{
-					ID:          "tool-1",
-					Name:        "grep",
-					InputDeltas: []string{`{"pattern":"Need`, `le","path":".","output_mode":"content"}`},
-				}}},
-				{Text: "grep chunk harness ok"},
-			},
-			prompt: "grep chunks",
-			setup: func(workspace string) error {
-				return os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Harness\nNeedle\n"), 0o644)
-			},
-			verify: func(_ string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "grep chunk harness ok") {
-					return fmt.Errorf("missing grep chunk final response")
-				}
-				if err := expectToolCalls(result, 1, false); err != nil {
-					return err
-				}
-				if !strings.Contains(result.ToolCalls[0].Output, "Needle") {
-					return fmt.Errorf("missing grep match in tool output")
-				}
-				return nil
-			},
-		},
+		inlineReadFileRoundtripScenario(),
+		inlineWriteFileAllowedScenario(),
+		inlineWriteFileDeniedScenario(),
+		inlinePreToolHookUpdatesInputScenario(),
+		inlineUserPromptHookAddsContextScenario(),
+		inlineStopHookAddsFeedbackScenario(),
+		inlinePostToolHookBlocksResultScenario(),
+		inlinePostToolHookAddsFeedbackScenario(),
+		inlineFileChangedHookAddsFeedbackScenario(),
+		inlineMultiToolTurnRoundtripScenario(),
+		inlineGrepChunkAssemblyScenario(),
 		editGlobLSScenario(),
 		multiEditApplyPatchScenario(),
-		{
-			name:       "bash_stdout_roundtrip",
-			permission: tools.PermissionAllow,
-			turns: []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{{
-					ID:    "tool-1",
-					Name:  "bash",
-					Input: json.RawMessage(`{"command":"printf harness-bash","timeout":1000}`),
-				}}},
-				{Text: "bash harness ok"},
-			},
-			prompt: "run bash",
-			verify: func(_ string, result runloop.TurnResult, _ string) error {
-				if err := expectToolCalls(result, 1, false); err != nil {
-					return err
-				}
-				if !strings.Contains(result.ToolCalls[0].Output, "harness-bash") {
-					return fmt.Errorf("missing bash stdout in tool output")
-				}
-				return nil
-			},
-		},
+		inlineBashStdoutRoundtripScenario(),
 		bashBackgroundOutputScenario(),
 		bashKillScenario(),
 		powerShellStdoutScenario(),
 		bashOutputTruncationScenario(),
-		{
-			name:       "bash_permission_prompt_approved",
-			permission: tools.PermissionWorkspace,
-			promptIn:   "y\n",
-			turns: []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{{
-					ID:    "tool-1",
-					Name:  "bash",
-					Input: json.RawMessage(`{"command":"printf approved-bash","timeout":1000}`),
-				}}},
-				{Text: "bash approved harness ok"},
-			},
-			prompt: "approve bash",
-			verify: func(_ string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "bash approved harness ok") {
-					return fmt.Errorf("missing approved bash final response")
-				}
-				if err := expectToolCalls(result, 1, false); err != nil {
-					return err
-				}
-				if !strings.Contains(result.ToolCalls[0].Output, "approved-bash") {
-					return fmt.Errorf("missing approved bash stdout in tool output")
-				}
-				return nil
-			},
-		},
-		{
-			name:       "bash_permission_prompt_denied",
-			permission: tools.PermissionWorkspace,
-			promptIn:   "n\n",
-			turns: []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{{
-					ID:    "tool-1",
-					Name:  "bash",
-					Input: json.RawMessage(`{"command":"printf denied-bash","timeout":1000}`),
-				}}},
-				{Text: "bash denied harness ok"},
-			},
-			prompt: "deny bash",
-			verify: func(_ string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "bash denied harness ok") {
-					return fmt.Errorf("missing denied bash final response")
-				}
-				if err := expectToolCalls(result, 1, true); err != nil {
-					return err
-				}
-				if !strings.Contains(result.ToolCalls[0].Output, "permission denied") {
-					return fmt.Errorf("missing permission denial in tool output")
-				}
-				return nil
-			},
-		},
+		inlineBashPermissionPromptApprovedScenario(),
+		inlineBashPermissionPromptDeniedScenario(),
 		permissionScopeDenialScenario(),
 		sandboxBypassStatusScenario(),
 		policyUpdateSandboxScenario(),
@@ -723,39 +304,7 @@ func Run(ctx context.Context) (Report, error) {
 		todoCompletionVerificationScenario(),
 		lspStaticScenario(),
 		lspCLIMetadataScenario(),
-		{
-			name:    "plugin_tool_roundtrip",
-			plugins: true,
-			turns: []mockanthropic.Turn{
-				{ToolUses: []mockanthropic.ToolUse{{
-					ID:    "tool-1",
-					Name:  "demo_tool",
-					Input: json.RawMessage(`{"message":"plugin-harness"}`),
-				}}},
-				{Text: "plugin harness ok"},
-			},
-			prompt: "run plugin",
-			setup: func(workspace string) error {
-				dir := filepath.Join(workspace, ".codog", "plugins", "demo")
-				if err := os.MkdirAll(dir, 0o755); err != nil {
-					return err
-				}
-				manifest := `{"id":"demo","tools":[{"name":"demo_tool","command":"cat","permission":"read-only"}]}`
-				return os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(manifest), 0o644)
-			},
-			verify: func(_ string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "plugin harness ok") {
-					return fmt.Errorf("missing plugin final response")
-				}
-				if err := expectToolCalls(result, 1, false); err != nil {
-					return err
-				}
-				if !strings.Contains(result.ToolCalls[0].Output, "plugin-harness") {
-					return fmt.Errorf("missing plugin stdin echo in tool output")
-				}
-				return nil
-			},
-		},
+		inlinePluginToolRoundtripScenario(),
 		commandSkillTemplateScenario(),
 		skillActivationScenario(),
 		onboardingBookmarksScenario(),
@@ -806,72 +355,8 @@ func Run(ctx context.Context) (Report, error) {
 		mcpAuthOAuthRefreshScenario(),
 		mcpAuthRecoveryScenario(),
 		acpStdioScenario(),
-		{
-			name: "auto_compact_triggered",
-			turns: []mockanthropic.Turn{
-				{Text: "compact harness ok"},
-			},
-			prompt:              "trigger compact",
-			autoCompactMessages: 1,
-			hooks: config.HookConfig{
-				PreCompactCommands: []config.HookCommand{{
-					Command: `printf '%s' '{"systemMessage":"compact parity pre"}'`,
-				}},
-				PostCompactCommands: []config.HookCommand{{
-					Command: `printf '%s' '{"hookSpecificOutput":{"additionalContext":"compact parity post"}}'`,
-				}},
-			},
-			previous: []anthropic.Message{
-				anthropic.TextMessage("user", "one"),
-				anthropic.TextMessage("assistant", "two"),
-				anthropic.TextMessage("user", "three"),
-			},
-			verify: func(_ string, _ runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "compact harness ok") {
-					return fmt.Errorf("missing compact final response")
-				}
-				return nil
-			},
-			verifyRequests: func(requests []anthropic.Request) error {
-				if len(requests) != 1 {
-					return fmt.Errorf("expected 1 compacted request, got %d", len(requests))
-				}
-				if len(requests[0].Messages) != 2 {
-					return fmt.Errorf("expected compacted request to keep 2 messages, got %d", len(requests[0].Messages))
-				}
-				if len(requests[0].Messages[0].Content) == 0 ||
-					!strings.Contains(requests[0].Messages[0].Content[0].Text, "auto-compacted") {
-					return fmt.Errorf("missing auto-compaction summary message")
-				}
-				summary := requests[0].Messages[0].Content[0].Text
-				if !strings.Contains(summary, "compact parity pre") ||
-					!strings.Contains(summary, "compact parity post") {
-					return fmt.Errorf("missing compaction hook feedback in summary")
-				}
-				return nil
-			},
-		},
-		{
-			name:   "token_cost_reporting",
-			turns:  []mockanthropic.Turn{{Text: "token cost harness ok"}},
-			prompt: "report token cost",
-			verify: func(_ string, result runloop.TurnResult, output string) error {
-				if !strings.Contains(output, "token cost harness ok") {
-					return fmt.Errorf("missing token cost final response")
-				}
-				summary := usageSummaryForResult(result)
-				if summary.Source != "actual" {
-					return fmt.Errorf("expected actual token usage source, got %q", summary.Source)
-				}
-				if summary.TotalTokens == 0 {
-					return fmt.Errorf("missing provider token counts")
-				}
-				if summary.EstimatedUSD <= 0 {
-					return fmt.Errorf("missing estimated cost")
-				}
-				return nil
-			},
-		},
+		inlineAutoCompactTriggeredScenario(),
+		inlineTokenCostReportingScenario(),
 	}
 
 	report := Report{SchemaVersion: ReportSchemaVersion, Total: len(scenarios), ScenarioCount: len(scenarios)}
@@ -966,53 +451,68 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 		return scenarioErrorReport(item.name, metadata, "", err)
 	}
 	defer func() { _ = os.RemoveAll(workspace) }()
-	if item.setup != nil {
-		if err := item.setup(workspace); err != nil {
-			return scenarioErrorReport(item.name, metadata, workspace, err)
-		}
+	previous, turns, cleanup, err := prepareScenarioWorkspace(item, workspace)
+	if cleanup != nil {
+		defer cleanup()
 	}
-	previous := item.previous
-	if item.loadPrevious != nil {
-		loaded, err := item.loadPrevious(workspace)
-		if err != nil {
-			return scenarioErrorReport(item.name, metadata, workspace, err)
-		}
-		previous = loaded
-	}
-	turns := item.turns
-	if item.prepare != nil {
-		preparedTurns, cleanup, err := item.prepare(workspace)
-		if cleanup != nil {
-			defer cleanup()
-		}
-		if err != nil {
-			return scenarioErrorReport(item.name, metadata, workspace, err)
-		}
-		turns = preparedTurns
+	if err != nil {
+		return scenarioErrorReport(item.name, metadata, workspace, err)
 	}
 	if item.runLocal != nil {
-		localResult, err := item.runLocal(ctx, workspace)
-		report := ScenarioReport{
-			Name:           item.name,
-			Category:       metadata.Category,
-			Description:    metadata.Description,
-			ParityRefs:     append([]string(nil), metadata.ParityRefs...),
-			Workspace:      workspace,
-			Output:         localResult.Output,
-			RequestCount:   localResult.RequestCount,
-			MessageCount:   localResult.MessageCount,
-			ToolCalls:      localResult.ToolCalls,
-			ToolUses:       append([]string(nil), localResult.ToolUses...),
-			ToolErrorCount: localResult.ToolErrorCount,
-			FinalMessage:   localResult.FinalMessage,
+		return runLocalScenario(ctx, item, metadata, workspace)
+	}
+	return runProviderScenario(ctx, item, metadata, workspace, previous, turns)
+}
+
+func prepareScenarioWorkspace(item scenario, workspace string) ([]anthropic.Message, []mockanthropic.Turn, func(), error) {
+	if item.setup != nil {
+		if err := item.setup(workspace); err != nil {
+			return nil, nil, nil, err
 		}
-		if err != nil {
-			report.Error = err.Error()
-			return report
-		}
-		report.OK = true
+	}
+	previous, err := loadScenarioMessages(item, workspace)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if item.prepare == nil {
+		return previous, item.turns, nil, nil
+	}
+	turns, cleanup, err := item.prepare(workspace)
+	return previous, turns, cleanup, err
+}
+
+func loadScenarioMessages(item scenario, workspace string) ([]anthropic.Message, error) {
+	if item.loadPrevious == nil {
+		return item.previous, nil
+	}
+	return item.loadPrevious(workspace)
+}
+
+func runLocalScenario(ctx context.Context, item scenario, metadata scenarioMetadata, workspace string) ScenarioReport {
+	result, err := item.runLocal(ctx, workspace)
+	report := ScenarioReport{
+		Name:           item.name,
+		Category:       metadata.Category,
+		Description:    metadata.Description,
+		ParityRefs:     append([]string(nil), metadata.ParityRefs...),
+		Workspace:      workspace,
+		Output:         result.Output,
+		RequestCount:   result.RequestCount,
+		MessageCount:   result.MessageCount,
+		ToolCalls:      result.ToolCalls,
+		ToolUses:       append([]string(nil), result.ToolUses...),
+		ToolErrorCount: result.ToolErrorCount,
+		FinalMessage:   result.FinalMessage,
+	}
+	if err != nil {
+		report.Error = err.Error()
 		return report
 	}
+	report.OK = true
+	return report
+}
+
+func runProviderScenario(ctx context.Context, item scenario, metadata scenarioMetadata, workspace string, previous []anthropic.Message, turns []mockanthropic.Turn) ScenarioReport {
 
 	var requests []anthropic.Request
 	mockServer := mockanthropic.Server{
@@ -1087,24 +587,28 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 		Compactions:          compactRequestCount(requests),
 	}
 	scenarioReport.EstimatedCost = scenarioReport.UsageSummary.EstimatedUSD
+	return verifyProviderScenario(item, workspace, result, requests, out.String(), runErr, scenarioReport)
+}
+
+func verifyProviderScenario(item scenario, workspace string, result runloop.TurnResult, requests []anthropic.Request, output string, runErr error, report ScenarioReport) ScenarioReport {
 	if runErr != nil {
-		scenarioReport.Error = runErr.Error()
-		return scenarioReport
+		report.Error = runErr.Error()
+		return report
 	}
 	if item.verify != nil {
-		if err := item.verify(workspace, result, out.String()); err != nil {
-			scenarioReport.Error = err.Error()
-			return scenarioReport
+		if err := item.verify(workspace, result, output); err != nil {
+			report.Error = err.Error()
+			return report
 		}
 	}
 	if item.verifyRequests != nil {
 		if err := item.verifyRequests(requests); err != nil {
-			scenarioReport.Error = err.Error()
-			return scenarioReport
+			report.Error = err.Error()
+			return report
 		}
 	}
-	scenarioReport.OK = true
-	return scenarioReport
+	report.OK = true
+	return report
 }
 
 func categoryCoverage(scenarios []ScenarioReport) []CategoryReport {
@@ -1881,6 +1385,35 @@ func waitForBackgroundLogs(ctx context.Context, store background.Store, id strin
 	}
 }
 
+func createHarnessConfigFile(workspace string, homeName string, values map[string]any) (string, error) {
+	configHome := filepath.Join(workspace, homeName)
+	if err := os.MkdirAll(configHome, 0o755); err != nil {
+		return "", err
+	}
+	if values == nil {
+		values = map[string]any{}
+	}
+	values["config_home"] = configHome
+	data, err := json.Marshal(values)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(workspace, "codog-config.json")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func harnessContainsAll(value string, expected ...string) bool {
+	for _, item := range expected {
+		if !strings.Contains(value, item) {
+			return false
+		}
+	}
+	return true
+}
+
 func configPrecedenceScenario() scenario {
 	var loadedModel string
 	var loadedPermission string
@@ -2007,4 +1540,647 @@ func configPrecedenceScenario() scenario {
 			return nil
 		},
 	}
+}
+
+func inlineStreamingTextScenario() scenario {
+	return scenario{
+		name:   "streaming_text",
+		turns:  []mockanthropic.Turn{{Text: "streaming harness ok"}},
+		prompt: "stream text",
+		verify: inlineStreamingTextScenarioVerify,
+	}
+}
+
+func inlinePromptAttachmentsRoundtripScenario() scenario {
+	return scenario{
+		name:   "prompt_attachments_roundtrip",
+		turns:  []mockanthropic.Turn{{Text: "attachment harness ok"}},
+		prompt: "describe attached image",
+		userContent: []anthropic.ContentBlock{
+			{Type: "text", Text: "describe attached image"},
+			{Type: "image", Title: "pixel.png", Source: &anthropic.ContentSource{Type: "base64", MediaType: "image/png", Data: "aW1n"}},
+		},
+		verify:         inlinePromptAttachmentsRoundtripScenarioVerify,
+		verifyRequests: inlinePromptAttachmentsRoundtripScenarioVerifyRequests,
+	}
+}
+
+func inlineReadFileRoundtripScenario() scenario {
+	return scenario{
+		name: "read_file_roundtrip",
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-1",
+				Name:  "read_file",
+				Input: json.RawMessage(`{"path":"README.md"}`),
+			}}},
+			{Text: "codog harness ok"},
+		},
+		prompt: "read file",
+		setup:  inlineReadFileRoundtripScenarioSetup,
+		verify: inlineReadFileRoundtripScenarioVerify,
+	}
+}
+
+func inlineWriteFileAllowedScenario() scenario {
+	return scenario{
+		name:       "write_file_allowed",
+		permission: tools.PermissionWorkspace,
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-1",
+				Name:  "write_file",
+				Input: json.RawMessage(`{"path":"created.txt","content":"created by harness\n"}`),
+			}}},
+			{Text: "write harness ok"},
+		},
+		prompt: "write file",
+		verify: inlineWriteFileAllowedScenarioVerify,
+	}
+}
+
+func inlineWriteFileDeniedScenario() scenario {
+	return scenario{
+		name:       "write_file_denied",
+		permission: tools.PermissionReadOnly,
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-1",
+				Name:  "write_file",
+				Input: json.RawMessage(`{"path":"denied.txt","content":"nope\n"}`),
+			}}},
+			{Text: "denied harness ok"},
+		},
+		prompt:   "deny write",
+		promptIn: "n\n",
+		verify:   inlineWriteFileDeniedScenarioVerify,
+	}
+}
+
+func inlinePreToolHookUpdatesInputScenario() scenario {
+	return scenario{
+		name:       "pre_tool_hook_updates_input",
+		permission: tools.PermissionReadOnly,
+		hooks: config.HookConfig{
+			PreToolUseCommands: []config.HookCommand{{
+				Matcher: "write_file",
+				Command: `printf '%s' '{"systemMessage":"updated","hookSpecificOutput":{"permissionDecision":"allow","permissionDecisionReason":"hook ok","updatedInput":{"path":"hooked.txt","content":"hooked by harness\n"}}}'`,
+			}},
+		},
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-1",
+				Name:  "write_file",
+				Input: json.RawMessage(`{"path":"original.txt","content":"original\n"}`),
+			}}},
+			{Text: "pre hook harness ok"},
+		},
+		prompt: "rewrite with hook",
+		verify: inlinePreToolHookUpdatesInputScenarioVerify,
+	}
+}
+
+func inlineUserPromptHookAddsContextScenario() scenario {
+	return scenario{
+		name: "user_prompt_hook_adds_context",
+		hooks: config.HookConfig{
+			UserPromptSubmitCommands: []config.HookCommand{{
+				Command: `printf '%s' '{"systemMessage":"prompt parity note","hookSpecificOutput":{"additionalContext":"prompt parity context"}}'`,
+			}},
+		},
+		turns:          []mockanthropic.Turn{{Text: "prompt hook harness ok"}},
+		prompt:         "prompt hook context",
+		verify:         inlineUserPromptHookAddsContextScenarioVerify,
+		verifyRequests: inlineUserPromptHookAddsContextScenarioVerifyRequests,
+	}
+}
+
+func inlineStopHookAddsFeedbackScenario() scenario {
+	return scenario{
+		name: "stop_hook_adds_feedback",
+		hooks: config.HookConfig{
+			StopCommands: []config.HookCommand{{
+				Command: `printf '%s' '{"systemMessage":"stop parity note","hookSpecificOutput":{"additionalContext":"stop parity context"}}'`,
+			}},
+		},
+		turns:  []mockanthropic.Turn{{Text: "stop hook harness ok"}},
+		prompt: "stop hook feedback",
+		verify: inlineStopHookAddsFeedbackScenarioVerify,
+	}
+}
+
+func inlinePostToolHookBlocksResultScenario() scenario {
+	return scenario{
+		name:       "post_tool_hook_blocks_result",
+		permission: tools.PermissionWorkspace,
+		hooks: config.HookConfig{
+			PostToolUseCommands: []config.HookCommand{{
+				Matcher: "write_file",
+				Command: `printf '%s' '{"continue":false,"reason":"post hook blocked result"}'`,
+			}},
+		},
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-1",
+				Name:  "write_file",
+				Input: json.RawMessage(`{"path":"post-hook.txt","content":"written before post hook\n"}`),
+			}}},
+			{Text: "post hook block harness ok"},
+		},
+		prompt: "write with post hook",
+		verify: inlinePostToolHookBlocksResultScenarioVerify,
+	}
+}
+
+func inlinePostToolHookAddsFeedbackScenario() scenario {
+	return scenario{
+		name: "post_tool_hook_adds_feedback",
+		hooks: config.HookConfig{
+			PostToolUseCommands: []config.HookCommand{{
+				Matcher: "read_file",
+				Command: `printf '%s' '{"systemMessage":"post feedback"}'`,
+			}},
+		},
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-1",
+				Name:  "read_file",
+				Input: json.RawMessage(`{"path":"feedback.txt"}`),
+			}}},
+			{Text: "post feedback harness ok"},
+		},
+		prompt: "read with post feedback",
+		setup:  inlinePostToolHookAddsFeedbackScenarioSetup,
+		verify: inlinePostToolHookAddsFeedbackScenarioVerify,
+	}
+}
+
+func inlineFileChangedHookAddsFeedbackScenario() scenario {
+	return scenario{
+		name:       "file_changed_hook_adds_feedback",
+		permission: tools.PermissionWorkspace,
+		hooks: config.HookConfig{
+			FileChangedCommands: []config.HookCommand{{
+				Matcher: "write_file",
+				Command: `printf '%s' '{"systemMessage":"file changed feedback"}'`,
+			}},
+		},
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-1",
+				Name:  "write_file",
+				Input: json.RawMessage(`{"path":"file-hook.txt","content":"file hook\n"}`),
+			}}},
+			{Text: "file changed feedback harness ok"},
+		},
+		prompt: "write with file changed hook",
+		verify: inlineFileChangedHookAddsFeedbackScenarioVerify,
+	}
+}
+
+func inlineMultiToolTurnRoundtripScenario() scenario {
+	return scenario{
+		name: "multi_tool_turn_roundtrip",
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{
+				{ID: "tool-1", Name: "read_file", Input: json.RawMessage(`{"path":"README.md"}`)},
+				{ID: "tool-2", Name: "grep", Input: json.RawMessage(`{"pattern":"Needle","path":"."}`)},
+			}},
+			{Text: "multi tool harness ok"},
+		},
+		prompt: "use multiple tools",
+		setup:  inlineMultiToolTurnRoundtripScenarioSetup,
+		verify: inlineMultiToolTurnRoundtripScenarioVerify,
+	}
+}
+
+func inlineGrepChunkAssemblyScenario() scenario {
+	return scenario{
+		name: "grep_chunk_assembly",
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:          "tool-1",
+				Name:        "grep",
+				InputDeltas: []string{`{"pattern":"Need`, `le","path":".","output_mode":"content"}`},
+			}}},
+			{Text: "grep chunk harness ok"},
+		},
+		prompt: "grep chunks",
+		setup:  inlineGrepChunkAssemblyScenarioSetup,
+		verify: inlineGrepChunkAssemblyScenarioVerify,
+	}
+}
+
+func inlineBashStdoutRoundtripScenario() scenario {
+	return scenario{
+		name:       "bash_stdout_roundtrip",
+		permission: tools.PermissionAllow,
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-1",
+				Name:  "bash",
+				Input: json.RawMessage(`{"command":"printf harness-bash","timeout":1000}`),
+			}}},
+			{Text: "bash harness ok"},
+		},
+		prompt: "run bash",
+		verify: inlineBashStdoutRoundtripScenarioVerify,
+	}
+}
+
+func inlineBashPermissionPromptApprovedScenario() scenario {
+	return scenario{
+		name:       "bash_permission_prompt_approved",
+		permission: tools.PermissionWorkspace,
+		promptIn:   "y\n",
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-1",
+				Name:  "bash",
+				Input: json.RawMessage(`{"command":"printf approved-bash","timeout":1000}`),
+			}}},
+			{Text: "bash approved harness ok"},
+		},
+		prompt: "approve bash",
+		verify: inlineBashPermissionPromptApprovedScenarioVerify,
+	}
+}
+
+func inlineBashPermissionPromptDeniedScenario() scenario {
+	return scenario{
+		name:       "bash_permission_prompt_denied",
+		permission: tools.PermissionWorkspace,
+		promptIn:   "n\n",
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-1",
+				Name:  "bash",
+				Input: json.RawMessage(`{"command":"printf denied-bash","timeout":1000}`),
+			}}},
+			{Text: "bash denied harness ok"},
+		},
+		prompt: "deny bash",
+		verify: inlineBashPermissionPromptDeniedScenarioVerify,
+	}
+}
+
+func inlinePluginToolRoundtripScenario() scenario {
+	return scenario{
+		name:    "plugin_tool_roundtrip",
+		plugins: true,
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-1",
+				Name:  "demo_tool",
+				Input: json.RawMessage(`{"message":"plugin-harness"}`),
+			}}},
+			{Text: "plugin harness ok"},
+		},
+		prompt: "run plugin",
+		setup:  inlinePluginToolRoundtripScenarioSetup,
+		verify: inlinePluginToolRoundtripScenarioVerify,
+	}
+}
+
+func inlineAutoCompactTriggeredScenario() scenario {
+	return scenario{
+		name: "auto_compact_triggered",
+		turns: []mockanthropic.Turn{
+			{Text: "compact harness ok"},
+		},
+		prompt:              "trigger compact",
+		autoCompactMessages: 1,
+		hooks: config.HookConfig{
+			PreCompactCommands: []config.HookCommand{{
+				Command: `printf '%s' '{"systemMessage":"compact parity pre"}'`,
+			}},
+			PostCompactCommands: []config.HookCommand{{
+				Command: `printf '%s' '{"hookSpecificOutput":{"additionalContext":"compact parity post"}}'`,
+			}},
+		},
+		previous: []anthropic.Message{
+			anthropic.TextMessage("user", "one"),
+			anthropic.TextMessage("assistant", "two"),
+			anthropic.TextMessage("user", "three"),
+		},
+		verify:         inlineAutoCompactTriggeredScenarioVerify,
+		verifyRequests: inlineAutoCompactTriggeredScenarioVerifyRequests,
+	}
+}
+
+func inlineTokenCostReportingScenario() scenario {
+	return scenario{
+		name:   "token_cost_reporting",
+		turns:  []mockanthropic.Turn{{Text: "token cost harness ok"}},
+		prompt: "report token cost",
+		verify: inlineTokenCostReportingScenarioVerify,
+	}
+}
+
+func inlineStreamingTextScenarioVerify(_ string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "streaming harness ok") {
+		return fmt.Errorf("missing streamed text")
+	}
+	if len(result.ToolCalls) != 0 {
+		return fmt.Errorf("expected no tool calls, got %d", len(result.ToolCalls))
+	}
+	return nil
+}
+
+func inlinePromptAttachmentsRoundtripScenarioVerify(_ string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "attachment harness ok") {
+		return fmt.Errorf("missing attachment response")
+	}
+	if len(result.Messages) == 0 || len(result.Messages[0].Content) != 2 {
+		return fmt.Errorf("expected structured attachment content in first user message")
+	}
+	return nil
+}
+
+func inlinePromptAttachmentsRoundtripScenarioVerifyRequests(requests []anthropic.Request) error {
+	if len(requests) == 0 {
+		return fmt.Errorf("expected provider request")
+	}
+	content := requests[0].Messages[0].Content
+	if len(content) != 2 || content[1].Type != "image" {
+		return fmt.Errorf("expected image content block in provider request")
+	}
+	if content[1].Source == nil || content[1].Source.MediaType != "image/png" || content[1].Source.Data == "" {
+		return fmt.Errorf("expected base64 image source in provider request")
+	}
+	return nil
+}
+
+func inlineReadFileRoundtripScenarioSetup(workspace string) error {
+	return os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Harness\n"), 0o644)
+}
+
+func inlineReadFileRoundtripScenarioVerify(_ string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "codog harness ok") {
+		return fmt.Errorf("missing final read_file response")
+	}
+	return expectToolCalls(result, 1, false)
+}
+
+func inlineWriteFileAllowedScenarioVerify(workspace string, result runloop.TurnResult, _ string) error {
+	if err := expectToolCalls(result, 1, false); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(filepath.Join(workspace, "created.txt"))
+	if err != nil {
+		return err
+	}
+	if string(data) != "created by harness\n" {
+		return fmt.Errorf("unexpected file content %q", string(data))
+	}
+	return nil
+}
+
+func inlineWriteFileDeniedScenarioVerify(workspace string, result runloop.TurnResult, _ string) error {
+	if err := expectToolCalls(result, 1, true); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "denied.txt")); !os.IsNotExist(err) {
+		return fmt.Errorf("denied file exists or stat failed: %v", err)
+	}
+	return nil
+}
+
+func inlinePreToolHookUpdatesInputScenarioVerify(workspace string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "pre hook harness ok") {
+		return fmt.Errorf("missing pre-tool hook final response")
+	}
+	if err := expectToolCalls(result, 1, false); err != nil {
+		return err
+	}
+	if result.ToolCalls[0].Input != `{"path":"hooked.txt","content":"hooked by harness\n"}` {
+		return fmt.Errorf("tool input was not updated by hook: %s", result.ToolCalls[0].Input)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "original.txt")); !os.IsNotExist(err) {
+		return fmt.Errorf("original file exists or stat failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(workspace, "hooked.txt"))
+	if err != nil {
+		return err
+	}
+	if string(data) != "hooked by harness\n" {
+		return fmt.Errorf("unexpected hooked file content %q", string(data))
+	}
+	return nil
+}
+
+func inlineUserPromptHookAddsContextScenarioVerify(_ string, _ runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "prompt hook harness ok") {
+		return fmt.Errorf("missing prompt hook final response")
+	}
+	return nil
+}
+
+func inlineUserPromptHookAddsContextScenarioVerifyRequests(requests []anthropic.Request) error {
+	if len(requests) != 1 {
+		return fmt.Errorf("expected 1 prompt hook request, got %d", len(requests))
+	}
+	if len(requests[0].Messages) != 2 {
+		return fmt.Errorf("expected prompt hook feedback message, got %d messages", len(requests[0].Messages))
+	}
+	feedback := requests[0].Messages[1].Content[0].Text
+	if !harnessContainsAll(feedback, "prompt parity note", "prompt parity context") {
+		return fmt.Errorf("missing prompt hook feedback in request")
+	}
+	return nil
+}
+
+func inlineStopHookAddsFeedbackScenarioVerify(_ string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "stop hook harness ok") {
+		return fmt.Errorf("missing stop hook final response")
+	}
+	if !slices.Equal(result.StopHookFeedback, []string{"stop parity note", "stop parity context"}) {
+		return fmt.Errorf("unexpected stop hook feedback: %#v", result.StopHookFeedback)
+	}
+	return nil
+}
+
+func inlinePostToolHookBlocksResultScenarioVerify(workspace string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "post hook block harness ok") {
+		return fmt.Errorf("missing post-tool hook final response")
+	}
+	if err := expectToolCalls(result, 1, true); err != nil {
+		return err
+	}
+	if !strings.Contains(result.ToolCalls[0].Output, "Hook feedback (error):\npost hook blocked result") {
+		return fmt.Errorf("post-tool hook denial was not surfaced: %s", result.ToolCalls[0].Output)
+	}
+	data, err := os.ReadFile(filepath.Join(workspace, "post-hook.txt"))
+	if err != nil {
+		return err
+	}
+	if string(data) != "written before post hook\n" {
+		return fmt.Errorf("unexpected post-hook file content %q", string(data))
+	}
+	return nil
+}
+
+func inlinePostToolHookAddsFeedbackScenarioSetup(workspace string) error {
+	return os.WriteFile(filepath.Join(workspace, "feedback.txt"), []byte("feedback file\n"), 0o644)
+}
+
+func inlinePostToolHookAddsFeedbackScenarioVerify(_ string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "post feedback harness ok") {
+		return fmt.Errorf("missing post feedback final response")
+	}
+	if err := expectToolCalls(result, 1, false); err != nil {
+		return err
+	}
+	if !strings.Contains(result.ToolCalls[0].Output, "Hook feedback:\npost feedback") {
+		return fmt.Errorf("post-tool hook feedback was not surfaced: %s", result.ToolCalls[0].Output)
+	}
+	return nil
+}
+
+func inlineFileChangedHookAddsFeedbackScenarioVerify(workspace string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "file changed feedback harness ok") {
+		return fmt.Errorf("missing file changed hook final response")
+	}
+	if err := expectToolCalls(result, 1, false); err != nil {
+		return err
+	}
+	if !strings.Contains(result.ToolCalls[0].Output, "Hook feedback:\nfile changed feedback") {
+		return fmt.Errorf("file-changed hook feedback was not surfaced: %s", result.ToolCalls[0].Output)
+	}
+	data, err := os.ReadFile(filepath.Join(workspace, "file-hook.txt"))
+	if err != nil {
+		return err
+	}
+	if string(data) != "file hook\n" {
+		return fmt.Errorf("unexpected file hook content %q", string(data))
+	}
+	return nil
+}
+
+func inlineMultiToolTurnRoundtripScenarioSetup(workspace string) error {
+	return os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Harness\nNeedle\n"), 0o644)
+}
+
+func inlineMultiToolTurnRoundtripScenarioVerify(_ string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "multi tool harness ok") {
+		return fmt.Errorf("missing multi-tool final response")
+	}
+	return expectToolCalls(result, 2, false)
+}
+
+func inlineGrepChunkAssemblyScenarioSetup(workspace string) error {
+	return os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Harness\nNeedle\n"), 0o644)
+}
+
+func inlineGrepChunkAssemblyScenarioVerify(_ string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "grep chunk harness ok") {
+		return fmt.Errorf("missing grep chunk final response")
+	}
+	if err := expectToolCalls(result, 1, false); err != nil {
+		return err
+	}
+	if !strings.Contains(result.ToolCalls[0].Output, "Needle") {
+		return fmt.Errorf("missing grep match in tool output")
+	}
+	return nil
+}
+
+func inlineBashStdoutRoundtripScenarioVerify(_ string, result runloop.TurnResult, _ string) error {
+	if err := expectToolCalls(result, 1, false); err != nil {
+		return err
+	}
+	if !strings.Contains(result.ToolCalls[0].Output, "harness-bash") {
+		return fmt.Errorf("missing bash stdout in tool output")
+	}
+	return nil
+}
+
+func inlineBashPermissionPromptApprovedScenarioVerify(_ string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "bash approved harness ok") {
+		return fmt.Errorf("missing approved bash final response")
+	}
+	if err := expectToolCalls(result, 1, false); err != nil {
+		return err
+	}
+	if !strings.Contains(result.ToolCalls[0].Output, "approved-bash") {
+		return fmt.Errorf("missing approved bash stdout in tool output")
+	}
+	return nil
+}
+
+func inlineBashPermissionPromptDeniedScenarioVerify(_ string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "bash denied harness ok") {
+		return fmt.Errorf("missing denied bash final response")
+	}
+	if err := expectToolCalls(result, 1, true); err != nil {
+		return err
+	}
+	if !strings.Contains(result.ToolCalls[0].Output, "permission denied") {
+		return fmt.Errorf("missing permission denial in tool output")
+	}
+	return nil
+}
+
+func inlinePluginToolRoundtripScenarioSetup(workspace string) error {
+	dir := filepath.Join(workspace, ".codog", "plugins", "demo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	manifest := `{"id":"demo","tools":[{"name":"demo_tool","command":"cat","permission":"read-only"}]}`
+	return os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(manifest), 0o644)
+}
+
+func inlinePluginToolRoundtripScenarioVerify(_ string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "plugin harness ok") {
+		return fmt.Errorf("missing plugin final response")
+	}
+	if err := expectToolCalls(result, 1, false); err != nil {
+		return err
+	}
+	if !strings.Contains(result.ToolCalls[0].Output, "plugin-harness") {
+		return fmt.Errorf("missing plugin stdin echo in tool output")
+	}
+	return nil
+}
+
+func inlineAutoCompactTriggeredScenarioVerify(_ string, _ runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "compact harness ok") {
+		return fmt.Errorf("missing compact final response")
+	}
+	return nil
+}
+
+func inlineAutoCompactTriggeredScenarioVerifyRequests(requests []anthropic.Request) error {
+	if len(requests) != 1 {
+		return fmt.Errorf("expected 1 compacted request, got %d", len(requests))
+	}
+	if len(requests[0].Messages) != 2 {
+		return fmt.Errorf("expected compacted request to keep 2 messages, got %d", len(requests[0].Messages))
+	}
+	if len(requests[0].Messages[0].Content) == 0 ||
+		!strings.Contains(requests[0].Messages[0].Content[0].Text, "auto-compacted") {
+		return fmt.Errorf("missing auto-compaction summary message")
+	}
+	summary := requests[0].Messages[0].Content[0].Text
+	if !harnessContainsAll(summary, "compact parity pre", "compact parity post") {
+		return fmt.Errorf("missing compaction hook feedback in summary")
+	}
+	return nil
+}
+
+func inlineTokenCostReportingScenarioVerify(_ string, result runloop.TurnResult, output string) error {
+	if !strings.Contains(output, "token cost harness ok") {
+		return fmt.Errorf("missing token cost final response")
+	}
+	summary := usageSummaryForResult(result)
+	if summary.Source != "actual" {
+		return fmt.Errorf("expected actual token usage source, got %q", summary.Source)
+	}
+	if summary.TotalTokens == 0 {
+		return fmt.Errorf("missing provider token counts")
+	}
+	if summary.EstimatedUSD <= 0 {
+		return fmt.Errorf("missing estimated cost")
+	}
+	return nil
 }

@@ -18,66 +18,8 @@ import (
 
 func acpStdioScenario() scenario {
 	return scenario{
-		name: "acp_stdio_roundtrip",
-		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
-			input := strings.Join([]string{
-				`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
-				`{"jsonrpc":"2.0","id":2,"method":"status","params":{}}`,
-				`{"jsonrpc":"2.0","id":3,"method":"session/new","params":{}}`,
-				`{"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}}`,
-				"",
-			}, "\n")
-			var out bytes.Buffer
-			err := acpserver.Serve(ctx, strings.NewReader(input), &out, acpserver.Handlers{
-				Status: func(context.Context) (any, error) {
-					return map[string]any{"kind": "acp", "status": "ok", "workspace": workspace}, nil
-				},
-				NewSession: func(context.Context) (acpserver.SessionInfo, error) {
-					return acpserver.SessionInfo{SessionID: "acp-harness-session", Workspace: workspace}, nil
-				},
-			}, acpserver.Options{Version: "harness", Workspace: workspace})
-			if err != nil {
-				return localScenarioResult{}, err
-			}
-			responses, err := decodeLocalJSONRPCResponses(out.String())
-			if err != nil {
-				return localScenarioResult{}, err
-			}
-			if len(responses) != 4 {
-				return localScenarioResult{}, fmt.Errorf("expected 4 ACP responses, got %d", len(responses))
-			}
-			initialize, ok := responses[0]["result"].(map[string]any)
-			if !ok {
-				return localScenarioResult{}, fmt.Errorf("initialize response missing result")
-			}
-			serverInfo, ok := initialize["serverInfo"].(map[string]any)
-			if !ok || serverInfo["version"] != "harness" {
-				return localScenarioResult{}, fmt.Errorf("initialize serverInfo missing harness version: %#v", initialize["serverInfo"])
-			}
-			capabilities, ok := initialize["capabilities"].(map[string]any)
-			if !ok || capabilities["prompt"] != true {
-				return localScenarioResult{}, fmt.Errorf("initialize capabilities missing prompt support: %#v", initialize["capabilities"])
-			}
-			status, ok := responses[1]["result"].(map[string]any)
-			if !ok || status["status"] != "ok" {
-				return localScenarioResult{}, fmt.Errorf("status response was not ok: %#v", responses[1]["result"])
-			}
-			sessionResult, ok := responses[2]["result"].(map[string]any)
-			if !ok || sessionResult["session_id"] != "acp-harness-session" {
-				return localScenarioResult{}, fmt.Errorf("session/new response missing session id: %#v", responses[2]["result"])
-			}
-			if _, ok := responses[3]["result"]; !ok {
-				return localScenarioResult{}, fmt.Errorf("shutdown response missing result: %#v", responses[3])
-			}
-
-			message := "acp stdio harness ok"
-			return localScenarioResult{
-				Output:       strings.TrimSpace(out.String()),
-				FinalMessage: message,
-				RequestCount: len(responses),
-				MessageCount: len(responses),
-			}, nil
-		},
+		name:     "acp_stdio_roundtrip",
+		runLocal: acpStdioScenarioRunLocal,
 	}
 }
 
@@ -205,4 +147,64 @@ func expectToolCalls(result runloop.TurnResult, count int, wantError bool) error
 		}
 	}
 	return nil
+}
+
+func acpStdioScenarioRunLocal(ctx context.Context, workspace string) (localScenarioResult, error) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"status","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"session/new","params":{}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	err := acpserver.Serve(ctx, strings.NewReader(input), &out, acpserver.Handlers{
+		Status: func(context.Context) (any, error) {
+			return map[string]any{"kind": "acp", "status": "ok", "workspace": workspace}, nil
+		},
+		NewSession: func(context.Context) (acpserver.SessionInfo, error) {
+			return acpserver.SessionInfo{SessionID: "acp-harness-session", Workspace: workspace}, nil
+		},
+	}, acpserver.Options{Version: "harness", Workspace: workspace})
+	if err != nil {
+		return localScenarioResult{}, err
+	}
+	responses, err := decodeLocalJSONRPCResponses(out.String())
+	if err != nil {
+		return localScenarioResult{}, err
+	}
+	if len(responses) != 4 {
+		return localScenarioResult{}, fmt.Errorf("expected 4 ACP responses, got %d", len(responses))
+	}
+	initialize, ok := responses[0]["result"].(map[string]any)
+	if !ok {
+		return localScenarioResult{}, fmt.Errorf("initialize response missing result")
+	}
+	serverInfo, ok := initialize["serverInfo"].(map[string]any)
+	if !ok || serverInfo["version"] != "harness" {
+		return localScenarioResult{}, fmt.Errorf("initialize serverInfo missing harness version: %#v", initialize["serverInfo"])
+	}
+	capabilities, ok := initialize["capabilities"].(map[string]any)
+	if !ok || capabilities["prompt"] != true {
+		return localScenarioResult{}, fmt.Errorf("initialize capabilities missing prompt support: %#v", initialize["capabilities"])
+	}
+	status, ok := responses[1]["result"].(map[string]any)
+	if !ok || status["status"] != "ok" {
+		return localScenarioResult{}, fmt.Errorf("status response was not ok: %#v", responses[1]["result"])
+	}
+	sessionResult, ok := responses[2]["result"].(map[string]any)
+	if !ok || sessionResult["session_id"] != "acp-harness-session" {
+		return localScenarioResult{}, fmt.Errorf("session/new response missing session id: %#v", responses[2]["result"])
+	}
+	if _, ok := responses[3]["result"]; !ok {
+		return localScenarioResult{}, fmt.Errorf("shutdown response missing result: %#v", responses[3])
+	}
+
+	message := "acp stdio harness ok"
+	return localScenarioResult{
+		Output:       strings.TrimSpace(out.String()),
+		FinalMessage: message,
+		RequestCount: len(responses),
+		MessageCount: len(responses),
+	}, nil
 }
