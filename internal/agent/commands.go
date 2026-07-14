@@ -3789,74 +3789,80 @@ func (a *App) ThinkBack(args []string) error {
 }
 
 func parseThinkBackArgs(args []string) (thinkBackRequest, error) {
-	req := thinkBackRequest{Format: "text", Limit: 8}
-	const usage = "codog think-back [--year YYYY] [--limit N] [--output PATH] [--output-format text|json]"
+	parser := thinkBackArgParser{req: thinkBackRequest{Format: "text", Limit: 8}}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "think-back", Flag: arg, Usage: usage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--year":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "think-back", Flag: arg, Usage: usage}
-			}
-			year, err := parseThinkBackYear(args[index], usage)
-			if err != nil {
-				return req, err
-			}
-			req.Year = year
-		case strings.HasPrefix(arg, "--year="):
-			year, err := parseThinkBackYear(strings.TrimPrefix(arg, "--year="), usage)
-			if err != nil {
-				return req, err
-			}
-			req.Year = year
-		case arg == "--limit":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "think-back", Flag: arg, Usage: usage}
-			}
-			limit, err := parsePositiveIntOption(args[index], "--limit", usage)
-			if err != nil {
-				return req, err
-			}
-			req.Limit = limit
-		case strings.HasPrefix(arg, "--limit="):
-			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
-			if err != nil {
-				return req, err
-			}
-			req.Limit = limit
-		case arg == "--output":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "think-back", Flag: arg, Usage: usage}
-			}
-			req.Output = args[index]
-		case strings.HasPrefix(arg, "--output="):
-			req.Output = strings.TrimPrefix(arg, "--output=")
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return req, unknownOptionError{Command: "think-back", Option: arg, Usage: usage}
-			}
-			return req, unexpectedExtraArgsError{Command: "think-back", Args: []string{arg}, Usage: usage}
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
 		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "think-back", Option: arg, Usage: thinkBackUsage}
+		}
+		return parser.req, unexpectedExtraArgsError{Command: "think-back", Args: []string{arg}, Usage: thinkBackUsage}
 	}
-	normalizedFormat, err := normalizeOutputFormat("think-back", req.Format, []string{"text", "json"})
+	normalizedFormat, err := normalizeOutputFormat("think-back", parser.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = normalizedFormat
-	return req, nil
+	parser.req.Format = normalizedFormat
+	return parser.req, nil
+}
+
+const thinkBackUsage = "codog think-back [--year YYYY] [--limit N] [--output PATH] [--output-format text|json]"
+
+type thinkBackArgParser struct {
+	req thinkBackRequest
+}
+
+func (p *thinkBackArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format, false),
+		"-o":              p.stringOption(&p.req.Format, false),
+		"--year":          p.yearOption(),
+		"--limit":         p.limitOption(),
+		"--output":        p.stringOption(&p.req.Output, true),
+	}
+}
+
+func (p *thinkBackArgParser) stringOption(target *string, rejectOutputFormat bool) valueOption {
+	return valueOption{missing: thinkBackMissingValue, rejectOutputFormat: rejectOutputFormat, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func (p *thinkBackArgParser) yearOption() valueOption {
+	return valueOption{missing: thinkBackMissingValue, rejectOutputFormat: true, set: func(value string) error {
+		year, err := parseThinkBackYear(value, thinkBackUsage)
+		if err != nil {
+			return err
+		}
+		p.req.Year = year
+		return nil
+	}}
+}
+
+func (p *thinkBackArgParser) limitOption() valueOption {
+	return valueOption{missing: thinkBackMissingValue, rejectOutputFormat: true, set: func(value string) error {
+		limit, err := parsePositiveIntOption(value, "--limit", thinkBackUsage)
+		if err != nil {
+			return err
+		}
+		p.req.Limit = limit
+		return nil
+	}}
+}
+
+func thinkBackMissingValue(flag string) error {
+	return missingFlagValueError{Command: "think-back", Flag: flag, Usage: thinkBackUsage}
 }
 
 func parseThinkBackYear(value string, usage string) (int, error) {
@@ -3972,97 +3978,75 @@ func compactMessagesPreservingPins(messages []anthropic.Message, keep int, pinne
 }
 
 func parseCompactArgs(args []string, overrides config.FlagOverrides, defaultKeep int) (compactRequest, error) {
-	req := compactRequest{Format: "text", Keep: defaultKeep}
-	req.Session = overrides.Resume
-	if req.Session == "" {
-		req.Session = overrides.SessionID
+	parser := compactArgParser{req: compactRequest{Format: "text", Keep: defaultKeep}}
+	parser.req.Session = overrides.Resume
+	if parser.req.Session == "" {
+		parser.req.Session = overrides.SessionID
 	}
-	if req.Session == "" {
-		req.Session = "latest"
+	if parser.req.Session == "" {
+		parser.req.Session = "latest"
 	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			if i+1 >= len(args) {
-				return req, missingFlagValueError{
-					Command: "compact",
-					Flag:    arg,
-					Usage:   compactUsage,
-				}
-			}
-			i++
-			req.Format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--keep":
-			if i+1 >= len(args) || isOutputFormatFlag(args[i+1]) {
-				return req, missingFlagValueError{
-					Command: "compact",
-					Flag:    arg,
-					Usage:   compactUsage,
-				}
-			}
-			i++
-			value, err := parseCompactKeep(args[i], arg)
-			if err != nil {
-				return req, err
-			}
-			req.Keep = value
-		case strings.HasPrefix(arg, "--keep="):
-			value, err := parseCompactKeep(strings.TrimPrefix(arg, "--keep="), "--keep")
-			if err != nil {
-				return req, err
-			}
-			req.Keep = value
-		case arg == "--session":
-			if i+1 >= len(args) || isOutputFormatFlag(args[i+1]) {
-				return req, missingFlagValueError{
-					Command: "compact",
-					Flag:    arg,
-					Usage:   compactUsage,
-				}
-			}
-			i++
-			req.Session = args[i]
-		case strings.HasPrefix(arg, "--session="):
-			req.Session = strings.TrimPrefix(arg, "--session=")
-		case arg == "--resume":
-			if i+1 >= len(args) || isOutputFormatFlag(args[i+1]) {
-				return req, missingFlagValueError{
-					Command: "compact",
-					Flag:    arg,
-					Usage:   compactUsage,
-				}
-			}
-			i++
-			req.Session = args[i]
-		case strings.HasPrefix(arg, "--resume="):
-			req.Session = strings.TrimPrefix(arg, "--resume=")
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return req, unknownOptionError{
-					Command: "compact",
-					Option:  arg,
-					Usage:   compactUsage,
-				}
-			}
-			return req, unexpectedExtraArgsError{
-				Command: "compact",
-				Args:    []string{arg},
-				Usage:   compactUsage,
-			}
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
 		}
+		handled, err := consumeValueOption(args, &i, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "compact", Option: arg, Usage: compactUsage}
+		}
+		return parser.req, unexpectedExtraArgsError{Command: "compact", Args: []string{arg}, Usage: compactUsage}
 	}
-	normalizedFormat, err := normalizeOutputFormat("compact", req.Format, []string{"text", "json"})
+	normalizedFormat, err := normalizeOutputFormat("compact", parser.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = normalizedFormat
-	if req.Keep <= 0 {
-		req.Keep = 40
+	parser.req.Format = normalizedFormat
+	if parser.req.Keep <= 0 {
+		parser.req.Keep = 40
 	}
-	return req, nil
+	return parser.req, nil
+}
+
+type compactArgParser struct {
+	req compactRequest
+}
+
+func (p *compactArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format, false),
+		"-o":              p.stringOption(&p.req.Format, false),
+		"--keep":          p.keepOption(),
+		"--session":       p.stringOption(&p.req.Session, true),
+		"--resume":        p.stringOption(&p.req.Session, true),
+	}
+}
+
+func (p *compactArgParser) stringOption(target *string, rejectOutputFormat bool) valueOption {
+	return valueOption{missing: compactMissingValue, rejectOutputFormat: rejectOutputFormat, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func (p *compactArgParser) keepOption() valueOption {
+	return valueOption{missing: compactMissingValue, rejectOutputFormat: true, set: func(value string) error {
+		keep, err := parseCompactKeep(value, "--keep")
+		if err != nil {
+			return err
+		}
+		p.req.Keep = keep
+		return nil
+	}}
+}
+
+func compactMissingValue(flag string) error {
+	return missingFlagValueError{Command: "compact", Flag: flag, Usage: compactUsage}
 }

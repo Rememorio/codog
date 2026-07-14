@@ -3084,82 +3084,85 @@ func (a *App) marketplaceSourcesCommand(args []string, format string) error {
 }
 
 func parseMarketplaceSourcesArgs(args []string) (marketplaceSourcesRequest, error) {
-	req := marketplaceSourcesRequest{Action: "list", Target: "user"}
-	actionSet := false
-	positionals := []string{}
+	parser := marketplaceSourcesArgParser{req: marketplaceSourcesRequest{Action: "list", Target: "user"}}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--target":
-			index++
-			if index >= len(args) {
-				return req, errors.New("marketplace sources target is required")
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) {
-				return req, errors.New("marketplace sources path is required")
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		case arg == "--public-key" || arg == "--key":
-			index++
-			if index >= len(args) {
-				return req, errors.New("marketplace public key is required")
-			}
-			req.PublicKey = args[index]
-		case strings.HasPrefix(arg, "--public-key="):
-			req.PublicKey = strings.TrimPrefix(arg, "--public-key=")
-		case strings.HasPrefix(arg, "--key="):
-			req.PublicKey = strings.TrimPrefix(arg, "--key=")
-		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown marketplace sources flag %q", arg)
-		default:
-			if !actionSet && isMarketplaceSourcesAction(arg) {
-				req.Action = normalizeMarketplaceSourcesAction(arg)
-				actionSet = true
-				continue
-			}
-			positionals = append(positionals, arg)
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
 		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, fmt.Errorf("unknown marketplace sources flag %q", arg)
+		}
+		parser.consumePositional(arg)
 	}
-	if err := validateMarketplaceSourcesTarget(req.Target); err != nil {
-		return req, err
+	if err := validateMarketplaceSourcesTarget(parser.req.Target); err != nil {
+		return parser.req, err
 	}
-	switch req.Action {
+	if err := parser.finish(); err != nil {
+		return parser.req, err
+	}
+	return parser.req, nil
+}
+
+type marketplaceSourcesArgParser struct {
+	req         marketplaceSourcesRequest
+	actionSet   bool
+	positionals []string
+}
+
+func (p *marketplaceSourcesArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--target":     stringValueOption(&p.req.Target, "marketplace sources target is required"),
+		"--path":       stringValueOption(&p.req.Path, "marketplace sources path is required"),
+		"--public-key": stringValueOption(&p.req.PublicKey, "marketplace public key is required"),
+		"--key":        stringValueOption(&p.req.PublicKey, "marketplace public key is required"),
+	}
+}
+
+func (p *marketplaceSourcesArgParser) consumePositional(arg string) {
+	if !p.actionSet && isMarketplaceSourcesAction(arg) {
+		p.req.Action = normalizeMarketplaceSourcesAction(arg)
+		p.actionSet = true
+		return
+	}
+	p.positionals = append(p.positionals, arg)
+}
+
+func (p *marketplaceSourcesArgParser) finish() error {
+	switch p.req.Action {
 	case "list":
-		if len(positionals) > 0 {
-			return req, fmt.Errorf("unexpected marketplace sources argument %q", positionals[0])
+		if len(p.positionals) > 0 {
+			return fmt.Errorf("unexpected marketplace sources argument %q", p.positionals[0])
 		}
 	case "add":
-		if len(positionals) == 0 {
-			return req, errors.New("usage: codog marketplace sources add URL [PUBLIC_KEY]")
+		if len(p.positionals) == 0 {
+			return errors.New("usage: codog marketplace sources add URL [PUBLIC_KEY]")
 		}
-		req.URL = positionals[0]
-		if len(positionals) > 1 {
-			if strings.TrimSpace(req.PublicKey) != "" {
-				return req, fmt.Errorf("unexpected marketplace sources argument %q", positionals[1])
+		p.req.URL = p.positionals[0]
+		if len(p.positionals) > 1 {
+			if strings.TrimSpace(p.req.PublicKey) != "" {
+				return fmt.Errorf("unexpected marketplace sources argument %q", p.positionals[1])
 			}
-			req.PublicKey = positionals[1]
+			p.req.PublicKey = p.positionals[1]
 		}
-		if len(positionals) > 2 {
-			return req, fmt.Errorf("unexpected marketplace sources argument %q", positionals[2])
+		if len(p.positionals) > 2 {
+			return fmt.Errorf("unexpected marketplace sources argument %q", p.positionals[2])
 		}
 	case "remove":
-		if len(positionals) != 1 {
-			return req, errors.New("usage: codog marketplace sources remove URL")
+		if len(p.positionals) != 1 {
+			return errors.New("usage: codog marketplace sources remove URL")
 		}
-		req.URL = positionals[0]
+		p.req.URL = p.positionals[0]
 	case "clear":
-		if len(positionals) > 0 {
-			return req, fmt.Errorf("unexpected marketplace sources argument %q", positionals[0])
+		if len(p.positionals) > 0 {
+			return fmt.Errorf("unexpected marketplace sources argument %q", p.positionals[0])
 		}
 	}
-	return req, nil
+	return nil
 }
 
 func isMarketplaceSourcesAction(action string) bool {

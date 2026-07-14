@@ -90,83 +90,93 @@ func (a *App) branchLockInput(req branchLockRequest) ([]byte, error) {
 }
 
 func parseBranchLockArgs(args []string) (branchLockRequest, error) {
-	req := branchLockRequest{Format: "text", Action: "check"}
-	var positionals []string
+	parser := branchLockArgParser{req: branchLockRequest{Format: "text", Action: "check"}}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			i++
-			if i >= len(args) {
-				return req, errors.New("branch-lock output format is required")
-			}
-			req.Format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--file" || arg == "-f":
-			i++
-			if i >= len(args) {
-				return req, errors.New("branch-lock file is required")
-			}
-			req.File = args[i]
-		case strings.HasPrefix(arg, "--file="):
-			req.File = strings.TrimPrefix(arg, "--file=")
-		case arg == "--input":
-			i++
-			if i >= len(args) {
-				return req, errors.New("branch-lock input JSON is required")
-			}
-			req.Input = args[i]
-		case strings.HasPrefix(arg, "--input="):
-			req.Input = strings.TrimPrefix(arg, "--input=")
-		case arg == "--stdin":
-			req.Stdin = true
-		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown branch-lock flag %q", arg)
-		default:
-			positionals = append(positionals, arg)
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
 		}
+		if arg == "--stdin" {
+			parser.req.Stdin = true
+			continue
+		}
+		handled, err := consumeValueOption(args, &i, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, fmt.Errorf("unknown branch-lock flag %q", arg)
+		}
+		parser.positionals = append(parser.positionals, arg)
 	}
-	normalized, err := normalizeTextOrJSON(req.Format, "branch-lock")
+	normalized, err := normalizeTextOrJSON(parser.req.Format, "branch-lock")
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = normalized
-	if len(positionals) == 0 {
-		return req, nil
+	parser.req.Format = normalized
+	if err := parser.finish(); err != nil {
+		return parser.req, err
 	}
-	rest := positionals
-	action := strings.ToLower(strings.TrimSpace(positionals[0]))
+	return parser.req, nil
+}
+
+type branchLockArgParser struct {
+	req         branchLockRequest
+	positionals []string
+}
+
+func (p *branchLockArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": stringValueOption(&p.req.Format, "branch-lock output format is required"),
+		"-o":              stringValueOption(&p.req.Format, "branch-lock output format is required"),
+		"--file":          stringValueOption(&p.req.File, "branch-lock file is required"),
+		"-f":              stringValueOption(&p.req.File, "branch-lock file is required"),
+		"--input":         stringValueOption(&p.req.Input, "branch-lock input JSON is required"),
+	}
+}
+
+func (p *branchLockArgParser) finish() error {
+	if len(p.positionals) == 0 {
+		return nil
+	}
+	rest := p.positionals
+	action := strings.ToLower(strings.TrimSpace(p.positionals[0]))
 	if action == "check" || action == "detect" || action == "collisions" {
-		req.Action = action
-		rest = positionals[1:]
+		p.req.Action = action
+		rest = p.positionals[1:]
 	}
-	if req.Action == "detect" || req.Action == "collisions" {
-		req.Action = "check"
+	if p.req.Action == "detect" || p.req.Action == "collisions" {
+		p.req.Action = "check"
 	}
-	if req.Action != "check" {
-		return req, fmt.Errorf("unknown branch-lock action %q", positionals[0])
+	if p.req.Action != "check" {
+		return fmt.Errorf("unknown branch-lock action %q", p.positionals[0])
 	}
 	if len(rest) > 1 {
-		return req, errors.New("usage: codog branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--json|--output-format text|json]")
+		return errors.New("usage: codog branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--json|--output-format text|json]")
 	}
 	if len(rest) == 1 {
 		value := strings.TrimSpace(rest[0])
 		if strings.HasPrefix(value, "[") || strings.HasPrefix(value, "{") {
-			req.Input = value
+			p.req.Input = value
 		} else {
-			req.File = value
+			p.req.File = value
 		}
 	}
-	if strings.TrimSpace(req.Input) != "" && strings.TrimSpace(req.File) != "" {
-		return req, errors.New("branch-lock accepts only one of --input or --file")
+	return p.validateInputs()
+}
+
+func (p *branchLockArgParser) validateInputs() error {
+	if strings.TrimSpace(p.req.Input) != "" && strings.TrimSpace(p.req.File) != "" {
+		return errors.New("branch-lock accepts only one of --input or --file")
 	}
-	if req.Stdin && (strings.TrimSpace(req.Input) != "" || strings.TrimSpace(req.File) != "") {
-		return req, errors.New("branch-lock accepts --stdin only without --input or --file")
+	if p.req.Stdin && (strings.TrimSpace(p.req.Input) != "" || strings.TrimSpace(p.req.File) != "") {
+		return errors.New("branch-lock accepts --stdin only without --input or --file")
 	}
-	return req, nil
+	return nil
 }
 
 func renderBranchLockReport(out io.Writer, report branchLockReport) {
@@ -218,72 +228,77 @@ func (a *App) StaleBase(args []string) error {
 }
 
 func parseStaleBaseArgs(args []string) (staleBaseRequest, error) {
-	req := staleBaseRequest{Format: "text", Action: "check"}
-	var positionals []string
+	parser := staleBaseArgParser{req: staleBaseRequest{Format: "text", Action: "check"}}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			i++
-			if i >= len(args) {
-				return req, errors.New("stale-base output format is required")
-			}
-			req.Format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--base-commit" || arg == "--base" || arg == "-b":
-			i++
-			if i >= len(args) {
-				return req, errors.New("stale-base base commit is required")
-			}
-			if err := setStaleBaseCommit(&req, args[i]); err != nil {
-				return req, err
-			}
-		case strings.HasPrefix(arg, "--base-commit="):
-			if err := setStaleBaseCommit(&req, strings.TrimPrefix(arg, "--base-commit=")); err != nil {
-				return req, err
-			}
-		case strings.HasPrefix(arg, "--base="):
-			if err := setStaleBaseCommit(&req, strings.TrimPrefix(arg, "--base=")); err != nil {
-				return req, err
-			}
-		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown stale-base flag %q", arg)
-		default:
-			positionals = append(positionals, arg)
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
 		}
+		handled, err := consumeValueOption(args, &i, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, fmt.Errorf("unknown stale-base flag %q", arg)
+		}
+		parser.positionals = append(parser.positionals, arg)
 	}
-	normalized, err := normalizeTextOrJSON(req.Format, "stale-base")
+	normalized, err := normalizeTextOrJSON(parser.req.Format, "stale-base")
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = normalized
-	if len(positionals) == 0 {
-		return req, nil
+	parser.req.Format = normalized
+	if err := parser.finish(); err != nil {
+		return parser.req, err
 	}
-	action := strings.ToLower(strings.TrimSpace(positionals[0]))
-	rest := positionals
+	return parser.req, nil
+}
+
+type staleBaseArgParser struct {
+	req         staleBaseRequest
+	positionals []string
+}
+
+func (p *staleBaseArgParser) valueOptions() map[string]valueOption {
+	baseOption := valueOption{missing: func(string) error { return errors.New("stale-base base commit is required") }, set: func(value string) error {
+		return setStaleBaseCommit(&p.req, value)
+	}}
+	return map[string]valueOption{
+		"--output-format": stringValueOption(&p.req.Format, "stale-base output format is required"),
+		"-o":              stringValueOption(&p.req.Format, "stale-base output format is required"),
+		"--base-commit":   baseOption,
+		"--base":          baseOption,
+		"-b":              baseOption,
+	}
+}
+
+func (p *staleBaseArgParser) finish() error {
+	if len(p.positionals) == 0 {
+		return nil
+	}
+	action := strings.ToLower(strings.TrimSpace(p.positionals[0]))
+	rest := p.positionals
 	if action == "check" || action == "status" {
-		req.Action = "check"
-		rest = positionals[1:]
+		p.req.Action = "check"
+		rest = p.positionals[1:]
 	}
-	if req.Action != "check" {
-		return req, fmt.Errorf("unknown stale-base action %q", positionals[0])
+	if p.req.Action != "check" {
+		return fmt.Errorf("unknown stale-base action %q", p.positionals[0])
 	}
 	if len(rest) > 1 {
-		return req, errors.New("usage: codog stale-base [check] [BASE_COMMIT] [--base-commit REF] [--json|--output-format text|json]")
+		return errors.New("usage: codog stale-base [check] [BASE_COMMIT] [--base-commit REF] [--json|--output-format text|json]")
 	}
 	if len(rest) == 1 {
-		if strings.TrimSpace(req.BaseCommit) != "" {
-			return req, errors.New("stale-base accepts only one base commit")
+		if strings.TrimSpace(p.req.BaseCommit) != "" {
+			return errors.New("stale-base accepts only one base commit")
 		}
-		if err := setStaleBaseCommit(&req, rest[0]); err != nil {
-			return req, err
-		}
+		return setStaleBaseCommit(&p.req, rest[0])
 	}
-	return req, nil
+	return nil
 }
 
 func setStaleBaseCommit(req *staleBaseRequest, value string) error {
@@ -605,78 +620,84 @@ func (a *App) G004Conformance(args []string) error {
 }
 
 func parseG004ConformanceArgs(args []string) (g004ConformanceRequest, error) {
-	req := g004ConformanceRequest{Format: "text", Action: "validate"}
-	var positionals []string
+	parser := g004ConformanceArgParser{req: g004ConformanceRequest{Format: "text", Action: "validate"}}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			i++
-			if i >= len(args) {
-				return req, errors.New("g004-conformance output format is required")
-			}
-			req.Format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--input":
-			i++
-			if i >= len(args) {
-				return req, errors.New("g004-conformance input JSON is required")
-			}
-			req.Input = args[i]
-		case strings.HasPrefix(arg, "--input="):
-			req.Input = strings.TrimPrefix(arg, "--input=")
-		case arg == "--file" || arg == "-f":
-			i++
-			if i >= len(args) {
-				return req, errors.New("g004-conformance file is required")
-			}
-			req.File = args[i]
-		case strings.HasPrefix(arg, "--file="):
-			req.File = strings.TrimPrefix(arg, "--file=")
-		case arg == "--stdin":
-			req.Stdin = true
-		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown g004-conformance flag %q", arg)
-		default:
-			positionals = append(positionals, arg)
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
 		}
+		if arg == "--stdin" {
+			parser.req.Stdin = true
+			continue
+		}
+		handled, err := consumeValueOption(args, &i, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, fmt.Errorf("unknown g004-conformance flag %q", arg)
+		}
+		parser.positionals = append(parser.positionals, arg)
 	}
-	normalized, err := normalizeTextOrJSON(req.Format, "g004-conformance")
+	normalized, err := normalizeTextOrJSON(parser.req.Format, "g004-conformance")
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = normalized
-	if len(positionals) > 0 {
-		action := strings.ToLower(strings.TrimSpace(positionals[0]))
+	parser.req.Format = normalized
+	if err := parser.finish(); err != nil {
+		return parser.req, err
+	}
+	return parser.req, nil
+}
+
+type g004ConformanceArgParser struct {
+	req         g004ConformanceRequest
+	positionals []string
+}
+
+func (p *g004ConformanceArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": stringValueOption(&p.req.Format, "g004-conformance output format is required"),
+		"-o":              stringValueOption(&p.req.Format, "g004-conformance output format is required"),
+		"--input":         stringValueOption(&p.req.Input, "g004-conformance input JSON is required"),
+		"--file":          stringValueOption(&p.req.File, "g004-conformance file is required"),
+		"-f":              stringValueOption(&p.req.File, "g004-conformance file is required"),
+	}
+}
+
+func (p *g004ConformanceArgParser) finish() error {
+	if len(p.positionals) > 0 {
+		action := strings.ToLower(strings.TrimSpace(p.positionals[0]))
 		if action == "validate" || action == "check" || action == "verify" {
-			req.Action = "validate"
-			positionals = positionals[1:]
+			p.req.Action = "validate"
+			p.positionals = p.positionals[1:]
 		}
 	}
-	if len(positionals) > 1 {
-		return req, errors.New("usage: codog g004-conformance [validate] [FILE|JSON] [--input JSON|--file PATH|--stdin] [--output-format text|json]")
+	if len(p.positionals) > 1 {
+		return errors.New("usage: codog g004-conformance [validate] [FILE|JSON] [--input JSON|--file PATH|--stdin] [--output-format text|json]")
 	}
-	if len(positionals) == 1 {
-		value := strings.TrimSpace(positionals[0])
+	if len(p.positionals) == 1 {
+		value := strings.TrimSpace(p.positionals[0])
 		if strings.HasPrefix(value, "{") {
-			req.Input = value
+			p.req.Input = value
 		} else {
-			req.File = value
+			p.req.File = value
 		}
 	}
-	if strings.TrimSpace(req.Input) != "" && strings.TrimSpace(req.File) != "" {
-		return req, errors.New("g004-conformance accepts only one of --input or --file")
+	if strings.TrimSpace(p.req.Input) != "" && strings.TrimSpace(p.req.File) != "" {
+		return errors.New("g004-conformance accepts only one of --input or --file")
 	}
-	if req.Stdin && (strings.TrimSpace(req.Input) != "" || strings.TrimSpace(req.File) != "") {
-		return req, errors.New("g004-conformance accepts --stdin only without --input or --file")
+	if p.req.Stdin && (strings.TrimSpace(p.req.Input) != "" || strings.TrimSpace(p.req.File) != "") {
+		return errors.New("g004-conformance accepts --stdin only without --input or --file")
 	}
-	if strings.TrimSpace(req.Input) == "" && strings.TrimSpace(req.File) == "" && !req.Stdin {
-		return req, errors.New("g004-conformance input is required")
+	if strings.TrimSpace(p.req.Input) == "" && strings.TrimSpace(p.req.File) == "" && !p.req.Stdin {
+		return errors.New("g004-conformance input is required")
 	}
-	return req, nil
+	return nil
 }
 
 func readG004ConformanceInput(req g004ConformanceRequest, stdin io.Reader) ([]byte, error) {
@@ -1467,93 +1488,111 @@ func (a *App) Tag(args []string) error {
 }
 
 func parseTagArgs(args []string) (tagRequest, error) {
-	const usage = "codog tag [list [PATTERN]|create NAME [REF]|show NAME|delete NAME] [--limit N] [--message TEXT] [--json|--output-format text|json]"
-	req := tagRequest{Format: "text", Action: "list", Limit: 50}
-	var positionals []string
+	parser := tagArgParser{req: tagRequest{Format: "text", Action: "list", Limit: 50}}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			i++
-			if i >= len(args) {
-				return req, missingFlagValueError{Command: "tag", Flag: arg, Usage: usage}
-			}
-			req.Format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--limit":
-			i++
-			if i >= len(args) {
-				return req, missingFlagValueError{Command: "tag", Flag: arg, Usage: usage}
-			}
-			limit, err := strconv.Atoi(args[i])
-			if err != nil || limit < 0 {
-				return req, invalidFlagValueError{Flag: "--limit", Value: args[i], Message: "tag limit must be a non-negative integer", Usage: usage}
-			}
-			req.Limit = limit
-		case strings.HasPrefix(arg, "--limit="):
-			value := strings.TrimPrefix(arg, "--limit=")
-			limit, err := strconv.Atoi(value)
-			if err != nil || limit < 0 {
-				return req, invalidFlagValueError{Flag: "--limit", Value: value, Message: "tag limit must be a non-negative integer", Usage: usage}
-			}
-			req.Limit = limit
-		case arg == "--message" || arg == "-m":
-			i++
-			if i >= len(args) {
-				return req, missingFlagValueError{Command: "tag", Flag: arg, Usage: usage}
-			}
-			req.Message = args[i]
-		case strings.HasPrefix(arg, "--message="):
-			req.Message = strings.TrimPrefix(arg, "--message=")
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{Command: "tag", Option: arg, Usage: usage}
-		default:
-			positionals = append(positionals, arg)
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
 		}
+		handled, err := consumeValueOption(args, &i, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "tag", Option: arg, Usage: tagUsage}
+		}
+		parser.positionals = append(parser.positionals, arg)
 	}
-	normalizedFormat, err := normalizeOutputFormat("tag", req.Format, []string{"text", "json"})
+	normalizedFormat, err := normalizeOutputFormat("tag", parser.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return parser.req, err
 	}
-	req.Format = normalizedFormat
-	if len(positionals) == 0 {
-		return req, nil
+	parser.req.Format = normalizedFormat
+	if err := parser.finish(); err != nil {
+		return parser.req, err
 	}
-	req.Action = strings.ToLower(positionals[0])
-	rest := positionals[1:]
-	switch req.Action {
+	return parser.req, nil
+}
+
+const tagUsage = "codog tag [list [PATTERN]|create NAME [REF]|show NAME|delete NAME] [--limit N] [--message TEXT] [--json|--output-format text|json]"
+
+type tagArgParser struct {
+	req         tagRequest
+	positionals []string
+}
+
+func (p *tagArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format),
+		"-o":              p.stringOption(&p.req.Format),
+		"--limit":         p.limitOption(),
+		"--message":       p.stringOption(&p.req.Message),
+		"-m":              p.stringOption(&p.req.Message),
+	}
+}
+
+func (p *tagArgParser) stringOption(target *string) valueOption {
+	return valueOption{missing: tagMissingValue, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func (p *tagArgParser) limitOption() valueOption {
+	return valueOption{missing: tagMissingValue, set: func(value string) error {
+		limit, err := strconv.Atoi(value)
+		if err != nil || limit < 0 {
+			return invalidFlagValueError{Flag: "--limit", Value: value, Message: "tag limit must be a non-negative integer", Usage: tagUsage}
+		}
+		p.req.Limit = limit
+		return nil
+	}}
+}
+
+func tagMissingValue(flag string) error {
+	return missingFlagValueError{Command: "tag", Flag: flag, Usage: tagUsage}
+}
+
+func (p *tagArgParser) finish() error {
+	if len(p.positionals) == 0 {
+		return nil
+	}
+	p.req.Action = strings.ToLower(p.positionals[0])
+	rest := p.positionals[1:]
+	switch p.req.Action {
 	case "list", "ls":
-		req.Action = "list"
+		p.req.Action = "list"
 		if len(rest) > 0 {
-			req.Pattern = rest[0]
+			p.req.Pattern = rest[0]
 		}
 	case "create", "add":
-		req.Action = "create"
+		p.req.Action = "create"
 		if len(rest) == 0 {
-			return req, requiredArgumentError{Command: "tag create", Argument: "NAME", Usage: usage}
+			return requiredArgumentError{Command: "tag create", Argument: "NAME", Usage: tagUsage}
 		}
-		req.Name = rest[0]
+		p.req.Name = rest[0]
 		if len(rest) > 1 {
-			req.Ref = rest[1]
+			p.req.Ref = rest[1]
 		}
 	case "show":
 		if len(rest) == 0 {
-			return req, requiredArgumentError{Command: "tag show", Argument: "NAME", Usage: usage}
+			return requiredArgumentError{Command: "tag show", Argument: "NAME", Usage: tagUsage}
 		}
-		req.Name = rest[0]
+		p.req.Name = rest[0]
 	case "delete", "del", "remove", "rm":
-		req.Action = "delete"
+		p.req.Action = "delete"
 		if len(rest) == 0 {
-			return req, requiredArgumentError{Command: "tag delete", Argument: "NAME", Usage: usage}
+			return requiredArgumentError{Command: "tag delete", Argument: "NAME", Usage: tagUsage}
 		}
-		req.Name = rest[0]
+		p.req.Name = rest[0]
 	default:
-		return req, unexpectedExtraArgsError{Command: "tag", Args: []string{positionals[0]}, Usage: usage}
+		return unexpectedExtraArgsError{Command: "tag", Args: []string{p.positionals[0]}, Usage: tagUsage}
 	}
-	return req, nil
+	return nil
 }
 
 func renderTagReport(out io.Writer, report tagReport) {
@@ -2411,99 +2450,70 @@ func truncateForReport(value string, limit int) string {
 }
 
 func parseGenerateSessionNameArgs(args []string, overrides config.FlagOverrides) (generateSessionNameRequest, error) {
-	req := generateSessionNameRequest{SessionID: "latest", Source: "first", Format: "text", MaxWords: 7}
+	parser := generateSessionNameArgParser{req: generateSessionNameRequest{SessionID: "latest", Source: "first", Format: "text", MaxWords: 7}}
 	if overrides.Resume != "" {
-		req.SessionID = overrides.Resume
+		parser.req.SessionID = overrides.Resume
 	}
 	if overrides.SessionID != "" {
-		req.SessionID = overrides.SessionID
+		parser.req.SessionID = overrides.SessionID
 	}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, errors.New("generateSessionName output format is required")
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--session":
-			index++
-			if index >= len(args) {
-				return req, errors.New("generateSessionName session id is required")
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--session="):
-			req.SessionID = strings.TrimPrefix(arg, "--session=")
-		case arg == "--resume":
-			index++
-			if index >= len(args) {
-				return req, errors.New("generateSessionName resume id is required")
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--resume="):
-			req.SessionID = strings.TrimPrefix(arg, "--resume=")
-		case arg == "--source":
-			index++
-			if index >= len(args) {
-				return req, errors.New("generateSessionName source is required")
-			}
-			req.Source = args[index]
-		case strings.HasPrefix(arg, "--source="):
-			req.Source = strings.TrimPrefix(arg, "--source=")
-		case arg == "--prefix":
-			index++
-			if index >= len(args) {
-				return req, errors.New("generateSessionName prefix is required")
-			}
-			req.Prefix = args[index]
-		case strings.HasPrefix(arg, "--prefix="):
-			req.Prefix = strings.TrimPrefix(arg, "--prefix=")
-		case arg == "--max-words":
-			index++
-			if index >= len(args) {
-				return req, errors.New("generateSessionName max words is required")
-			}
-			value, err := parsePositiveInt(args[index], "generateSessionName max words")
-			if err != nil {
-				return req, err
-			}
-			req.MaxWords = value
-		case strings.HasPrefix(arg, "--max-words="):
-			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--max-words="), "generateSessionName max words")
-			if err != nil {
-				return req, err
-			}
-			req.MaxWords = value
-		case arg == "--text":
-			index++
-			if index >= len(args) {
-				return req, errors.New("generateSessionName text is required")
-			}
-			req.Text = args[index]
-		case strings.HasPrefix(arg, "--text="):
-			req.Text = strings.TrimPrefix(arg, "--text=")
-		case arg == "--rename" || arg == "--apply":
-			req.Rename = true
-		default:
-			return req, fmt.Errorf("unknown generateSessionName argument %q", arg)
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
+		}
+		if arg == "--rename" || arg == "--apply" {
+			parser.req.Rename = true
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if !handled {
+			return parser.req, fmt.Errorf("unknown generateSessionName argument %q", arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "generateSessionName"); err != nil {
-		return req, err
+	if err := validateTextOrJSON(parser.req.Format, "generateSessionName"); err != nil {
+		return parser.req, err
 	}
-	source := strings.ToLower(strings.TrimSpace(req.Source))
+	source := strings.ToLower(strings.TrimSpace(parser.req.Source))
 	switch source {
 	case "first", "oldest", "last", "latest", "recent":
-		req.Source = source
+		parser.req.Source = source
 	default:
-		return req, fmt.Errorf("unknown generateSessionName source %q", req.Source)
+		return parser.req, fmt.Errorf("unknown generateSessionName source %q", parser.req.Source)
 	}
-	return req, nil
+	return parser.req, nil
+}
+
+type generateSessionNameArgParser struct {
+	req generateSessionNameRequest
+}
+
+func (p *generateSessionNameArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": stringValueOption(&p.req.Format, "generateSessionName output format is required"),
+		"-o":              stringValueOption(&p.req.Format, "generateSessionName output format is required"),
+		"--session":       stringValueOption(&p.req.SessionID, "generateSessionName session id is required"),
+		"--resume":        stringValueOption(&p.req.SessionID, "generateSessionName resume id is required"),
+		"--source":        stringValueOption(&p.req.Source, "generateSessionName source is required"),
+		"--prefix":        stringValueOption(&p.req.Prefix, "generateSessionName prefix is required"),
+		"--max-words":     p.maxWordsOption(),
+		"--text":          stringValueOption(&p.req.Text, "generateSessionName text is required"),
+	}
+}
+
+func (p *generateSessionNameArgParser) maxWordsOption() valueOption {
+	return valueOption{missing: func(string) error { return errors.New("generateSessionName max words is required") }, set: func(value string) error {
+		parsed, err := parsePositiveInt(value, "generateSessionName max words")
+		if err != nil {
+			return err
+		}
+		p.req.MaxWords = parsed
+		return nil
+	}}
 }
 
 func (a *App) Rename(args []string, overrides config.FlagOverrides) error {
@@ -3173,75 +3183,86 @@ func (a *App) copyPayload(req copyRequest) ([]byte, *session.Session, string, er
 }
 
 func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, error) {
-	const usage = "codog copy [last|N|all] [--session ID|--resume ID] [--format markdown|json|jsonl|html] [--json]"
-	req := copyRequest{Scope: "last", Nth: 1, SessionID: "latest"}
+	parser := copyArgParser{req: copyRequest{Scope: "last", Nth: 1, SessionID: "latest"}}
 	if overrides.Resume != "" {
-		req.SessionID = overrides.Resume
+		parser.req.SessionID = overrides.Resume
 	}
 	if overrides.SessionID != "" {
-		req.SessionID = overrides.SessionID
+		parser.req.SessionID = overrides.SessionID
 	}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.JSON = true
-		case arg == "--session":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "copy", Flag: arg, Usage: usage}
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--session="):
-			req.SessionID = strings.TrimPrefix(arg, "--session=")
-		case arg == "--resume":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "copy", Flag: arg, Usage: usage}
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--resume="):
-			req.SessionID = strings.TrimPrefix(arg, "--resume=")
-		case arg == "--format" || arg == "--output-format":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "copy", Flag: arg, Usage: usage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--format="):
-			req.Format = strings.TrimPrefix(arg, "--format=")
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "last" || arg == "latest":
-			req.Scope = "last"
-			req.Nth = 1
-		case arg == "all" || arg == "session":
-			req.Scope = "all"
-			req.Nth = 0
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return req, unknownOptionError{Command: "copy", Option: arg, Usage: usage}
-			}
-			nth, err := strconv.Atoi(arg)
-			if err != nil {
-				return req, unexpectedExtraArgsError{Command: "copy", Args: []string{arg}, Usage: usage}
-			}
-			if nth < 1 {
-				return req, invalidFlagValueError{Flag: "response-index", Value: arg, Message: "copy response index must be greater than zero", Usage: usage}
-			}
-			req.Scope = "nth"
-			req.Nth = nth
+		if arg == "--json" {
+			parser.req.JSON = true
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "copy", Option: arg, Usage: copyUsage}
+		}
+		if err := parser.consumeScope(arg); err != nil {
+			return parser.req, err
 		}
 	}
-	if req.Scope != "all" && strings.TrimSpace(req.Format) != "" && req.Format != "text" {
-		return req, invalidFlagValueError{Flag: "--format", Value: req.Format, Message: "copy response only supports text format", Usage: usage}
+	if parser.req.Scope != "all" && strings.TrimSpace(parser.req.Format) != "" && parser.req.Format != "text" {
+		return parser.req, invalidFlagValueError{Flag: "--format", Value: parser.req.Format, Message: "copy response only supports text format", Usage: copyUsage}
 	}
-	if req.Scope == "all" {
-		if _, err := session.NormalizeExportFormat(req.Format); err != nil {
-			return req, err
+	if parser.req.Scope == "all" {
+		if _, err := session.NormalizeExportFormat(parser.req.Format); err != nil {
+			return parser.req, err
 		}
 	}
-	return req, nil
+	return parser.req, nil
+}
+
+const copyUsage = "codog copy [last|N|all] [--session ID|--resume ID] [--format markdown|json|jsonl|html] [--json]"
+
+type copyArgParser struct {
+	req copyRequest
+}
+
+func (p *copyArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--session":       p.stringOption(&p.req.SessionID),
+		"--resume":        p.stringOption(&p.req.SessionID),
+		"--format":        p.stringOption(&p.req.Format),
+		"--output-format": p.stringOption(&p.req.Format),
+	}
+}
+
+func (p *copyArgParser) stringOption(target *string) valueOption {
+	return valueOption{missing: func(flag string) error {
+		return missingFlagValueError{Command: "copy", Flag: flag, Usage: copyUsage}
+	}, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func (p *copyArgParser) consumeScope(arg string) error {
+	switch arg {
+	case "last", "latest":
+		p.req.Scope, p.req.Nth = "last", 1
+		return nil
+	case "all", "session":
+		p.req.Scope, p.req.Nth = "all", 0
+		return nil
+	}
+	nth, err := strconv.Atoi(arg)
+	if err != nil {
+		return unexpectedExtraArgsError{Command: "copy", Args: []string{arg}, Usage: copyUsage}
+	}
+	if nth < 1 {
+		return invalidFlagValueError{Flag: "response-index", Value: arg, Message: "copy response index must be greater than zero", Usage: copyUsage}
+	}
+	p.req.Scope, p.req.Nth = "nth", nth
+	return nil
 }
 
 func parsePasteArgs(args []string, overrides config.FlagOverrides) (pasteRequest, error) {

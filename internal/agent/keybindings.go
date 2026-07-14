@@ -2047,98 +2047,77 @@ func (a *App) CommitPushPR(ctx context.Context, args []string) error {
 }
 
 func parseCommitPushPRArgs(args []string) (commitPushPRRequest, error) {
-	req := commitPushPRRequest{Format: "text", Remote: "origin", All: true}
-	var positionals []string
+	parser := commitPushPRArgParser{req: commitPushPRRequest{Format: "text", Remote: "origin", All: true}}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, errors.New("commit-push-pr output format is required")
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--message" || arg == "-m":
-			index++
-			if index >= len(args) {
-				return req, errors.New("commit-push-pr message is required")
-			}
-			req.Message = args[index]
-		case strings.HasPrefix(arg, "--message="):
-			req.Message = strings.TrimPrefix(arg, "--message=")
-		case arg == "--title":
-			index++
-			if index >= len(args) {
-				return req, errors.New("commit-push-pr title is required")
-			}
-			req.Title = args[index]
-		case strings.HasPrefix(arg, "--title="):
-			req.Title = strings.TrimPrefix(arg, "--title=")
-		case arg == "--body":
-			index++
-			if index >= len(args) {
-				return req, errors.New("commit-push-pr body is required")
-			}
-			req.Body = args[index]
-		case strings.HasPrefix(arg, "--body="):
-			req.Body = strings.TrimPrefix(arg, "--body=")
-		case arg == "--branch" || arg == "-b":
-			index++
-			if index >= len(args) {
-				return req, errors.New("commit-push-pr branch is required")
-			}
-			req.Branch = args[index]
-		case strings.HasPrefix(arg, "--branch="):
-			req.Branch = strings.TrimPrefix(arg, "--branch=")
-		case arg == "--base":
-			index++
-			if index >= len(args) {
-				return req, errors.New("commit-push-pr base branch is required")
-			}
-			req.Base = args[index]
-		case strings.HasPrefix(arg, "--base="):
-			req.Base = strings.TrimPrefix(arg, "--base=")
-		case arg == "--remote":
-			index++
-			if index >= len(args) {
-				return req, errors.New("commit-push-pr remote is required")
-			}
-			req.Remote = args[index]
-		case strings.HasPrefix(arg, "--remote="):
-			req.Remote = strings.TrimPrefix(arg, "--remote=")
-		case arg == "--draft":
-			req.Draft = true
-		case arg == "--no-pr":
-			req.NoPR = true
-		case arg == "--dry-run":
-			req.DryRun = true
-		case arg == "--all":
-			req.All = true
-		case arg == "--staged":
-			req.All = false
-		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown commit-push-pr flag %q", arg)
-		default:
-			positionals = append(positionals, arg)
+		if parser.consumeBoolean(arg) {
+			continue
 		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, fmt.Errorf("unknown commit-push-pr flag %q", arg)
+		}
+		parser.positionals = append(parser.positionals, arg)
 	}
-	if err := validateTextOrJSON(req.Format, "commit-push-pr"); err != nil {
-		return req, err
+	if err := validateTextOrJSON(parser.req.Format, "commit-push-pr"); err != nil {
+		return parser.req, err
 	}
-	if strings.TrimSpace(req.Message) == "" {
-		req.Message = strings.Join(positionals, " ")
+	if strings.TrimSpace(parser.req.Message) == "" {
+		parser.req.Message = strings.Join(parser.positionals, " ")
 	}
-	if strings.TrimSpace(req.Message) == "" && strings.TrimSpace(req.Title) != "" {
-		req.Message = req.Title
+	if strings.TrimSpace(parser.req.Message) == "" && strings.TrimSpace(parser.req.Title) != "" {
+		parser.req.Message = parser.req.Title
 	}
-	if strings.TrimSpace(req.Message) == "" {
-		return req, errors.New("commit-push-pr requires a commit message")
+	if strings.TrimSpace(parser.req.Message) == "" {
+		return parser.req, errors.New("commit-push-pr requires a commit message")
 	}
-	return req, nil
+	return parser.req, nil
+}
+
+type commitPushPRArgParser struct {
+	req         commitPushPRRequest
+	positionals []string
+}
+
+func (p *commitPushPRArgParser) consumeBoolean(arg string) bool {
+	switch arg {
+	case "--json":
+		p.req.Format = "json"
+	case "--draft":
+		p.req.Draft = true
+	case "--no-pr":
+		p.req.NoPR = true
+	case "--dry-run":
+		p.req.DryRun = true
+	case "--all":
+		p.req.All = true
+	case "--staged":
+		p.req.All = false
+	default:
+		return false
+	}
+	return true
+}
+
+func (p *commitPushPRArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": stringValueOption(&p.req.Format, "commit-push-pr output format is required"),
+		"-o":              stringValueOption(&p.req.Format, "commit-push-pr output format is required"),
+		"--message":       stringValueOption(&p.req.Message, "commit-push-pr message is required"),
+		"-m":              stringValueOption(&p.req.Message, "commit-push-pr message is required"),
+		"--title":         stringValueOption(&p.req.Title, "commit-push-pr title is required"),
+		"--body":          stringValueOption(&p.req.Body, "commit-push-pr body is required"),
+		"--branch":        stringValueOption(&p.req.Branch, "commit-push-pr branch is required"),
+		"-b":              stringValueOption(&p.req.Branch, "commit-push-pr branch is required"),
+		"--base":          stringValueOption(&p.req.Base, "commit-push-pr base branch is required"),
+		"--remote":        stringValueOption(&p.req.Remote, "commit-push-pr remote is required"),
+	}
 }
 
 func renderCommitPushPRReport(out io.Writer, report prworkflow.Report) {
