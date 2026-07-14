@@ -767,91 +767,114 @@ func (req budgetRequest) hasSetValues() bool {
 
 func parseBudgetArgs(args []string) (budgetRequest, error) {
 	req := budgetRequest{Action: "show", Format: "text", Target: "user"}
-	rest := []string{}
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "budget", Flag: arg, Usage: budgetUsage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "budget", Flag: arg, Usage: budgetUsage}
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "budget", Flag: arg, Usage: budgetUsage}
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		case arg == "--max-tokens" || arg == "--tokens":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "budget", Flag: arg, Usage: budgetUsage}
-			}
-			value, err := parsePositiveIntOption(args[index], arg, budgetUsage)
-			if err != nil {
-				return req, err
-			}
-			req.MaxTokens = &value
-		case strings.HasPrefix(arg, "--max-tokens="):
-			value, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--max-tokens="), "--max-tokens", budgetUsage)
-			if err != nil {
-				return req, err
-			}
-			req.MaxTokens = &value
-		case strings.HasPrefix(arg, "--tokens="):
-			value, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--tokens="), "--tokens", budgetUsage)
-			if err != nil {
-				return req, err
-			}
-			req.MaxTokens = &value
-		case arg == "--max-turns" || arg == "--turns":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "budget", Flag: arg, Usage: budgetUsage}
-			}
-			value, err := parsePositiveIntOption(args[index], arg, budgetUsage)
-			if err != nil {
-				return req, err
-			}
-			req.MaxTurns = &value
-		case strings.HasPrefix(arg, "--max-turns="):
-			value, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--max-turns="), "--max-turns", budgetUsage)
-			if err != nil {
-				return req, err
-			}
-			req.MaxTurns = &value
-		case strings.HasPrefix(arg, "--turns="):
-			value, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--turns="), "--turns", budgetUsage)
-			if err != nil {
-				return req, err
-			}
-			req.MaxTurns = &value
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{Command: "budget", Option: arg, Usage: budgetUsage}
-		default:
-			rest = append(rest, arg)
-		}
+	rest, err := parseBudgetOptions(args, &req)
+	if err != nil {
+		return req, err
 	}
 	normalizedFormat, err := normalizeOutputFormat("budget", req.Format, []string{"text", "json"})
 	if err != nil {
 		return req, err
 	}
 	req.Format = normalizedFormat
+	return applyBudgetAction(req, rest)
+}
+
+func parseBudgetOptions(args []string, req *budgetRequest) ([]string, error) {
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		handled, err := consumeBudgetOption(args, &index, req)
+		if err != nil {
+			return nil, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(args[index], "-") {
+			return nil, unknownOptionError{Command: "budget", Option: args[index], Usage: budgetUsage}
+		}
+		rest = append(rest, args[index])
+	}
+	return rest, nil
+}
+
+func consumeBudgetOption(args []string, index *int, req *budgetRequest) (bool, error) {
+	arg := args[*index]
+	if arg == "--json" {
+		req.Format = "json"
+		return true, nil
+	}
+	if name, value, inline := strings.Cut(arg, "="); inline {
+		return consumeInlineBudgetOption(name, value, req)
+	}
+	switch arg {
+	case "--output-format", "-o":
+		return true, consumeBudgetString(args, index, arg, &req.Format, false)
+	case "--target":
+		return true, consumeBudgetString(args, index, arg, &req.Target, true)
+	case "--path":
+		return true, consumeBudgetString(args, index, arg, &req.Path, true)
+	case "--max-tokens", "--tokens":
+		return true, consumeBudgetNumber(args, index, arg, &req.MaxTokens)
+	case "--max-turns", "--turns":
+		return true, consumeBudgetNumber(args, index, arg, &req.MaxTurns)
+	default:
+		return false, nil
+	}
+}
+
+func consumeInlineBudgetOption(name, value string, req *budgetRequest) (bool, error) {
+	switch name {
+	case "--output-format":
+		req.Format = value
+	case "--target":
+		req.Target = value
+	case "--path":
+		req.Path = value
+	case "--max-tokens", "--tokens":
+		return true, setBudgetNumber(name, value, &req.MaxTokens)
+	case "--max-turns", "--turns":
+		return true, setBudgetNumber(name, value, &req.MaxTurns)
+	default:
+		return false, nil
+	}
+	return true, nil
+}
+
+func consumeBudgetString(args []string, index *int, flag string, target *string, rejectFormat bool) error {
+	value, err := budgetOptionValue(args, index, flag, rejectFormat)
+	if err != nil {
+		return err
+	}
+	*target = value
+	return nil
+}
+
+func consumeBudgetNumber(args []string, index *int, flag string, target **int) error {
+	value, err := budgetOptionValue(args, index, flag, true)
+	if err != nil {
+		return err
+	}
+	return setBudgetNumber(flag, value, target)
+}
+
+func budgetOptionValue(args []string, index *int, flag string, rejectFormat bool) (string, error) {
+	(*index)++
+	if *index >= len(args) || rejectFormat && isOutputFormatFlag(args[*index]) {
+		return "", missingFlagValueError{Command: "budget", Flag: flag, Usage: budgetUsage}
+	}
+	return args[*index], nil
+}
+
+func setBudgetNumber(flag, raw string, target **int) error {
+	value, err := parsePositiveIntOption(raw, flag, budgetUsage)
+	if err != nil {
+		return err
+	}
+	*target = &value
+	return nil
+}
+
+func applyBudgetAction(req budgetRequest, rest []string) (budgetRequest, error) {
 	if len(rest) == 0 {
 		if req.hasSetValues() {
 			req.Action = "set"
@@ -862,38 +885,49 @@ func parseBudgetArgs(args []string) (budgetRequest, error) {
 	action := normalizeBudgetAction(rawAction)
 	switch action {
 	case "show":
-		if len(rest) > 1 {
-			return req, unexpectedExtraArgsError{Command: "budget " + rawAction, Args: rest[1:], Usage: budgetUsage}
-		}
-		if req.hasSetValues() {
-			return req, unexpectedExtraArgsError{Command: "budget " + rawAction, Args: budgetSetValueArgs(req), Usage: budgetUsage}
-		}
-		req.Action = "show"
+		return applyBudgetShowAction(req, rawAction, rest)
 	case "set":
 		req.Action = "set"
-		if err := parseBudgetSetArgs(&req, rest[1:]); err != nil {
-			return req, err
-		}
+		return req, parseBudgetSetArgs(&req, rest[1:])
 	case "reset":
-		if len(rest) > 1 {
-			return req, unexpectedExtraArgsError{Command: "budget " + rawAction, Args: rest[1:], Usage: budgetUsage}
-		}
-		if req.hasSetValues() {
-			return req, unexpectedExtraArgsError{Command: "budget " + rawAction, Args: budgetSetValueArgs(req), Usage: budgetUsage}
-		}
-		req.Action = "reset"
+		return applyBudgetResetAction(req, rawAction, rest)
 	default:
-		if len(rest) == 1 {
-			value, err := parsePositiveIntOption(rest[0], "max-tokens", budgetUsage)
-			if err == nil {
-				req.Action = "set"
-				req.MaxTokens = &value
-				return req, nil
-			}
-		}
-		return req, unexpectedExtraArgsError{Command: "budget", Args: []string{rest[0]}, Usage: budgetUsage}
+		return applyImplicitBudgetSet(req, rest)
 	}
+}
+
+func applyBudgetShowAction(req budgetRequest, rawAction string, rest []string) (budgetRequest, error) {
+	if len(rest) > 1 {
+		return req, unexpectedExtraArgsError{Command: "budget " + rawAction, Args: rest[1:], Usage: budgetUsage}
+	}
+	if req.hasSetValues() {
+		return req, unexpectedExtraArgsError{Command: "budget " + rawAction, Args: budgetSetValueArgs(req), Usage: budgetUsage}
+	}
+	req.Action = "show"
 	return req, nil
+}
+
+func applyBudgetResetAction(req budgetRequest, rawAction string, rest []string) (budgetRequest, error) {
+	if len(rest) > 1 {
+		return req, unexpectedExtraArgsError{Command: "budget " + rawAction, Args: rest[1:], Usage: budgetUsage}
+	}
+	if req.hasSetValues() {
+		return req, unexpectedExtraArgsError{Command: "budget " + rawAction, Args: budgetSetValueArgs(req), Usage: budgetUsage}
+	}
+	req.Action = "reset"
+	return req, nil
+}
+
+func applyImplicitBudgetSet(req budgetRequest, rest []string) (budgetRequest, error) {
+	if len(rest) == 1 {
+		value, err := parsePositiveIntOption(rest[0], "max-tokens", budgetUsage)
+		if err == nil {
+			req.Action = "set"
+			req.MaxTokens = &value
+			return req, nil
+		}
+	}
+	return req, unexpectedExtraArgsError{Command: "budget", Args: []string{rest[0]}, Usage: budgetUsage}
 }
 
 func normalizeBudgetAction(action string) string {

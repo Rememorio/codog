@@ -16,7 +16,6 @@ gocognit|internal/agent/commands.go|parseThinkBackArgs|35
 gocognit|internal/agent/commands.go|renderMCPListReport|34
 gocognit|internal/agent/commands_test.go|TestResumedSlashCLIContracts|36
 gocognit|internal/agent/diagnostics.go|parseAPIKeyArgs|41
-gocognit|internal/agent/diagnostics.go|parseBudgetArgs|63
 gocognit|internal/agent/diagnostics.go|parsePermissionsArgs|35
 gocognit|internal/agent/diagnostics.go|parseTemperatureArgs|36
 gocognit|internal/agent/git.go|(*App).SessionsCommand|64
@@ -42,7 +41,6 @@ gocognit|internal/agent/keybindings.go|parsePassesArgs|62
 gocognit|internal/agent/limits.go|(*App).openSession|34
 gocognit|internal/agent/limits.go|parseAntTraceArgs|41
 gocognit|internal/agent/limits.go|parseMockLimitsArgs|42
-gocognit|internal/agent/limits.go|parseRateLimitArgs|77
 gocognit|internal/agent/limits.go|snapshotWatchPaths|34
 gocognit|internal/agent/prompt.go|(*App).TUI|31
 gocognit|internal/agent/prompt.go|(*App).promptWithOutputOptions|62
@@ -58,7 +56,6 @@ gocognit|internal/agent/remote.go|parseBackgroundHeartbeatArgs|41
 gocognit|internal/agent/remote.go|parseBackgroundRunArgs|58
 gocognit|internal/agent/remote.go|parseCronArgsWithDefault|37
 gocognit|internal/agent/remote.go|parseMobileHandoffArgs|39
-gocognit|internal/agent/remote.go|parseTeamArgsWithDefault|79
 gocognit|internal/agent/resume.go|(*App).CodeIntelLSP|46
 gocognit|internal/agent/resume.go|(*App).runResumedSessionSlash|35
 gocognit|internal/agent/resume.go|parseCodeIntelNotebookEditArgs|42

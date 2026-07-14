@@ -2910,165 +2910,243 @@ func parseTeamArgsWithDefault(args []string, defaultFormat string) (teamRequest,
 	if strings.TrimSpace(defaultFormat) == "" {
 		defaultFormat = "text"
 	}
-	req := teamRequest{Action: "list", Format: defaultFormat, Limit: 64 * 1024}
-	actionSet := false
-	positionals := []string{}
+	parser := teamArgParser{
+		req: teamRequest{Action: "list", Format: defaultFormat, Limit: 64 * 1024},
+	}
+	return parser.parse(args)
+}
+
+type teamArgParser struct {
+	req         teamRequest
+	actionSet   bool
+	positionals []string
+}
+
+func (p *teamArgParser) parse(args []string) (teamRequest, error) {
 	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			i++
-			if i >= len(args) {
-				return req, missingFlagValueError{Command: "team", Flag: arg, Usage: teamUsage}
+		handled, err := p.consumeOption(args, &i)
+		if err != nil {
+			return p.req, err
+		}
+		if !handled {
+			if err := p.consumePositional(args[i]); err != nil {
+				return p.req, err
 			}
-			req.Format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--task":
-			i++
-			if i >= len(args) || isOutputFormatFlag(args[i]) {
-				return req, missingFlagValueError{Command: "team", Flag: arg, Usage: teamUsage}
-			}
-			req.Tasks = append(req.Tasks, parseTeamTaskSpec(args[i]))
-		case strings.HasPrefix(arg, "--task="):
-			req.Tasks = append(req.Tasks, parseTeamTaskSpec(strings.TrimPrefix(arg, "--task=")))
-		case arg == "--status":
-			i++
-			if i >= len(args) || isOutputFormatFlag(args[i]) {
-				return req, missingFlagValueError{Command: "team", Flag: arg, Usage: teamUsage}
-			}
-			req.Status = strings.TrimSpace(args[i])
-		case strings.HasPrefix(arg, "--status="):
-			req.Status = strings.TrimSpace(strings.TrimPrefix(arg, "--status="))
-		case arg == "--session-id" || arg == "--session":
-			i++
-			if i >= len(args) || isOutputFormatFlag(args[i]) {
-				return req, missingFlagValueError{Command: "team", Flag: arg, Usage: teamUsage}
-			}
-			req.SessionID = strings.TrimSpace(args[i])
-		case strings.HasPrefix(arg, "--session-id="):
-			req.SessionID = strings.TrimSpace(strings.TrimPrefix(arg, "--session-id="))
-		case strings.HasPrefix(arg, "--session="):
-			req.SessionID = strings.TrimSpace(strings.TrimPrefix(arg, "--session="))
-		case arg == "--bytes" || arg == "--limit":
-			i++
-			if i >= len(args) || isOutputFormatFlag(args[i]) {
-				return req, missingFlagValueError{Command: "team", Flag: arg, Usage: teamUsage}
-			}
-			limit, err := strconv.ParseInt(args[i], 10, 64)
-			if err != nil || limit < 0 {
-				return req, invalidFlagValueError{Flag: arg, Value: args[i], Message: "team log byte limit must be a non-negative integer", Usage: teamUsage}
-			}
-			req.Limit = limit
-		case strings.HasPrefix(arg, "--bytes="):
-			value := strings.TrimPrefix(arg, "--bytes=")
-			limit, err := strconv.ParseInt(value, 10, 64)
-			if err != nil || limit < 0 {
-				return req, invalidFlagValueError{Flag: "--bytes", Value: value, Message: "team log byte limit must be a non-negative integer", Usage: teamUsage}
-			}
-			req.Limit = limit
-		case strings.HasPrefix(arg, "--limit="):
-			value := strings.TrimPrefix(arg, "--limit=")
-			limit, err := strconv.ParseInt(value, 10, 64)
-			if err != nil || limit < 0 {
-				return req, invalidFlagValueError{Flag: "--limit", Value: value, Message: "team log byte limit must be a non-negative integer", Usage: teamUsage}
-			}
-			req.Limit = limit
-		case arg == "--offset":
-			i++
-			if i >= len(args) || isOutputFormatFlag(args[i]) {
-				return req, missingFlagValueError{Command: "team", Flag: arg, Usage: teamUsage}
-			}
-			offset, err := strconv.ParseInt(args[i], 10, 64)
-			if err != nil || offset < 0 {
-				return req, invalidFlagValueError{Flag: arg, Value: args[i], Message: "team watch offset must be a non-negative integer", Usage: teamUsage}
-			}
-			req.Offset = offset
-		case strings.HasPrefix(arg, "--offset="):
-			value := strings.TrimPrefix(arg, "--offset=")
-			offset, err := strconv.ParseInt(value, 10, 64)
-			if err != nil || offset < 0 {
-				return req, invalidFlagValueError{Flag: "--offset", Value: value, Message: "team watch offset must be a non-negative integer", Usage: teamUsage}
-			}
-			req.Offset = offset
-		case arg == "--max-events":
-			i++
-			if i >= len(args) || isOutputFormatFlag(args[i]) {
-				return req, missingFlagValueError{Command: "team", Flag: arg, Usage: teamUsage}
-			}
-			events, err := strconv.Atoi(args[i])
-			if err != nil || events < 0 {
-				return req, invalidFlagValueError{Flag: arg, Value: args[i], Message: "team watch max events must be a non-negative integer", Usage: teamUsage}
-			}
-			req.MaxEvents = events
-		case strings.HasPrefix(arg, "--max-events="):
-			value := strings.TrimPrefix(arg, "--max-events=")
-			events, err := strconv.Atoi(value)
-			if err != nil || events < 0 {
-				return req, invalidFlagValueError{Flag: "--max-events", Value: value, Message: "team watch max events must be a non-negative integer", Usage: teamUsage}
-			}
-			req.MaxEvents = events
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{Command: "team", Option: arg, Usage: teamUsage}
-		case !actionSet && isTeamAction(arg):
-			req.Action = normalizeTeamAction(arg)
-			actionSet = true
-		case !actionSet:
-			return req, unknownActionError{
-				Command:     "team",
-				Action:      arg,
-				Expected:    append([]string(nil), teamActionCandidates...),
-				Suggestions: toolnames.Suggestions(arg, teamActionCandidates, 4),
-				Usage:       teamUsage,
-			}
-		default:
-			positionals = append(positionals, arg)
 		}
 	}
-	format, err := normalizeOutputFormat("team", req.Format, []string{"text", "json"})
-	if err != nil {
-		return req, err
+	return p.finish()
+}
+
+func (p *teamArgParser) consumeOption(args []string, index *int) (bool, error) {
+	arg := args[*index]
+	if handled, err := p.consumeInlineOption(arg); handled {
+		return true, err
 	}
-	req.Format = format
-	switch req.Action {
+	switch arg {
+	case "--output-format", "-o":
+		return true, p.consumeString(args, index, arg, &p.req.Format, false)
+	case "--task":
+		return true, p.consumeTask(args, index, arg)
+	case "--status":
+		return true, p.consumeString(args, index, arg, &p.req.Status, true)
+	case "--session-id", "--session":
+		return true, p.consumeString(args, index, arg, &p.req.SessionID, true)
+	case "--bytes", "--limit":
+		return true, p.consumeLimit(args, index, arg)
+	case "--offset":
+		return true, p.consumeOffset(args, index, arg)
+	case "--max-events":
+		return true, p.consumeMaxEvents(args, index, arg)
+	default:
+		return false, nil
+	}
+}
+
+func (p *teamArgParser) consumeInlineOption(arg string) (bool, error) {
+	name, value, inline := strings.Cut(arg, "=")
+	if inline {
+		return p.setInlineOption(name, value)
+	}
+	if arg == "--json" {
+		p.req.Format = "json"
+		return true, nil
+	}
+	return false, nil
+}
+
+func (p *teamArgParser) setInlineOption(name, value string) (bool, error) {
+	switch name {
+	case "--output-format":
+		p.req.Format = value
+	case "--task":
+		p.req.Tasks = append(p.req.Tasks, parseTeamTaskSpec(value))
+	case "--status":
+		p.req.Status = strings.TrimSpace(value)
+	case "--session-id", "--session":
+		p.req.SessionID = strings.TrimSpace(value)
+	case "--bytes", "--limit":
+		return true, p.setLimit(name, value)
+	case "--offset":
+		return true, p.setOffset(name, value)
+	case "--max-events":
+		return true, p.setMaxEvents(name, value)
+	default:
+		return false, nil
+	}
+	return true, nil
+}
+
+func (p *teamArgParser) consumeString(args []string, index *int, flag string, target *string, trim bool) error {
+	value, err := teamOptionValue(args, index, flag, flag != "--output-format" && flag != "-o")
+	if err != nil {
+		return err
+	}
+	if trim {
+		value = strings.TrimSpace(value)
+	}
+	*target = value
+	return nil
+}
+
+func teamOptionValue(args []string, index *int, flag string, rejectFormat bool) (string, error) {
+	(*index)++
+	if *index >= len(args) || rejectFormat && isOutputFormatFlag(args[*index]) {
+		return "", missingFlagValueError{Command: "team", Flag: flag, Usage: teamUsage}
+	}
+	return args[*index], nil
+}
+
+func (p *teamArgParser) consumeTask(args []string, index *int, flag string) error {
+	value, err := teamOptionValue(args, index, flag, true)
+	if err != nil {
+		return err
+	}
+	p.req.Tasks = append(p.req.Tasks, parseTeamTaskSpec(value))
+	return nil
+}
+
+func (p *teamArgParser) consumeLimit(args []string, index *int, flag string) error {
+	value, err := teamOptionValue(args, index, flag, true)
+	if err != nil {
+		return err
+	}
+	return p.setLimit(flag, value)
+}
+
+func (p *teamArgParser) setLimit(flag, value string) error {
+	limit, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || limit < 0 {
+		return invalidFlagValueError{Flag: flag, Value: value, Message: "team log byte limit must be a non-negative integer", Usage: teamUsage}
+	}
+	p.req.Limit = limit
+	return nil
+}
+
+func (p *teamArgParser) consumeOffset(args []string, index *int, flag string) error {
+	value, err := teamOptionValue(args, index, flag, true)
+	if err != nil {
+		return err
+	}
+	return p.setOffset(flag, value)
+}
+
+func (p *teamArgParser) setOffset(flag, value string) error {
+	offset, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || offset < 0 {
+		return invalidFlagValueError{Flag: flag, Value: value, Message: "team watch offset must be a non-negative integer", Usage: teamUsage}
+	}
+	p.req.Offset = offset
+	return nil
+}
+
+func (p *teamArgParser) consumeMaxEvents(args []string, index *int, flag string) error {
+	value, err := teamOptionValue(args, index, flag, true)
+	if err != nil {
+		return err
+	}
+	return p.setMaxEvents(flag, value)
+}
+
+func (p *teamArgParser) setMaxEvents(flag, value string) error {
+	events, err := strconv.Atoi(value)
+	if err != nil || events < 0 {
+		return invalidFlagValueError{Flag: flag, Value: value, Message: "team watch max events must be a non-negative integer", Usage: teamUsage}
+	}
+	p.req.MaxEvents = events
+	return nil
+}
+
+func (p *teamArgParser) consumePositional(arg string) error {
+	if strings.HasPrefix(arg, "-") {
+		return unknownOptionError{Command: "team", Option: arg, Usage: teamUsage}
+	}
+	if !p.actionSet {
+		return p.consumeAction(arg)
+	}
+	p.positionals = append(p.positionals, arg)
+	return nil
+}
+
+func (p *teamArgParser) consumeAction(arg string) error {
+	if !isTeamAction(arg) {
+		return unknownActionError{
+			Command: "team", Action: arg, Expected: append([]string(nil), teamActionCandidates...),
+			Suggestions: toolnames.Suggestions(arg, teamActionCandidates, 4), Usage: teamUsage,
+		}
+	}
+	p.req.Action = normalizeTeamAction(arg)
+	p.actionSet = true
+	return nil
+}
+
+func (p *teamArgParser) finish() (teamRequest, error) {
+	format, err := normalizeOutputFormat("team", p.req.Format, []string{"text", "json"})
+	if err != nil {
+		return p.req, err
+	}
+	p.req.Format = format
+	return p.validatePositionals()
+}
+
+func (p *teamArgParser) validatePositionals() (teamRequest, error) {
+	switch p.req.Action {
 	case "list":
-		if len(positionals) != 0 {
+		if len(p.positionals) != 0 {
 			command := "team list"
-			if !actionSet {
+			if !p.actionSet {
 				command = "team"
 			}
-			return req, unexpectedExtraArgsError{
-				Command: command,
-				Args:    append([]string(nil), positionals...),
-				Usage:   teamUsage,
+			return p.req, unexpectedExtraArgsError{
+				Command: command, Args: append([]string(nil), p.positionals...), Usage: teamUsage,
 			}
 		}
 	case "get", "status", "logs", "watch", "delete":
-		if len(positionals) != 1 {
-			return req, requiredArgumentError{Command: "team " + req.Action, Argument: "TEAM_ID", Usage: teamUsage}
+		if len(p.positionals) != 1 {
+			return p.req, requiredArgumentError{Command: "team " + p.req.Action, Argument: "TEAM_ID", Usage: teamUsage}
 		}
-		req.ID = positionals[0]
+		p.req.ID = p.positionals[0]
 	case "create":
-		if len(positionals) < 1 {
-			return req, requiredArgumentError{Command: "team create", Argument: "NAME", Usage: teamUsage}
-		}
-		req.Name = positionals[0]
-		if len(req.Tasks) == 0 && len(positionals) > 1 {
-			req.Tasks = append(req.Tasks, team.TaskSpec{Prompt: strings.Join(positionals[1:], " ")})
-		}
-		if len(req.Tasks) == 0 {
-			return req, requiredArgumentError{Command: "team create", Argument: "TASK", Usage: teamUsage}
-		}
+		return p.validateCreatePositionals()
 	default:
-		return req, unexpectedExtraArgsError{
-			Command: "team",
-			Args:    []string{req.Action},
-			Usage:   teamUsage,
+		return p.req, unexpectedExtraArgsError{
+			Command: "team", Args: []string{p.req.Action}, Usage: teamUsage,
 		}
 	}
-	return req, nil
+	return p.req, nil
+}
+
+func (p *teamArgParser) validateCreatePositionals() (teamRequest, error) {
+	if len(p.positionals) < 1 {
+		return p.req, requiredArgumentError{Command: "team create", Argument: "NAME", Usage: teamUsage}
+	}
+	p.req.Name = p.positionals[0]
+	if len(p.req.Tasks) == 0 && len(p.positionals) > 1 {
+		p.req.Tasks = append(p.req.Tasks, team.TaskSpec{Prompt: strings.Join(p.positionals[1:], " ")})
+	}
+	if len(p.req.Tasks) == 0 {
+		return p.req, requiredArgumentError{Command: "team create", Argument: "TASK", Usage: teamUsage}
+	}
+	return p.req, nil
 }
 
 func parseTeamTaskSpec(value string) team.TaskSpec {
