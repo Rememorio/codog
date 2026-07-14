@@ -1544,527 +1544,56 @@ func TestFakeLSPServer(t *testing.T) {
 			return
 		}
 		if msg.ID == nil {
-			if msg.Method == "textDocument/didOpen" {
-				var params struct {
-					TextDocument struct {
-						URI string `json:"uri"`
-					} `json:"textDocument"`
-				}
-				_ = decodeLSPParams(msg.Params, &params)
-				currentURI = params.TextDocument.URI
-				_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "textDocument/publishDiagnostics", Params: map[string]any{
-					"uri": params.TextDocument.URI,
-					"diagnostics": []map[string]any{{
-						"range": map[string]any{
-							"start": map[string]any{"line": 2, "character": 5},
-							"end":   map[string]any{"line": 2, "character": 9},
-						},
-						"severity": 1,
-						"code":     "fake-code",
-						"codeDescription": map[string]any{
-							"href": "https://example.test/diagnostics/fake-code",
-						},
-						"source":  "fake-lsp",
-						"message": "fake diagnostic",
-						"tags":    []int{1},
-						"relatedInformation": []map[string]any{{
-							"location": map[string]any{
-								"uri": params.TextDocument.URI,
-								"range": map[string]any{
-									"start": map[string]any{"line": 1, "character": 0},
-									"end":   map[string]any{"line": 1, "character": 4},
-								},
-							},
-							"message": "related fake diagnostic",
-						}},
-						"data": map[string]any{"rule": "fake-rule"},
-					}},
-				}})
-			}
+			handleFakeLSPNotification(msg, &currentURI)
 			continue
 		}
-		switch msg.Method {
-		case "initialize":
-			var params struct {
-				RootURI string `json:"rootUri"`
-			}
-			_ = decodeLSPParams(msg.Params, &params)
-			rootURI = strings.TrimRight(params.RootURI, "/")
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"capabilities": map[string]any{}})})
-		case "textDocument/diagnostic":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
-				"kind": "full",
-				"items": []map[string]any{{
-					"range": map[string]any{
-						"start": map[string]any{"line": 2, "character": 5},
-						"end":   map[string]any{"line": 2, "character": 9},
-					},
-					"severity": 2,
-					"source":   "fake-lsp",
-					"message":  "pulled document diagnostic",
-				}},
-			})})
-		case "workspace/diagnostic":
-			if currentURI == "" {
-				currentURI = "file:///workspace/main.go"
-			}
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
-				"items": []map[string]any{{
-					"uri":     currentURI,
-					"version": 1,
-					"kind":    "full",
-					"items": []map[string]any{{
-						"range": map[string]any{
-							"start": map[string]any{"line": 3, "character": 1},
-							"end":   map[string]any{"line": 3, "character": 5},
-						},
-						"severity": 2,
-						"source":   "fake-lsp",
-						"message":  "pulled workspace diagnostic",
-					}},
-				}},
-			})})
-		case "textDocument/hover":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"contents": map[string]any{"kind": "markdown", "value": "fake hover"}})})
-		case "textDocument/completion":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
-				"isIncomplete": false,
-				"items": []map[string]any{
-					{"label": "BuildWidget", "kind": 3, "data": map[string]any{"id": "completion-1"}},
-					{"label": "BuildOther", "kind": 3, "data": map[string]any{"id": "completion-2"}},
-				},
-			})})
-		case "completionItem/resolve":
-			var item map[string]any
-			_ = decodeLSPParams(msg.Params, &item)
-			item["detail"] = "func BuildWidget() Widget"
-			item["documentation"] = map[string]any{"kind": "markdown", "value": "Constructs a widget."}
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(item)})
-		case "textDocument/declaration", "textDocument/implementation", "textDocument/typeDefinition":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"uri":   "file:///workspace/main.go",
-				"range": map[string]any{"start": map[string]any{"line": 2, "character": 5}, "end": map[string]any{"line": 2, "character": 9}},
-			}})})
-		case "textDocument/documentHighlight":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"kind":  1,
-				"range": map[string]any{"start": map[string]any{"line": 2, "character": 5}, "end": map[string]any{"line": 2, "character": 9}},
-			}})})
-		case "textDocument/selectionRange":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 5},
-					"end":   map[string]any{"line": 2, "character": 10},
-				},
-				"parent": map[string]any{
-					"range": map[string]any{
-						"start": map[string]any{"line": 2, "character": 0},
-						"end":   map[string]any{"line": 2, "character": 15},
-					},
-				},
-			}})})
-		case "textDocument/foldingRange":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"startLine": 2,
-				"endLine":   2,
-				"kind":      "region",
-			}})})
-		case "textDocument/documentLink":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 12},
-				},
-				"target": "https://example.test/docs",
-			}})})
-		case "documentLink/resolve":
-			var link map[string]any
-			_ = decodeLSPParams(msg.Params, &link)
-			link["target"] = "https://example.test/resolved"
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(link)})
-		case "textDocument/documentColor":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 1},
-					"end":   map[string]any{"line": 2, "character": 8},
-				},
-				"color": map[string]any{"red": 1.0, "green": 0.5, "blue": 0.25, "alpha": 1.0},
-			}})})
-		case "textDocument/colorPresentation":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"label": "#ff8040",
-				"textEdit": map[string]any{
-					"range": map[string]any{
-						"start": map[string]any{"line": 2, "character": 1},
-						"end":   map[string]any{"line": 2, "character": 8},
-					},
-					"newText": "#ff8040",
-				},
-			}})})
-		case "textDocument/codeLens":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 20},
-				},
-				"command": map[string]any{"title": "Run test", "command": "go.test"},
-				"data":    map[string]any{"id": "lens-1"},
-			}})})
-		case "codeLens/resolve":
-			var lens map[string]any
-			_ = decodeLSPParams(msg.Params, &lens)
-			lens["command"] = map[string]any{"title": "Run test (resolved)", "command": "go.test", "arguments": []string{"./..."}}
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(lens)})
-		case "textDocument/inlayHint":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"position": map[string]any{"line": 2, "character": 10},
-				"label":    ": int",
-				"kind":     1,
-			}})})
-		case "inlayHint/resolve":
-			var hint map[string]any
-			_ = decodeLSPParams(msg.Params, &hint)
-			hint["tooltip"] = "resolved inlay hint"
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(hint)})
-		case "textDocument/inlineValue":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 5},
-					"end":   map[string]any{"line": 2, "character": 10},
-				},
-				"text": "count = 1",
-			}})})
-		case "textDocument/linkedEditingRange":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
-				"ranges": []map[string]any{
-					{"start": map[string]any{"line": 2, "character": 5}, "end": map[string]any{"line": 2, "character": 10}},
-					{"start": map[string]any{"line": 4, "character": 5}, "end": map[string]any{"line": 4, "character": 10}},
-				},
-				"wordPattern": "[A-Za-z_]+",
-			})})
-		case "textDocument/moniker":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"scheme":     "gomod",
-				"identifier": "example.test/demo.BuildWidget",
-				"kind":       "export",
-			}})})
-		case "textDocument/semanticTokens/full":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
-				"resultId": "full-1",
-				"data":     []int{2, 5, 4, 12, 0},
-			})})
-		case "textDocument/semanticTokens/range":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
-				"data": []int{0, 5, 6, 12, 0},
-			})})
-		case "textDocument/semanticTokens/full/delta":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
-				"resultId": "full-2",
-				"edits": []map[string]any{{
-					"start":       0,
-					"deleteCount": 5,
-					"data":        []int{0, 1, 2, 3, 4},
-				}},
-			})})
-		case "workspace/symbol":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"name": "BuildWidget",
-				"kind": 12,
-				"location": map[string]any{
-					"uri": "file:///workspace/main.go",
-					"range": map[string]any{
-						"start": map[string]any{"line": 2, "character": 5},
-						"end":   map[string]any{"line": 2, "character": 16},
-					},
-				},
-			}})})
-		case "workspaceSymbol/resolve":
-			var symbol map[string]any
-			_ = decodeLSPParams(msg.Params, &symbol)
-			symbol["containerName"] = "demo"
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(symbol)})
-		case "workspace/executeCommand":
-			var params struct {
-				Command   string `json:"command"`
-				Arguments []any  `json:"arguments"`
-			}
-			_ = decodeLSPParams(msg.Params, &params)
-			if currentURI == "" && rootURI != "" {
-				currentURI = rootURI + "/main.go"
-			}
-			configurationHandled := fakeLSPServerRequestHandled(reader, "configuration-check", "workspace/configuration", map[string]any{
-				"items": []map[string]any{{"section": "gopls"}},
-			})
-			foldersHandled := fakeLSPServerRequestHandled(reader, "folders-check", "workspace/workspaceFolders", nil)
-			registerHandled := fakeLSPServerRequestHandled(reader, "register-check", "client/registerCapability", map[string]any{
-				"registrations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
-			})
-			unregisterHandled := fakeLSPServerRequestHandled(reader, "unregister-check", "client/unregisterCapability", map[string]any{
-				"unregisterations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
-			})
-			progressHandled := fakeLSPServerRequestHandled(reader, "progress-check", "window/workDoneProgress/create", map[string]any{
-				"token": "demo-progress",
-			})
-			showDocumentHandled := fakeLSPServerRequestHandled(reader, "show-document-check", "window/showDocument", map[string]any{
-				"uri":       currentURI,
-				"takeFocus": false,
-			})
-			refreshHandled := fakeLSPServerRequestHandled(reader, "semantic-refresh-check", "workspace/semanticTokens/refresh", nil) &&
-				fakeLSPServerRequestHandled(reader, "inlay-refresh-check", "workspace/inlayHint/refresh", nil) &&
-				fakeLSPServerRequestHandled(reader, "code-lens-refresh-check", "workspace/codeLens/refresh", nil) &&
-				fakeLSPServerRequestHandled(reader, "diagnostic-refresh-check", "workspace/diagnostic/refresh", nil)
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "window/showMessage", Params: map[string]any{
-				"type":    3,
-				"message": "execute notice",
-			}})
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "window/logMessage", Params: map[string]any{
-				"type":    3,
-				"message": "execute log",
-			}})
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "telemetry/event", Params: map[string]any{
-				"name": "execute",
-			}})
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "$/progress", Params: map[string]any{
-				"token": "demo-progress",
-				"value": map[string]any{"kind": "report", "message": "running"},
-			}})
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: "apply-execute", Method: "workspace/applyEdit", Params: map[string]any{
-				"label": "execute preview",
-				"edit": map[string]any{
-					"changes": map[string]any{
-						currentURI: []map[string]any{{
-							"range": map[string]any{
-								"start": map[string]any{"line": 2, "character": 0},
-								"end":   map[string]any{"line": 2, "character": 13},
-							},
-							"newText": "func ExecutePreview() {}",
-						}},
-					},
-				},
-			}})
-			_, _ = readLSPMessage(reader)
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
-				"status":               "ok",
-				"command":              params.Command,
-				"arguments":            params.Arguments,
-				"configurationHandled": configurationHandled,
-				"foldersHandled":       foldersHandled,
-				"registerHandled":      registerHandled,
-				"unregisterHandled":    unregisterHandled,
-				"progressHandled":      progressHandled,
-				"showDocumentHandled":  showDocumentHandled,
-				"refreshHandled":       refreshHandled,
-			})})
-		case "textDocument/signatureHelp":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
-				"activeSignature": 0,
-				"signatures": []map[string]any{{
-					"label": "main()",
-				}},
-			})})
-		case "textDocument/rename":
-			if currentURI == "" {
-				currentURI = "file:///workspace/main.go"
-			}
-			var params struct {
-				NewName string `json:"newName"`
-			}
-			_ = decodeLSPParams(msg.Params, &params)
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
-				"changes": map[string]any{
-					currentURI: []map[string]any{{
-						"range": map[string]any{
-							"start": map[string]any{"line": 2, "character": 5},
-							"end":   map[string]any{"line": 2, "character": 9},
-						},
-						"newText": params.NewName,
-					}},
-				},
-			})})
-		case "textDocument/prepareRename":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 5},
-					"end":   map[string]any{"line": 2, "character": 10},
-				},
-				"placeholder": "Start",
-			})})
-		case "textDocument/codeAction":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{
-				{
-					"title": "Apply fake fix",
-					"kind":  "quickfix",
-					"edit": map[string]any{
-						"changes": map[string]any{
-							currentURI: []map[string]any{{
-								"range": map[string]any{
-									"start": map[string]any{"line": 2, "character": 5},
-									"end":   map[string]any{"line": 2, "character": 10},
-								},
-								"newText": "Launch",
-							}},
-						},
-					},
-				},
-				{"title": "Apply lazy fix", "kind": "quickfix", "data": map[string]any{"id": "lazy-fix"}},
-			})})
-		case "codeAction/resolve":
-			var action map[string]any
-			_ = decodeLSPParams(msg.Params, &action)
-			action["edit"] = map[string]any{
-				"changes": map[string]any{
-					currentURI: []map[string]any{{
-						"range": map[string]any{
-							"start": map[string]any{"line": 2, "character": 5},
-							"end":   map[string]any{"line": 2, "character": 10},
-						},
-						"newText": "Lazy",
-					}},
-				},
-			}
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(action)})
-		case "textDocument/prepareCallHierarchy":
-			if currentURI == "" {
-				currentURI = "file:///workspace/main.go"
-			}
-			callItem := map[string]any{
-				"name": "BuildWidget",
-				"kind": 12,
-				"uri":  currentURI,
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 20},
-				},
-				"selectionRange": map[string]any{
-					"start": map[string]any{"line": 2, "character": 5},
-					"end":   map[string]any{"line": 2, "character": 16},
-				},
-			}
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{callItem})})
-		case "callHierarchy/incomingCalls":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"from": map[string]any{
-					"name": "TestCaller",
-					"kind": 12,
-					"uri":  currentURI,
-					"range": map[string]any{
-						"start": map[string]any{"line": 8, "character": 0},
-						"end":   map[string]any{"line": 10, "character": 1},
-					},
-					"selectionRange": map[string]any{
-						"start": map[string]any{"line": 8, "character": 5},
-						"end":   map[string]any{"line": 8, "character": 15},
-					},
-				},
-				"fromRanges": []map[string]any{{
-					"start": map[string]any{"line": 9, "character": 1},
-					"end":   map[string]any{"line": 9, "character": 12},
-				}},
-			}})})
-		case "callHierarchy/outgoingCalls":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"to": map[string]any{
-					"name": "fmt.Println",
-					"kind": 12,
-					"uri":  currentURI,
-					"range": map[string]any{
-						"start": map[string]any{"line": 4, "character": 0},
-						"end":   map[string]any{"line": 4, "character": 20},
-					},
-					"selectionRange": map[string]any{
-						"start": map[string]any{"line": 4, "character": 1},
-						"end":   map[string]any{"line": 4, "character": 12},
-					},
-				},
-				"fromRanges": []map[string]any{{
-					"start": map[string]any{"line": 3, "character": 1},
-					"end":   map[string]any{"line": 3, "character": 12},
-				}},
-			}})})
-		case "textDocument/prepareTypeHierarchy":
-			if currentURI == "" {
-				currentURI = "file:///workspace/main.go"
-			}
-			typeItem := map[string]any{
-				"name": "Widget",
-				"kind": 23,
-				"uri":  currentURI,
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 20},
-				},
-				"selectionRange": map[string]any{
-					"start": map[string]any{"line": 2, "character": 5},
-					"end":   map[string]any{"line": 2, "character": 11},
-				},
-			}
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{typeItem})})
-		case "typeHierarchy/supertypes":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"name": "BaseWidget",
-				"kind": 23,
-				"uri":  currentURI,
-				"range": map[string]any{
-					"start": map[string]any{"line": 1, "character": 0},
-					"end":   map[string]any{"line": 1, "character": 20},
-				},
-				"selectionRange": map[string]any{
-					"start": map[string]any{"line": 1, "character": 5},
-					"end":   map[string]any{"line": 1, "character": 15},
-				},
-			}})})
-		case "typeHierarchy/subtypes":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"name": "SpecialWidget",
-				"kind": 23,
-				"uri":  currentURI,
-				"range": map[string]any{
-					"start": map[string]any{"line": 5, "character": 0},
-					"end":   map[string]any{"line": 5, "character": 20},
-				},
-				"selectionRange": map[string]any{
-					"start": map[string]any{"line": 5, "character": 5},
-					"end":   map[string]any{"line": 5, "character": 18},
-				},
-			}})})
-		case "textDocument/formatting":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 14},
-				},
-				"newText": "func main() {}\n",
-			}})})
-		case "textDocument/rangeFormatting":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 14},
-				},
-				"newText": "func rangeFormatted() {}\n",
-			}})})
-		case "textDocument/onTypeFormatting":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 14},
-				},
-				"newText": "func onTypeFormatted() {}\n",
-			}})})
-		case "textDocument/willSaveWaitUntil":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
-				"range": map[string]any{
-					"start": map[string]any{"line": 2, "character": 0},
-					"end":   map[string]any{"line": 2, "character": 14},
-				},
-				"newText": "func saved() {}\n",
-			}})})
-		case "shutdown":
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(nil)})
-		default:
-			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(nil)})
+		var handled bool
+		currentURI, rootURI, handled = handleFakeLSPPrimaryRequest(reader, msg, currentURI, rootURI)
+		if !handled {
+			currentURI, rootURI, _ = handleFakeLSPSecondaryRequest(reader, msg, currentURI, rootURI)
 		}
 	}
+}
+
+func handleFakeLSPNotification(msg lspRPCMessage, currentURI *string) {
+	if msg.Method != "textDocument/didOpen" {
+		return
+	}
+	var params struct {
+		TextDocument struct {
+			URI string `json:"uri"`
+		} `json:"textDocument"`
+	}
+	_ = decodeLSPParams(msg.Params, &params)
+	*currentURI = params.TextDocument.URI
+	_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "textDocument/publishDiagnostics", Params: map[string]any{
+		"uri": params.TextDocument.URI,
+		"diagnostics": []map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 5},
+				"end":   map[string]any{"line": 2, "character": 9},
+			},
+			"severity": 1,
+			"code":     "fake-code",
+			"codeDescription": map[string]any{
+				"href": "https://example.test/diagnostics/fake-code",
+			},
+			"source":  "fake-lsp",
+			"message": "fake diagnostic",
+			"tags":    []int{1},
+			"relatedInformation": []map[string]any{{
+				"location": map[string]any{
+					"uri": params.TextDocument.URI,
+					"range": map[string]any{
+						"start": map[string]any{"line": 1, "character": 0},
+						"end":   map[string]any{"line": 1, "character": 4},
+					},
+				},
+				"message": "related fake diagnostic",
+			}},
+			"data": map[string]any{"rule": "fake-rule"},
+		}},
+	}})
 }
 
 func fakeLSPServerRequestHandled(reader *bufio.Reader, id string, method string, params any) bool {
@@ -2086,4 +1615,541 @@ func mustRawJSON(value any) json.RawMessage {
 		panic(err)
 	}
 	return data
+}
+
+func handleFakeLSPPrimaryRequest(reader *bufio.Reader, msg lspRPCMessage, currentURI string, rootURI string) (string, string, bool) {
+	handled := false
+	switch msg.Method {
+	case "initialize":
+		handled = true
+		var params struct {
+			RootURI string `json:"rootUri"`
+		}
+		_ = decodeLSPParams(msg.Params, &params)
+		rootURI = strings.TrimRight(params.RootURI, "/")
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"capabilities": map[string]any{}})})
+	case "textDocument/diagnostic":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+			"kind": "full",
+			"items": []map[string]any{{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 5},
+					"end":   map[string]any{"line": 2, "character": 9},
+				},
+				"severity": 2,
+				"source":   "fake-lsp",
+				"message":  "pulled document diagnostic",
+			}},
+		})})
+	case "workspace/diagnostic":
+		handled = true
+		if currentURI == "" {
+			currentURI = "file:///workspace/main.go"
+		}
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+			"items": []map[string]any{{
+				"uri":     currentURI,
+				"version": 1,
+				"kind":    "full",
+				"items": []map[string]any{{
+					"range": map[string]any{
+						"start": map[string]any{"line": 3, "character": 1},
+						"end":   map[string]any{"line": 3, "character": 5},
+					},
+					"severity": 2,
+					"source":   "fake-lsp",
+					"message":  "pulled workspace diagnostic",
+				}},
+			}},
+		})})
+	case "textDocument/hover":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"contents": map[string]any{"kind": "markdown", "value": "fake hover"}})})
+	case "textDocument/completion":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+			"isIncomplete": false,
+			"items": []map[string]any{
+				{"label": "BuildWidget", "kind": 3, "data": map[string]any{"id": "completion-1"}},
+				{"label": "BuildOther", "kind": 3, "data": map[string]any{"id": "completion-2"}},
+			},
+		})})
+	case "completionItem/resolve":
+		handled = true
+		var item map[string]any
+		_ = decodeLSPParams(msg.Params, &item)
+		item["detail"] = "func BuildWidget() Widget"
+		item["documentation"] = map[string]any{"kind": "markdown", "value": "Constructs a widget."}
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(item)})
+	case "textDocument/declaration", "textDocument/implementation", "textDocument/typeDefinition":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"uri":   "file:///workspace/main.go",
+			"range": map[string]any{"start": map[string]any{"line": 2, "character": 5}, "end": map[string]any{"line": 2, "character": 9}},
+		}})})
+	case "textDocument/documentHighlight":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"kind":  1,
+			"range": map[string]any{"start": map[string]any{"line": 2, "character": 5}, "end": map[string]any{"line": 2, "character": 9}},
+		}})})
+	case "textDocument/selectionRange":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 5},
+				"end":   map[string]any{"line": 2, "character": 10},
+			},
+			"parent": map[string]any{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 0},
+					"end":   map[string]any{"line": 2, "character": 15},
+				},
+			},
+		}})})
+	case "textDocument/foldingRange":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"startLine": 2,
+			"endLine":   2,
+			"kind":      "region",
+		}})})
+	case "textDocument/documentLink":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 12},
+			},
+			"target": "https://example.test/docs",
+		}})})
+	case "documentLink/resolve":
+		handled = true
+		var link map[string]any
+		_ = decodeLSPParams(msg.Params, &link)
+		link["target"] = "https://example.test/resolved"
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(link)})
+	case "textDocument/documentColor":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 1},
+				"end":   map[string]any{"line": 2, "character": 8},
+			},
+			"color": map[string]any{"red": 1.0, "green": 0.5, "blue": 0.25, "alpha": 1.0},
+		}})})
+	case "textDocument/colorPresentation":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"label": "#ff8040",
+			"textEdit": map[string]any{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 1},
+					"end":   map[string]any{"line": 2, "character": 8},
+				},
+				"newText": "#ff8040",
+			},
+		}})})
+	case "textDocument/codeLens":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 20},
+			},
+			"command": map[string]any{"title": "Run test", "command": "go.test"},
+			"data":    map[string]any{"id": "lens-1"},
+		}})})
+	case "codeLens/resolve":
+		handled = true
+		var lens map[string]any
+		_ = decodeLSPParams(msg.Params, &lens)
+		lens["command"] = map[string]any{"title": "Run test (resolved)", "command": "go.test", "arguments": []string{"./..."}}
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(lens)})
+	case "textDocument/inlayHint":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"position": map[string]any{"line": 2, "character": 10},
+			"label":    ": int",
+			"kind":     1,
+		}})})
+	case "inlayHint/resolve":
+		handled = true
+		var hint map[string]any
+		_ = decodeLSPParams(msg.Params, &hint)
+		hint["tooltip"] = "resolved inlay hint"
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(hint)})
+	case "textDocument/inlineValue":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 5},
+				"end":   map[string]any{"line": 2, "character": 10},
+			},
+			"text": "count = 1",
+		}})})
+	case "textDocument/linkedEditingRange":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+			"ranges": []map[string]any{
+				{"start": map[string]any{"line": 2, "character": 5}, "end": map[string]any{"line": 2, "character": 10}},
+				{"start": map[string]any{"line": 4, "character": 5}, "end": map[string]any{"line": 4, "character": 10}},
+			},
+			"wordPattern": "[A-Za-z_]+",
+		})})
+	case "textDocument/moniker":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"scheme":     "gomod",
+			"identifier": "example.test/demo.BuildWidget",
+			"kind":       "export",
+		}})})
+	case "textDocument/semanticTokens/full":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+			"resultId": "full-1",
+			"data":     []int{2, 5, 4, 12, 0},
+		})})
+	}
+	return currentURI, rootURI, handled
+}
+
+func handleFakeLSPSecondaryRequest(reader *bufio.Reader, msg lspRPCMessage, currentURI string, rootURI string) (string, string, bool) {
+	handled := false
+	switch msg.Method {
+	case "textDocument/semanticTokens/range":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+			"data": []int{0, 5, 6, 12, 0},
+		})})
+	case "textDocument/semanticTokens/full/delta":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+			"resultId": "full-2",
+			"edits": []map[string]any{{
+				"start":       0,
+				"deleteCount": 5,
+				"data":        []int{0, 1, 2, 3, 4},
+			}},
+		})})
+	case "workspace/symbol":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"name": "BuildWidget",
+			"kind": 12,
+			"location": map[string]any{
+				"uri": "file:///workspace/main.go",
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 5},
+					"end":   map[string]any{"line": 2, "character": 16},
+				},
+			},
+		}})})
+	case "workspaceSymbol/resolve":
+		handled = true
+		var symbol map[string]any
+		_ = decodeLSPParams(msg.Params, &symbol)
+		symbol["containerName"] = "demo"
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(symbol)})
+	case "workspace/executeCommand":
+		handled = true
+		var params struct {
+			Command   string `json:"command"`
+			Arguments []any  `json:"arguments"`
+		}
+		_ = decodeLSPParams(msg.Params, &params)
+		if currentURI == "" && rootURI != "" {
+			currentURI = rootURI + "/main.go"
+		}
+		configurationHandled := fakeLSPServerRequestHandled(reader, "configuration-check", "workspace/configuration", map[string]any{
+			"items": []map[string]any{{"section": "gopls"}},
+		})
+		foldersHandled := fakeLSPServerRequestHandled(reader, "folders-check", "workspace/workspaceFolders", nil)
+		registerHandled := fakeLSPServerRequestHandled(reader, "register-check", "client/registerCapability", map[string]any{
+			"registrations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
+		})
+		unregisterHandled := fakeLSPServerRequestHandled(reader, "unregister-check", "client/unregisterCapability", map[string]any{
+			"unregisterations": []map[string]any{{"id": "watch", "method": "workspace/didChangeWatchedFiles"}},
+		})
+		progressHandled := fakeLSPServerRequestHandled(reader, "progress-check", "window/workDoneProgress/create", map[string]any{
+			"token": "demo-progress",
+		})
+		showDocumentHandled := fakeLSPServerRequestHandled(reader, "show-document-check", "window/showDocument", map[string]any{
+			"uri":       currentURI,
+			"takeFocus": false,
+		})
+		refreshHandled := fakeLSPServerRequestHandled(reader, "semantic-refresh-check", "workspace/semanticTokens/refresh", nil) &&
+			fakeLSPServerRequestHandled(reader, "inlay-refresh-check", "workspace/inlayHint/refresh", nil) &&
+			fakeLSPServerRequestHandled(reader, "code-lens-refresh-check", "workspace/codeLens/refresh", nil) &&
+			fakeLSPServerRequestHandled(reader, "diagnostic-refresh-check", "workspace/diagnostic/refresh", nil)
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "window/showMessage", Params: map[string]any{
+			"type":    3,
+			"message": "execute notice",
+		}})
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "window/logMessage", Params: map[string]any{
+			"type":    3,
+			"message": "execute log",
+		}})
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "telemetry/event", Params: map[string]any{
+			"name": "execute",
+		}})
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "$/progress", Params: map[string]any{
+			"token": "demo-progress",
+			"value": map[string]any{"kind": "report", "message": "running"},
+		}})
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: "apply-execute", Method: "workspace/applyEdit", Params: map[string]any{
+			"label": "execute preview",
+			"edit": map[string]any{
+				"changes": map[string]any{
+					currentURI: []map[string]any{{
+						"range": map[string]any{
+							"start": map[string]any{"line": 2, "character": 0},
+							"end":   map[string]any{"line": 2, "character": 13},
+						},
+						"newText": "func ExecutePreview() {}",
+					}},
+				},
+			},
+		}})
+		_, _ = readLSPMessage(reader)
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+			"status":               "ok",
+			"command":              params.Command,
+			"arguments":            params.Arguments,
+			"configurationHandled": configurationHandled,
+			"foldersHandled":       foldersHandled,
+			"registerHandled":      registerHandled,
+			"unregisterHandled":    unregisterHandled,
+			"progressHandled":      progressHandled,
+			"showDocumentHandled":  showDocumentHandled,
+			"refreshHandled":       refreshHandled,
+		})})
+	case "textDocument/signatureHelp":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+			"activeSignature": 0,
+			"signatures": []map[string]any{{
+				"label": "main()",
+			}},
+		})})
+	case "textDocument/rename":
+		handled = true
+		if currentURI == "" {
+			currentURI = "file:///workspace/main.go"
+		}
+		var params struct {
+			NewName string `json:"newName"`
+		}
+		_ = decodeLSPParams(msg.Params, &params)
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+			"changes": map[string]any{
+				currentURI: []map[string]any{{
+					"range": map[string]any{
+						"start": map[string]any{"line": 2, "character": 5},
+						"end":   map[string]any{"line": 2, "character": 9},
+					},
+					"newText": params.NewName,
+				}},
+			},
+		})})
+	case "textDocument/prepareRename":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 5},
+				"end":   map[string]any{"line": 2, "character": 10},
+			},
+			"placeholder": "Start",
+		})})
+	case "textDocument/codeAction":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{
+			{
+				"title": "Apply fake fix",
+				"kind":  "quickfix",
+				"edit": map[string]any{
+					"changes": map[string]any{
+						currentURI: []map[string]any{{
+							"range": map[string]any{
+								"start": map[string]any{"line": 2, "character": 5},
+								"end":   map[string]any{"line": 2, "character": 10},
+							},
+							"newText": "Launch",
+						}},
+					},
+				},
+			},
+			{"title": "Apply lazy fix", "kind": "quickfix", "data": map[string]any{"id": "lazy-fix"}},
+		})})
+	case "codeAction/resolve":
+		handled = true
+		var action map[string]any
+		_ = decodeLSPParams(msg.Params, &action)
+		action["edit"] = map[string]any{
+			"changes": map[string]any{
+				currentURI: []map[string]any{{
+					"range": map[string]any{
+						"start": map[string]any{"line": 2, "character": 5},
+						"end":   map[string]any{"line": 2, "character": 10},
+					},
+					"newText": "Lazy",
+				}},
+			},
+		}
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(action)})
+	case "textDocument/prepareCallHierarchy":
+		handled = true
+		if currentURI == "" {
+			currentURI = "file:///workspace/main.go"
+		}
+		callItem := map[string]any{
+			"name": "BuildWidget",
+			"kind": 12,
+			"uri":  currentURI,
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 20},
+			},
+			"selectionRange": map[string]any{
+				"start": map[string]any{"line": 2, "character": 5},
+				"end":   map[string]any{"line": 2, "character": 16},
+			},
+		}
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{callItem})})
+	case "callHierarchy/incomingCalls":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"from": map[string]any{
+				"name": "TestCaller",
+				"kind": 12,
+				"uri":  currentURI,
+				"range": map[string]any{
+					"start": map[string]any{"line": 8, "character": 0},
+					"end":   map[string]any{"line": 10, "character": 1},
+				},
+				"selectionRange": map[string]any{
+					"start": map[string]any{"line": 8, "character": 5},
+					"end":   map[string]any{"line": 8, "character": 15},
+				},
+			},
+			"fromRanges": []map[string]any{{
+				"start": map[string]any{"line": 9, "character": 1},
+				"end":   map[string]any{"line": 9, "character": 12},
+			}},
+		}})})
+	case "callHierarchy/outgoingCalls":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"to": map[string]any{
+				"name": "fmt.Println",
+				"kind": 12,
+				"uri":  currentURI,
+				"range": map[string]any{
+					"start": map[string]any{"line": 4, "character": 0},
+					"end":   map[string]any{"line": 4, "character": 20},
+				},
+				"selectionRange": map[string]any{
+					"start": map[string]any{"line": 4, "character": 1},
+					"end":   map[string]any{"line": 4, "character": 12},
+				},
+			},
+			"fromRanges": []map[string]any{{
+				"start": map[string]any{"line": 3, "character": 1},
+				"end":   map[string]any{"line": 3, "character": 12},
+			}},
+		}})})
+	case "textDocument/prepareTypeHierarchy":
+		handled = true
+		if currentURI == "" {
+			currentURI = "file:///workspace/main.go"
+		}
+		typeItem := map[string]any{
+			"name": "Widget",
+			"kind": 23,
+			"uri":  currentURI,
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 20},
+			},
+			"selectionRange": map[string]any{
+				"start": map[string]any{"line": 2, "character": 5},
+				"end":   map[string]any{"line": 2, "character": 11},
+			},
+		}
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{typeItem})})
+	case "typeHierarchy/supertypes":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"name": "BaseWidget",
+			"kind": 23,
+			"uri":  currentURI,
+			"range": map[string]any{
+				"start": map[string]any{"line": 1, "character": 0},
+				"end":   map[string]any{"line": 1, "character": 20},
+			},
+			"selectionRange": map[string]any{
+				"start": map[string]any{"line": 1, "character": 5},
+				"end":   map[string]any{"line": 1, "character": 15},
+			},
+		}})})
+	case "typeHierarchy/subtypes":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"name": "SpecialWidget",
+			"kind": 23,
+			"uri":  currentURI,
+			"range": map[string]any{
+				"start": map[string]any{"line": 5, "character": 0},
+				"end":   map[string]any{"line": 5, "character": 20},
+			},
+			"selectionRange": map[string]any{
+				"start": map[string]any{"line": 5, "character": 5},
+				"end":   map[string]any{"line": 5, "character": 18},
+			},
+		}})})
+	case "textDocument/formatting":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 14},
+			},
+			"newText": "func main() {}\n",
+		}})})
+	case "textDocument/rangeFormatting":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 14},
+			},
+			"newText": "func rangeFormatted() {}\n",
+		}})})
+	case "textDocument/onTypeFormatting":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 14},
+			},
+			"newText": "func onTypeFormatted() {}\n",
+		}})})
+	case "textDocument/willSaveWaitUntil":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+			"range": map[string]any{
+				"start": map[string]any{"line": 2, "character": 0},
+				"end":   map[string]any{"line": 2, "character": 14},
+			},
+			"newText": "func saved() {}\n",
+		}})})
+	case "shutdown":
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(nil)})
+	default:
+		handled = true
+		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(nil)})
+	}
+	return currentURI, rootURI, handled
 }

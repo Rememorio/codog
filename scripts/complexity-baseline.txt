@@ -86,12 +86,6 @@ gocognit|internal/agent/statusline.go|buildCLIErrorReport|104
 gocognit|internal/anthropic/client.go|openAIMessagesFromAnthropic|68
 gocognit|internal/anthropic/client.go|parseOpenAIStream|53
 gocognit|internal/background/background.go|(Store).Watch|34
-gocognit|internal/codeintel/codeintel.go|FoldingRanges|57
-gocognit|internal/codeintel/codeintel.go|InlineValues|47
-gocognit|internal/codeintel/codeintel.go|RenameSymbol|31
-gocognit|internal/codeintel/codeintel.go|semanticClassifierForFile|39
-gocognit|internal/codeintel/codeintel.go|typeHierarchyItems|46
-gocognit|internal/codeintel/codeintel_test.go|TestFakeLSPServer|32
 gocognit|internal/config/config.go|(*CompatibilityConfig).UnmarshalJSON|51
 gocognit|internal/config/config.go|(*Config).UnmarshalJSON|39
 gocognit|internal/config/config.go|(*SandboxConfig).UnmarshalJSON|32

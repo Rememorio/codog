@@ -585,84 +585,108 @@ func FoldingRanges(workspace string, relPath string, limit int) ([]FoldingRange,
 	if limit <= 0 {
 		limit = 100
 	}
-	relPath = filepath.ToSlash(strings.TrimSpace(relPath))
-	fset := token.NewFileSet()
-	var ranges []FoldingRange
-	err := filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if len(ranges) >= limit {
-			return filepath.SkipAll
-		}
-		if entry.IsDir() {
-			if ignoredDir(entry.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") {
-			return nil
-		}
-		rel, _ := filepath.Rel(workspace, path)
-		rel = filepath.ToSlash(rel)
-		if relPath != "" && rel != relPath {
-			return nil
-		}
-		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
-		if err != nil {
-			return err
-		}
-		addRange := func(start token.Pos, end token.Pos, kind string) {
-			if len(ranges) >= limit || !start.IsValid() || !end.IsValid() {
-				return
-			}
-			startLine := fset.Position(start).Line - 1
-			endLine := fset.Position(end).Line - 1
-			if endLine <= startLine {
-				return
-			}
-			ranges = append(ranges, FoldingRange{Path: rel, StartLine: startLine, EndLine: endLine, Kind: kind})
-		}
-		for _, comment := range file.Comments {
-			addRange(comment.Pos(), comment.End(), "comment")
-		}
-		ast.Inspect(file, func(node ast.Node) bool {
-			if len(ranges) >= limit {
-				return false
-			}
-			switch n := node.(type) {
-			case *ast.FuncDecl:
-				if n.Body != nil {
-					addRange(n.Body.Lbrace, n.Body.Rbrace, "region")
-				}
-			case *ast.GenDecl:
-				if n.Lparen.IsValid() && n.Rparen.IsValid() {
-					addRange(n.Lparen, n.Rparen, "region")
-				}
-			case *ast.TypeSpec:
-				switch typ := n.Type.(type) {
-				case *ast.StructType:
-					if typ.Fields != nil {
-						addRange(typ.Struct, typ.Fields.Closing, "region")
-					}
-				case *ast.InterfaceType:
-					if typ.Methods != nil {
-						addRange(typ.Interface, typ.Methods.Closing, "region")
-					}
-				}
-			}
-			return true
-		})
-		return nil
-	})
+	collector := foldingRangeCollector{
+		workspace: workspace,
+		relPath:   filepath.ToSlash(strings.TrimSpace(relPath)),
+		limit:     limit,
+		fset:      token.NewFileSet(),
+	}
+	err := filepath.WalkDir(workspace, collector.walk)
 	if err != nil {
 		return nil, err
 	}
-	if len(ranges) > limit {
-		ranges = ranges[:limit]
+	if len(collector.ranges) > limit {
+		collector.ranges = collector.ranges[:limit]
 	}
-	return ranges, nil
+	return collector.ranges, nil
+}
+
+type foldingRangeCollector struct {
+	workspace string
+	relPath   string
+	limit     int
+	fset      *token.FileSet
+	path      string
+	ranges    []FoldingRange
+}
+
+func (c *foldingRangeCollector) walk(path string, entry os.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		return walkErr
+	}
+	if len(c.ranges) >= c.limit {
+		return filepath.SkipAll
+	}
+	if entry.IsDir() {
+		if ignoredDir(entry.Name()) {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	if !strings.HasSuffix(path, ".go") {
+		return nil
+	}
+	rel, _ := filepath.Rel(c.workspace, path)
+	rel = filepath.ToSlash(rel)
+	if c.relPath != "" && rel != c.relPath {
+		return nil
+	}
+	file, err := parser.ParseFile(c.fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return err
+	}
+	c.path = rel
+	for _, comment := range file.Comments {
+		c.add(comment.Pos(), comment.End(), "comment")
+	}
+	ast.Inspect(file, c.inspect)
+	return nil
+}
+
+func (c *foldingRangeCollector) add(start token.Pos, end token.Pos, kind string) {
+	if len(c.ranges) >= c.limit || !start.IsValid() || !end.IsValid() {
+		return
+	}
+	startLine := c.fset.Position(start).Line - 1
+	endLine := c.fset.Position(end).Line - 1
+	if endLine <= startLine {
+		return
+	}
+	c.ranges = append(c.ranges, FoldingRange{Path: c.path, StartLine: startLine, EndLine: endLine, Kind: kind})
+}
+
+func (c *foldingRangeCollector) inspect(node ast.Node) bool {
+	if len(c.ranges) >= c.limit {
+		return false
+	}
+	switch n := node.(type) {
+	case *ast.FuncDecl:
+		c.addFunction(n)
+	case *ast.GenDecl:
+		c.add(n.Lparen, n.Rparen, "region")
+	case *ast.TypeSpec:
+		c.addType(n)
+	}
+	return true
+}
+
+func (c *foldingRangeCollector) addFunction(function *ast.FuncDecl) {
+	if function.Body != nil {
+		c.add(function.Body.Lbrace, function.Body.Rbrace, "region")
+	}
+}
+
+func (c *foldingRangeCollector) addType(spec *ast.TypeSpec) {
+	switch typ := spec.Type.(type) {
+	case *ast.StructType:
+		if typ.Fields != nil {
+			c.add(typ.Struct, typ.Fields.Closing, "region")
+		}
+	case *ast.InterfaceType:
+		if typ.Methods != nil {
+			c.add(typ.Interface, typ.Methods.Closing, "region")
+		}
+	}
 }
 
 // SelectionRanges returns nested static AST ranges containing a document position.
@@ -1093,73 +1117,98 @@ func InlineValues(workspace string, relPath string, line int, character int, lim
 	if err != nil {
 		return nil, err
 	}
-	values := []InlineValue{}
-	add := func(name *ast.Ident, expr ast.Expr, kind string) {
-		if name == nil || expr == nil || len(values) >= limit {
-			return
-		}
-		value, ok := inlineValueLabel(fset, expr)
-		if !ok {
-			return
-		}
-		rng := nodeRange(fset, name)
-		if line > 0 && rng.Start.Line < line {
-			return
-		}
-		if line > 0 && character > 0 && rng.Start.Line == line && rng.Start.Character < character {
-			return
-		}
-		values = append(values, InlineValue{
-			Path:  rel,
-			Name:  name.Name,
-			Value: value,
-			Text:  name.Name + " = " + value,
-			Kind:  kind,
-			Range: rng,
-		})
+	collector := inlineValueCollector{
+		fset: fset, path: rel, line: line, character: character, limit: limit,
 	}
 	for _, decl := range file.Decls {
-		gen, ok := decl.(*ast.GenDecl)
-		if !ok {
-			continue
-		}
-		kind := strings.ToLower(gen.Tok.String())
-		if kind != "const" && kind != "var" {
-			continue
-		}
-		for _, spec := range gen.Specs {
-			valueSpec, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			for i, name := range valueSpec.Names {
-				if i < len(valueSpec.Values) {
-					add(name, valueSpec.Values[i], kind)
-				}
-			}
+		collector.collectDeclaration(decl)
+	}
+	ast.Inspect(file, collector.collectAssignment)
+	return collector.values, nil
+}
+
+type inlineValueCollector struct {
+	fset      *token.FileSet
+	path      string
+	line      int
+	character int
+	limit     int
+	values    []InlineValue
+}
+
+func (c *inlineValueCollector) add(name *ast.Ident, expr ast.Expr, kind string) {
+	if name == nil || expr == nil || len(c.values) >= c.limit {
+		return
+	}
+	value, ok := inlineValueLabel(c.fset, expr)
+	if !ok {
+		return
+	}
+	rng := nodeRange(c.fset, name)
+	if c.beforeStart(rng.Start) {
+		return
+	}
+	c.values = append(c.values, InlineValue{
+		Path: c.path, Name: name.Name, Value: value,
+		Text: name.Name + " = " + value, Kind: kind, Range: rng,
+	})
+}
+
+func (c *inlineValueCollector) beforeStart(position LSPPosition) bool {
+	if c.line <= 0 {
+		return false
+	}
+	if position.Line < c.line {
+		return true
+	}
+	return c.character > 0 && position.Line == c.line && position.Character < c.character
+}
+
+func (c *inlineValueCollector) collectDeclaration(decl ast.Decl) {
+	gen, ok := decl.(*ast.GenDecl)
+	if !ok {
+		return
+	}
+	kind := strings.ToLower(gen.Tok.String())
+	if kind != "const" && kind != "var" {
+		return
+	}
+	for _, spec := range gen.Specs {
+		if valueSpec, ok := spec.(*ast.ValueSpec); ok {
+			c.collectValueSpec(valueSpec, kind)
 		}
 	}
-	ast.Inspect(file, func(node ast.Node) bool {
-		if len(values) >= limit {
-			return false
+}
+
+func (c *inlineValueCollector) collectValueSpec(spec *ast.ValueSpec, kind string) {
+	for index, name := range spec.Names {
+		if index < len(spec.Values) {
+			c.add(name, spec.Values[index], kind)
 		}
-		assign, ok := node.(*ast.AssignStmt)
-		if !ok || assign.Tok != token.DEFINE {
-			return true
-		}
-		for i, lhs := range assign.Lhs {
-			if i >= len(assign.Rhs) {
-				continue
-			}
-			name, ok := lhs.(*ast.Ident)
-			if !ok || name.Name == "_" {
-				continue
-			}
-			add(name, assign.Rhs[i], "assignment")
-		}
+	}
+}
+
+func (c *inlineValueCollector) collectAssignment(node ast.Node) bool {
+	if len(c.values) >= c.limit {
+		return false
+	}
+	assignment, ok := node.(*ast.AssignStmt)
+	if !ok || assignment.Tok != token.DEFINE {
 		return true
-	})
-	return values, nil
+	}
+	for index, lhs := range assignment.Lhs {
+		if index < len(assignment.Rhs) {
+			c.addAssignmentName(lhs, assignment.Rhs[index])
+		}
+	}
+	return true
+}
+
+func (c *inlineValueCollector) addAssignmentName(lhs ast.Expr, rhs ast.Expr) {
+	name, ok := lhs.(*ast.Ident)
+	if ok && name.Name != "_" {
+		c.add(name, rhs, "assignment")
+	}
 }
 
 func inlineValueLabel(fset *token.FileSet, expr ast.Expr) (string, bool) {
@@ -1598,39 +1647,56 @@ func semanticClassifierForFile(file *ast.File) map[string]string {
 	}
 	classifier[file.Name.Name] = "namespace"
 	ast.Inspect(file, func(node ast.Node) bool {
-		switch n := node.(type) {
-		case *ast.TypeSpec:
-			classifier[n.Name.Name] = "type"
-		case *ast.FuncDecl:
-			classifier[n.Name.Name] = "function"
-			if n.Recv != nil {
-				for _, field := range n.Recv.List {
-					for _, name := range field.Names {
-						classifier[name.Name] = "parameter"
-					}
-				}
-			}
-			if n.Type != nil && n.Type.Params != nil {
-				for _, field := range n.Type.Params.List {
-					for _, name := range field.Names {
-						classifier[name.Name] = "parameter"
-					}
-				}
-			}
-		case *ast.ValueSpec:
-			for _, name := range n.Names {
-				classifier[name.Name] = "variable"
-			}
-		case *ast.AssignStmt:
-			for _, expr := range n.Lhs {
-				if ident, ok := expr.(*ast.Ident); ok && n.Tok == token.DEFINE {
-					classifier[ident.Name] = "variable"
-				}
-			}
-		}
+		classifySemanticNode(classifier, node)
 		return true
 	})
 	return classifier
+}
+
+func classifySemanticNode(classifier map[string]string, node ast.Node) {
+	switch n := node.(type) {
+	case *ast.TypeSpec:
+		classifier[n.Name.Name] = "type"
+	case *ast.FuncDecl:
+		classifySemanticFunction(classifier, n)
+	case *ast.ValueSpec:
+		classifySemanticNames(classifier, n.Names, "variable")
+	case *ast.AssignStmt:
+		classifySemanticAssignment(classifier, n)
+	}
+}
+
+func classifySemanticFunction(classifier map[string]string, function *ast.FuncDecl) {
+	classifier[function.Name.Name] = "function"
+	if function.Recv != nil {
+		classifySemanticFields(classifier, function.Recv.List, "parameter")
+	}
+	if function.Type != nil && function.Type.Params != nil {
+		classifySemanticFields(classifier, function.Type.Params.List, "parameter")
+	}
+}
+
+func classifySemanticFields(classifier map[string]string, fields []*ast.Field, kind string) {
+	for _, field := range fields {
+		classifySemanticNames(classifier, field.Names, kind)
+	}
+}
+
+func classifySemanticNames(classifier map[string]string, names []*ast.Ident, kind string) {
+	for _, name := range names {
+		classifier[name.Name] = kind
+	}
+}
+
+func classifySemanticAssignment(classifier map[string]string, assignment *ast.AssignStmt) {
+	if assignment.Tok != token.DEFINE {
+		return
+	}
+	for _, expr := range assignment.Lhs {
+		if ident, ok := expr.(*ast.Ident); ok {
+			classifier[ident.Name] = "variable"
+		}
+	}
 }
 
 func semanticTokenType(tok token.Token, lit string, classifier map[string]string) (string, string) {
@@ -1740,61 +1806,80 @@ func RenameSymbol(workspace string, symbol string, newName string, limit int) (R
 	if err != nil {
 		return RenameResult{}, err
 	}
-	result := RenameResult{Symbol: symbol, NewName: newName, Found: true}
-	err = filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if result.TextEdits >= limit {
-			return filepath.SkipAll
-		}
-		if entry.IsDir() {
-			if ignoredDir(entry.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		content := string(data)
-		lines := strings.Split(content, "\n")
-		fileEdit := RenameFileEdit{}
-		for lineNo, lineText := range lines {
-			for _, bounds := range re.FindAllStringIndex(lineText, -1) {
-				if result.TextEdits >= limit {
-					break
-				}
-				fileEdit.Edits = append(fileEdit.Edits, RenameTextEdit{
-					Range: LSPRange{
-						Start: LSPPosition{Line: lineNo, Character: bounds[0]},
-						End:   LSPPosition{Line: lineNo, Character: bounds[1]},
-					},
-					NewText: newName,
-				})
-				result.TextEdits++
-			}
-		}
-		if len(fileEdit.Edits) == 0 {
-			return nil
-		}
-		rel, _ := filepath.Rel(workspace, path)
-		fileEdit.Path = filepath.ToSlash(rel)
-		fileEdit.TextEdits = len(fileEdit.Edits)
-		fileEdit.Changed = true
-		fileEdit.Content = re.ReplaceAllString(content, newName)
-		result.Edits = append(result.Edits, fileEdit)
-		result.FileEdits++
-		return nil
-	})
+	collector := renameCollector{
+		workspace: workspace, expression: re, newName: newName, limit: limit,
+		result: RenameResult{Symbol: symbol, NewName: newName, Found: true},
+	}
+	err = filepath.WalkDir(workspace, collector.walk)
 	if err != nil {
 		return RenameResult{}, err
 	}
-	return result, nil
+	return collector.result, nil
+}
+
+type renameCollector struct {
+	workspace  string
+	expression *regexp.Regexp
+	newName    string
+	limit      int
+	result     RenameResult
+}
+
+func (c *renameCollector) walk(path string, entry os.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		return walkErr
+	}
+	if c.result.TextEdits >= c.limit {
+		return filepath.SkipAll
+	}
+	if entry.IsDir() {
+		if ignoredDir(entry.Name()) {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	if !strings.HasSuffix(path, ".go") {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	c.collectFile(path, string(data))
+	return nil
+}
+
+func (c *renameCollector) collectFile(path string, content string) {
+	fileEdit := RenameFileEdit{}
+	for lineNo, lineText := range strings.Split(content, "\n") {
+		c.collectLine(&fileEdit, lineNo, lineText)
+	}
+	if len(fileEdit.Edits) == 0 {
+		return
+	}
+	rel, _ := filepath.Rel(c.workspace, path)
+	fileEdit.Path = filepath.ToSlash(rel)
+	fileEdit.TextEdits = len(fileEdit.Edits)
+	fileEdit.Changed = true
+	fileEdit.Content = c.expression.ReplaceAllString(content, c.newName)
+	c.result.Edits = append(c.result.Edits, fileEdit)
+	c.result.FileEdits++
+}
+
+func (c *renameCollector) collectLine(fileEdit *RenameFileEdit, lineNo int, lineText string) {
+	for _, bounds := range c.expression.FindAllStringIndex(lineText, -1) {
+		if c.result.TextEdits >= c.limit {
+			return
+		}
+		fileEdit.Edits = append(fileEdit.Edits, RenameTextEdit{
+			Range: LSPRange{
+				Start: LSPPosition{Line: lineNo, Character: bounds[0]},
+				End:   LSPPosition{Line: lineNo, Character: bounds[1]},
+			},
+			NewText: c.newName,
+		})
+		c.result.TextEdits++
+	}
 }
 
 func identifierAtLineCharacter(data []byte, line int, character int) (string, LSPRange, bool) {
@@ -2136,74 +2221,92 @@ type staticTypeInfo struct {
 }
 
 func typeHierarchyItems(workspace string) (map[string]staticTypeInfo, error) {
-	types := map[string]staticTypeInfo{}
-	fset := token.NewFileSet()
-	err := filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			if ignoredDir(entry.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") {
-			return nil
-		}
-		rel, _ := filepath.Rel(workspace, path)
-		rel = filepath.ToSlash(rel)
-		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
-		if err != nil {
-			return err
-		}
-		for _, decl := range file.Decls {
-			switch node := decl.(type) {
-			case *ast.GenDecl:
-				for _, spec := range node.Specs {
-					typ, ok := spec.(*ast.TypeSpec)
-					if !ok || typ.Name == nil {
-						continue
-					}
-					info := ensureStaticTypeInfo(types, typ.Name.Name)
-					info.Item = TypeHierarchyItem{
-						Name:           typ.Name.Name,
-						Kind:           typeHierarchyKind(typ.Type),
-						Path:           rel,
-						Range:          nodeRange(fset, typ),
-						SelectionRange: nodeRange(fset, typ.Name),
-						Detail:         exprLabel(fset, typ.Type),
-					}
-					info.Interface = false
-					info.Embedded = nil
-					switch typ := typ.Type.(type) {
-					case *ast.StructType:
-						info.Embedded = embeddedStructTypes(typ)
-					case *ast.InterfaceType:
-						info.Interface = true
-						info.Embedded = embeddedInterfaceTypes(typ)
-						for _, method := range interfaceMethods(typ) {
-							info.Methods[method] = true
-						}
-					}
-					types[info.Item.Name] = info
-				}
-			case *ast.FuncDecl:
-				if node.Recv == nil || node.Name == nil || len(node.Recv.List) == 0 {
-					continue
-				}
-				recv := receiverTypeName(node.Recv.List[0].Type)
-				if recv == "" {
-					continue
-				}
-				info := ensureStaticTypeInfo(types, recv)
-				info.Methods[node.Name.Name] = true
-				types[recv] = info
-			}
+	collector := typeHierarchyCollector{
+		workspace: workspace,
+		fset:      token.NewFileSet(),
+		types:     map[string]staticTypeInfo{},
+	}
+	err := filepath.WalkDir(workspace, collector.walk)
+	return collector.types, err
+}
+
+type typeHierarchyCollector struct {
+	workspace string
+	fset      *token.FileSet
+	types     map[string]staticTypeInfo
+}
+
+func (c *typeHierarchyCollector) walk(path string, entry os.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		return walkErr
+	}
+	if entry.IsDir() {
+		if ignoredDir(entry.Name()) {
+			return filepath.SkipDir
 		}
 		return nil
-	})
-	return types, err
+	}
+	if !strings.HasSuffix(path, ".go") {
+		return nil
+	}
+	rel, _ := filepath.Rel(c.workspace, path)
+	rel = filepath.ToSlash(rel)
+	file, err := parser.ParseFile(c.fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return err
+	}
+	for _, decl := range file.Decls {
+		c.collectDeclaration(rel, decl)
+	}
+	return nil
+}
+
+func (c *typeHierarchyCollector) collectDeclaration(rel string, decl ast.Decl) {
+	switch node := decl.(type) {
+	case *ast.GenDecl:
+		for _, spec := range node.Specs {
+			if typ, ok := spec.(*ast.TypeSpec); ok && typ.Name != nil {
+				c.collectType(rel, typ)
+			}
+		}
+	case *ast.FuncDecl:
+		c.collectMethod(node)
+	}
+}
+
+func (c *typeHierarchyCollector) collectType(rel string, typ *ast.TypeSpec) {
+	info := ensureStaticTypeInfo(c.types, typ.Name.Name)
+	info.Item = TypeHierarchyItem{
+		Name: typ.Name.Name, Kind: typeHierarchyKind(typ.Type), Path: rel,
+		Range: nodeRange(c.fset, typ), SelectionRange: nodeRange(c.fset, typ.Name),
+		Detail: exprLabel(c.fset, typ.Type),
+	}
+	info.Interface = false
+	info.Embedded = nil
+	switch concrete := typ.Type.(type) {
+	case *ast.StructType:
+		info.Embedded = embeddedStructTypes(concrete)
+	case *ast.InterfaceType:
+		info.Interface = true
+		info.Embedded = embeddedInterfaceTypes(concrete)
+		for _, method := range interfaceMethods(concrete) {
+			info.Methods[method] = true
+		}
+	}
+	c.types[info.Item.Name] = info
+}
+
+func (c *typeHierarchyCollector) collectMethod(function *ast.FuncDecl) {
+	if function.Recv == nil || function.Name == nil || len(function.Recv.List) == 0 {
+		return
+	}
+	receiver := receiverTypeName(function.Recv.List[0].Type)
+	if receiver == "" {
+		return
+	}
+	info := ensureStaticTypeInfo(c.types, receiver)
+	info.Methods[function.Name.Name] = true
+	c.types[receiver] = info
 }
 
 func ensureStaticTypeInfo(types map[string]staticTypeInfo, name string) staticTypeInfo {
