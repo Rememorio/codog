@@ -235,6 +235,26 @@ func (m model) View() string {
 	if !m.inline {
 		composer = styles.panelTitle().Render(" composer ") + "\n" + composer
 	}
+	composer = m.renderComposerPanels(composer, styles)
+	composer = m.renderActiveComposerDialog(composer, composerTextarea, styles)
+	statusText := fitFooterText(m.promptFooterText(barWidth), barContentWidth)
+	status := styles.status().Width(barWidth).Render(statusText)
+	if m.inline {
+		statusText = fitFooterText(m.inlineFooterText(barWidth), barContentWidth)
+		status = styles.inlineStatus().Render(statusText)
+	}
+	parts := []string{title}
+	if body != "" {
+		parts = append(parts, body)
+	}
+	parts = append(parts, composer)
+	if m.sessionPicker == nil {
+		parts = append(parts, status)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func (m model) renderComposerPanels(composer string, styles themeStyles) string {
 	if m.commandArgumentHint != "" || m.inlineGhostText != "" {
 		composer += "\n" + renderCommandAssist(m.commandArgumentHint, m.inlineGhostText, styles)
 	}
@@ -286,6 +306,10 @@ func (m model) View() string {
 	if m.stashedPrompt != nil {
 		composer += "\n" + renderStashNotice(m.stashedPrompt, styles)
 	}
+	return composer
+}
+
+func (m model) renderActiveComposerDialog(composer string, composerTextarea textarea.Model, styles themeStyles) string {
 	if m.exportDialog != nil {
 		composer = renderExportDialog(*m.exportDialog, m.exportDialogSelected, m.exportFilenameInput, composerTextarea.View(), m.width, styles)
 	}
@@ -305,21 +329,7 @@ func (m model) View() string {
 			composer += "\n" + composerTextarea.View()
 		}
 	}
-	statusText := fitFooterText(m.promptFooterText(barWidth), barContentWidth)
-	status := styles.status().Width(barWidth).Render(statusText)
-	if m.inline {
-		statusText = fitFooterText(m.inlineFooterText(barWidth), barContentWidth)
-		status = styles.inlineStatus().Render(statusText)
-	}
-	parts := []string{title}
-	if body != "" {
-		parts = append(parts, body)
-	}
-	parts = append(parts, composer)
-	if m.sessionPicker == nil {
-		parts = append(parts, status)
-	}
-	return strings.Join(parts, "\n")
+	return composer
 }
 
 func (m model) headerText() string {
@@ -904,6 +914,21 @@ func (m model) handleBoundTUIActionKey(key string) (model, bool, tea.Cmd) {
 	if key == "" {
 		return m, false, nil
 	}
+	if next, handled, cmd := m.handleBoundTUIActionGroup1(key); handled {
+		return next, true, cmd
+	}
+	if next, handled, cmd := m.handleBoundTUIActionGroup2(key); handled {
+		return next, true, cmd
+	}
+	if next, handled, cmd := m.handleBoundTUIActionGroup3(key); handled {
+		return next, true, cmd
+	}
+	if next, handled, cmd := m.handleBoundTUIActionGroup4(key); handled {
+		return next, true, cmd
+	}
+	return m, false, nil
+}
+func (m model) handleBoundTUIActionGroup1(key string) (model, bool, tea.Cmd) {
 	switch {
 	case m.isBoundTUIAction("submit prompt", key):
 		if m.busy && m.awaitingQuestion {
@@ -972,6 +997,11 @@ func (m model) handleBoundTUIActionKey(key string) (model, bool, tea.Cmd) {
 		}
 		m.status = "compacting"
 		return m, true, runRuntimeControlCommand(m.ctx, m.compactSession)
+	}
+	return m, false, nil
+}
+func (m model) handleBoundTUIActionGroup2(key string) (model, bool, tea.Cmd) {
+	switch {
 	case m.isBoundTUIAction("undo last file change", key):
 		if m.undoLast == nil {
 			m.status = "no undo"
@@ -1008,6 +1038,24 @@ func (m model) handleBoundTUIActionKey(key string) (model, bool, tea.Cmd) {
 		}
 		m.deleteComposerBeforeCursor()
 		return m, true, nil
+	}
+	return m, false, nil
+}
+func (m model) handleBoundTUIActionGroup3(key string) (model, bool, tea.Cmd) {
+	if next, handled, cmd := m.handleBoundTUIActionGroup3A(key); handled {
+		return next, true, cmd
+	}
+	return m.handleBoundTUIActionGroup3B(key)
+}
+func (m model) handleBoundTUIActionGroup4(key string) (model, bool, tea.Cmd) {
+	if next, handled, cmd := m.handleBoundTUIActionGroup4A(key); handled {
+		return next, true, cmd
+	}
+	return m.handleBoundTUIActionGroup4B(key)
+}
+
+func (m model) handleBoundTUIActionGroup3A(key string) (model, bool, tea.Cmd) {
+	switch {
 	case m.isBoundTUIAction("delete after cursor", key):
 		if m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
 			return m, true, nil
@@ -1026,6 +1074,12 @@ func (m model) handleBoundTUIActionKey(key string) (model, bool, tea.Cmd) {
 		}
 		m.moveComposerLineEnd()
 		return m, true, nil
+	}
+	return m, false, nil
+}
+
+func (m model) handleBoundTUIActionGroup3B(key string) (model, bool, tea.Cmd) {
+	switch {
 	case m.isBoundTUIAction("quick open files", key) || m.isBoundTUIAction("quick open fallback", key):
 		if m.busy || m.backgrounding || m.searchOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion || len(m.fileCandidates) == 0 {
 			return m, true, nil
@@ -1044,24 +1098,22 @@ func (m model) handleBoundTUIActionKey(key string) (model, bool, tea.Cmd) {
 		}
 		m.cyclePermissionMode()
 		return m, true, nil
-	case m.isBoundTUIAction("open model picker", key):
-		if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
-			return m, true, nil
-		}
-		m.openModelPicker()
-		return m, true, nil
-	case m.isBoundTUIAction("toggle fast mode", key):
-		if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.awaitingPermission || m.awaitingQuestion || m.toggleFast == nil {
-			return m, true, nil
-		}
-		m.status = "fast mode"
-		return m, true, runRuntimeControlCommand(m.ctx, m.toggleFast)
-	case m.isBoundTUIAction("cycle thinking effort", key):
-		if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.awaitingPermission || m.awaitingQuestion || m.toggleThinking == nil {
-			return m, true, nil
-		}
-		m.status = "thinking"
-		return m, true, runRuntimeControlCommand(m.ctx, m.toggleThinking)
+	}
+	return m, false, nil
+}
+
+func (m model) handleBoundTUIActionGroup4A(key string) (model, bool, tea.Cmd) {
+	if next, handled, cmd := m.handleBoundTUIModelPickerAction(key); handled {
+		return next, true, cmd
+	}
+	if next, handled, cmd := m.handleBoundTUIFastModeAction(key); handled {
+		return next, true, cmd
+	}
+	return m.handleBoundTUIThinkingAction(key)
+}
+
+func (m model) handleBoundTUIActionGroup4B(key string) (model, bool, tea.Cmd) {
+	switch {
 	case m.isBoundTUIAction("toggle expanded transcript", key):
 		if m.helpOpen {
 			m.helpOpen = false
@@ -1096,7 +1148,42 @@ func (m model) handleBoundTUIActionKey(key string) (model, bool, tea.Cmd) {
 		m.selected = 0
 		m.status = "pasting"
 		return m, true, runPasteCommand(m.ctx, m.paste)
-	default:
-		return m, false, nil
 	}
+	return m, false, nil
+}
+
+func (m model) handleBoundTUIModelPickerAction(key string) (model, bool, tea.Cmd) {
+	switch {
+	case m.isBoundTUIAction("open model picker", key):
+		if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.awaitingPermission || m.awaitingQuestion {
+			return m, true, nil
+		}
+		m.openModelPicker()
+		return m, true, nil
+	}
+	return m, false, nil
+}
+
+func (m model) handleBoundTUIFastModeAction(key string) (model, bool, tea.Cmd) {
+	switch {
+	case m.isBoundTUIAction("toggle fast mode", key):
+		if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.awaitingPermission || m.awaitingQuestion || m.toggleFast == nil {
+			return m, true, nil
+		}
+		m.status = "fast mode"
+		return m, true, runRuntimeControlCommand(m.ctx, m.toggleFast)
+	}
+	return m, false, nil
+}
+
+func (m model) handleBoundTUIThinkingAction(key string) (model, bool, tea.Cmd) {
+	switch {
+	case m.isBoundTUIAction("cycle thinking effort", key):
+		if m.busy || m.backgrounding || m.searchOpen || m.quickOpen || m.globalSearch || m.todosOpen || m.modelPicker || m.awaitingPermission || m.awaitingQuestion || m.toggleThinking == nil {
+			return m, true, nil
+		}
+		m.status = "thinking"
+		return m, true, runRuntimeControlCommand(m.ctx, m.toggleThinking)
+	}
+	return m, false, nil
 }

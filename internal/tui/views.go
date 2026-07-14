@@ -486,118 +486,6 @@ func renderPermissionRequest(request PermissionRequest, selected int, inputMode 
 	return strings.Join(lines, "\n")
 }
 
-func renderQuestionRequest(request QuestionRequest, questionIndex int, selected int, custom bool, selections [][]bool, customValues []string, width int, themed ...themeStyles) string {
-	styles := resolveThemeStyles(themed)
-	limit := 100
-	if width > 0 {
-		limit = max(12, width-8)
-	}
-	questions := request.Questions
-	if len(questions) == 0 {
-		options := make([]QuestionOption, 0, len(request.Choices))
-		for _, choice := range request.Choices {
-			options = append(options, QuestionOption{Label: choice})
-		}
-		questions = []Question{{Question: request.Question, Header: "Question", Options: options}}
-	}
-	questionIndex = min(max(questionIndex, 0), len(questions))
-	lines := []string{styles.role("question").Render("Questions")}
-	if len(questions) > 1 {
-		tabs := make([]string, 0, len(questions)+1)
-		for index, question := range questions {
-			marker := "[ ]"
-			if renderedQuestionAnswered(index, selections, customValues) {
-				marker = "[x]"
-			}
-			prefix := ""
-			if index == questionIndex {
-				prefix = ">"
-			}
-			tabs = append(tabs, fmt.Sprintf("%s%s %s", prefix, marker, question.Header))
-		}
-		submitPrefix := ""
-		if questionIndex == len(questions) {
-			submitPrefix = ">"
-		}
-		tabs = append(tabs, submitPrefix+"Submit")
-		lines = append(lines, styles.completionTitle().Render(truncateForComposer(strings.Join(tabs, "  "), limit)))
-	}
-	if questionIndex == len(questions) {
-		lines = append(lines, styles.panelTitle().Render("Review answers"))
-		for index, question := range questions {
-			answer := renderedQuestionAnswer(index, question, selections, customValues)
-			if answer == "" {
-				answer = "(not answered)"
-			}
-			lines = append(lines, styles.completion().Render(truncateForComposer(question.Header+": "+answer, limit)))
-		}
-		lines = append(lines, styles.completion().Render(truncateForComposer("  Enter to submit · Left to go back · Esc to cancel", limit)))
-		return strings.Join(lines, "\n")
-	}
-
-	question := questions[questionIndex]
-	questionText := strings.TrimSpace(question.Question)
-	if questionText == "" {
-		questionText = "Choose an answer"
-	}
-	lines = append(lines, truncateForComposer(questionText, limit))
-	if question.MultiSelect {
-		lines = append(lines, styles.completionTitle().Render("Select one or more"))
-	}
-	if len(question.Options) == 0 {
-		lines = append(lines, styles.selectedCompletion().Render("> Type something"))
-	} else {
-		selected = clampIndex(selected, len(question.Options)+1)
-		for index, option := range question.Options {
-			prefix := "  "
-			style := styles.completion()
-			if index == selected && !custom {
-				prefix = "> "
-				style = styles.selectedCompletion()
-			}
-			marker := ""
-			if question.MultiSelect {
-				marker = "[ ] "
-				if questionIndex < len(selections) && index < len(selections[questionIndex]) && selections[questionIndex][index] {
-					marker = "[x] "
-				}
-			}
-			label := fmt.Sprintf("%d. %s%s", index+1, marker, option.Label)
-			if strings.EqualFold(option.Label, request.Default) {
-				label += " (default)"
-			}
-			lines = append(lines, style.Render(truncateForComposer(prefix+label, limit)))
-		}
-		prefix := "  "
-		style := styles.completion()
-		if selected == len(question.Options) || custom {
-			prefix = "> "
-			style = styles.selectedCompletion()
-		}
-		lines = append(lines, style.Render(prefix+"Type something"))
-		if selected < len(question.Options) {
-			option := question.Options[selected]
-			if option.Description != "" {
-				lines = append(lines, styles.completion().Render(truncateForComposer("  "+option.Description, limit)))
-			}
-			if option.Preview != "" {
-				lines = append(lines, styles.completionTitle().Render("Preview"))
-				for _, previewLine := range firstLines(option.Preview, 5) {
-					lines = append(lines, styles.completion().Render(truncateForComposer("  "+previewLine, limit)))
-				}
-			}
-		}
-	}
-	if custom {
-		lines = append(lines, styles.completion().Render(truncateForComposer("  Type your response below, then press Enter", limit)))
-	} else if question.MultiSelect {
-		lines = append(lines, styles.completion().Render(truncateForComposer("  Space to toggle · Enter next · Up/Down navigate · Esc cancel", limit)))
-	} else {
-		lines = append(lines, styles.completion().Render(truncateForComposer("  Enter to select · Up/Down to navigate · Esc to cancel", limit)))
-	}
-	return strings.Join(lines, "\n")
-}
-
 func renderedQuestionAnswered(index int, selections [][]bool, customValues []string) bool {
 	if index >= 0 && index < len(customValues) && strings.TrimSpace(customValues[index]) != "" {
 		return true
@@ -743,118 +631,6 @@ func commandViewItemCapacity(tab CommandViewTab, height int) int {
 		}
 	}
 	return max(1, commandViewVisibleLines(height)-headerLines-1)
-}
-
-func renderCommandView(view CommandView, tabIndex int, itemIndex int, offset int, width int, height int, themed ...themeStyles) string {
-	styles := resolveThemeStyles(themed)
-	title := strings.TrimSpace(view.Title)
-	if title == "" {
-		title = "Settings"
-	}
-	limit := 100
-	if width > 0 {
-		limit = max(12, width-8)
-	}
-	lines := []string{styles.completionTitle().Render(" " + strings.ToLower(title) + " ")}
-	if len(view.Tabs) == 0 {
-		lines = append(lines, styles.completion().Render("  no settings"), styles.completion().Render("  Esc close"))
-		return strings.Join(lines, "\n")
-	}
-	tabIndex = clampIndex(tabIndex, len(view.Tabs))
-	tabLabels := make([]string, 0, len(view.Tabs))
-	for index, tab := range view.Tabs {
-		label := strings.TrimSpace(tab.Title)
-		if label == "" {
-			label = fmt.Sprintf("Tab %d", index+1)
-		}
-		style := styles.completion()
-		if index == tabIndex {
-			style = styles.selectedCompletion()
-		}
-		tabLabels = append(tabLabels, style.Render(" "+label+" "))
-	}
-	lines = append(lines, "  "+strings.Join(tabLabels, " "))
-	tab := view.Tabs[tabIndex]
-	visible := commandViewVisibleLines(height)
-	if len(tab.Items) > 0 {
-		itemIndex = clampIndex(itemIndex, len(tab.Items))
-		headerLines := 0
-		for _, line := range tab.Lines {
-			if trimmed := strings.TrimSpace(line); trimmed != "" {
-				lines = append(lines, styles.completion().Render(truncateForComposer("  "+trimmed, limit)))
-				headerLines++
-				if headerLines == 2 {
-					break
-				}
-			}
-		}
-		capacity := commandViewItemCapacity(tab, height)
-		maximum := max(0, len(tab.Items)-capacity)
-		offset = min(max(0, offset), maximum)
-		if itemIndex < offset {
-			offset = itemIndex
-		}
-		if itemIndex >= offset+capacity {
-			offset = itemIndex - capacity + 1
-		}
-		end := min(len(tab.Items), offset+capacity)
-		for index := offset; index < end; index++ {
-			item := tab.Items[index]
-			prefix := "  "
-			style := styles.completion()
-			if index == itemIndex {
-				prefix = "> "
-				style = styles.selectedCompletion()
-			}
-			label := strings.TrimSpace(item.Label)
-			if label == "" {
-				label = strings.TrimSpace(item.Action)
-			}
-			row := prefix + label
-			if value := strings.TrimSpace(item.Value); value != "" {
-				row += "  " + value
-			}
-			lines = append(lines, style.Render(truncateForComposer(row, limit)))
-			if index == itemIndex && strings.TrimSpace(item.Description) != "" {
-				lines = append(lines, styles.completion().Render(truncateForComposer("    "+strings.TrimSpace(item.Description), limit)))
-			}
-		}
-		footer := "←/→ tab · ↑/↓ select · Enter open"
-		if strings.TrimSpace(tab.Items[itemIndex].SecondaryCommand) != "" {
-			label := strings.TrimSpace(tab.Items[itemIndex].SecondaryLabel)
-			if label == "" {
-				label = "action"
-			}
-			footer += " · " + commandViewSecondaryKeyLabel(tab.Items[itemIndex]) + " " + label
-		}
-		if strings.TrimSpace(tab.RefreshCommand) != "" {
-			footer += " · R refresh"
-		}
-		if len(tab.Items) > capacity {
-			footer = fmt.Sprintf("%d-%d/%d · %s", offset+1, end, len(tab.Items), footer)
-		}
-		lines = append(lines, styles.completion().Render("  "+footer+" · Esc close"))
-		return strings.Join(lines, "\n")
-	}
-	maximum := max(0, len(tab.Lines)-visible)
-	offset = min(max(0, offset), maximum)
-	end := min(len(tab.Lines), offset+visible)
-	for _, line := range tab.Lines[offset:end] {
-		lines = append(lines, styles.completion().Render(truncateForComposer("  "+line, limit)))
-	}
-	if len(tab.Lines) == 0 {
-		lines = append(lines, styles.completion().Render("  no information"))
-	}
-	footer := "←/→ tab"
-	if strings.TrimSpace(tab.RefreshCommand) != "" {
-		footer += " · R refresh"
-	}
-	footer += " · Esc close"
-	if len(tab.Lines) > visible {
-		footer = fmt.Sprintf("%d-%d/%d · ↑/↓ scroll · %s", offset+1, end, len(tab.Lines), footer)
-	}
-	lines = append(lines, styles.completion().Render("  "+footer))
-	return strings.Join(lines, "\n")
 }
 
 func renderExportDialog(dialog ExportDialog, selected int, filenameInput bool, input string, width int, themed ...themeStyles) string {
@@ -1045,70 +821,28 @@ func statusBarText(status string, width int) string {
 		status = "ready"
 	}
 	if strings.EqualFold(status, "permission") {
-		switch {
-		case width > 0 && width < 70:
-			return "permission · Up/Down · Enter · Tab amend · Esc deny"
-		default:
-			return "permission · Up/Down choose · Enter select · Tab amend · y/n/a shortcuts · Esc deny"
-		}
+		return responsiveStatus(width, 70, "permission · Up/Down · Enter · Tab amend · Esc deny", "permission · Up/Down choose · Enter select · Tab amend · y/n/a shortcuts · Esc deny")
 	}
 	if strings.EqualFold(status, "question") {
-		switch {
-		case width > 0 && width < 70:
-			return "question · Up/Down · Enter · Esc"
-		default:
-			return "question · Up/Down choose · Enter select · type for custom response · Esc cancel"
-		}
+		return responsiveStatus(width, 70, "question · Up/Down · Enter · Esc", "question · Up/Down choose · Enter select · type for custom response · Esc cancel")
 	}
 	if isBusyStatus(status) {
-		switch {
-		case width > 0 && width < 70:
-			return fmt.Sprintf("%s · Esc cancel", status)
-		case width > 0 && width < 90:
-			return fmt.Sprintf("%s · Esc/Ctrl-C cancel current turn", status)
-		default:
-			return fmt.Sprintf("%s · Esc/Ctrl-C cancel current turn · wait for tools to stop", status)
-		}
+		return busyStatusBarText(status, width)
 	}
 	if strings.HasPrefix(strings.ToLower(status), "quick open") {
-		switch {
-		case width > 0 && width < 80:
-			return "quick open · type · Enter · Esc"
-		default:
-			return "quick open · type to search · Enter/Tab insert @file · Shift+Tab path · Esc cancel"
-		}
+		return responsiveStatus(width, 80, "quick open · type · Enter · Esc", "quick open · type to search · Enter/Tab insert @file · Shift+Tab path · Esc cancel")
 	}
 	if strings.EqualFold(status, "model picker") {
-		switch {
-		case width > 0 && width < 80:
-			return "model picker · Enter select · Esc"
-		default:
-			return "model picker · Up/Down choose · Enter select · Esc cancel"
-		}
+		return responsiveStatus(width, 80, "model picker · Enter select · Esc", "model picker · Up/Down choose · Enter select · Esc cancel")
 	}
 	if strings.EqualFold(status, "message actions") {
-		switch {
-		case width > 0 && width < 80:
-			return "message actions · Enter apply · Esc"
-		default:
-			return "message actions · Up/Down choose · Enter apply · Esc cancel"
-		}
+		return responsiveStatus(width, 80, "message actions · Enter apply · Esc", "message actions · Up/Down choose · Enter apply · Esc cancel")
 	}
 	if strings.HasPrefix(strings.ToLower(status), "global search") {
-		switch {
-		case width > 0 && width < 80:
-			return "global search · type · Enter · Esc"
-		default:
-			return "global search · type to search · Enter/Tab insert @line · Shift+Tab path:line · Esc cancel"
-		}
+		return responsiveStatus(width, 80, "global search · type · Enter · Esc", "global search · type to search · Enter/Tab insert @line · Shift+Tab path:line · Esc cancel")
 	}
 	if strings.HasPrefix(strings.ToLower(status), "todos") || strings.EqualFold(status, "loading todos") {
-		switch {
-		case width > 0 && width < 80:
-			return "tasks · Ctrl+T close"
-		default:
-			return "tasks · Ctrl+T close · /todos manage tasks · Ctrl+Shift+T background tasks"
-		}
+		return responsiveStatus(width, 80, "tasks · Ctrl+T close", "tasks · Ctrl+T close · /todos manage tasks · Ctrl+Shift+T background tasks")
 	}
 	if strings.EqualFold(status, "ctrl+x") {
 		return "Ctrl+X · Ctrl+E edit in $EDITOR · Ctrl+K stop background · Ctrl+C compact · Esc cancel"
@@ -1123,6 +857,23 @@ func statusBarText(status string, width int) string {
 	default:
 		return fmt.Sprintf("%s · Enter send · Shift+Enter or \\+Enter newline · Tab complete · Ctrl-R history · Ctrl+Shift+P files · Ctrl+Shift+F search · Ctrl+T tasks · Ctrl-O transcript · Ctrl-L clear · Ctrl-D exit", status)
 	}
+}
+
+func responsiveStatus(width int, breakpoint int, compact string, full string) string {
+	if width > 0 && width < breakpoint {
+		return compact
+	}
+	return full
+}
+
+func busyStatusBarText(status string, width int) string {
+	if width > 0 && width < 70 {
+		return fmt.Sprintf("%s · Esc cancel", status)
+	}
+	if width > 0 && width < 90 {
+		return fmt.Sprintf("%s · Esc/Ctrl-C cancel current turn", status)
+	}
+	return fmt.Sprintf("%s · Esc/Ctrl-C cancel current turn · wait for tools to stop", status)
 }
 
 func (m model) promptFooterText(width int) string {
@@ -1166,197 +917,19 @@ func footerHintsContain(hints []string, text string) bool {
 	return false
 }
 
-func (m model) promptFooterHints(width int) []string {
-	status := strings.ToLower(strings.TrimSpace(m.status))
-	hints := []string{}
-	add := func(hint string) {
-		hint = strings.TrimSpace(hint)
-		if hint == "" {
+type footerHints []string
+
+func (h *footerHints) add(hint string) {
+	hint = strings.TrimSpace(hint)
+	if hint == "" {
+		return
+	}
+	for _, existing := range *h {
+		if strings.EqualFold(existing, hint) {
 			return
 		}
-		for _, existing := range hints {
-			if strings.EqualFold(existing, hint) {
-				return
-			}
-		}
-		hints = append(hints, hint)
 	}
-	if m.awaitingPermission {
-		if m.permissionInput {
-			add("Enter submit")
-			add("Tab/Esc collapse")
-		} else {
-			add("Up/Down choose")
-			add("Enter select")
-			add("Tab amend")
-			add("y/n/a shortcuts")
-		}
-		return trimFooterHints(hints, width)
-	}
-	if m.awaitingQuestion {
-		add("Up/Down choose")
-		add("Enter select")
-		add("type custom response")
-		return trimFooterHints(hints, width)
-	}
-	if m.busy {
-		add("Esc interrupt")
-		if len(m.queuedPrompts) > 0 {
-			add(fmt.Sprintf("%d queued", len(m.queuedPrompts)))
-			add("Up edit queue")
-		} else {
-			add("type next prompt to queue")
-		}
-		if m.background != nil {
-			add("Ctrl+B background")
-		}
-		return trimFooterHints(hints, width)
-	}
-	if m.backgrounding {
-		add("background starting")
-		if m.stopBackground != nil {
-			add("Ctrl+X Ctrl+K stop")
-		}
-		return trimFooterHints(hints, width)
-	}
-	if m.helpOpen {
-		add("Esc close help")
-		add("/ for commands")
-		add("@ for files")
-		return trimFooterHints(hints, width)
-	}
-	if m.exitPending {
-		switch m.exitKey {
-		case "ctrl+c":
-			add("Ctrl+C again to exit")
-		case "ctrl+d":
-			add("Ctrl+D again to exit")
-		case "esc":
-			if strings.TrimSpace(m.textarea.Value()) == "" && len(m.attachments) == 0 {
-				break
-			}
-			add("Esc again to clear")
-		}
-		if len(hints) > 0 {
-			add("type to continue")
-			add("Ctrl+_ undo")
-			return trimFooterHints(hints, width)
-		}
-	}
-	if status == "bash" || isBashModeInput(m.textarea.Value()) {
-		add("! for bash mode")
-		add("Enter run local command")
-		add("Esc clear")
-		return trimFooterHints(hints, width)
-	}
-	if m.vimEnabled && m.vimNormal {
-		add("vim NORMAL")
-		add("i/a insert")
-		add("h/l/w/b move")
-		add("x/D/dd delete")
-		add("C/cc change")
-		add("Enter send")
-		return trimFooterHints(hints, width)
-	}
-	if m.searchOpen {
-		add("Enter restore")
-		add("Esc close")
-		return trimFooterHints(hints, width)
-	}
-	if m.quickOpen {
-		add("Enter insert @file")
-		add("Shift+Tab path only")
-		add("Esc close")
-		return trimFooterHints(hints, width)
-	}
-	if m.globalSearch {
-		add("Enter insert @line")
-		add("Shift+Tab path:line")
-		add("Esc close")
-		return trimFooterHints(hints, width)
-	}
-	if m.todosOpen {
-		add("Ctrl+T close tasks")
-		add("/todos manage")
-		if m.taskBoard != nil {
-			add("Ctrl+Shift+T background tasks")
-		}
-		return trimFooterHints(hints, width)
-	}
-	if m.modelPicker {
-		add("Enter select model")
-		add("Esc close")
-		return trimFooterHints(hints, width)
-	}
-	if m.messageActions {
-		add("Enter apply")
-		add("Left/Right target")
-		add("Esc close")
-		return trimFooterHints(hints, width)
-	}
-	if m.attachmentsOpen {
-		add("Left/Right select")
-		add("Backspace remove")
-		add("Esc close")
-		return trimFooterHints(hints, width)
-	}
-	if m.diffDialog {
-		add("Enter details")
-		add("Left/Right sources")
-		add("Esc close")
-		return trimFooterHints(hints, width)
-	}
-	if status == "ctrl+x" {
-		add("Ctrl+E editor")
-		add("Ctrl+C compact")
-		add("Ctrl+U undo")
-		add("Esc cancel")
-		return trimFooterHints(hints, width)
-	}
-	if mode := permissionModeFooterLabel(m.modeLabel); mode != "" {
-		add(mode + " (Shift+Tab cycle)")
-	}
-	add("? for shortcuts")
-	add("/ commands")
-	add("@ files")
-	for _, badge := range m.runtimeStatusBadges() {
-		add(badge)
-	}
-	if len(m.attachments) > 0 {
-		add(fmt.Sprintf("%d attached", len(m.attachments)))
-	}
-	if len(m.queuedPrompts) > 0 {
-		add(fmt.Sprintf("%d queued", len(m.queuedPrompts)))
-	}
-	add("Ctrl+R history")
-	add("Ctrl+T tasks")
-	if m.transcriptMode {
-		add("Ctrl+O compact transcript")
-	} else {
-		add("Ctrl+O transcript")
-	}
-	if m.vimEnabled {
-		if m.vimNormal {
-			add("vim: normal")
-		} else {
-			add("vim: insert")
-		}
-	}
-	if permissionModeFooterLabel(m.modeLabel) == "" && (m.cycleMode != nil || strings.TrimSpace(m.modeLabel) != "") {
-		add("Shift+Tab mode")
-	}
-	if m.stashedPrompt != nil {
-		add("Ctrl+S restore stash")
-	} else {
-		add("Ctrl+S stash")
-	}
-	if len(m.modelOptions) > 0 {
-		add("Alt+P model")
-	}
-	if m.background != nil {
-		add("Ctrl+B background")
-	}
-	return trimFooterHints(hints, width)
+	*h = append(*h, hint)
 }
 
 func permissionModeFooterLabel(label string) string {

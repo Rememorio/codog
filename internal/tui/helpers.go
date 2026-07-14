@@ -217,59 +217,76 @@ func toolActivityOutputLines(activity ToolActivity, expanded bool) []string {
 	if expanded {
 		return strings.Split(output, "\n")
 	}
-	lines := []string{}
-	var payload map[string]any
-	if json.Unmarshal([]byte(output), &payload) == nil {
-		if summarized := specializedToolActivityOutput(activity.Name, payload); len(summarized) > 0 {
-			return summarized
-		}
-		appendField := func(label string, keys ...string) {
-			for _, key := range keys {
-				value, ok := payload[key].(string)
-				value = strings.TrimSpace(value)
-				if !ok || value == "" {
-					continue
-				}
-				if label != "" {
-					value = label + ": " + value
-				}
-				lines = append(lines, strings.Split(value, "\n")...)
-				return
-			}
-		}
-		appendField("", "stdout")
-		appendField("stderr", "stderr")
-		appendField("error", "error")
-		appendField("", "output", "message", "content")
-		if len(lines) == 0 {
-			path, _ := payload["path"].(string)
-			if path == "" {
-				path, _ = payload["file_path"].(string)
-			}
-			if path != "" {
-				line := path
-				if count, ok := payload["bytes"].(float64); ok {
-					line += fmt.Sprintf(" · %.0f bytes", count)
-				}
-				lines = append(lines, line)
-			}
-			if exitCode, ok := payload["exit_code"].(float64); ok {
-				line := fmt.Sprintf("Exit code %.0f", exitCode)
-				if duration, durationOK := payload["duration_ms"].(float64); durationOK {
-					line += fmt.Sprintf(" · %.0f ms", duration)
-				}
-				lines = append(lines, line)
-			}
-		}
-	}
+	lines := summarizedToolOutputLines(activity.Name, output)
 	if len(lines) == 0 {
 		lines = strings.Split(output, "\n")
 	}
-	if !expanded && len(lines) > 4 {
-		hidden := len(lines) - 4
-		lines = append(append([]string(nil), lines[:4]...), fmt.Sprintf("... %d more %s", hidden, plural("line", hidden)))
+	return truncateToolOutputLines(lines, 4)
+}
+
+func summarizedToolOutputLines(name string, output string) []string {
+	var payload map[string]any
+	if json.Unmarshal([]byte(output), &payload) != nil {
+		return nil
+	}
+	if summarized := specializedToolActivityOutput(name, payload); len(summarized) > 0 {
+		return summarized
+	}
+	lines := []string{}
+	lines = append(lines, payloadStringLines(payload, "", "stdout")...)
+	lines = append(lines, payloadStringLines(payload, "stderr", "stderr")...)
+	lines = append(lines, payloadStringLines(payload, "error", "error")...)
+	lines = append(lines, payloadStringLines(payload, "", "output", "message", "content")...)
+	if len(lines) == 0 {
+		lines = payloadMetadataLines(payload)
 	}
 	return lines
+}
+
+func payloadStringLines(payload map[string]any, label string, keys ...string) []string {
+	for _, key := range keys {
+		value, ok := payload[key].(string)
+		value = strings.TrimSpace(value)
+		if !ok || value == "" {
+			continue
+		}
+		if label != "" {
+			value = label + ": " + value
+		}
+		return strings.Split(value, "\n")
+	}
+	return nil
+}
+
+func payloadMetadataLines(payload map[string]any) []string {
+	lines := []string{}
+	path, _ := payload["path"].(string)
+	if path == "" {
+		path, _ = payload["file_path"].(string)
+	}
+	if path != "" {
+		line := path
+		if count, ok := payload["bytes"].(float64); ok {
+			line += fmt.Sprintf(" · %.0f bytes", count)
+		}
+		lines = append(lines, line)
+	}
+	if exitCode, ok := payload["exit_code"].(float64); ok {
+		line := fmt.Sprintf("Exit code %.0f", exitCode)
+		if duration, durationOK := payload["duration_ms"].(float64); durationOK {
+			line += fmt.Sprintf(" · %.0f ms", duration)
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func truncateToolOutputLines(lines []string, limit int) []string {
+	if len(lines) <= limit {
+		return lines
+	}
+	hidden := len(lines) - limit
+	return append(append([]string(nil), lines[:limit]...), fmt.Sprintf("... %d more %s", hidden, plural("line", hidden)))
 }
 
 func specializedToolActivityOutput(name string, payload map[string]any) []string {
