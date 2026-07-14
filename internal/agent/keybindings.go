@@ -3091,125 +3091,8 @@ func (a *App) Passes(args []string) error {
 		report.LastSeenRemaining = cloneIntPtr(report.RemainingPasses)
 	}
 	report.UpsellVisible = guestPassUpsellVisible(report)
-	switch req.Action {
-	case "status":
-		report.Message = "Guest pass status loaded."
-	case "fetch":
-		fetchCtx, cancel := context.WithTimeout(context.Background(), passesFetchTimeout(req.TimeoutMS))
-		defer cancel()
-		fetched, err := a.fetchGuestPasses(fetchCtx, req)
-		if err != nil {
-			return err
-		}
-		report.RequestSent = true
-		report.OrganizationUUID = fetched.OrganizationUUID
-		report.Campaign = fetched.Campaign
-		report.Eligible = &fetched.Eligible
-		report.ReferralURL = firstNonEmpty(fetched.ReferralURL, report.ReferralURL)
-		report.ReferralConfigured = strings.TrimSpace(report.ReferralURL) != ""
-		report.URL, report.URLSource = passesURLWithSource(report.ReferralURL, req.Docs)
-		if fetched.RemainingPasses != nil {
-			report.RemainingPasses = fetched.RemainingPasses
-		}
-		if fetched.Limit != nil {
-			report.Limit = fetched.Limit
-		}
-		if fetched.Redeemed != nil {
-			report.Redeemed = fetched.Redeemed
-		}
-		if fetched.AvailablePasses != nil {
-			report.AvailablePasses = fetched.AvailablePasses
-		}
-		applyGuestPassRewardToReport(&report, fetched.ReferrerReward)
-		if req.SaveURL && strings.TrimSpace(fetched.ReferralURL) != "" {
-			if err := setCompatibilityValue(path, "compatibility.guest_pass_referral_url", legacyGuestPassReferralURLKey, fetched.ReferralURL); err != nil {
-				return err
-			}
-			a.Config.Future.GuestPassReferralURL = fetched.ReferralURL
-			report.SavedReferralURL = true
-		}
-		if req.SaveCache {
-			if err := a.saveGuestPassEligibilityCache(path, fetched, time.Now().UTC()); err != nil {
-				return err
-			}
-			report.SavedEligibilityCache = true
-		}
-		if fetched.Eligible {
-			report.Message = "Guest pass eligibility fetched."
-		} else {
-			report.Message = "Guest passes are not currently available for this organization."
-		}
-		report.UpsellVisible = guestPassUpsellVisible(report)
-	case "visit":
-		remaining := intPtrValue(report.RemainingPasses, intPtrValue(a.Config.Future.PassesLastSeenRemaining, 0))
-		if err := a.markPassesVisited(path, remaining); err != nil {
-			return err
-		}
-		report.HasVisitedPasses = true
-		report.MarkedVisited = true
-		report.LastSeenRemaining = &remaining
-		report.UpsellVisible = false
-		report.Message = "Guest passes visit state saved."
-	case "upsell-seen":
-		count, err := a.markPassesUpsellSeen(path)
-		if err != nil {
-			return err
-		}
-		report.UpsellSeenCount = count
-		report.MarkedUpsellSeen = true
-		report.UpsellVisible = guestPassUpsellVisible(report)
-		report.Message = "Guest passes upsell impression recorded."
-	case "set-url":
-		if err := validateHTTPURL(req.ReferralURL, "guest pass referral URL"); err != nil {
-			return err
-		}
-		if err := setCompatibilityValue(path, "compatibility.guest_pass_referral_url", legacyGuestPassReferralURLKey, req.ReferralURL); err != nil {
-			return err
-		}
-		a.Config.Future.GuestPassReferralURL = req.ReferralURL
-		report.ReferralURL = req.ReferralURL
-		report.URL = req.ReferralURL
-		report.URLSource = "referral"
-		report.ReferralConfigured = true
-		report.Message = "Guest pass referral URL saved."
-	case "clear-url":
-		if err := unsetCompatibilityValue(path, "compatibility.guest_pass_referral_url", legacyGuestPassReferralURLKey); err != nil {
-			return err
-		}
-		a.Config.Future.GuestPassReferralURL = ""
-		report.ReferralURL = ""
-		report.URL = guestPassDocsURL
-		report.URLSource = "docs"
-		report.ReferralConfigured = false
-		report.Message = "Guest pass referral URL cleared."
-	case "show", "open":
-		count := a.Config.Future.GuestPassVisitCount + 1
-		if err := setCompatibilityValue(path, "compatibility.guest_pass_visit_count", legacyGuestPassVisitCountKey, count); err != nil {
-			return err
-		}
-		a.Config.Future.GuestPassVisitCount = count
-		report.VisitCount = count
-		report.URL, report.URLSource = passesURLWithSource(report.ReferralURL, req.Docs)
-		if report.ReferralURL == "" || req.Docs {
-			report.Message = "No guest pass referral URL is configured. Showing Claude Code guest pass documentation."
-		} else {
-			report.Message = "Showing configured guest pass referral URL."
-		}
-		if req.Action == "show" || !req.Open {
-			report.Action = "show"
-			break
-		}
-		opener, err := openExternalURL(report.URL)
-		if err != nil {
-			report.Status = "open_failed"
-			report.Message = "Could not open a browser automatically. Visit the URL manually."
-		} else {
-			report.Opened = true
-			report.Opener = opener
-			report.Message = "Opening guest pass page in browser."
-		}
-	default:
-		return fmt.Errorf("unknown passes command %q", req.Action)
+	if err := a.executePassesAction(req, path, &report); err != nil {
+		return err
 	}
 	if req.Format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -3218,6 +3101,168 @@ func (a *App) Passes(args []string) error {
 	}
 	renderPassesReport(a.Out, report)
 	return nil
+}
+
+func (a *App) executePassesAction(req passesRequest, path string, report *passesReport) error {
+	switch req.Action {
+	case "status":
+		report.Message = "Guest pass status loaded."
+	case "fetch":
+		return a.fetchPasses(req, path, report)
+	case "visit":
+		return a.visitPasses(path, report)
+	case "upsell-seen":
+		return a.recordPassesUpsell(path, report)
+	case "set-url":
+		return a.setPassesURL(req.ReferralURL, path, report)
+	case "clear-url":
+		return a.clearPassesURL(path, report)
+	case "show", "open":
+		return a.showPasses(req, path, report)
+	default:
+		return fmt.Errorf("unknown passes command %q", req.Action)
+	}
+	return nil
+}
+
+func (a *App) fetchPasses(req passesRequest, path string, report *passesReport) error {
+	fetchCtx, cancel := context.WithTimeout(context.Background(), passesFetchTimeout(req.TimeoutMS))
+	defer cancel()
+	fetched, err := a.fetchGuestPasses(fetchCtx, req)
+	if err != nil {
+		return err
+	}
+	applyFetchedPasses(report, fetched, req.Docs)
+	if err := a.persistFetchedPasses(req, path, fetched, report); err != nil {
+		return err
+	}
+	if fetched.Eligible {
+		report.Message = "Guest pass eligibility fetched."
+	} else {
+		report.Message = "Guest passes are not currently available for this organization."
+	}
+	report.UpsellVisible = guestPassUpsellVisible(*report)
+	return nil
+}
+
+func applyFetchedPasses(report *passesReport, fetched guestPassesFetchResult, docs bool) {
+	report.RequestSent = true
+	report.OrganizationUUID = fetched.OrganizationUUID
+	report.Campaign = fetched.Campaign
+	report.Eligible = &fetched.Eligible
+	report.ReferralURL = firstNonEmpty(fetched.ReferralURL, report.ReferralURL)
+	report.ReferralConfigured = strings.TrimSpace(report.ReferralURL) != ""
+	report.URL, report.URLSource = passesURLWithSource(report.ReferralURL, docs)
+	if fetched.RemainingPasses != nil {
+		report.RemainingPasses = fetched.RemainingPasses
+	}
+	if fetched.Limit != nil {
+		report.Limit = fetched.Limit
+	}
+	if fetched.Redeemed != nil {
+		report.Redeemed = fetched.Redeemed
+	}
+	if fetched.AvailablePasses != nil {
+		report.AvailablePasses = fetched.AvailablePasses
+	}
+	applyGuestPassRewardToReport(report, fetched.ReferrerReward)
+}
+
+func (a *App) persistFetchedPasses(req passesRequest, path string, fetched guestPassesFetchResult, report *passesReport) error {
+	if req.SaveURL && strings.TrimSpace(fetched.ReferralURL) != "" {
+		if err := setCompatibilityValue(path, "compatibility.guest_pass_referral_url", legacyGuestPassReferralURLKey, fetched.ReferralURL); err != nil {
+			return err
+		}
+		a.Config.Future.GuestPassReferralURL = fetched.ReferralURL
+		report.SavedReferralURL = true
+	}
+	if req.SaveCache {
+		if err := a.saveGuestPassEligibilityCache(path, fetched, time.Now().UTC()); err != nil {
+			return err
+		}
+		report.SavedEligibilityCache = true
+	}
+	return nil
+}
+
+func (a *App) visitPasses(path string, report *passesReport) error {
+	remaining := intPtrValue(report.RemainingPasses, intPtrValue(a.Config.Future.PassesLastSeenRemaining, 0))
+	if err := a.markPassesVisited(path, remaining); err != nil {
+		return err
+	}
+	report.HasVisitedPasses, report.MarkedVisited = true, true
+	report.LastSeenRemaining = &remaining
+	report.UpsellVisible = false
+	report.Message = "Guest passes visit state saved."
+	return nil
+}
+
+func (a *App) recordPassesUpsell(path string, report *passesReport) error {
+	count, err := a.markPassesUpsellSeen(path)
+	if err != nil {
+		return err
+	}
+	report.UpsellSeenCount, report.MarkedUpsellSeen = count, true
+	report.UpsellVisible = guestPassUpsellVisible(*report)
+	report.Message = "Guest passes upsell impression recorded."
+	return nil
+}
+
+func (a *App) setPassesURL(url, path string, report *passesReport) error {
+	if err := validateHTTPURL(url, "guest pass referral URL"); err != nil {
+		return err
+	}
+	if err := setCompatibilityValue(path, "compatibility.guest_pass_referral_url", legacyGuestPassReferralURLKey, url); err != nil {
+		return err
+	}
+	a.Config.Future.GuestPassReferralURL = url
+	report.ReferralURL, report.URL, report.URLSource = url, url, "referral"
+	report.ReferralConfigured = true
+	report.Message = "Guest pass referral URL saved."
+	return nil
+}
+
+func (a *App) clearPassesURL(path string, report *passesReport) error {
+	if err := unsetCompatibilityValue(path, "compatibility.guest_pass_referral_url", legacyGuestPassReferralURLKey); err != nil {
+		return err
+	}
+	a.Config.Future.GuestPassReferralURL = ""
+	report.ReferralURL, report.URL, report.URLSource = "", guestPassDocsURL, "docs"
+	report.ReferralConfigured = false
+	report.Message = "Guest pass referral URL cleared."
+	return nil
+}
+
+func (a *App) showPasses(req passesRequest, path string, report *passesReport) error {
+	count := a.Config.Future.GuestPassVisitCount + 1
+	if err := setCompatibilityValue(path, "compatibility.guest_pass_visit_count", legacyGuestPassVisitCountKey, count); err != nil {
+		return err
+	}
+	a.Config.Future.GuestPassVisitCount = count
+	report.VisitCount = count
+	report.URL, report.URLSource = passesURLWithSource(report.ReferralURL, req.Docs)
+	setPassesShowMessage(req, report)
+	if req.Action == "show" || !req.Open {
+		report.Action = "show"
+		return nil
+	}
+	opener, err := openExternalURL(report.URL)
+	if err != nil {
+		report.Status = "open_failed"
+		report.Message = "Could not open a browser automatically. Visit the URL manually."
+		return nil
+	}
+	report.Opened, report.Opener = true, opener
+	report.Message = "Opening guest pass page in browser."
+	return nil
+}
+
+func setPassesShowMessage(req passesRequest, report *passesReport) {
+	if report.ReferralURL == "" || req.Docs {
+		report.Message = "No guest pass referral URL is configured. Showing Claude Code guest pass documentation."
+	} else {
+		report.Message = "Showing configured guest pass referral URL."
+	}
 }
 
 func parsePassesArgs(args []string) (passesRequest, error) {

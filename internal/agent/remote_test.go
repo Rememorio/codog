@@ -2321,6 +2321,22 @@ func TestPassesFetchesEligibilityAndRedemptions(t *testing.T) {
 	require.Contains(t, string(data), `"passes_last_seen_remaining": 2`)
 }
 
+func TestPassesActionErrorsPropagate(t *testing.T) {
+	blockedParent := filepath.Join(t.TempDir(), "blocked")
+	require.NoError(t, os.WriteFile(blockedParent, []byte("file"), 0o644))
+	blockedPath := filepath.Join(blockedParent, "config.json")
+	app := &App{}
+	report := passesReport{}
+
+	require.Error(t, app.executePassesAction(passesRequest{Action: "unknown"}, blockedPath, &report))
+	require.Error(t, app.setPassesURL("not-a-url", blockedPath, &report))
+	require.Error(t, app.setPassesURL("https://example.com/pass", blockedPath, &report))
+	require.Error(t, app.clearPassesURL(blockedPath, &report))
+	require.Error(t, app.visitPasses(blockedPath, &report))
+	require.Error(t, app.recordPassesUpsell(blockedPath, &report))
+	require.Error(t, app.showPasses(passesRequest{Action: "show"}, blockedPath, &report))
+}
+
 func TestFormatGuestPassReward(t *testing.T) {
 	require.Empty(t, formatGuestPassReward(nil))
 	require.Equal(t, "$5", formatGuestPassReward(&config.MoneyInfo{Currency: "USD", AmountMinorUnits: 500}))

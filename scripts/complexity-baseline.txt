@@ -29,7 +29,6 @@ gocognit|internal/agent/hooks.go|(*App).Voice|38
 gocognit|internal/agent/hooks.go|parseEffortArgs|33
 gocognit|internal/agent/hooks.go|parseThemeArgs|33
 gocognit|internal/agent/hooks.go|parseVoiceArgs|47
-gocognit|internal/agent/keybindings.go|(*App).Passes|55
 gocognit|internal/agent/keybindings.go|parseCommitPushPRArgs|32
 gocognit|internal/agent/limits.go|(*App).openSession|34
 gocognit|internal/agent/limits.go|parseAntTraceArgs|41
