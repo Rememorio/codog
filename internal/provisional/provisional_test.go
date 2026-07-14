@@ -177,7 +177,7 @@ func countLines(t *testing.T, path string) int {
 	t.Helper()
 	file, err := os.Open(path)
 	require.NoError(t, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	count := 0
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {

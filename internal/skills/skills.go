@@ -637,14 +637,6 @@ func pluginIDFromSource(source string) string {
 	return id
 }
 
-func roots(configHome, workspace string) []root {
-	manifests, err := plugins.Load(workspace)
-	if err != nil {
-		return rootsWithManifests(configHome, workspace, nil)
-	}
-	return rootsWithManifests(configHome, workspace, manifests)
-}
-
 func rootsWithManifests(configHome, workspace string, manifests []plugins.Manifest) []root {
 	out := []root{
 		skillRoot(filepath.Join(configHome, "skills"), "user"),

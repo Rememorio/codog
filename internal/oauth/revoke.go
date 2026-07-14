@@ -43,7 +43,7 @@ func RevokeToken(ctx context.Context, metadata ProviderMetadata, clientID string
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return endpointError{Code: "revocation_failed", Status: resp.StatusCode}
 	}

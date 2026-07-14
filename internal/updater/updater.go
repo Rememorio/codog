@@ -128,7 +128,7 @@ func FetchManifest(ctx context.Context, manifestURL string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return Manifest{}, fmt.Errorf("manifest request failed: %s", resp.Status)
 	}
@@ -207,7 +207,7 @@ func DownloadManifest(ctx context.Context, manifest Manifest, platform, destDir 
 	if err != nil {
 		return DownloadResult{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return DownloadResult{}, fmt.Errorf("download request failed: %s", resp.Status)
 	}
@@ -461,7 +461,7 @@ func copyExecutable(source, target string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 	out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 	if err != nil {
 		return err

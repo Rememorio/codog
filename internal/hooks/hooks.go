@@ -1466,7 +1466,7 @@ func (r Runner) runHTTPHook(ctx context.Context, hook config.HookCommand, payloa
 		result.Error = err.Error()
 		return result, fmt.Errorf("http hook failed: %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	result.StatusCode = resp.StatusCode
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if readErr != nil {

@@ -181,7 +181,7 @@ func postFormJSON(ctx context.Context, endpoint string, form url.Values, target 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var payload endpointError
 		_ = json.NewDecoder(resp.Body).Decode(&payload)

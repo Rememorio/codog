@@ -1964,14 +1964,6 @@ func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
 	cfg.AuthToken = token.AccessToken
 }
 
-func applyPluginHookConfigs(cfg *config.Config, workspace string) error {
-	manifests, err := plugins.Load(workspace)
-	if err != nil {
-		return err
-	}
-	return applyPluginHookConfigsFromManifests(cfg, manifests)
-}
-
 func applyPluginHookConfigsFromManifests(cfg *config.Config, manifests []plugins.Manifest) error {
 	if cfg.EffectiveAllowManagedHooksOnly() {
 		cfg.Hooks = config.HookConfig{}
@@ -2093,10 +2085,6 @@ func (a *App) Remote(args []string) error {
 		addr = serveArgs[1]
 	}
 	return a.serveRemoteControl(context.Background(), addr)
-}
-
-func (a *App) remoteControlServer(addr string) control.Server {
-	return a.remoteControlServerWithMaxSessions(addr, 0)
 }
 
 func (a *App) remoteControlServerWithMaxSessions(addr string, maxSessions int) control.Server {
@@ -2473,7 +2461,7 @@ func (a *App) serveUnixServer(ctx context.Context, req serverRequest) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(socketPath)
+	defer func() { _ = os.Remove(socketPath) }()
 	remoteURL := "unix:" + socketPath
 	report := a.buildServerReport(req, "unix", socketPath, remoteURL)
 	if err := renderServerReport(a.Out, report, req.Format); err != nil {
@@ -2759,7 +2747,7 @@ func (a *App) SSH(ctx context.Context, args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
-	return a.runSSHCommand(ctx, req, report.Command)
+	return a.runSSHCommand(ctx, req)
 }
 
 func parseSSHArgs(args []string) (sshRequest, error) {
@@ -2948,8 +2936,8 @@ func (a *App) runSSHCommandReport(ctx context.Context, req sshRequest, report ss
 	}
 }
 
-func (a *App) runSSHCommand(ctx context.Context, req sshRequest, command []string) error {
-	command, _ = a.sshCommand(req, false)
+func (a *App) runSSHCommand(ctx context.Context, req sshRequest) error {
+	command, _ := a.sshCommand(req, false)
 	if len(command) == 0 {
 		return errors.New("ssh command is empty")
 	}
@@ -3049,7 +3037,7 @@ func (a *App) deploySSHBinary(ctx context.Context, req sshRequest) error {
 	if err != nil {
 		return fmt.Errorf("cannot open ssh deploy binary: %w", err)
 	}
-	defer binary.Close()
+	defer func() { _ = binary.Close() }()
 	cmd := exec.CommandContext(ctx, deployCommand[0], deployCommand[1:]...)
 	cmd.Stdin = binary
 	cmd.Stdout = a.Out
@@ -3346,7 +3334,7 @@ func openJSONRequest(ctx context.Context, client *http.Client, target openTarget
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
@@ -3404,10 +3392,6 @@ func (a *App) serveControlListener(ctx context.Context, listener net.Listener, a
 	return a.serveControlListenerWithOptions(ctx, listener, addr, controlListenerOptions{})
 }
 
-func (a *App) serveControlListenerWithMaxSessions(ctx context.Context, listener net.Listener, addr string, maxSessions int) error {
-	return a.serveControlListenerWithOptions(ctx, listener, addr, controlListenerOptions{MaxSessions: maxSessions})
-}
-
 type controlListenerOptions struct {
 	MaxSessions int
 	IdleTimeout time.Duration
@@ -3428,9 +3412,8 @@ func (a *App) serveControlListenerWithOptions(ctx context.Context, listener net.
 	go func() {
 		errCh <- server.Serve(listener)
 	}()
-	stopIdle := func() {}
 	if opts.IdleTimeout > 0 {
-		stopIdle = startControlIdleShutdown(ctx, server, opts.IdleTimeout, idleActivity)
+		stopIdle := startControlIdleShutdown(ctx, server, opts.IdleTimeout, idleActivity)
 		defer stopIdle()
 	}
 	select {
@@ -6624,10 +6607,6 @@ func (a *App) CronWithFormat(args []string, defaultFormat string) error {
 	return nil
 }
 
-func parseCronArgs(args []string) (cronRequest, error) {
-	return parseCronArgsWithDefault(args, "text")
-}
-
 func parseCronArgsWithDefault(args []string, defaultFormat string) (cronRequest, error) {
 	if strings.TrimSpace(defaultFormat) == "" {
 		defaultFormat = "text"
@@ -7004,10 +6983,6 @@ func (a *App) TeamWithFormat(args []string, defaultFormat string) error {
 	}
 	renderTeamReport(a.Out, report)
 	return nil
-}
-
-func parseTeamArgs(args []string) (teamRequest, error) {
-	return parseTeamArgsWithDefault(args, "text")
 }
 
 func parseTeamArgsWithDefault(args []string, defaultFormat string) (teamRequest, error) {
@@ -13796,7 +13771,7 @@ func (a *App) oauthBrowser(args []string) error {
 		if err != nil {
 			return err
 		}
-		defer callback.Close()
+		defer func() { _ = callback.Close() }()
 		auth, err := oauth.BuildBrowserAuthorization(source.Metadata, source.ClientID, callback.RedirectURI, source.Scopes, state, pkce)
 		if err != nil {
 			return err
@@ -20177,7 +20152,7 @@ func (a *App) initKeybindings(force bool) (keybindingsFileReport, error) {
 		}
 		return report, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if _, err := file.Write(data); err != nil {
 		return report, err
 	}
@@ -23687,7 +23662,7 @@ func fetchGuestPassesJSON(ctx context.Context, endpoint string, token string, or
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return err
@@ -23699,11 +23674,6 @@ func fetchGuestPassesJSON(ctx context.Context, endpoint string, token string, or
 		return err
 	}
 	return nil
-}
-
-func passesURL(referralURL string, docs bool) string {
-	url, _ := passesURLWithSource(referralURL, docs)
-	return url
 }
 
 func passesURLWithSource(referralURL string, docs bool) (string, string) {
@@ -24365,14 +24335,6 @@ func parseACPGlobalInvocation(args []string) ([]string, bool, error) {
 		}
 	}
 	return nil, false, nil
-}
-
-func parseACPArgs(args []string) (string, []string, error) {
-	req, err := parseACPRequest(args)
-	if err != nil {
-		return "", nil, err
-	}
-	return req.Format, req.Unsupported, nil
 }
 
 func parseACPRequest(args []string) (acpRequest, error) {
@@ -33504,10 +33466,6 @@ func writeUnknownSlashCommand(out io.Writer, command string, extraSuggestions []
 	}
 }
 
-func renderInteractiveOnly(out io.Writer, command string, format string) error {
-	return renderInteractiveOnlyWithHint(out, command, fmt.Sprintf("%s is only available in an interactive REPL session", command), "Run `codog repl` and use the command there.", format)
-}
-
 func renderInteractiveOnlySlash(out io.Writer, command string, format string) error {
 	hint := "Run `codog repl` and use the command there."
 	if directSlashResumeSafe(command) {
@@ -36236,7 +36194,7 @@ func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrid
 	}
 	priorMessageCount := len(sess.Messages)
 	var streamCapture bytes.Buffer
-	var turnOut io.Writer = a.Out
+	var turnOut = a.Out
 	if compact {
 		turnOut = &streamCapture
 	} else if format == "json" {
@@ -36384,10 +36342,6 @@ type promptCompactUsage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
-}
-
-func promptOutputReport(sess *session.Session, streamed string, status string) promptReport {
-	return promptOutputReportWithOptions(nil, sess, "", streamed, status, false)
 }
 
 func promptOutputReportWithOptions(store *session.Store, sess *session.Session, model string, streamed string, status string, verbose bool) promptReport {
@@ -37287,14 +37241,6 @@ func readPromptStreamJSONInputState(in io.Reader) (promptStreamJSONInput, error)
 	return promptStreamJSONInput{Prompt: strings.Join(parts, "\n\n"), ReplayMessages: replayMessages}, nil
 }
 
-func promptTextFromSDKUserMessageLine(line []byte) (string, bool, error) {
-	message, ok, err := promptMessageFromSDKUserMessageLine(line)
-	if err != nil || !ok {
-		return "", ok, err
-	}
-	return promptTextFromAnthropicContent(message.Content), true, nil
-}
-
 func promptMessageFromSDKUserMessageLine(line []byte) (anthropic.Message, bool, error) {
 	var msg struct {
 		Type            string          `json:"type"`
@@ -37777,7 +37723,7 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 	if rl, ok, err := a.newLineReader(sess.ID); err != nil {
 		return err
 	} else if ok {
-		defer rl.Close()
+		defer func() { _ = rl.Close() }()
 		return a.finishREPL(ctx, sess, a.replReadline(ctx, sess, rl, overrides.Prefill))
 	}
 	return a.finishREPL(ctx, sess, a.replScanner(ctx, sess))
@@ -40614,7 +40560,7 @@ func (a *App) tuiUntrackedPreview(path string) (string, int) {
 	if err != nil {
 		return "(preview unavailable)", 0
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxPreviewBytes+1))
 	if err != nil || !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
 		return "(binary or unreadable file)", 0
@@ -41594,7 +41540,7 @@ func (a *App) editTUIComposer(ctx context.Context, value string) (string, error)
 		return "", err
 	}
 	path := file.Name()
-	defer os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
 	if _, err := file.WriteString(value); err != nil {
 		_ = file.Close()
 		return "", err
@@ -49954,20 +49900,6 @@ func parseStashPushArgs(args []string) gitops.StashPushOptions {
 	return options
 }
 
-func parseOptionalPositiveInt(args []string, defaultValue int, label string) (int, error) {
-	if len(args) == 0 {
-		return defaultValue, nil
-	}
-	if len(args) != 1 {
-		return 0, fmt.Errorf("usage: %s", label)
-	}
-	value, err := strconv.Atoi(args[0])
-	if err != nil || value <= 0 {
-		return 0, fmt.Errorf("%s must be a positive integer", label)
-	}
-	return value, nil
-}
-
 type gitBlameRequest struct {
 	Format string
 	Path   string
@@ -51528,7 +51460,7 @@ func readDarwinClipboardImage(ctx context.Context) (clipboardImage, error) {
 	}
 	path := file.Name()
 	_ = file.Close()
-	defer os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
 	escapedPath := strings.ReplaceAll(path, `"`, `\"`)
 	args := []string{
 		"-e", `set outputPath to "` + escapedPath + `"`,
@@ -51562,7 +51494,7 @@ func readWindowsClipboardImage(ctx context.Context) (clipboardImage, error) {
 	}
 	path := file.Name()
 	_ = file.Close()
-	defer os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
 	script := `$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; if (-not [System.Windows.Forms.Clipboard]::ContainsImage()) { exit 3 }; $img = [System.Windows.Forms.Clipboard]::GetImage(); $img.Save('` + strings.ReplaceAll(path, `'`, `''`) + `', [System.Drawing.Imaging.ImageFormat]::Png)`
 	if err := exec.CommandContext(ctx, command, "-NoProfile", "-Command", script).Run(); err != nil {
 		return clipboardImage{}, errNoClipboardImage
@@ -58163,8 +58095,6 @@ func currentWorkingDirectory() string {
 	return wd
 }
 
-const mcpUsage = "usage: codog mcp list | serve | self | show|info|describe SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] [--tool-call-timeout-ms N] [--required] | add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required] | remove SERVER | tools [SERVER] | auth [--refresh|refresh|--clear|clear|logout] [SERVER] | call SERVER TOOL JSON | resources [SERVER] | resource-templates [SERVER] | read SERVER URI | prompts [SERVER] | prompt SERVER NAME [JSON]"
-
 type mcpSelfReport struct {
 	Kind          string   `json:"kind"`
 	Action        string   `json:"action"`
@@ -62161,7 +62091,7 @@ func snapshotFile(path string, info os.FileInfo) (watchPathSnapshot, error) {
 	if err != nil {
 		return watchPathSnapshot{}, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return watchPathSnapshot{}, err
@@ -66152,10 +66082,6 @@ func isHelpFlag(arg string) bool {
 
 func boolPtr(value bool) *bool {
 	return &value
-}
-
-func printHelp(out io.Writer) {
-	fmt.Fprint(out, helpText(filepath.Base(os.Args[0])))
 }
 
 func helpText(exe string) string {

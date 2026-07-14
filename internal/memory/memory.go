@@ -328,7 +328,7 @@ func Append(workspace string, text string) (AppendReport, error) {
 	if err != nil {
 		return AppendReport{}, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if _, err := file.Write(payload); err != nil {
 		return AppendReport{}, err
 	}
@@ -417,7 +417,7 @@ func Ensure(workspace string, target string) (FileReport, error) {
 		}
 		return report, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	report.Status = "created"
 	report.Created = true
 	return report, nil

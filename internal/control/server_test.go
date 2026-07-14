@@ -28,7 +28,7 @@ func TestControlHealth(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/health")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
@@ -85,12 +85,12 @@ func TestControlAuth(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/health")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp, err = http.Get(server.URL + "/sessions")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 	req, err := http.NewRequest(http.MethodGet, server.URL+"/sessions", nil)
@@ -98,7 +98,7 @@ func TestControlAuth(t *testing.T) {
 	req.Header.Set("authorization", "Bearer secret-token")
 	resp, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
@@ -110,7 +110,7 @@ func TestControlRoutesEndpoint(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/routes")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var report struct {
 		Kind       string      `json:"kind"`
@@ -128,7 +128,7 @@ func TestControlRoutesEndpoint(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/routes", "application/json", bytes.NewBufferString(`{}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
 
 	authServer := httptest.NewServer(Server{
@@ -138,7 +138,7 @@ func TestControlRoutesEndpoint(t *testing.T) {
 	defer authServer.Close()
 	resp, err = http.Get(authServer.URL + "/routes")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 	req, err := http.NewRequest(http.MethodGet, authServer.URL+"/routes", nil)
@@ -146,7 +146,7 @@ func TestControlRoutesEndpoint(t *testing.T) {
 	req.Header.Set("authorization", "Bearer secret-token")
 	resp, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
@@ -160,7 +160,7 @@ func TestControlCapabilitiesEndpoint(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/capabilities")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var report struct {
 		Kind                  string      `json:"kind"`
@@ -190,7 +190,7 @@ func TestControlCapabilitiesEndpoint(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/capabilities", "application/json", bytes.NewBufferString(`{}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
 
 	authServer := httptest.NewServer(Server{
@@ -200,7 +200,7 @@ func TestControlCapabilitiesEndpoint(t *testing.T) {
 	defer authServer.Close()
 	resp, err = http.Get(authServer.URL + "/capabilities")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 	req, err := http.NewRequest(http.MethodGet, authServer.URL+"/capabilities", nil)
@@ -208,7 +208,7 @@ func TestControlCapabilitiesEndpoint(t *testing.T) {
 	req.Header.Set("x-codog-token", "secret-token")
 	resp, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
@@ -226,7 +226,7 @@ func TestControlSessionLimit(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/sessions", "application/json", nil)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 	var report map[string]string
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&report))
@@ -234,7 +234,7 @@ func TestControlSessionLimit(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/sessions")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var sessions []session.Session
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&sessions))
@@ -261,7 +261,7 @@ func TestControlHooksHealth(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/hooks/health?event=pre&tool=read_file")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var getReport hookHealthReport
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&getReport))
@@ -283,7 +283,7 @@ func TestControlHooksHealth(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/hooks/status", "application/json", bytes.NewBufferString(`{"event":"notification","notification_type":"background_task_started"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var postReport hookHealthReport
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&postReport))
@@ -297,7 +297,7 @@ func TestControlHooksHealth(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/hooks/health?event=unknown")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
@@ -431,7 +431,7 @@ func TestControlState(t *testing.T) {
 
 	resp, err := http.Post(server.URL+"/state", "application/json", bytes.NewBufferString(`{"heartbeat":true,"failure_code":"transport_lost","failure_message":"lost connection","retryable":true}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -444,7 +444,7 @@ func TestControlState(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/state")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"last_error":"lost connection"`)
@@ -452,7 +452,7 @@ func TestControlState(t *testing.T) {
 	now = now.Add(31 * time.Second)
 	resp, err = http.Get(server.URL + "/state")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"lease_expired":true`)
@@ -470,7 +470,7 @@ func TestControlStateKeepsLastErrorCompatibility(t *testing.T) {
 
 	resp, err := http.Post(server.URL+"/state", "application/json", bytes.NewBufferString(`{"last_error":"legacy error"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -479,7 +479,7 @@ func TestControlStateKeepsLastErrorCompatibility(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/state", "application/json", bytes.NewBufferString(`{"clear_failure":true}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NotContains(t, string(body), `"failure"`)
@@ -498,12 +498,12 @@ func TestControlSessionMutationEndpoints(t *testing.T) {
 
 	resp, err := http.Post(server.URL+"/sessions/session-remote/input", "application/json", bytes.NewBufferString(`{"input":"remote prompt"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp, err = http.Post(server.URL+"/sessions/session-remote/messages", "application/json", bytes.NewBufferString(`{"role":"user","text":"hello remote"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -511,12 +511,12 @@ func TestControlSessionMutationEndpoints(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/sessions/session-remote/messages", "application/json", bytes.NewBufferString(`{"message":{"role":"assistant","content":[{"type":"text","text":"remote answer"}]}}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp, err = http.Get(server.URL + "/sessions/session-remote")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), "hello remote")
@@ -524,7 +524,7 @@ func TestControlSessionMutationEndpoints(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/sessions/session-remote/rewind", "application/json", bytes.NewBufferString(`{"remove_messages":1}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -532,7 +532,7 @@ func TestControlSessionMutationEndpoints(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/sessions/session-remote/history?limit=1")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -541,7 +541,7 @@ func TestControlSessionMutationEndpoints(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/sessions/session-remote/fork", "application/json", bytes.NewBufferString(`{"branch_name":"remote-branch"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -557,7 +557,7 @@ func TestControlSessionMutationEndpoints(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/sessions/session-remote/rename", "application/json", bytes.NewBufferString(`{"new_id":"renamed-remote"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -569,7 +569,7 @@ func TestControlSessionMutationEndpoints(t *testing.T) {
 	require.NoError(t, err)
 	resp, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -605,7 +605,7 @@ func TestControlSessionPromptStartsBackgroundRun(t *testing.T) {
 
 	resp, err := http.Post(server.URL+"/sessions/session-remote/prompt", "application/json", bytes.NewBufferString(`{"prompt":"summarize remote state"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var task background.Task
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&task))
@@ -637,12 +637,12 @@ func TestControlEditorBridgeEndpoints(t *testing.T) {
 
 	resp, err := http.Post(server.URL+"/editor/identify", "application/json", bytes.NewBufferString(`{"editor":"VS Code","workspace":"`+filepath.ToSlash(root)+`","token":"wrong"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	resp, err = http.Post(server.URL+"/editor/identify", "application/json", bytes.NewBufferString(`{"editor":"VS Code","version":"1.0","workspace":"`+filepath.ToSlash(root)+`","token":"secret"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -651,7 +651,7 @@ func TestControlEditorBridgeEndpoints(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/editor/open", "application/json", bytes.NewBufferString(`{"path":"main.go"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -659,7 +659,7 @@ func TestControlEditorBridgeEndpoints(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/editor/selection", "application/json", bytes.NewBufferString(`{"start_line":1,"start_column":1,"end_line":1,"end_column":8}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -668,14 +668,14 @@ func TestControlEditorBridgeEndpoints(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/editor/selection")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"text":"package"`)
 
 	resp, err = http.Get(server.URL + "/editor/state")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"open_file":{"path":"main.go"`)
@@ -693,7 +693,7 @@ func TestControlBridgeFaults(t *testing.T) {
 
 	resp, err := http.Post(server.URL+"/bridge/faults/record", "application/json", bytes.NewBufferString(`{"action":"latency","args":["250ms"]}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -705,7 +705,7 @@ func TestControlBridgeFaults(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/bridge/faults")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -714,7 +714,7 @@ func TestControlBridgeFaults(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/bridge/faults/record", "application/json", bytes.NewBufferString(`{"args":["missing"]}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -722,7 +722,7 @@ func TestControlBridgeFaults(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/bridge/faults/clear", "application/json", bytes.NewBufferString(`{}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -739,7 +739,7 @@ func TestControlBridgeCapabilities(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/bridge/capabilities")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var report struct {
 		Kind         string   `json:"kind"`
@@ -761,7 +761,7 @@ func TestControlBridgeCapabilities(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/bridge/capabilities", "application/json", bytes.NewBufferString(`{}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
 }
 
@@ -773,7 +773,7 @@ func TestControlBridgeFaultsRequireConfigHome(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/bridge/faults")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -792,7 +792,7 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 
 	resp, err := http.Post(server.URL+"/background", "application/json", bytes.NewBufferString(`{"command":"printf remote-$CODOG_REMOTE_ENV","session_id":"session-remote","restart_policy":{"enabled":true,"mode":"on-failure","max_attempts":2},"owner":"remote-bot","workflow_scope":"external-git-maintenance","watcher_action":"observe"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var task background.Task
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&task))
@@ -809,19 +809,19 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(resp.Body)
 		return bytes.Contains(body, []byte("remote-proxy"))
 	}, 2*time.Second, 50*time.Millisecond)
 
 	resp, err = http.Get(server.URL + "/background/" + task.ID)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp, err = http.Get(server.URL + "/background?session_id=session-remote")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var sessionTasks []background.Task
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&sessionTasks))
 	require.Len(t, sessionTasks, 1)
@@ -829,7 +829,7 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/sessions/session-remote/background")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	sessionTasks = nil
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&sessionTasks))
 	require.Len(t, sessionTasks, 1)
@@ -837,7 +837,7 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/background/"+task.ID+"/restart", "application/json", nil)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var restarted background.Task
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&restarted))
@@ -851,7 +851,7 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(resp.Body)
 		return bytes.Contains(body, []byte("remote"))
 	}, 2*time.Second, 50*time.Millisecond)
@@ -860,7 +860,7 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		var task background.Task
 		if err := json.NewDecoder(resp.Body).Decode(&task); err != nil {
 			return false
@@ -870,7 +870,7 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/background/prune", "application/json", bytes.NewBufferString(`{"older_than_days":0,"keep":0}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var pruned background.PruneResult
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&pruned))
@@ -912,7 +912,7 @@ func TestControlBackgroundSupervise(t *testing.T) {
 
 	resp, err := http.Post(server.URL+"/background/supervise", "application/json", nil)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var result background.SuperviseResult
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
@@ -957,7 +957,7 @@ func TestControlAgentRunsLifecycle(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/agents/runs?agent=reviewer&session_id=session-remote")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var statuses []agentruns.Status
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&statuses))
@@ -966,7 +966,7 @@ func TestControlAgentRunsLifecycle(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/agents/" + run.ID)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var status agentruns.Status
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&status))
@@ -977,7 +977,7 @@ func TestControlAgentRunsLifecycle(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode == http.StatusOK && strings.Contains(string(body), "agent-http")
 	}, 2*time.Second, 50*time.Millisecond)
@@ -985,7 +985,7 @@ func TestControlAgentRunsLifecycle(t *testing.T) {
 	heartbeatBody := bytes.NewBufferString(`{"status":"working","transport_alive":true,"source_kind":"transport","environment":"dogfood","channel":"http","emitter":"control-test","confidence":"high"}`)
 	resp, err = http.Post(server.URL+"/agents/"+run.ID+"/heartbeat", "application/json", heartbeatBody)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var action struct {
 		Run  agentruns.Run   `json:"run"`
@@ -998,7 +998,7 @@ func TestControlAgentRunsLifecycle(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/agents/board?stalled_after_seconds=60")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var board agentruns.Board
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&board))
@@ -1008,7 +1008,7 @@ func TestControlAgentRunsLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	resp, err = http.Post(server.URL+"/agents/prune", "application/json", bytes.NewBufferString(`{"older_than_days":0,"keep":0}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var pruned background.PruneResult
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&pruned))
@@ -1020,7 +1020,7 @@ func TestControlAgentRunsLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	resp, err = http.Post(server.URL+"/agents/"+longRun.ID+"/stop", "application/json", nil)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&action))
 	require.Equal(t, "stopped", action.Task.Status)
@@ -1056,7 +1056,7 @@ func TestControlBackgroundWatchStreamsEvents(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/background/" + task.ID + "/watch?interval_ms=10")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, resp.Header.Get("content-type"), "application/x-ndjson")
 	body, err := io.ReadAll(resp.Body)
@@ -1080,7 +1080,7 @@ func TestControlTerminalLifecycleStreamsEvents(t *testing.T) {
 
 	resp, err := http.Post(server.URL+"/terminal", "application/json", bytes.NewBufferString(`{"command":"echo terminal-remote","session_id":"session-terminal"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var task background.Task
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&task))
@@ -1093,7 +1093,7 @@ func TestControlTerminalLifecycleStreamsEvents(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode == http.StatusOK &&
 			strings.Contains(resp.Header.Get("content-type"), "application/x-ndjson") &&
@@ -1104,7 +1104,7 @@ func TestControlTerminalLifecycleStreamsEvents(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/terminal?session_id=session-terminal")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var tasks []background.Task
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&tasks))
@@ -1114,7 +1114,7 @@ func TestControlTerminalLifecycleStreamsEvents(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/terminal/" + task.ID)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var current background.Task
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&current))
@@ -1122,7 +1122,7 @@ func TestControlTerminalLifecycleStreamsEvents(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/terminal/" + task.ID + "/logs?limit=100")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1130,7 +1130,7 @@ func TestControlTerminalLifecycleStreamsEvents(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/terminal/"+task.ID+"/restart", "application/json", nil)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var restarted background.Task
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&restarted))
@@ -1151,7 +1151,7 @@ func TestControlGoDiagnostics(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/diagnostics/go?pattern=./...")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1185,7 +1185,7 @@ func TestControlCodeIntelligence(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/code/symbols?path=demo.go")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1195,7 +1195,7 @@ func TestControlCodeIntelligence(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/code/references", "application/json", bytes.NewBufferString(`{"symbol":"Widget","limit":5}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1205,7 +1205,7 @@ func TestControlCodeIntelligence(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/code/definition?symbol=BuildWidget")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1215,7 +1215,7 @@ func TestControlCodeIntelligence(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/code/hover", "application/json", bytes.NewBufferString(`{"symbol":"Widget","context_lines":1}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1225,7 +1225,7 @@ func TestControlCodeIntelligence(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/code/completion?query=Build&limit=5")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1234,7 +1234,7 @@ func TestControlCodeIntelligence(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/code/format?path=messy.go")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1245,7 +1245,7 @@ func TestControlCodeIntelligence(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/code/format", "application/json", bytes.NewBufferString(`{"path":"messy.go","write":true}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1256,7 +1256,7 @@ func TestControlCodeIntelligence(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/code/symbols?path=../secret.go")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
@@ -1285,7 +1285,7 @@ func TestControlNotebookReadEdit(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/notebook/read?notebook_path=analysis.ipynb&limit=1&include_outputs=true")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1296,7 +1296,7 @@ func TestControlNotebookReadEdit(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/notebook/read?notebook_path=analysis.ipynb&cell_index=1&include_outputs=true")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1305,7 +1305,7 @@ func TestControlNotebookReadEdit(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/notebook/edit", "application/json", bytes.NewBufferString(`{"notebook_path":"analysis.ipynb","cell_id":"intro","new_source":"# Renamed\n"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1314,7 +1314,7 @@ func TestControlNotebookReadEdit(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/notebook/edit", "application/json", bytes.NewBufferString(`{"path":"analysis.ipynb","edit_mode":"insert","cell_id":"intro","cell_type":"markdown","source":"inserted note"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1323,7 +1323,7 @@ func TestControlNotebookReadEdit(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/notebook/edit", "application/json", bytes.NewBufferString(`{"path":"analysis.ipynb","mode":"delete","cell_id":"calc"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1332,7 +1332,7 @@ func TestControlNotebookReadEdit(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/notebook/read", "application/json", bytes.NewBufferString(`{"path":"analysis.ipynb","cell_index":0}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1347,7 +1347,7 @@ func TestControlNotebookReadEdit(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/notebook/read?path=notes.txt")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1355,7 +1355,7 @@ func TestControlNotebookReadEdit(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/notebook/read?path=../outside.ipynb")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1363,7 +1363,7 @@ func TestControlNotebookReadEdit(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/notebook/edit", "application/json", bytes.NewBufferString(`{"path":"analysis.ipynb","mode":"replace"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1449,7 +1449,7 @@ func TestControlMCPEndpoints(t *testing.T) {
 
 	resp, err := http.Get(controlServer.URL + "/mcp/list?inspect=false")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1462,7 +1462,7 @@ func TestControlMCPEndpoints(t *testing.T) {
 
 	resp, err = http.Get(controlServer.URL + "/mcp/show?server=remote")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1473,7 +1473,7 @@ func TestControlMCPEndpoints(t *testing.T) {
 
 	resp, err = http.Get(controlServer.URL + "/mcp/auth?server=%20remote%20")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1486,7 +1486,7 @@ func TestControlMCPEndpoints(t *testing.T) {
 
 	resp, err = http.Post(controlServer.URL+"/mcp/auth", "application/json", bytes.NewBufferString(`{}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1499,12 +1499,12 @@ func TestControlMCPEndpoints(t *testing.T) {
 	require.NoError(t, err)
 	resp, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
 
 	resp, err = http.Get(controlServer.URL + "/mcp/tools?server=remote")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1513,7 +1513,7 @@ func TestControlMCPEndpoints(t *testing.T) {
 
 	resp, err = http.Post(controlServer.URL+"/mcp/call", "application/json", bytes.NewBufferString(`{"server":"remote","tool":"echo","arguments":{"text":"hi"}}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1522,7 +1522,7 @@ func TestControlMCPEndpoints(t *testing.T) {
 
 	resp, err = http.Get(controlServer.URL + "/mcp/resources?server=remote")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1531,7 +1531,7 @@ func TestControlMCPEndpoints(t *testing.T) {
 
 	resp, err = http.Get(controlServer.URL + "/mcp/resource-templates?server=remote")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1540,7 +1540,7 @@ func TestControlMCPEndpoints(t *testing.T) {
 
 	resp, err = http.Get(controlServer.URL + "/mcp/read?server=remote&uri=codog%3A%2F%2Fnote")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1549,7 +1549,7 @@ func TestControlMCPEndpoints(t *testing.T) {
 
 	resp, err = http.Get(controlServer.URL + "/mcp/prompts?server=remote")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1558,7 +1558,7 @@ func TestControlMCPEndpoints(t *testing.T) {
 
 	resp, err = http.Post(controlServer.URL+"/mcp/prompt", "application/json", bytes.NewBufferString(`{"server":"remote","prompt":"review","arguments":{"topic":"hooks"}}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1567,7 +1567,7 @@ func TestControlMCPEndpoints(t *testing.T) {
 
 	resp, err = http.Post(controlServer.URL+"/mcp/call", "application/json", bytes.NewBufferString(`{"server":"remote"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1575,7 +1575,7 @@ func TestControlMCPEndpoints(t *testing.T) {
 
 	resp, err = http.Get(controlServer.URL + "/mcp/tools?server=missing")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1583,7 +1583,7 @@ func TestControlMCPEndpoints(t *testing.T) {
 
 	resp, err = http.Get(controlServer.URL + "/mcp/auth?server=missing")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1606,7 +1606,7 @@ func TestControlLSPEndpoints(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/lsp/actions")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1615,7 +1615,7 @@ func TestControlLSPEndpoints(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/lsp/discover")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1624,7 +1624,7 @@ func TestControlLSPEndpoints(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/lsp/start", "application/json", bytes.NewBufferString(`{"language":"go","command_args":["sleep","30"]}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1637,7 +1637,7 @@ func TestControlLSPEndpoints(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/lsp/list")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1647,7 +1647,7 @@ func TestControlLSPEndpoints(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/lsp/status?language=go")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1656,7 +1656,7 @@ func TestControlLSPEndpoints(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/lsp/query", "application/json", bytes.NewBufferString(`{"language":"go","action":"hover","line":-1}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1664,7 +1664,7 @@ func TestControlLSPEndpoints(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/lsp/stop", "application/json", bytes.NewBufferString(`{"language":"go"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1683,7 +1683,7 @@ func TestControlLSPStartRejectsEmptyCommandArg(t *testing.T) {
 
 	resp, err := http.Post(server.URL+"/lsp/start", "application/json", bytes.NewBufferString(`{"language":"go","command_args":["  ","--stdio"]}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1739,7 +1739,7 @@ func TestControlLSPRequiresConfigHome(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/lsp/list")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1782,7 +1782,7 @@ func TestControlWorkspaceAndFileOperations(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/workspace/info")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1790,7 +1790,7 @@ func TestControlWorkspaceAndFileOperations(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/workspace/files?pattern=*.md")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1798,7 +1798,7 @@ func TestControlWorkspaceAndFileOperations(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/workspace/search?query=remote&glob=*.md")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1806,7 +1806,7 @@ func TestControlWorkspaceAndFileOperations(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/file/write", "application/json", bytes.NewBufferString(`{"path":"notes.txt","content":"hello world"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1814,7 +1814,7 @@ func TestControlWorkspaceAndFileOperations(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/file/edit", "application/json", bytes.NewBufferString(`{"path":"notes.txt","old_string":"world","new_string":"codog"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1822,7 +1822,7 @@ func TestControlWorkspaceAndFileOperations(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/file/read?path=notes.txt")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1830,7 +1830,7 @@ func TestControlWorkspaceAndFileOperations(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/file/diff", "application/json", bytes.NewBufferString(`{"path":"README.md","old_string":"hello remote","new_string":"hello codog"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -1839,6 +1839,6 @@ func TestControlWorkspaceAndFileOperations(t *testing.T) {
 
 	resp, err = http.Get(server.URL + "/file/read?path=../secret.txt")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }

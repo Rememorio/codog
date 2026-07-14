@@ -449,7 +449,7 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 	if err != nil {
 		return Task{}, err
 	}
-	defer logFile.Close()
+	defer func() { _ = logFile.Close() }()
 
 	cmd := exec.Command("sh", "-c", backgroundShellWrapper, "codog-background", command, s.completionPath(id))
 	cmd.Dir = cwd
@@ -1091,7 +1091,7 @@ func (s Store) readCompletion(id string) (taskCompletion, bool, error) {
 		}
 		return taskCompletion{}, false, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(file)
 	if err != nil {
 		return taskCompletion{}, false, err
@@ -1228,7 +1228,7 @@ func (s Store) Logs(id string, limitBytes int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
 		return "", err
@@ -1335,7 +1335,7 @@ func (s Store) readLogRange(path string, offset int64, limitBytes int64) (int64,
 		}
 		return offset, "", err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
 		return offset, "", err

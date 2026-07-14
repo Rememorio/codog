@@ -16,10 +16,10 @@ func TestFetchHTMLPlainTextAndInvalidURL(t *testing.T) {
 		switch r.URL.Path {
 		case "/page":
 			w.Header().Set("Content-Type", "text/html")
-			io.WriteString(w, `<html><head><title>Test Title</title><script>hidden()</script></head><body><h1>Test Page</h1><p>Hello <b>world</b>.</p></body></html>`)
+			_, _ = io.WriteString(w, `<html><head><title>Test Title</title><script>hidden()</script></head><body><h1>Test Page</h1><p>Hello <b>world</b>.</p></body></html>`)
 		case "/plain":
 			w.Header().Set("Content-Type", "text/plain")
-			io.WriteString(w, "plain text response")
+			_, _ = io.WriteString(w, "plain text response")
 		default:
 			http.NotFound(w, r)
 		}
@@ -50,7 +50,7 @@ func TestSearchExtractsFiltersAndDecodesRedirects(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "rust web search", r.URL.Query().Get("q"))
 		w.Header().Set("Content-Type", "text/html")
-		io.WriteString(w, `
+		_, _ = io.WriteString(w, `
 			<html><body>
 			  <a class="result__a" href="https://duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.rs%2Freqwest&amp;rut=abc">Reqwest docs</a>
 			  <a class="result__snippet" href="https://duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.rs%2Freqwest">Fast Rust HTTP client docs.</a>
@@ -124,7 +124,7 @@ func TestSearchRejectsTooShortQuery(t *testing.T) {
 func TestSearchFallsBackToGenericLinks(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		io.WriteString(w, `
+		_, _ = io.WriteString(w, `
 			<html><body>
 			  <a href="https://example.com/one">Example One</a>
 			  <a href="https://example.com/one">Duplicate One</a>

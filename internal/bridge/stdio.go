@@ -2084,14 +2084,6 @@ func (s Server) resolve(requested string, allowMissing bool) (string, string, er
 	return s.workspaceOps().Resolve(requested, allowMissing)
 }
 
-func (s Server) resolveWorkspacePath(requested string) (string, string, error) {
-	return s.workspaceOps().ResolveWorkspacePath(requested)
-}
-
-func (s Server) rel(path string) (string, error) {
-	return s.workspaceOps().Rel(path)
-}
-
 func (s Server) workspace() (string, error) {
 	return s.workspaceOps().WorkspacePath()
 }

@@ -214,7 +214,7 @@ func (c *Client) streamSingle(ctx context.Context, req Request, onText func(stri
 			return AssistantMessage{}, err
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			return parseStream(resp.Body, onText)
 		}
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
@@ -413,7 +413,7 @@ func (c *Client) streamOpenAICompatible(ctx context.Context, req Request, onText
 			return AssistantMessage{}, err
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			return parseOpenAIStream(resp.Body, onText)
 		}
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))

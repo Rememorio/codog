@@ -48,7 +48,7 @@ func (s *Store) Append(event Event) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -65,7 +65,7 @@ func (s *Store) List(limit int) ([]Event, error) {
 		}
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var events []Event
 	scanner := bufio.NewScanner(file)

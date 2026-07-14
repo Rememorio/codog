@@ -62,11 +62,11 @@ func TestStartBrowserCallbackServer(t *testing.T) {
 	defer cancel()
 	callback, err := StartBrowserCallbackServer(ctx, "127.0.0.1:0", "/oauth/callback", "state-1")
 	require.NoError(t, err)
-	defer callback.Close()
+	defer func() { _ = callback.Close() }()
 
 	resp, err := http.Get(callback.RedirectURI + "?code=code-1&state=state-1")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	result := <-callback.Results
 	require.NoError(t, result.Err)
@@ -79,11 +79,11 @@ func TestStartBrowserCallbackServerRejectsStateMismatch(t *testing.T) {
 	defer cancel()
 	callback, err := StartBrowserCallbackServer(ctx, "127.0.0.1:0", "/oauth/callback", "state-1")
 	require.NoError(t, err)
-	defer callback.Close()
+	defer func() { _ = callback.Close() }()
 
 	resp, err := http.Get(callback.RedirectURI + "?code=code-1&state=wrong")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	result := <-callback.Results
 	require.Error(t, result.Err)

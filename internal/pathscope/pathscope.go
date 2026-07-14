@@ -112,7 +112,7 @@ func Save(workspace string, state State) error {
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 	if _, err := tmp.Write(append(data, '\n')); err != nil {
 		_ = tmp.Close()
 		return err

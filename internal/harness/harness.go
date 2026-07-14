@@ -1000,7 +1000,7 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 	if err != nil {
 		return scenarioErrorReport(item.name, metadata, "", err)
 	}
-	defer os.RemoveAll(workspace)
+	defer func() { _ = os.RemoveAll(workspace) }()
 	if item.setup != nil {
 		if err := item.setup(workspace); err != nil {
 			return scenarioErrorReport(item.name, metadata, workspace, err)
@@ -6934,7 +6934,7 @@ func permissionScopeDenialScenario() scenario {
 		name: "permission_scope_denial_roundtrip",
 		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
 			outside := filepath.Join(filepath.Dir(workspace), filepath.Base(workspace)+"-outside")
-			defer os.RemoveAll(outside)
+			defer func() { _ = os.RemoveAll(outside) }()
 			if err := os.MkdirAll(outside, 0o755); err != nil {
 				return localScenarioResult{}, err
 			}
@@ -7762,14 +7762,14 @@ func webAccessScenario() scenario {
 				switch r.URL.Path {
 				case "/page":
 					w.Header().Set("Content-Type", "text/html")
-					io.WriteString(w, `<html><head><title>Codog Web Parity</title><script>ignored()</script></head><body><main><h1>Fetch Summary</h1><p>Codog fetches local HTML text for grounded answers.</p></main></body></html>`)
+					_, _ = io.WriteString(w, `<html><head><title>Codog Web Parity</title><script>ignored()</script></head><body><main><h1>Fetch Summary</h1><p>Codog fetches local HTML text for grounded answers.</p></main></body></html>`)
 				case "/search":
 					if got := r.URL.Query().Get("q"); got != "codog web parity" {
 						http.Error(w, "unexpected query "+got, http.StatusBadRequest)
 						return
 					}
 					w.Header().Set("Content-Type", "text/html")
-					io.WriteString(w, `
+					_, _ = io.WriteString(w, `
 <html><body>
   <a class="result__a" href="https://example.com/codog">Codog docs</a>
   <div class="result__snippet">Go implementation notes for Codog web parity.</div>
@@ -7827,14 +7827,14 @@ func webAccessLimitsScenario() scenario {
 				switch r.URL.Path {
 				case "/large":
 					w.Header().Set("Content-Type", "text/plain")
-					io.WriteString(w, strings.Repeat("bounded fetch content ", 8))
+					_, _ = io.WriteString(w, strings.Repeat("bounded fetch content ", 8))
 				case "/search":
 					if got := r.URL.Query().Get("q"); got != "codog blocked parity" {
 						http.Error(w, "unexpected query "+got, http.StatusBadRequest)
 						return
 					}
 					w.Header().Set("Content-Type", "text/html")
-					io.WriteString(w, `
+					_, _ = io.WriteString(w, `
 <html><body>
   <a class="result__a" href="https://example.com/blocked">Filtered docs</a>
   <div class="result__snippet">This result should be removed by the blocked domain filter.</div>
@@ -11304,7 +11304,7 @@ func remoteAPIListenerScenario() scenario {
 			if err != nil {
 				return localScenarioResult{}, err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			if resp.StatusCode != http.StatusOK {
 				return localScenarioResult{}, fmt.Errorf("authenticated sessions returned %d", resp.StatusCode)
 			}
@@ -11368,7 +11368,7 @@ func remoteBridgeWorkspaceScenario() scenario {
 				if err != nil {
 					return 0, "", err
 				}
-				defer resp.Body.Close()
+				defer func() { _ = resp.Body.Close() }()
 				data, err := io.ReadAll(resp.Body)
 				if err != nil {
 					return resp.StatusCode, "", err
@@ -11983,7 +11983,7 @@ func getControlBody(url string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
@@ -11999,7 +11999,7 @@ func postControlBody(url string, payload string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err

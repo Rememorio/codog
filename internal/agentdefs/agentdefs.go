@@ -141,14 +141,6 @@ func Merge(base []Definition, overlays ...[]Definition) []Definition {
 	return merged
 }
 
-func roots(workspace string) []root {
-	manifests, err := plugins.Load(workspace)
-	if err != nil {
-		return rootsWithManifests(workspace, nil)
-	}
-	return rootsWithManifests(workspace, manifests)
-}
-
 func rootsWithManifests(workspace string, manifests []plugins.Manifest) []root {
 	out := []root{
 		{path: filepath.Join(workspace, ".codog", "agents"), source: "workspace"},

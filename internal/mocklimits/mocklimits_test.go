@@ -24,7 +24,7 @@ func TestHandlerRateLimitsThenStreams(t *testing.T) {
 
 	resp, err := http.Post(server.URL+"/v1/messages", "application/json", strings.NewReader(`{}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var body bytes.Buffer
 	_, err = body.ReadFrom(resp.Body)

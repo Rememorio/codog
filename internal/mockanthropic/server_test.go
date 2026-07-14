@@ -30,7 +30,7 @@ func TestHandlerStreamsTextAndToolUse(t *testing.T) {
 
 	resp, err := http.Post(server.URL+"/v1/messages", "application/json", strings.NewReader(`{"messages":[]}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestHandlerRateLimitsBeforeStreaming(t *testing.T) {
 
 	resp, err = http.Post(server.URL+"/v1/messages", "application/json", strings.NewReader(`{}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -76,7 +76,7 @@ func TestHandlerRejectsNonPost(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/v1/messages")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
 }

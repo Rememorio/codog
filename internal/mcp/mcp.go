@@ -1463,7 +1463,7 @@ func sendHTTPRPC(ctx context.Context, server config.MCPServerConfig, rpc rpcRequ
 	if err != nil {
 		return rpcResponse{}, "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	nextSessionID := firstNonEmpty(resp.Header.Get("Mcp-Session-Id"), resp.Header.Get("mcp-session-id"))
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
 	if err != nil {

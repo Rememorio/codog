@@ -80,7 +80,7 @@ func fetchMetadata(ctx context.Context, client *http.Client, endpoint string) (P
 	if err != nil {
 		return ProviderMetadata{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return ProviderMetadata{}, fmt.Errorf("metadata %s returned %s", endpoint, resp.Status)
 	}

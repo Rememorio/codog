@@ -2937,10 +2937,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+g":
 			return m.openExternalEditor()
 		case "pgup":
-			m.viewport.LineUp(max(1, m.viewport.Height/2))
+			m.viewport.ScrollUp(max(1, m.viewport.Height/2))
 			return m, nil
 		case "pgdown":
-			m.viewport.LineDown(max(1, m.viewport.Height/2))
+			m.viewport.ScrollDown(max(1, m.viewport.Height/2))
 			return m, nil
 		case "up":
 			if m.searchOpen {
@@ -4799,14 +4799,6 @@ func (m model) currentDiffSource() DiffSource {
 		return DiffSource{}
 	}
 	return m.diffSources[clampIndex(m.diffSourceSelected, len(m.diffSources))]
-}
-
-func (m model) currentDiffFile() DiffFile {
-	source := m.currentDiffSource()
-	if len(source.Files) == 0 {
-		return DiffFile{}
-	}
-	return source.Files[clampIndex(m.diffFileSelected, len(source.Files))]
 }
 
 func (m *model) previousDiffSourceOrBack() {
@@ -10072,26 +10064,6 @@ func (m model) mode() string {
 		return "ready"
 	}
 	return "compose"
-}
-
-func (m model) visibleStatus() string {
-	status := strings.TrimSpace(m.status)
-	if status == "" {
-		status = m.mode()
-	}
-	if m.transcriptMode && !strings.EqualFold(status, "transcript") {
-		status += " · transcript"
-	}
-	if len(m.queuedPrompts) == 0 {
-		if len(m.attachments) == 0 {
-			return status
-		}
-		return fmt.Sprintf("%s · %d attached", status, len(m.attachments))
-	}
-	if len(m.attachments) == 0 {
-		return fmt.Sprintf("%s · %d queued", status, len(m.queuedPrompts))
-	}
-	return fmt.Sprintf("%s · %d queued · %d attached", status, len(m.queuedPrompts), len(m.attachments))
 }
 
 func isLocalHelpInput(value string) bool {

@@ -518,7 +518,7 @@ func (s *Store) createAtPath(id string, path string, identity SessionIdentity) (
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	now := time.Now().UTC()
 	if err := writeRecord(file, Record{
 		Type:      "session",
@@ -552,7 +552,7 @@ func (s *Store) AppendWithUsage(id string, msg anthropic.Message, usage *anthrop
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	record := Record{
 		Type:      "message",
 		Time:      time.Now().UTC(),
@@ -576,7 +576,7 @@ func (s *Store) AppendInput(id string, input string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	records, readErr := s.readRecords(path)
 	inputRecord := Record{
 		Type:      "input",
@@ -608,7 +608,7 @@ func (s *Store) AppendPromptHistoryDisabled(id string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	return writeRecord(file, Record{
 		Type:      "prompt_history",
 		Time:      time.Now().UTC(),
@@ -748,7 +748,7 @@ func (s *Store) setMessagePin(id string, index int, pinned bool) (PinResult, err
 	if err != nil {
 		return PinResult{}, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if err := writeRecord(file, record); err != nil {
 		return PinResult{}, err
 	}
@@ -868,7 +868,7 @@ func (s *Store) Fork(id string, branchName string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	branchName = strings.TrimSpace(branchName)
 	if err := writeRecord(file, Record{
 		Type:            "fork",
@@ -1321,7 +1321,7 @@ func appendSessionIdentity(path string, id string, identity SessionIdentity) err
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	return writeRecord(file, Record{
 		Type:      "session_identity",
 		Time:      time.Now().UTC(),
@@ -1681,14 +1681,6 @@ func (s *Store) ReplaceMessages(sess *Session, messages []anthropic.Message) (Re
 	}, nil
 }
 
-func (s *Store) messageRecordMetadata(path string) map[int]messageRecordInfo {
-	records, err := s.readRecords(path)
-	if err != nil {
-		return nil
-	}
-	return messageRecordMetadata(records)
-}
-
 func messageRecordMetadata(records []Record) map[int]messageRecordInfo {
 	metadata := map[int]messageRecordInfo{}
 	messageIndex := -1
@@ -2020,20 +2012,6 @@ func metadataFromRecords(path string, records []Record) SessionMetadata {
 	return metadata
 }
 
-func (s *Store) readMessages(path string) ([]anthropic.Message, error) {
-	records, err := s.readRecords(path)
-	if err != nil {
-		return nil, err
-	}
-	var messages []anthropic.Message
-	for _, record := range records {
-		if record.Message != nil {
-			messages = append(messages, *record.Message)
-		}
-	}
-	return messages, nil
-}
-
 func identityFromRecords(id string, workspace string, records []Record) SessionIdentity {
 	var identity SessionIdentity
 	hadExplicitIdentity := false
@@ -2226,7 +2204,7 @@ func (s *Store) writeRecords(path string, records []Record) error {
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 	for _, record := range records {
 		if err := writeRecord(tmp, record); err != nil {
 			_ = tmp.Close()

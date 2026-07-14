@@ -62,7 +62,7 @@ func Push(workspace, tool, targetPath string, existed bool, content []byte) (Rec
 	if err != nil {
 		return Record{}, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := json.Marshal(record)
 	if err != nil {
 		return Record{}, err
@@ -174,7 +174,7 @@ func readRecords(workspace string) ([]Record, error) {
 		}
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	records := []Record{}
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)

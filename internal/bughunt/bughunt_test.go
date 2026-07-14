@@ -18,7 +18,7 @@ func risky(value any) {
 	_, _ = os.Open("missing")
 	_ = value.(string)
 	for _, item := range []string{"a"} {
-		defer os.Remove(item)
+		defer func() { _ = os.Remove(item) }()
 		go func() { println(item) }()
 	}
 	panic("boom")

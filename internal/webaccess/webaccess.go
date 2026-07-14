@@ -124,7 +124,7 @@ func Fetch(ctx context.Context, input FetchInput) (FetchOutput, error) {
 	if err != nil {
 		return FetchOutput{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	reader := io.LimitReader(resp.Body, limit+1)
 	data, err := io.ReadAll(reader)
@@ -191,7 +191,7 @@ func Search(ctx context.Context, input SearchInput) (SearchOutput, error) {
 	if err != nil {
 		return SearchOutput{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, defaultMaxFetchBytes))
 	if err != nil {
 		return SearchOutput{}, err

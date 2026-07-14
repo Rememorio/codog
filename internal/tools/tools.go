@@ -3116,7 +3116,7 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		if err != nil {
 			return "", err
 		}
-		defer os.RemoveAll(cwdProbeDir)
+		defer func() { _ = os.RemoveAll(cwdProbeDir) }()
 		commandText = wrapCommandWithCWDProbe(commandText, cwdProbePath)
 	}
 	strategy := bashSandboxStrategy(t.SandboxStrategy, t.Sandbox, payload.DangerouslyDisableSandbox)
@@ -5757,7 +5757,7 @@ func (t RetrieveContextTool) Execute(ctx context.Context, input json.RawMessage)
 	if err != nil {
 		return "", fmt.Errorf("RAG request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRAGBodyBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("RAG response body: %w", err)
@@ -5947,7 +5947,7 @@ func (RemoteTriggerTool) Execute(ctx context.Context, input json.RawMessage) (st
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return "", err
@@ -7518,10 +7518,6 @@ func findAgentDefinition(workspace string, definitions []agentdefs.Definition, n
 	return agentdefs.Definition{}, false, nil
 }
 
-func buildAgentToolCommand(executable string, def agentdefs.Definition, description string, prompt string, model string) string {
-	return buildAgentToolCommandWithPluginDirs(executable, def, description, prompt, model, nil)
-}
-
 func buildAgentToolCommandWithPluginDirs(executable string, def agentdefs.Definition, description string, prompt string, model string, pluginDirs []string) string {
 	parts := []string{}
 	if strings.TrimSpace(description) != "" {
@@ -8186,7 +8182,7 @@ func (t WorkerListTool) Execute(_ context.Context, input json.RawMessage) (strin
 		return "", err
 	}
 	out := make([]workers.Worker, 0, len(list))
-	getter := WorkerGetTool{Workspace: t.Workspace, ConfigHome: t.ConfigHome}
+	getter := WorkerGetTool(t)
 	for _, worker := range list {
 		worker = getter.withTaskStatus(worker)
 		if status != "" && !strings.EqualFold(worker.Status, status) {
@@ -8265,7 +8261,7 @@ func (t WorkerObserveTool) Execute(_ context.Context, input json.RawMessage) (st
 	if err != nil {
 		return "", err
 	}
-	worker = WorkerGetTool{Workspace: t.Workspace, ConfigHome: t.ConfigHome}.withTaskStatus(worker)
+	worker = WorkerGetTool(t).withTaskStatus(worker)
 	return pretty(worker), nil
 }
 
@@ -8289,7 +8285,7 @@ func (t WorkerResolveTrustTool) Execute(_ context.Context, input json.RawMessage
 	if err != nil {
 		return "", err
 	}
-	worker = WorkerGetTool{Workspace: t.Workspace, ConfigHome: t.ConfigHome}.withTaskStatus(worker)
+	worker = WorkerGetTool(t).withTaskStatus(worker)
 	return pretty(worker), nil
 }
 
@@ -8517,7 +8513,7 @@ func (t WorkerObserveCompletionTool) Execute(_ context.Context, input json.RawMe
 	if err != nil {
 		return "", err
 	}
-	worker = WorkerGetTool{Workspace: t.Workspace, ConfigHome: t.ConfigHome}.withTaskStatus(worker)
+	worker = WorkerGetTool(t).withTaskStatus(worker)
 	return pretty(worker), nil
 }
 
@@ -8611,7 +8607,7 @@ func (t WorkerStartupTimeoutTool) Execute(_ context.Context, input json.RawMessa
 	if err != nil {
 		return "", err
 	}
-	worker = WorkerGetTool{Workspace: t.Workspace, ConfigHome: t.ConfigHome}.withTaskStatus(worker)
+	worker = WorkerGetTool(t).withTaskStatus(worker)
 	return pretty(worker), nil
 }
 
@@ -10794,7 +10790,7 @@ func (SendUserMessageTool) Definition() anthropic.ToolDefinition {
 func (SendUserMessageTool) Permission() Permission { return PermissionReadOnly }
 
 func (t SendUserMessageTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
-	return BriefTool{Workspace: t.Workspace, AdditionalDirs: t.AdditionalDirs}.Execute(ctx, input)
+	return BriefTool(t).Execute(ctx, input)
 }
 
 func isImageAttachment(path string) bool {
@@ -11799,7 +11795,7 @@ func readFileLimited(path string, maxBytes int64) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
 	if err != nil {
 		return nil, false, err

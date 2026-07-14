@@ -535,7 +535,7 @@ func FetchMarketplace(ctx context.Context, indexURL, publicKey string) (Marketpl
 	if err != nil {
 		return MarketplaceIndex{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return MarketplaceIndex{}, fmt.Errorf("marketplace request failed: %s", resp.Status)
 	}
@@ -1072,7 +1072,7 @@ func copyFile(source, target string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 	info, err := in.Stat()
 	if err != nil {
 		return err
@@ -1085,7 +1085,7 @@ func copyFile(source, target string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 	_, err = io.Copy(out, in)
 	return err
 }
@@ -1122,7 +1122,7 @@ func downloadArchive(ctx context.Context, archiveURL, target string) (string, er
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("plugin archive request failed: %s", resp.Status)
 	}
@@ -1152,7 +1152,7 @@ func extractZip(archivePath, dest string) error {
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	for _, file := range reader.File {
 		target, err := safeArchivePath(dest, file.Name)
 		if err != nil {

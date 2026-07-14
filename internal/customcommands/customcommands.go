@@ -377,14 +377,6 @@ func commandVariablesWithSession(command Command, sessionID string) map[string]s
 	return variables
 }
 
-func roots(configHome, workspace string) []root {
-	manifests, err := plugins.Load(workspace)
-	if err != nil {
-		return rootsWithManifests(configHome, workspace, nil)
-	}
-	return rootsWithManifests(configHome, workspace, manifests)
-}
-
 func rootsWithManifests(configHome, workspace string, manifests []plugins.Manifest) []root {
 	out := []root{
 		{path: filepath.Join(configHome, "commands"), source: "user"},

@@ -5459,7 +5459,7 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Contains(t, commitError.Hint, "codog commit")
 	require.NotContains(t, out, "config_load_failed")
 
-	out, err = captureStdout(t, func() error {
+	_, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/compact"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
@@ -10366,7 +10366,7 @@ func risky(value any) {
 	require.NoError(t, err)
 	require.Empty(t, opened.Messages)
 
-	out, err = captureStdout(t, func() error {
+	_, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/commit"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
@@ -12162,7 +12162,7 @@ func TestParseFlagsSupportsInteractiveBareResume(t *testing.T) {
 func TestTerminalInputRejectsNonTTYCharacterDevice(t *testing.T) {
 	input, err := os.Open(os.DevNull)
 	require.NoError(t, err)
-	defer input.Close()
+	defer func() { _ = input.Close() }()
 
 	_, ok := terminalInput(input)
 	require.False(t, ok)
@@ -24189,7 +24189,7 @@ func TestAPIServeStartsControlListener(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		return resp.StatusCode == http.StatusOK
 	}, 3*time.Second, 25*time.Millisecond)
 
@@ -24266,7 +24266,7 @@ func TestServerCommandStartsControlListener(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		return resp.StatusCode == http.StatusOK
 	}, 3*time.Second, 25*time.Millisecond)
 
@@ -30087,7 +30087,7 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 		RootCount int                    `json:"root_count"`
 		Roots     []skills.DiscoveryRoot `json:"roots"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(out.String()), &sourceReport))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &sourceReport))
 	require.Equal(t, "skills", sourceReport.Kind)
 	require.Equal(t, "sources", sourceReport.Action)
 	require.Equal(t, "ok", sourceReport.Status)
@@ -30115,7 +30115,7 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 		Action string         `json:"action"`
 		Skills []skills.Skill `json:"skills"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(out.String()), &showListReport))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &showListReport))
 	require.Equal(t, "skills", showListReport.Kind)
 	require.Equal(t, "list", showListReport.Action)
 	require.NotEmpty(t, showListReport.Skills)
@@ -30218,7 +30218,7 @@ Mismatch body.`), 0o644))
 		MetadataDrift      []skills.MetadataDrift `json:"metadata_drift"`
 		Skills             []skills.Skill         `json:"skills"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(out.String()), &report))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "skills", report.Kind)
 	require.Equal(t, "list", report.Action)
 	require.Equal(t, "degraded", report.Status)
@@ -30239,7 +30239,7 @@ Mismatch body.`), 0o644))
 
 	require.NoError(t, app.Skills([]string{"audit", "--json"}))
 	var audit skillAuditReport
-	require.NoError(t, json.Unmarshal([]byte(out.String()), &audit))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &audit))
 	require.Equal(t, "skills", audit.Kind)
 	require.Equal(t, "audit", audit.Action)
 	require.Equal(t, "degraded", audit.Status)
@@ -32396,7 +32396,7 @@ func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
 		AgentType string `json:"agent_type"`
 	}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 		var payload struct {
 			Event     string `json:"event"`
 			AgentID   string `json:"agent_id"`
@@ -33084,7 +33084,7 @@ func TestBackgroundRunEmitsNotificationHook(t *testing.T) {
 		NotificationType string `json:"notification_type"`
 	}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 		var payload struct {
 			Event            string `json:"event"`
 			Message          string `json:"message"`
@@ -33152,7 +33152,7 @@ func TestBackgroundStopEmitsSubagentStopHook(t *testing.T) {
 		LastAssistant  string `json:"last_assistant_message"`
 	}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 		var payload struct {
 			Event          string `json:"event"`
 			AgentID        string `json:"agent_id"`

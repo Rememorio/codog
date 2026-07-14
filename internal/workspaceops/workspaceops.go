@@ -386,7 +386,7 @@ func readWindow(path string, offset int, limit int) ([]byte, int, bool, error) {
 	if err != nil {
 		return nil, 0, false, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
 		return nil, 0, false, err
@@ -424,7 +424,7 @@ func readEditableFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, MaxFileBytes+1))
 	if err != nil {
 		return nil, err
@@ -468,7 +468,7 @@ func (s Service) Resolve(requested string, allowMissing bool) (string, string, e
 		candidate = filepath.Join(root, candidate)
 	}
 	candidate = filepath.Clean(candidate)
-	resolved := candidate
+	var resolved string
 	if allowMissing {
 		resolved, err = resolveAllowMissingPath(candidate)
 		if err != nil {
