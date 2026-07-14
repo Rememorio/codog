@@ -2281,6 +2281,49 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	if mapped := slashCommandName(command); mapped != "" {
 		command = slashSwitchName(mapped)
 	}
+	handlers := []interactiveSlashHandler{
+		a.handleSystemSlash,
+		a.handleRemoteSystemSlash,
+		a.handleWorkspaceSlash,
+		a.handleReviewSlash,
+		a.handleWorkspaceStateSlash,
+		a.handlePreferencesSlash,
+		a.handleInterfacePreferenceSlash,
+		a.handleUsageSlash,
+		a.handleLimitSlash,
+		a.handlePlanConfigSlash,
+		a.handleRuntimeConfigSlash,
+		a.handleEditingSlash,
+		a.handleDevelopmentSlash,
+		a.handleBuildSlash,
+		a.handleCodeIntelSlash,
+		a.handleSharingSlash,
+		a.handleExtensionSlash,
+		a.handleAgentExtensionSlash,
+		a.handleIntegrationSlash,
+		a.handlePluginSlash,
+		a.handleAuthSessionsSlash,
+	}
+	for _, handle := range handlers {
+		if handle(ctx, command, fields, sess) {
+			return true
+		}
+	}
+	if a.handleCustomSlash(ctx, line, sess) {
+		return true
+	}
+	if a.handleSkillSlash(ctx, line, sess) {
+		return true
+	}
+	if _, ok := slash.Lookup(fields[0]); !ok {
+		writeUnknownSlashCommand(a.Err, fields[0], a.customSlashCompletionCandidates())
+	}
+	return true
+}
+
+type interactiveSlashHandler func(context.Context, string, []string, *session.Session) bool
+
+func (a *App) handleSystemSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
 	switch command {
 	case "/help":
 		a.renderSlashHelp(a.Err)
@@ -2324,6 +2367,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.RemoteSetup(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleRemoteSystemSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/bridge":
 		if err := a.Bridge(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2366,6 +2417,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.HeapDump(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleWorkspaceSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/version":
 		if err := renderVersion(a.Out, a.Workspace, nil); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2414,6 +2473,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Bughunter(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleReviewSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/review", "/ultrareview":
 		if err := a.Review(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2462,6 +2529,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.IssueDraft(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleWorkspaceStateSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/focus":
 		if err := a.Focus(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2482,6 +2557,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.WorkspaceCommand(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handlePreferencesSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/output-style":
 		if err := a.OutputStyle(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2514,6 +2597,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Fast(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleInterfacePreferenceSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/voice":
 		if err := a.Voice(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2550,6 +2641,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Notifications(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleUsageSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/cost", "/tokens", "/stats":
 		_ = a.UsageOverview(strings.TrimPrefix(command, "/"), fields[1:], config.FlagOverrides{SessionID: sess.ID})
 	case "/cache":
@@ -2583,6 +2682,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.PerfIssue(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleLimitSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/think-back":
 		if err := a.ThinkBack(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2619,6 +2726,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.ResetLimits(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handlePlanConfigSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/plan", "/ultraplan":
 		if err := a.Plan(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2647,6 +2762,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Budget(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleRuntimeConfigSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/max-tokens":
 		a.handleMaxTokensSlash(fields[1:])
 	case "/temperature":
@@ -2671,6 +2794,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Doctor(nil); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleEditingSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/compact":
 		if err := a.Compact(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2709,6 +2840,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.ReportSchema(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleDevelopmentSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/trust":
 		if err := a.Trust(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2727,6 +2866,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/blame":
 		a.handleBlameSlash(fields[1:])
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleBuildSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/stash":
 		if err := a.Stash(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2756,6 +2903,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.ProjectCommand(ctx, "lint", fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleCodeIntelSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/symbols":
 		if err := a.Symbols(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2804,6 +2959,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.CodeIntel(append([]string{"notebook-edit"}, fields[1:]...)); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleSharingSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/export":
 		a.handleExportSlash(fields[1:], sess)
 	case "/share":
@@ -2830,6 +2993,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Summary(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleExtensionSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/generatesessionname":
 		report, format, err := a.generateSessionNameReport(fields[1:], config.FlagOverrides{SessionID: sess.ID})
 		if err != nil {
@@ -2876,6 +3047,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Skills(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleAgentExtensionSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/commands":
 		if err := a.Commands(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2896,6 +3075,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Capabilities(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleIntegrationSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/prefetch":
 		if err := a.Prefetch(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2933,6 +3120,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Install(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handlePluginSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/agents":
 		if err := a.AgentsWithOverrides(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2965,6 +3160,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.ReloadPlugins(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) handleAuthSessionsSlash(ctx context.Context, command string, fields []string, sess *session.Session) bool {
+	switch command {
 	case "/providers":
 		args := fields[1:]
 		if len(args) == 0 {
@@ -3008,15 +3211,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	case "/rewind":
 		a.handleRewindSlash(fields[1:], sess)
 	default:
-		if a.handleCustomSlash(ctx, line, sess) {
-			return true
-		}
-		if a.handleSkillSlash(ctx, line, sess) {
-			return true
-		}
-		if _, ok := slash.Lookup(fields[0]); !ok {
-			writeUnknownSlashCommand(a.Err, fields[0], a.customSlashCompletionCandidates())
-		}
+		return false
 	}
 	return true
 }

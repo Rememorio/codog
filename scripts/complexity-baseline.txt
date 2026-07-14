@@ -1,4 +1,3 @@
-gocognit|internal/agent/acp.go|(*App).serveACP|338
 gocognit|internal/agent/acp.go|renderMemoryCommand|42
 gocognit|internal/agent/agent.go|(*App).RemoteEnv|35
 gocognit|internal/agent/agent.go|(*App).RemoteSetup|43
@@ -47,7 +46,6 @@ gocognit|internal/agent/hooks.go|parsePrivacyArgs|58
 gocognit|internal/agent/hooks.go|parseSpeakArgs|72
 gocognit|internal/agent/hooks.go|parseThemeArgs|33
 gocognit|internal/agent/hooks.go|parseVoiceArgs|47
-gocognit|internal/agent/interactive.go|(*App).handleSlash|350
 gocognit|internal/agent/keybindings.go|(*App).Passes|55
 gocognit|internal/agent/keybindings.go|parseCommitPushPRArgs|32
 gocognit|internal/agent/keybindings.go|parsePassesArgs|62
