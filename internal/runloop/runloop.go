@@ -3,7 +3,6 @@ package runloop
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -12,7 +11,6 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/hooks"
 	"github.com/Rememorio/codog/internal/sessionsummary"
-	"github.com/Rememorio/codog/internal/shellstate"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/usage"
 )
@@ -89,303 +87,11 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 // executes tool loops until the model stops, and returns the updated
 // conversation state. The plain input is still used for hooks and diagnostics.
 func (r Runner) RunWithUserContent(ctx context.Context, previous []anthropic.Message, content []anthropic.ContentBlock, input string) (TurnResult, error) {
-	if r.Client == nil {
-		return TurnResult{}, errors.New("missing model client")
-	}
-	if r.Tools == nil {
-		return TurnResult{}, errors.New("missing tool registry")
-	}
-	if len(content) == 0 {
-		content = []anthropic.ContentBlock{{Type: "text", Text: input}}
-	}
-
-	messages := append([]anthropic.Message(nil), previous...)
-	messages = append(messages, anthropic.Message{Role: "user", Content: append([]anthropic.ContentBlock(nil), content...)})
-
-	system := r.System
-	if system == "" {
-		system = defaultSystemPrompt
-	}
-	hookRunner := r.Hooks
-	if !hasHookConfig(hookRunner.Config) {
-		hookRunner.Config = r.Config.Hooks
-	}
-	if hookRunner.Workspace == "" {
-		hookRunner.Workspace = r.Workspace
-	}
-	if hookRunner.ConfigHome == "" {
-		hookRunner.ConfigHome = r.Config.ConfigHome
-	}
-	if hookRunner.SessionID == "" {
-		hookRunner.SessionID = r.SessionID
-	}
-	if hookRunner.PromptRunner == nil {
-		hookRunner.PromptRunner = r.HookPromptRunner
-	}
-	toolCtx := tools.ContextWithSessionID(ctx, r.SessionID)
-	promptReport, err := hookRunner.UserPromptSubmitReport(ctx, input)
+	execution, err := newTurnExecution(ctx, r, previous, content, input)
 	if err != nil {
 		return TurnResult{}, err
 	}
-	if promptReport.Denied {
-		return TurnResult{}, hookDeniedReportError("user_prompt_submit", promptReport)
-	}
-	messages = appendUserPromptHookFeedback(messages, hooks.MessagesFromReport(promptReport))
-	var toolCalls []ToolCall
-	var messageUsages []MessageUsage
-	loadedTools := loadedToolsFromMessages(previous)
-	for turn := 0; turn < r.Config.MaxTurns; turn++ {
-		compactPayload := ""
-		compactFeedback := []string{}
-		if shouldCompactMessages(messages, r.Config.AutoCompactMessages) {
-			compactPayload = CompactHookPayload("auto", "", len(messages), r.Config.AutoCompactMessages)
-			report, err := hookRunner.PreCompactReport(ctx, compactPayload)
-			if err != nil {
-				return TurnResult{}, err
-			}
-			compactFeedback = append(compactFeedback, hooks.MessagesFromReport(report)...)
-			if report.Denied {
-				return TurnResult{}, hookDeniedReportError("pre_compact", report)
-			}
-		}
-		requestMessages := CompactMessages(messages, r.Config.AutoCompactMessages)
-		if compactPayload != "" {
-			report, err := hookRunner.PostCompactReport(ctx, compactPayload)
-			if err != nil {
-				return TurnResult{}, err
-			}
-			compactFeedback = append(compactFeedback, hooks.MessagesFromReport(report)...)
-			if report.Denied {
-				return TurnResult{}, hookDeniedReportError("post_compact", report)
-			}
-			requestMessages = appendCompactionHookFeedback(requestMessages, compactFeedback)
-		}
-		req := anthropic.Request{
-			Model:           r.Config.Model,
-			MaxTokens:       r.Config.MaxTokens,
-			Temperature:     r.Config.Temperature,
-			ReasoningEffort: r.Config.ReasoningEffort,
-			ExtraBody:       r.Config.ExtraBody,
-			System:          system,
-			Messages:        requestMessages,
-			Tools:           r.toolDefinitions(loadedTools),
-		}
-		assistant, err := r.Client.Stream(ctx, req, func(delta string) {
-			if r.Out != nil {
-				fmt.Fprint(r.Out, delta)
-			}
-		})
-		if err != nil {
-			stopReport, hookErr := hookRunner.StopFailureReport(ctx, err.Error(), "model_error")
-			if hookErr != nil {
-				return TurnResult{}, fmt.Errorf("%w; stop failure hook: %v", err, hookErr)
-			}
-			if stopReport.Denied {
-				return TurnResult{}, fmt.Errorf("%w; stop failure hook: %v", err, hookDeniedReportError("stop_failure", stopReport))
-			}
-			return TurnResult{}, err
-		}
-		assistantMsg := anthropic.Message{ID: assistant.ID, Role: "assistant", Content: assistant.Blocks}
-		assistantIndex := len(messages)
-		messages = append(messages, assistantMsg)
-		messageUsages = appendMessageUsage(messageUsages, assistantIndex, assistant.Usage)
-		if budgetErr, exceeded := r.budgetExceeded(messageUsages); exceeded {
-			result := TurnResult{
-				Messages:      messages,
-				MessageUsages: messageUsages,
-				ToolCalls:     toolCalls,
-				Iterations:    turn + 1,
-			}
-			return result, budgetErr
-		}
-
-		blocks := toolUseBlocks(assistant.Blocks)
-		if len(blocks) == 0 {
-			stopReport, err := hookRunner.StopReport(ctx, assistantText(assistant.Blocks), false)
-			if err != nil {
-				return TurnResult{}, err
-			}
-			stopFeedback := hooks.MessagesFromReport(stopReport)
-			if stopReport.Denied {
-				return TurnResult{}, hookDeniedReportError("stop", stopReport)
-			}
-			result := TurnResult{
-				Messages:         messages,
-				MessageUsages:    messageUsages,
-				ToolCalls:        toolCalls,
-				StopHookFeedback: stopFeedback,
-				Iterations:       turn + 1,
-			}
-			if err := ValidateTurnResult(result); err != nil {
-				return result, err
-			}
-			return result, nil
-		}
-
-		for _, block := range blocks {
-			effectiveInput := append(json.RawMessage(nil), block.Input...)
-			call := ToolCall{
-				ID:    block.ID,
-				Name:  block.Name,
-				Input: string(effectiveInput),
-			}
-			if !r.toolSelectionAllows(block.Name) {
-				call.Output = fmt.Sprintf("tool %s is not available because it was not included by --tools", block.Name)
-				call.IsError = true
-				toolCalls = append(toolCalls, call)
-				r.emitToolUse(call)
-				messages = append(messages, anthropic.ToolResultMessage(block.ID, call.Output, true))
-				continue
-			}
-			_, preToolOutput, err := hookRunner.PreToolUseReport(ctx, block.Name, effectiveInput)
-			if err != nil {
-				call.Output = preToolUseErrorMessage(err, preToolOutput)
-				call.IsError = true
-				if failureReport, failureErr := hookRunner.PostToolUseFailureReport(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
-					call.Output = failureErr.Error()
-				} else {
-					call.Output = mergeHookFeedback(hooks.MessagesFromReport(failureReport), call.Output, true)
-				}
-				toolCalls = append(toolCalls, call)
-				r.emitToolUse(call)
-				messages = append(messages, anthropic.ToolResultMessage(block.ID, call.Output, true))
-				continue
-			}
-			if preToolOutput.UpdatedInputProvided {
-				effectiveInput = append(json.RawMessage(nil), preToolOutput.UpdatedInput...)
-				call.Input = string(effectiveInput)
-			}
-			if preToolOutput.Denied {
-				call.Output = preToolUseDeniedMessage(block.Name, preToolOutput)
-				call.IsError = true
-				if failureReport, failureErr := hookRunner.PostToolUseFailureReport(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
-					call.Output = failureErr.Error()
-				} else {
-					call.Output = mergeHookFeedback(hooks.MessagesFromReport(failureReport), call.Output, true)
-				}
-				toolCalls = append(toolCalls, call)
-				r.emitToolUse(call)
-				messages = append(messages, anthropic.ToolResultMessage(block.ID, call.Output, true))
-				continue
-			}
-
-			canonicalTool := tools.CanonicalToolName(block.Name)
-			execPrompter := prompterWithPreToolDecision(r.Prompter, preToolOutput.PermissionDecision)
-			if r.Config.PlanMode {
-				if info, ok := r.Tools.Info(block.Name); ok && !tools.ToolAllowedInPlanMode(info.Name, info.Permission) {
-					call.Output = fmt.Sprintf("plan mode blocked tool %s because it requires %s permission", info.Name, info.Permission)
-					call.IsError = true
-					if failureReport, failureErr := hookRunner.PostToolUseFailureReport(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
-						call.Output = failureErr.Error()
-					} else {
-						call.Output = mergeHookFeedback(hooks.MessagesFromReport(failureReport), call.Output, true)
-					}
-					toolCalls = append(toolCalls, call)
-					r.emitToolUse(call)
-					messages = append(messages, anthropic.ToolResultMessage(block.ID, call.Output, true))
-					continue
-				}
-				execPrompter = tools.ReadOnlyPrompter(execPrompter, r.Workspace)
-			}
-			oldCWD := ""
-			if canonicalTool == "bash" && r.SessionID != "" {
-				if cwd, cwdErr := shellstate.CurrentCWD(r.Config.ConfigHome, r.SessionID, r.Workspace); cwdErr == nil {
-					oldCWD = cwd
-				}
-			}
-			r.emitToolStart(call)
-			output, err := r.Tools.Execute(toolCtx, block.Name, effectiveInput, execPrompter)
-			if err != nil {
-				call.Output = err.Error()
-				call.IsError = true
-			} else {
-				call.Output = output
-				if canonicalTool == "tool_search" {
-					loadToolSearchMatches(loadedTools, output)
-				}
-			}
-			call.Output = mergeHookFeedback(preToolOutput.Messages, call.Output, call.IsError)
-			if oldCWD != "" {
-				if newCWD, cwdErr := shellstate.CurrentCWD(r.Config.ConfigHome, r.SessionID, r.Workspace); cwdErr == nil && newCWD != oldCWD {
-					if cwdReport, hookErr := hookRunner.CwdChangedReport(ctx, oldCWD, newCWD, string(effectiveInput)); hookErr != nil {
-						if !call.IsError {
-							call.Output = hookErr.Error()
-							call.IsError = true
-						}
-					} else {
-						if cwdReport.Denied {
-							call.IsError = true
-						}
-						call.Output = mergeHookFeedback(hooks.MessagesFromReport(cwdReport), call.Output, call.IsError)
-					}
-				}
-			}
-			if call.IsError {
-				if failureReport, failureErr := hookRunner.PostToolUseFailureReport(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
-					call.Output = failureErr.Error()
-				} else {
-					call.Output = mergeHookFeedback(hooks.MessagesFromReport(failureReport), call.Output, true)
-				}
-			} else {
-				if postReport, hookErr := hookRunner.PostToolUseReport(ctx, block.Name, effectiveInput, call.Output, false); hookErr != nil {
-					call.Output = hookErr.Error()
-					call.IsError = true
-				} else {
-					if postReport.Denied {
-						call.IsError = true
-					}
-					call.Output = mergeHookFeedback(hooks.MessagesFromReport(postReport), call.Output, call.IsError)
-				}
-			}
-			fileChangedFailed := false
-			if !call.IsError {
-				for _, change := range fileChangesForTool(block.Name, effectiveInput) {
-					fileReport, hookErr := hookRunner.FileChangedReport(ctx, change.Path, change.Operation, effectiveInput)
-					if hookErr != nil {
-						call.Output = hookErr.Error()
-						call.IsError = true
-						fileChangedFailed = true
-						break
-					}
-					if fileReport.Denied {
-						call.IsError = true
-						fileChangedFailed = true
-					}
-					call.Output = mergeHookFeedback(hooks.MessagesFromReport(fileReport), call.Output, call.IsError)
-					if call.IsError {
-						break
-					}
-				}
-			}
-			if fileChangedFailed {
-				if failureReport, failureErr := hookRunner.PostToolUseFailureReport(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
-					call.Output = failureErr.Error()
-				} else {
-					call.Output = mergeHookFeedback(hooks.MessagesFromReport(failureReport), call.Output, true)
-				}
-			}
-
-			toolCalls = append(toolCalls, call)
-			r.emitToolUse(call)
-			messages = append(messages, anthropic.ToolResultMessage(block.ID, call.Output, call.IsError))
-		}
-	}
-	maxTurnsErr := errors.New("conversation exceeded max turns")
-	stopReport, hookErr := hookRunner.StopFailureReport(ctx, maxTurnsErr.Error(), "max_turns")
-	result := TurnResult{
-		Messages:         messages,
-		MessageUsages:    messageUsages,
-		ToolCalls:        toolCalls,
-		StopHookFeedback: hooks.MessagesFromReport(stopReport),
-		Iterations:       r.Config.MaxTurns,
-	}
-	if hookErr != nil {
-		return result, fmt.Errorf("%w; stop failure hook: %v", maxTurnsErr, hookErr)
-	}
-	if stopReport.Denied {
-		return result, fmt.Errorf("%w; stop failure hook: %v", maxTurnsErr, hookDeniedReportError("stop_failure", stopReport))
-	}
-	return result, maxTurnsErr
+	return execution.run()
 }
 
 func (r Runner) toolDefinitions(loaded map[string]struct{}) []anthropic.ToolDefinition {
@@ -539,52 +245,36 @@ func toolSelectionPatternMatches(pattern string, value string) bool {
 }
 
 func hasHookConfig(cfg config.HookConfig) bool {
-	return len(cfg.PreToolUse) != 0 ||
-		len(cfg.PostToolUse) != 0 ||
-		len(cfg.PostToolUseFailure) != 0 ||
-		len(cfg.PermissionRequest) != 0 ||
-		len(cfg.PermissionDenied) != 0 ||
-		len(cfg.UserPromptSubmit) != 0 ||
-		len(cfg.SessionStart) != 0 ||
-		len(cfg.SessionEnd) != 0 ||
-		len(cfg.Setup) != 0 ||
-		len(cfg.Stop) != 0 ||
-		len(cfg.StopFailure) != 0 ||
-		len(cfg.PreCompact) != 0 ||
-		len(cfg.PostCompact) != 0 ||
-		len(cfg.Notification) != 0 ||
-		len(cfg.SubagentStart) != 0 ||
-		len(cfg.SubagentStop) != 0 ||
-		len(cfg.WorktreeCreate) != 0 ||
-		len(cfg.WorktreeRemove) != 0 ||
-		len(cfg.CwdChanged) != 0 ||
-		len(cfg.TaskCreated) != 0 ||
-		len(cfg.TaskCompleted) != 0 ||
-		len(cfg.InstructionsLoaded) != 0 ||
-		len(cfg.FileChanged) != 0 ||
-		len(cfg.PreToolUseCommands) != 0 ||
-		len(cfg.PostToolUseCommands) != 0 ||
-		len(cfg.PostToolUseFailureCommands) != 0 ||
-		len(cfg.PermissionRequestCommands) != 0 ||
-		len(cfg.PermissionDeniedCommands) != 0 ||
-		len(cfg.UserPromptSubmitCommands) != 0 ||
-		len(cfg.SessionStartCommands) != 0 ||
-		len(cfg.SessionEndCommands) != 0 ||
-		len(cfg.SetupCommands) != 0 ||
-		len(cfg.StopCommands) != 0 ||
-		len(cfg.StopFailureCommands) != 0 ||
-		len(cfg.PreCompactCommands) != 0 ||
-		len(cfg.PostCompactCommands) != 0 ||
-		len(cfg.NotificationCommands) != 0 ||
-		len(cfg.SubagentStartCommands) != 0 ||
-		len(cfg.SubagentStopCommands) != 0 ||
-		len(cfg.WorktreeCreateCommands) != 0 ||
-		len(cfg.WorktreeRemoveCommands) != 0 ||
-		len(cfg.CwdChangedCommands) != 0 ||
-		len(cfg.TaskCreatedCommands) != 0 ||
-		len(cfg.TaskCompletedCommands) != 0 ||
-		len(cfg.InstructionsLoadedCommands) != 0 ||
-		len(cfg.FileChangedCommands) != 0
+	stringHooks := [][]string{
+		cfg.PreToolUse, cfg.PostToolUse, cfg.PostToolUseFailure,
+		cfg.PermissionRequest, cfg.PermissionDenied, cfg.UserPromptSubmit,
+		cfg.SessionStart, cfg.SessionEnd, cfg.Setup, cfg.Stop, cfg.StopFailure,
+		cfg.PreCompact, cfg.PostCompact, cfg.Notification,
+		cfg.SubagentStart, cfg.SubagentStop,
+		cfg.WorktreeCreate, cfg.WorktreeRemove, cfg.CwdChanged,
+		cfg.TaskCreated, cfg.TaskCompleted, cfg.InstructionsLoaded, cfg.FileChanged,
+	}
+	commandHooks := [][]config.HookCommand{
+		cfg.PreToolUseCommands, cfg.PostToolUseCommands, cfg.PostToolUseFailureCommands,
+		cfg.PermissionRequestCommands, cfg.PermissionDeniedCommands, cfg.UserPromptSubmitCommands,
+		cfg.SessionStartCommands, cfg.SessionEndCommands, cfg.SetupCommands,
+		cfg.StopCommands, cfg.StopFailureCommands,
+		cfg.PreCompactCommands, cfg.PostCompactCommands, cfg.NotificationCommands,
+		cfg.SubagentStartCommands, cfg.SubagentStopCommands,
+		cfg.WorktreeCreateCommands, cfg.WorktreeRemoveCommands, cfg.CwdChangedCommands,
+		cfg.TaskCreatedCommands, cfg.TaskCompletedCommands,
+		cfg.InstructionsLoadedCommands, cfg.FileChangedCommands,
+	}
+	return hasAnyHookEntries(stringHooks) || hasAnyHookEntries(commandHooks)
+}
+
+func hasAnyHookEntries[T any](groups [][]T) bool {
+	for _, group := range groups {
+		if len(group) != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func prompterWithPreToolDecision(base *tools.Prompter, decision string) *tools.Prompter {

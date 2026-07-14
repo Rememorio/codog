@@ -155,8 +155,6 @@ gocognit|internal/promptrefs/promptrefs.go|readDirectoryReference|38
 gocognit|internal/reportconformance/reportconformance.go|Validate|34
 gocognit|internal/reporting/reporting.go|(Store).GenerateWithOptions|32
 gocognit|internal/roadmap/roadmap.go|(Store).File|31
-gocognit|internal/runloop/contract.go|ValidateTranscript|49
-gocognit|internal/runloop/runloop.go|(Runner).RunWithUserContent|178
 gocognit|internal/session/store.go|(*Store).removeSessionFiles|41
 gocognit|internal/skills/skills.go|load|45
 gocognit|internal/status/status.go|RenderText|45
@@ -179,5 +177,4 @@ gocyclo|internal/bridge/stdio_test.go|TestBridgeFakeLSPServer|55
 gocyclo|internal/codeintel/lsp_client.go|lspMethodParams|39
 gocyclo|internal/harness/recovery.go|reportBackpressureScenario|55
 gocyclo|internal/plugins/plugins.go|(*ValidationResult).validateManifest|34
-gocyclo|internal/runloop/runloop.go|hasHookConfig|46
 gocyclo|internal/terminalparity/report.go|Build|78
