@@ -4176,258 +4176,249 @@ func (a *App) writeRemoteLease(path string, seconds int) error {
 }
 
 func parseRemoteEnvArgs(args []string) (remoteEnvRequest, error) {
-	const usage = "codog remote-env [show|set|clear] [--target user|project|local] [--path PATH] [--enabled on|off] [--auth-token TOKEN] [--clear-auth-token] [--lease-seconds N] [--json|--output-format text|json]"
-	req := remoteEnvRequest{Action: "show", Format: "text", Target: "user"}
-	var rest []string
+	parser := remoteEnvArgParser{req: remoteEnvRequest{Action: "show", Format: "text", Target: "user"}}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-env", Flag: arg, Usage: usage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-env", Flag: arg, Usage: usage}
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-env", Flag: arg, Usage: usage}
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		case arg == "--enabled":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-env", Flag: arg, Usage: usage}
-			}
-			enabled, err := parseOnOffBool(args[index])
-			if err != nil {
-				return req, err
-			}
-			req.SetEnabled = true
-			req.Enabled = enabled
-		case strings.HasPrefix(arg, "--enabled="):
-			enabled, err := parseOnOffBool(strings.TrimPrefix(arg, "--enabled="))
-			if err != nil {
-				return req, err
-			}
-			req.SetEnabled = true
-			req.Enabled = enabled
-		case arg == "--auth-token":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-env", Flag: arg, Usage: usage}
-			}
-			req.AuthToken = args[index]
-		case strings.HasPrefix(arg, "--auth-token="):
-			req.AuthToken = strings.TrimPrefix(arg, "--auth-token=")
-		case arg == "--clear-auth-token":
-			req.ClearToken = true
-		case arg == "--lease-seconds":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-env", Flag: arg, Usage: usage}
-			}
-			seconds, err := parseNonNegativeIntOption(args[index], "--lease-seconds", usage)
-			if err != nil {
-				return req, err
-			}
-			req.SetLease = true
-			req.LeaseSeconds = seconds
-		case strings.HasPrefix(arg, "--lease-seconds="):
-			seconds, err := parseNonNegativeIntOption(strings.TrimPrefix(arg, "--lease-seconds="), "--lease-seconds", usage)
-			if err != nil {
-				return req, err
-			}
-			req.SetLease = true
-			req.LeaseSeconds = seconds
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{Command: "remote-env", Option: arg, Usage: usage}
-		default:
-			rest = append(rest, arg)
+		if parser.consumeBoolean(arg) {
+			continue
 		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "remote-env", Option: arg, Usage: remoteEnvUsage}
+		}
+		parser.rest = append(parser.rest, arg)
 	}
-	normalizedFormat, err := normalizeOutputFormat("remote-env", req.Format, []string{"text", "json"})
+	if err := parser.finish(); err != nil {
+		return parser.req, err
+	}
+	return parser.req, nil
+}
+
+const remoteEnvUsage = "codog remote-env [show|set|clear] [--target user|project|local] [--path PATH] [--enabled on|off] [--auth-token TOKEN] [--clear-auth-token] [--lease-seconds N] [--json|--output-format text|json]"
+
+type remoteEnvArgParser struct {
+	req  remoteEnvRequest
+	rest []string
+}
+
+func (p *remoteEnvArgParser) consumeBoolean(arg string) bool {
+	switch arg {
+	case "--json":
+		p.req.Format = "json"
+		return true
+	case "--clear-auth-token":
+		p.req.ClearToken = true
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *remoteEnvArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format),
+		"-o":              p.stringOption(&p.req.Format),
+		"--target":        p.stringOption(&p.req.Target),
+		"--path":          p.stringOption(&p.req.Path),
+		"--auth-token":    p.stringOption(&p.req.AuthToken),
+		"--enabled":       {missing: remoteEnvMissingValue, rejectEmptySeparate: true, rejectOutputFormat: true, set: p.setEnabled},
+		"--lease-seconds": {missing: remoteEnvMissingValue, rejectEmptySeparate: true, rejectOutputFormat: true, set: p.setLease},
+	}
+}
+
+func (p *remoteEnvArgParser) stringOption(target *string) valueOption {
+	return valueOption{missing: remoteEnvMissingValue, rejectEmptySeparate: true, rejectOutputFormat: true, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func remoteEnvMissingValue(flag string) error {
+	return missingFlagValueError{Command: "remote-env", Flag: flag, Usage: remoteEnvUsage}
+}
+
+func (p *remoteEnvArgParser) setEnabled(value string) error {
+	enabled, err := parseOnOffBool(value)
 	if err != nil {
-		return req, err
+		return err
 	}
-	req.Format = normalizedFormat
-	if len(rest) > 1 {
-		return req, unexpectedExtraArgsError{Command: "remote-env", Args: rest[1:], Usage: usage}
+	p.req.SetEnabled = true
+	p.req.Enabled = enabled
+	return nil
+}
+
+func (p *remoteEnvArgParser) setLease(value string) error {
+	seconds, err := parseNonNegativeIntOption(value, "--lease-seconds", remoteEnvUsage)
+	if err != nil {
+		return err
 	}
-	if len(rest) == 1 {
-		switch strings.ToLower(rest[0]) {
+	p.req.SetLease = true
+	p.req.LeaseSeconds = seconds
+	return nil
+}
+
+func (p *remoteEnvArgParser) finish() error {
+	format, err := normalizeOutputFormat("remote-env", p.req.Format, []string{"text", "json"})
+	if err != nil {
+		return err
+	}
+	p.req.Format = format
+	if len(p.rest) > 1 {
+		return unexpectedExtraArgsError{Command: "remote-env", Args: p.rest[1:], Usage: remoteEnvUsage}
+	}
+	if len(p.rest) == 1 {
+		switch strings.ToLower(p.rest[0]) {
 		case "show", "status":
-			req.Action = "show"
+			p.req.Action = "show"
 		case "set":
-			req.Action = "set"
+			p.req.Action = "set"
 		case "clear", "reset", "unset":
-			req.Action = "clear"
+			p.req.Action = "clear"
 		default:
-			return req, unknownActionError{
+			return unknownActionError{
 				Command:     "remote-env",
-				Action:      rest[0],
+				Action:      p.rest[0],
 				Expected:    append([]string(nil), remoteEnvActionCandidates...),
-				Suggestions: toolnames.Suggestions(rest[0], remoteEnvActionCandidates, 4),
-				Usage:       usage,
+				Suggestions: toolnames.Suggestions(p.rest[0], remoteEnvActionCandidates, 4),
+				Usage:       remoteEnvUsage,
 			}
 		}
 	}
-	return req, nil
+	return nil
 }
 
 var remoteEnvActionCandidates = []string{"show", "status", "set", "clear", "reset", "unset"}
 
 func parseRemoteSetupArgs(args []string, overrides config.FlagOverrides) (remoteSetupRequest, error) {
-	const usage = "codog remote-setup [status|enable|disable|clear] [--addr ADDR] [--target user|project|local] [--path PATH] [--auth-token TOKEN] [--clear-auth-token] [--lease-seconds N] [--session ID|--resume ID] [--json|--output-format text|json]"
-	req := remoteSetupRequest{
+	parser := remoteSetupArgParser{req: remoteSetupRequest{
 		Action:    "status",
 		Format:    "text",
 		Addr:      "127.0.0.1:8791",
 		Target:    "user",
 		SessionID: firstNonEmpty(overrides.Resume, overrides.SessionID),
-	}
-	actionSet := false
+	}}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--addr":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
-			}
-			req.Addr = args[index]
-		case strings.HasPrefix(arg, "--addr="):
-			req.Addr = strings.TrimPrefix(arg, "--addr=")
-		case arg == "--target":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		case arg == "--auth-token":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
-			}
-			req.AuthToken = args[index]
-		case strings.HasPrefix(arg, "--auth-token="):
-			req.AuthToken = strings.TrimPrefix(arg, "--auth-token=")
-		case arg == "--clear-auth-token":
-			req.ClearToken = true
-		case arg == "--lease-seconds":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
-			}
-			seconds, err := parseNonNegativeIntOption(args[index], "--lease-seconds", usage)
-			if err != nil {
-				return req, err
-			}
-			req.SetLease = true
-			req.LeaseSeconds = seconds
-		case strings.HasPrefix(arg, "--lease-seconds="):
-			seconds, err := parseNonNegativeIntOption(strings.TrimPrefix(arg, "--lease-seconds="), "--lease-seconds", usage)
-			if err != nil {
-				return req, err
-			}
-			req.SetLease = true
-			req.LeaseSeconds = seconds
-		case arg == "--session":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--session="):
-			req.SessionID = strings.TrimPrefix(arg, "--session=")
-		case arg == "--resume":
-			index++
-			if missingFlagValueAt(args, index) {
-				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
-			}
-			req.SessionID = args[index]
-		case strings.HasPrefix(arg, "--resume="):
-			req.SessionID = strings.TrimPrefix(arg, "--resume=")
-		case arg == "--enable":
-			req.Action = "enable"
-			actionSet = true
-		case arg == "--disable":
-			req.Action = "disable"
-			actionSet = true
-		case strings.HasPrefix(arg, "-"):
-			return req, unknownOptionError{Command: "remote-setup", Option: arg, Usage: usage}
-		default:
-			if actionSet {
-				return req, unexpectedExtraArgsError{Command: "remote-setup", Args: []string{arg}, Usage: usage}
-			}
-			switch strings.ToLower(arg) {
-			case "status", "show", "check":
-				req.Action = "status"
-			case "enable", "on", "setup":
-				req.Action = "enable"
-			case "disable", "off":
-				req.Action = "disable"
-			case "clear", "reset", "unset":
-				req.Action = "clear"
-			default:
-				return req, unknownActionError{
-					Command:     "remote-setup",
-					Action:      arg,
-					Expected:    append([]string(nil), remoteSetupActionCandidates...),
-					Suggestions: toolnames.Suggestions(arg, remoteSetupActionCandidates, 4),
-					Usage:       usage,
-				}
-			}
-			actionSet = true
+		if parser.consumeBoolean(arg) {
+			continue
+		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "remote-setup", Option: arg, Usage: remoteSetupUsage}
+		}
+		if err := parser.consumeAction(arg); err != nil {
+			return parser.req, err
 		}
 	}
-	normalizedFormat, err := normalizeOutputFormat("remote-setup", req.Format, []string{"text", "json"})
+	if err := parser.finish(); err != nil {
+		return parser.req, err
+	}
+	return parser.req, nil
+}
+
+const remoteSetupUsage = "codog remote-setup [status|enable|disable|clear] [--addr ADDR] [--target user|project|local] [--path PATH] [--auth-token TOKEN] [--clear-auth-token] [--lease-seconds N] [--session ID|--resume ID] [--json|--output-format text|json]"
+
+type remoteSetupArgParser struct {
+	req       remoteSetupRequest
+	actionSet bool
+}
+
+func (p *remoteSetupArgParser) consumeBoolean(arg string) bool {
+	switch arg {
+	case "--json":
+		p.req.Format = "json"
+	case "--clear-auth-token":
+		p.req.ClearToken = true
+	case "--enable":
+		p.req.Action, p.actionSet = "enable", true
+	case "--disable":
+		p.req.Action, p.actionSet = "disable", true
+	default:
+		return false
+	}
+	return true
+}
+
+func (p *remoteSetupArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format),
+		"-o":              p.stringOption(&p.req.Format),
+		"--addr":          p.stringOption(&p.req.Addr),
+		"--target":        p.stringOption(&p.req.Target),
+		"--path":          p.stringOption(&p.req.Path),
+		"--auth-token":    p.stringOption(&p.req.AuthToken),
+		"--session":       p.stringOption(&p.req.SessionID),
+		"--resume":        p.stringOption(&p.req.SessionID),
+		"--lease-seconds": {missing: remoteSetupMissingValue, rejectEmptySeparate: true, rejectOutputFormat: true, set: p.setLease},
+	}
+}
+
+func (p *remoteSetupArgParser) stringOption(target *string) valueOption {
+	return valueOption{missing: remoteSetupMissingValue, rejectEmptySeparate: true, rejectOutputFormat: true, set: func(value string) error {
+		*target = value
+		return nil
+	}}
+}
+
+func remoteSetupMissingValue(flag string) error {
+	return missingFlagValueError{Command: "remote-setup", Flag: flag, Usage: remoteSetupUsage}
+}
+
+func (p *remoteSetupArgParser) setLease(value string) error {
+	seconds, err := parseNonNegativeIntOption(value, "--lease-seconds", remoteSetupUsage)
 	if err != nil {
-		return req, err
+		return err
 	}
-	req.Format = normalizedFormat
-	if req.AuthToken != "" && req.ClearToken {
-		return req, errors.New("remote-setup cannot set and clear auth token in the same command")
+	p.req.SetLease, p.req.LeaseSeconds = true, seconds
+	return nil
+}
+
+func (p *remoteSetupArgParser) consumeAction(arg string) error {
+	if p.actionSet {
+		return unexpectedExtraArgsError{Command: "remote-setup", Args: []string{arg}, Usage: remoteSetupUsage}
 	}
-	if req.Action == "status" && (req.AuthToken != "" || req.ClearToken || req.SetLease) {
-		req.Action = "enable"
+	switch strings.ToLower(arg) {
+	case "status", "show", "check":
+		p.req.Action = "status"
+	case "enable", "on", "setup":
+		p.req.Action = "enable"
+	case "disable", "off":
+		p.req.Action = "disable"
+	case "clear", "reset", "unset":
+		p.req.Action = "clear"
+	default:
+		return unknownActionError{Command: "remote-setup", Action: arg, Expected: append([]string(nil), remoteSetupActionCandidates...), Suggestions: toolnames.Suggestions(arg, remoteSetupActionCandidates, 4), Usage: remoteSetupUsage}
 	}
-	if req.Action == "disable" && (req.AuthToken != "" || req.SetLease) {
-		return req, errors.New("remote-setup disable only accepts --clear-auth-token as a write option")
+	p.actionSet = true
+	return nil
+}
+
+func (p *remoteSetupArgParser) finish() error {
+	format, err := normalizeOutputFormat("remote-setup", p.req.Format, []string{"text", "json"})
+	if err != nil {
+		return err
 	}
-	return req, nil
+	p.req.Format = format
+	if p.req.AuthToken != "" && p.req.ClearToken {
+		return errors.New("remote-setup cannot set and clear auth token in the same command")
+	}
+	if p.req.Action == "status" && (p.req.AuthToken != "" || p.req.ClearToken || p.req.SetLease) {
+		p.req.Action = "enable"
+	}
+	if p.req.Action == "disable" && (p.req.AuthToken != "" || p.req.SetLease) {
+		return errors.New("remote-setup disable only accepts --clear-auth-token as a write option")
+	}
+	return nil
 }

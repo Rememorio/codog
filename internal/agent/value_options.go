@@ -6,16 +6,19 @@ import (
 )
 
 type valueOption struct {
-	missing            func(string) error
-	rejectOutputFormat bool
-	set                func(string) error
+	missing             func(string) error
+	rejectEmptySeparate bool
+	rejectOutputFormat  bool
+	set                 func(string) error
 }
 
 func consumeValueOption(args []string, index *int, options map[string]valueOption) (bool, error) {
 	arg := args[*index]
 	if option, ok := options[arg]; ok {
 		(*index)++
-		if *index >= len(args) || option.rejectOutputFormat && isOutputFormatFlag(args[*index]) {
+		if *index >= len(args) ||
+			option.rejectEmptySeparate && strings.TrimSpace(args[*index]) == "" ||
+			option.rejectOutputFormat && isOutputFormatFlag(args[*index]) {
 			return true, option.missing(arg)
 		}
 		return true, option.set(args[*index])

@@ -1,6 +1,4 @@
 gocognit|internal/agent/acp.go|renderMemoryCommand|42
-gocognit|internal/agent/agent.go|parseRemoteEnvArgs|39
-gocognit|internal/agent/agent.go|parseRemoteSetupArgs|49
 gocognit|internal/agent/agent.go|parseSSHArgs|46
 gocognit|internal/agent/background.go|parseMarketplaceSourcesArgs|34
 gocognit|internal/agent/commands.go|parseCompactArgs|32
@@ -23,7 +21,6 @@ gocognit|internal/agent/git.go|renderReportSchemaReport|34
 gocognit|internal/agent/hooks.go|(*App).Voice|38
 gocognit|internal/agent/hooks.go|parseEffortArgs|33
 gocognit|internal/agent/hooks.go|parseThemeArgs|33
-gocognit|internal/agent/hooks.go|parseVoiceArgs|47
 gocognit|internal/agent/keybindings.go|parseCommitPushPRArgs|32
 gocognit|internal/agent/limits.go|(*App).openSession|34
 gocognit|internal/agent/limits.go|parseAntTraceArgs|41

@@ -1915,118 +1915,121 @@ func (a *App) Voice(args []string) error {
 }
 
 func parseVoiceArgs(args []string) (voiceRequest, error) {
-	req := voiceRequest{Action: "status", Format: "text", Target: "user"}
-	var rest []string
+	parser := voiceArgParser{req: voiceRequest{Action: "status", Format: "text", Target: "user"}}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		switch {
-		case arg == "--json":
-			req.Format = "json"
-		case arg == "--output-format" || arg == "-o":
-			index++
-			if index >= len(args) {
-				return req, missingFlagValueError{Command: "voice", Flag: arg, Usage: voiceUsage}
-			}
-			req.Format = args[index]
-		case strings.HasPrefix(arg, "--output-format="):
-			req.Format = strings.TrimPrefix(arg, "--output-format=")
-		case arg == "--target":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "voice", Flag: arg, Usage: voiceUsage}
-			}
-			req.Target = args[index]
-		case strings.HasPrefix(arg, "--target="):
-			req.Target = strings.TrimPrefix(arg, "--target=")
-		case arg == "--path":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "voice", Flag: arg, Usage: voiceUsage}
-			}
-			req.Path = args[index]
-		case strings.HasPrefix(arg, "--path="):
-			req.Path = strings.TrimPrefix(arg, "--path=")
-		case arg == "--command":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "voice", Flag: arg, Usage: voiceUsage}
-			}
-			req.Command = args[index]
-		case strings.HasPrefix(arg, "--command="):
-			req.Command = strings.TrimPrefix(arg, "--command=")
-		case arg == "--input" || arg == "--stdin":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "voice", Flag: arg, Usage: voiceUsage}
-			}
-			req.Input = args[index]
-		case strings.HasPrefix(arg, "--input="):
-			req.Input = strings.TrimPrefix(arg, "--input=")
-		case strings.HasPrefix(arg, "--stdin="):
-			req.Input = strings.TrimPrefix(arg, "--stdin=")
-		case arg == "--timeout-ms":
-			index++
-			if index >= len(args) || isOutputFormatFlag(args[index]) {
-				return req, missingFlagValueError{Command: "voice", Flag: arg, Usage: voiceUsage}
-			}
-			timeout, err := parseNonNegativeIntOption(args[index], "--timeout-ms", voiceUsage)
-			if err != nil {
-				return req, err
-			}
-			req.TimeoutMS = timeout
-		case strings.HasPrefix(arg, "--timeout-ms="):
-			timeout, err := parseNonNegativeIntOption(strings.TrimPrefix(arg, "--timeout-ms="), "--timeout-ms", voiceUsage)
-			if err != nil {
-				return req, err
-			}
-			req.TimeoutMS = timeout
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return req, unknownOptionError{Command: "voice", Option: arg, Usage: voiceUsage}
-			}
-			rest = append(rest, arg)
+		if arg == "--json" {
+			parser.req.Format = "json"
+			continue
 		}
+		handled, err := consumeValueOption(args, &index, parser.valueOptions())
+		if err != nil {
+			return parser.req, err
+		}
+		if handled {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return parser.req, unknownOptionError{Command: "voice", Option: arg, Usage: voiceUsage}
+		}
+		parser.rest = append(parser.rest, arg)
 	}
-	normalizedFormat, err := normalizeOutputFormat("voice", req.Format, []string{"text", "json"})
+	if err := parser.finish(); err != nil {
+		return parser.req, err
+	}
+	return parser.req, nil
+}
+
+type voiceArgParser struct {
+	req  voiceRequest
+	rest []string
+}
+
+func (p *voiceArgParser) valueOptions() map[string]valueOption {
+	return map[string]valueOption{
+		"--output-format": p.stringOption(&p.req.Format, false),
+		"-o":              p.stringOption(&p.req.Format, false),
+		"--target":        p.stringOption(&p.req.Target, true),
+		"--path":          p.stringOption(&p.req.Path, true),
+		"--command":       p.stringOption(&p.req.Command, true),
+		"--input":         p.stringOption(&p.req.Input, true),
+		"--stdin":         p.stringOption(&p.req.Input, true),
+		"--timeout-ms":    p.timeoutOption(),
+	}
+}
+
+func (p *voiceArgParser) stringOption(target *string, rejectOutputFormat bool) valueOption {
+	return valueOption{
+		missing:            voiceMissingValueError,
+		rejectOutputFormat: rejectOutputFormat,
+		set: func(value string) error {
+			*target = value
+			return nil
+		},
+	}
+}
+
+func (p *voiceArgParser) timeoutOption() valueOption {
+	return valueOption{
+		missing:            voiceMissingValueError,
+		rejectOutputFormat: true,
+		set: func(value string) error {
+			timeout, err := parseNonNegativeIntOption(value, "--timeout-ms", voiceUsage)
+			if err != nil {
+				return err
+			}
+			p.req.TimeoutMS = timeout
+			return nil
+		},
+	}
+}
+
+func voiceMissingValueError(flag string) error {
+	return missingFlagValueError{Command: "voice", Flag: flag, Usage: voiceUsage}
+}
+
+func (p *voiceArgParser) finish() error {
+	format, err := normalizeOutputFormat("voice", p.req.Format, []string{"text", "json"})
 	if err != nil {
-		return req, err
+		return err
 	}
-	req.Format = normalizedFormat
-	if len(rest) == 0 {
-		return req, nil
+	p.req.Format = format
+	if len(p.rest) == 0 {
+		return nil
 	}
-	switch strings.ToLower(rest[0]) {
+	action := strings.ToLower(p.rest[0])
+	switch action {
 	case "status", "show":
-		req.Action = "status"
+		p.req.Action = "status"
 	case "on", "enable", "enabled", "true":
-		req.Action = "on"
+		p.req.Action = "on"
 	case "off", "disable", "disabled", "false":
-		req.Action = "off"
+		p.req.Action = "off"
 	case "toggle":
-		req.Action = "toggle"
+		p.req.Action = "toggle"
 	case "set-command", "command":
-		req.Action = "set-command"
-		if req.Command == "" && len(rest) > 1 {
-			req.Command = strings.Join(rest[1:], " ")
+		p.req.Action = "set-command"
+		if p.req.Command == "" && len(p.rest) > 1 {
+			p.req.Command = strings.Join(p.rest[1:], " ")
 		}
 	case "test", "check":
-		req.Action = "test"
+		p.req.Action = "test"
 	case "transcribe", "listen":
-		req.Action = strings.ToLower(rest[0])
+		p.req.Action = action
 	case "clear-command":
-		req.Action = "clear-command"
+		p.req.Action = "clear-command"
 	case "clear", "reset", "unset":
-		req.Action = "clear"
+		p.req.Action = "clear"
 	default:
-		return req, unexpectedExtraArgsError{Command: "voice", Args: []string{rest[0]}, Usage: voiceUsage}
+		return unexpectedExtraArgsError{Command: "voice", Args: []string{p.rest[0]}, Usage: voiceUsage}
 	}
-	if req.Action != "set-command" && len(rest) > 1 {
-		return req, unexpectedExtraArgsError{Command: "voice " + strings.ToLower(rest[0]), Args: rest[1:], Usage: voiceUsage}
+	if p.req.Action != "set-command" && len(p.rest) > 1 {
+		return unexpectedExtraArgsError{Command: "voice " + action, Args: p.rest[1:], Usage: voiceUsage}
 	}
-	if req.Action == "set-command" && strings.TrimSpace(req.Command) == "" {
-		return req, requiredArgumentError{Command: "voice set-command", Argument: "COMMAND", Usage: voiceUsage}
+	if p.req.Action == "set-command" && strings.TrimSpace(p.req.Command) == "" {
+		return requiredArgumentError{Command: "voice set-command", Argument: "COMMAND", Usage: voiceUsage}
 	}
-	return req, nil
+	return nil
 }
 
 func (a *App) voiceStatusReport(action string, path string) voiceReport {
