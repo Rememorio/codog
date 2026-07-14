@@ -217,7 +217,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return err
 		}
 	}
-	if err := run.loadConfig(); err != nil {
+	if handled, err := run.loadConfig(); handled {
 		return err
 	}
 	if err := run.buildApp(); err != nil {
@@ -519,21 +519,21 @@ func (r *cliRun) prepareInteractiveWorkspace() (bool, error) {
 	return !proceed, nil
 }
 
-func (r *cliRun) loadConfig() error {
+func (r *cliRun) loadConfig() (bool, error) {
 	cfg, err := config.Load(r.overrides)
 	if err != nil {
-		return r.renderConfigLoadError(err)
+		return true, r.renderConfigLoadError(err)
 	}
 	applyStoredOAuthToken(&cfg, time.Now().UTC())
 	workspace, err := os.Getwd()
 	if err != nil {
-		return err
+		return true, err
 	}
 	if err := renderBroadCWDGuard(os.Stdout, r.command, r.rest, workspace, r.overrides.AllowBroadCWD, r.format); err != nil {
-		return err
+		return true, err
 	}
 	r.cfg, r.workspace = cfg, workspace
-	return nil
+	return false, nil
 }
 
 func (r *cliRun) renderConfigLoadError(err error) error {
