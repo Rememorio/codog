@@ -2801,17 +2801,9 @@ func (a *App) TeamWithFormat(args []string, defaultFormat string) error {
 	report := teamCommandReport{Kind: "team", Action: req.Action, Status: "ok"}
 	switch req.Action {
 	case "list":
-		teams, err := store.List()
-		if err != nil {
+		if err := populateTeamList(store, req, &report); err != nil {
 			return err
 		}
-		for _, item := range teams {
-			if req.Status != "" && !strings.EqualFold(item.Status, req.Status) {
-				continue
-			}
-			report.Teams = append(report.Teams, item)
-		}
-		report.Count = len(report.Teams)
 	case "get":
 		item, err := store.Get(req.ID)
 		if err != nil {
@@ -2846,54 +2838,13 @@ func (a *App) TeamWithFormat(args []string, defaultFormat string) error {
 		}
 		return a.watchTeam(context.Background(), taskStore, item, req)
 	case "create":
-		exe, err := a.executablePath()
-		if err != nil {
+		if err := a.createTeam(store, taskStore, req, &report); err != nil {
 			return err
 		}
-		taskIDs := make([]string, 0, len(req.Tasks))
-		taskSpecs := append([]team.TaskSpec(nil), req.Tasks...)
-		for index, spec := range taskSpecs {
-			prompt := strings.TrimSpace(spec.Prompt)
-			if spec.Description != "" {
-				prompt = "Task: " + strings.TrimSpace(spec.Description) + "\n\n" + prompt
-			}
-			task, err := taskStore.RunWithOptions(buildCronPromptCommand(exe, prompt), a.Workspace, background.RunOptions{Kind: "team", SessionID: req.SessionID})
-			if err != nil {
-				return err
-			}
-			taskIDs = append(taskIDs, task.ID)
-			taskSpecs[index].TaskID = task.ID
-			report.Tasks = append(report.Tasks, task)
-			a.runTaskCreatedHook(context.Background(), task)
-			a.runNotificationHook(context.Background(), "team_task_started", "Team task started", fmt.Sprintf("Team %s started background task %s", req.Name, task.ID))
-		}
-		item, err := store.Create(req.Name, taskSpecs, taskIDs)
-		if err != nil {
-			return err
-		}
-		report.Team = &item
-		report.Count = len(taskIDs)
-		report.Message = "Team created"
 	case "delete":
-		existing, err := store.Get(req.ID)
-		if err != nil {
+		if err := a.deleteTeam(store, taskStore, req.ID, &report); err != nil {
 			return err
 		}
-		for _, id := range existing.TaskIDs {
-			task, err := taskStore.Stop(id)
-			if err != nil {
-				continue
-			}
-			report.StoppedTasks = append(report.StoppedTasks, task.ID)
-			a.runTaskCompletedHook(context.Background(), task, "team_deleted")
-		}
-		item, err := store.MarkDeleted(req.ID)
-		if err != nil {
-			return err
-		}
-		report.Team = &item
-		report.Count = 1
-		report.Message = "Team deleted"
 	default:
 		return fmt.Errorf("unknown team command %q", req.Action)
 	}
@@ -2903,6 +2854,71 @@ func (a *App) TeamWithFormat(args []string, defaultFormat string) error {
 		return nil
 	}
 	renderTeamReport(a.Out, report)
+	return nil
+}
+
+func populateTeamList(store team.Store, req teamRequest, report *teamCommandReport) error {
+	teams, err := store.List()
+	if err != nil {
+		return err
+	}
+	for _, item := range teams {
+		if req.Status == "" || strings.EqualFold(item.Status, req.Status) {
+			report.Teams = append(report.Teams, item)
+		}
+	}
+	report.Count = len(report.Teams)
+	return nil
+}
+
+func (a *App) createTeam(store team.Store, taskStore background.Store, req teamRequest, report *teamCommandReport) error {
+	exe, err := a.executablePath()
+	if err != nil {
+		return err
+	}
+	taskIDs := make([]string, 0, len(req.Tasks))
+	taskSpecs := append([]team.TaskSpec(nil), req.Tasks...)
+	for index, spec := range taskSpecs {
+		prompt := strings.TrimSpace(spec.Prompt)
+		if spec.Description != "" {
+			prompt = "Task: " + strings.TrimSpace(spec.Description) + "\n\n" + prompt
+		}
+		task, err := taskStore.RunWithOptions(buildCronPromptCommand(exe, prompt), a.Workspace, background.RunOptions{Kind: "team", SessionID: req.SessionID})
+		if err != nil {
+			return err
+		}
+		taskIDs = append(taskIDs, task.ID)
+		taskSpecs[index].TaskID = task.ID
+		report.Tasks = append(report.Tasks, task)
+		a.runTaskCreatedHook(context.Background(), task)
+		a.runNotificationHook(context.Background(), "team_task_started", "Team task started", fmt.Sprintf("Team %s started background task %s", req.Name, task.ID))
+	}
+	item, err := store.Create(req.Name, taskSpecs, taskIDs)
+	if err != nil {
+		return err
+	}
+	report.Team, report.Count, report.Message = &item, len(taskIDs), "Team created"
+	return nil
+}
+
+func (a *App) deleteTeam(store team.Store, taskStore background.Store, id string, report *teamCommandReport) error {
+	existing, err := store.Get(id)
+	if err != nil {
+		return err
+	}
+	for _, taskID := range existing.TaskIDs {
+		task, err := taskStore.Stop(taskID)
+		if err != nil {
+			continue
+		}
+		report.StoppedTasks = append(report.StoppedTasks, task.ID)
+		a.runTaskCompletedHook(context.Background(), task, "team_deleted")
+	}
+	item, err := store.MarkDeleted(id)
+	if err != nil {
+		return err
+	}
+	report.Team, report.Count, report.Message = &item, 1, "Team deleted"
 	return nil
 }
 
@@ -3257,84 +3273,31 @@ func (a *App) watchTeam(ctx context.Context, taskStore background.Store, item te
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	offsets := map[string]int64{}
-	lastStatus := map[string]string{}
+	watcher := teamWatcher{
+		app: a, taskStore: taskStore, item: item, req: req,
+		offsets: map[string]int64{}, lastStatus: map[string]string{},
+	}
 	for _, id := range item.TaskIDs {
-		offsets[id] = req.Offset
+		watcher.offsets[id] = req.Offset
 	}
-	events := 0
-	emit := func(event teamWatchEvent) error {
-		if req.Format == "json" {
-			return json.NewEncoder(a.Out).Encode(event)
-		}
-		switch event.Type {
-		case "status":
-			fmt.Fprintf(a.Out, "%s status %s\n", event.TaskID, event.Status)
-		case "log":
-			if event.Data != "" {
-				fmt.Fprintf(a.Out, "%s log %s", event.TaskID, event.Data)
-				if !strings.HasSuffix(event.Data, "\n") {
-					fmt.Fprintln(a.Out)
-				}
-			}
-		case "error":
-			fmt.Fprintf(a.Out, "%s error %s\n", event.TaskID, event.Error)
-		}
-		return nil
-	}
+	return watcher.run(ctx)
+}
+
+type teamWatcher struct {
+	app        *App
+	taskStore  background.Store
+	item       team.Team
+	req        teamRequest
+	offsets    map[string]int64
+	lastStatus map[string]string
+	events     int
+}
+
+func (w *teamWatcher) run(ctx context.Context) error {
 	for {
-		running := false
-		for _, id := range item.TaskIDs {
-			task, err := taskStore.Status(id)
-			if err != nil {
-				if lastStatus[id] != "error" {
-					event := teamWatchEvent{Kind: "team_watch", TeamID: item.ID, TeamName: item.Name, Type: "error", TaskID: id, Error: err.Error()}
-					if err := emit(event); err != nil {
-						return err
-					}
-					events++
-					lastStatus[id] = "error"
-				}
-				if req.MaxEvents > 0 && events >= req.MaxEvents {
-					return nil
-				}
-				continue
-			}
-			if background.IsActiveStatus(task.Status) {
-				running = true
-			}
-			if lastStatus[id] == "" || lastStatus[id] != task.Status {
-				event := teamWatchEvent{Kind: "team_watch", TeamID: item.ID, TeamName: item.Name, Type: "status", TaskID: id, Status: task.Status, Error: task.Error, Task: &task}
-				if err := emit(event); err != nil {
-					return err
-				}
-				events++
-				lastStatus[id] = task.Status
-				if req.MaxEvents > 0 && events >= req.MaxEvents {
-					return nil
-				}
-			}
-			nextOffset, data, err := taskStore.LogFrom(id, offsets[id])
-			if err != nil {
-				event := teamWatchEvent{Kind: "team_watch", TeamID: item.ID, TeamName: item.Name, Type: "error", TaskID: id, Error: err.Error()}
-				if err := emit(event); err != nil {
-					return err
-				}
-				events++
-				if req.MaxEvents > 0 && events >= req.MaxEvents {
-					return nil
-				}
-			} else if data != "" {
-				offsets[id] = nextOffset
-				event := teamWatchEvent{Kind: "team_watch", TeamID: item.ID, TeamName: item.Name, Type: "log", TaskID: id, Offset: nextOffset, Data: data}
-				if err := emit(event); err != nil {
-					return err
-				}
-				events++
-				if req.MaxEvents > 0 && events >= req.MaxEvents {
-					return nil
-				}
-			}
+		running, done, err := w.poll()
+		if err != nil || done {
+			return err
 		}
 		if !running {
 			return nil
@@ -3344,6 +3307,125 @@ func (a *App) watchTeam(ctx context.Context, taskStore background.Store, item te
 			return ctx.Err()
 		case <-time.After(500 * time.Millisecond):
 		}
+	}
+}
+
+func (w *teamWatcher) poll() (bool, bool, error) {
+	running := false
+	for _, id := range w.item.TaskIDs {
+		active, done, err := w.pollTask(id)
+		if err != nil || done {
+			return running, done, err
+		}
+		running = running || active
+	}
+	return running, false, nil
+}
+
+func (w *teamWatcher) pollTask(id string) (bool, bool, error) {
+	task, err := w.taskStore.Status(id)
+	if err != nil {
+		return w.recordStatusError(id, err)
+	}
+	active := background.IsActiveStatus(task.Status)
+	done, err := w.recordStatus(id, task)
+	if err != nil || done {
+		return active, done, err
+	}
+	done, err = w.recordLog(id)
+	return active, done, err
+}
+
+func (w *teamWatcher) recordStatusError(id string, statusErr error) (bool, bool, error) {
+	if w.lastStatus[id] != "error" {
+		event := w.event("error", id)
+		event.Error = statusErr.Error()
+		if err := w.emit(event); err != nil {
+			return false, false, err
+		}
+		w.lastStatus[id] = "error"
+	}
+	return false, w.limitReached(), nil
+}
+
+func (w *teamWatcher) recordStatus(id string, task background.Task) (bool, error) {
+	if w.lastStatus[id] == task.Status {
+		return false, nil
+	}
+	event := w.event("status", id)
+	event.Status, event.Error, event.Task = task.Status, task.Error, &task
+	if err := w.emit(event); err != nil {
+		return false, err
+	}
+	w.lastStatus[id] = task.Status
+	return w.limitReached(), nil
+}
+
+func (w *teamWatcher) recordLog(id string) (bool, error) {
+	nextOffset, data, err := w.taskStore.LogFrom(id, w.offsets[id])
+	if err != nil {
+		event := w.event("error", id)
+		event.Error = err.Error()
+		return w.emitAndCheck(event)
+	}
+	if data == "" {
+		return false, nil
+	}
+	w.offsets[id] = nextOffset
+	event := w.event("log", id)
+	event.Offset, event.Data = nextOffset, data
+	return w.emitAndCheck(event)
+}
+
+func (w *teamWatcher) event(eventType, taskID string) teamWatchEvent {
+	return teamWatchEvent{
+		Kind: "team_watch", TeamID: w.item.ID, TeamName: w.item.Name,
+		Type: eventType, TaskID: taskID,
+	}
+}
+
+func (w *teamWatcher) emitAndCheck(event teamWatchEvent) (bool, error) {
+	if err := w.emit(event); err != nil {
+		return false, err
+	}
+	return w.limitReached(), nil
+}
+
+func (w *teamWatcher) limitReached() bool {
+	return w.req.MaxEvents > 0 && w.events >= w.req.MaxEvents
+}
+
+func (w *teamWatcher) emit(event teamWatchEvent) error {
+	if w.req.Format == "json" {
+		if err := json.NewEncoder(w.app.Out).Encode(event); err != nil {
+			return err
+		}
+		w.events++
+		return nil
+	}
+	w.renderText(event)
+	w.events++
+	return nil
+}
+
+func (w *teamWatcher) renderText(event teamWatchEvent) {
+	switch event.Type {
+	case "status":
+		fmt.Fprintf(w.app.Out, "%s status %s\n", event.TaskID, event.Status)
+	case "log":
+		w.renderLog(event)
+	case "error":
+		fmt.Fprintf(w.app.Out, "%s error %s\n", event.TaskID, event.Error)
+	}
+}
+
+func (w *teamWatcher) renderLog(event teamWatchEvent) {
+	if event.Data == "" {
+		return
+	}
+	fmt.Fprintf(w.app.Out, "%s log %s", event.TaskID, event.Data)
+	if !strings.HasSuffix(event.Data, "\n") {
+		fmt.Fprintln(w.app.Out)
 	}
 }
 
