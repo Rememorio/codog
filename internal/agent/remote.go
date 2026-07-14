@@ -3369,290 +3369,335 @@ func (a *App) BackgroundWithFormat(args []string, overrides config.FlagOverrides
 		}
 	}
 	store := background.NewStore(a.Config.ConfigHome)
-	if len(args) == 0 || args[0] == "list" {
-		if len(args) > 2 {
-			return unexpectedExtraArgsError{Command: "background list", Args: append([]string(nil), args[2:]...), Usage: backgroundUsage}
-		}
-		tasks, err := store.List()
-		if err != nil {
-			return err
-		}
-		sessionID, err := a.sessionIDFromOverrides(overrides)
-		if err != nil {
-			return err
-		}
-		if len(args) > 1 {
-			sessionID = args[1]
-		}
-		tasks = background.FilterBySession(tasks, sessionID)
-		if format == "json" {
-			return renderBackgroundReport(a.Out, backgroundCommandReport{
-				Kind:      "background",
-				Action:    "list",
-				Status:    "ok",
-				Count:     len(tasks),
-				SessionID: sessionID,
-				Tasks:     tasks,
-			})
-		}
-		data, _ := json.MarshalIndent(tasks, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	}
-	if args[0] == "run" {
-		command, options, err := parseBackgroundRunArgs(args[1:])
-		if err != nil {
-			return err
-		}
-		sessionID, err := a.sessionIDFromOverrides(overrides)
-		if err != nil {
-			return err
-		}
-		options.SessionID = sessionID
-		task, err := store.RunWithOptions(command, a.Workspace, options)
-		if err != nil {
-			return err
-		}
-		if format == "json" {
-			if err := renderBackgroundReport(a.Out, backgroundCommandReport{
-				Kind:      "background",
-				Action:    "run",
-				Status:    "ok",
-				Count:     1,
-				SessionID: task.SessionID,
-				TaskID:    task.ID,
-				Task:      &task,
-				Message:   "Background task started",
-			}); err != nil {
-				return err
-			}
-			a.runTaskCreatedHook(context.Background(), task)
-			a.runNotificationHook(context.Background(), "background_task_started", "Background task started", fmt.Sprintf("Background task %s started: %s", task.ID, task.Command))
-			return nil
-		}
-		data, _ := json.MarshalIndent(task, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		a.runTaskCreatedHook(context.Background(), task)
-		a.runNotificationHook(context.Background(), "background_task_started", "Background task started", fmt.Sprintf("Background task %s started: %s", task.ID, task.Command))
-		return nil
+	if len(args) == 0 {
+		return a.backgroundListCommand(store, args, overrides, format)
 	}
 	if len(args) < 2 && backgroundActionRequiresID(args[0]) {
 		return errors.New("usage: " + backgroundUsage)
 	}
 	switch args[0] {
-	case "board", "lane-board", "lanes":
-		stalledAfter, err := parseBackgroundBoardArgs(args[1:])
-		if err != nil {
-			return err
-		}
-		board, err := store.LaneBoard(stalledAfter)
-		if err != nil {
-			return err
-		}
-		if format == "json" {
-			return renderBackgroundReport(a.Out, backgroundCommandReport{
-				Kind:   "background",
-				Action: "board",
-				Status: "ok",
-				Board:  &board,
-			})
-		}
-		data, _ := json.MarshalIndent(board, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+	case "list":
+		return a.backgroundListCommand(store, args, overrides, format)
+	case "run":
+		return a.backgroundRunCommand(store, args, overrides, format)
+	case "board":
+		return a.backgroundBoardCommand(store, args, overrides, format)
 	case "heartbeat":
-		id, heartbeat, err := parseBackgroundHeartbeatArgs(args[1:])
-		if err != nil {
-			return err
-		}
-		task, err := store.UpdateHeartbeat(id, heartbeat)
-		if err != nil {
-			return err
-		}
-		if format == "json" {
-			return renderBackgroundReport(a.Out, backgroundCommandReport{
-				Kind:   "background",
-				Action: "heartbeat",
-				Status: "ok",
-				Count:  1,
-				TaskID: task.ID,
-				Task:   &task,
-			})
-		}
-		data, _ := json.MarshalIndent(task, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+		return a.backgroundHeartbeatCommand(store, args, overrides, format)
 	case "status":
-		if len(args) > 2 {
-			return unexpectedExtraArgsError{Command: "background status", Args: append([]string(nil), args[2:]...), Usage: backgroundUsage}
-		}
-		task, err := store.Status(args[1])
-		if err != nil {
-			return err
-		}
-		if format == "json" {
-			return renderBackgroundReport(a.Out, backgroundCommandReport{
-				Kind:   "background",
-				Action: "status",
-				Status: "ok",
-				Count:  1,
-				TaskID: task.ID,
-				Task:   &task,
-			})
-		}
-		data, _ := json.MarshalIndent(task, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+		return a.backgroundStatusCommand(store, args, overrides, format)
 	case "stop":
-		if len(args) > 2 {
-			return unexpectedExtraArgsError{Command: "background stop", Args: append([]string(nil), args[2:]...), Usage: backgroundUsage}
-		}
-		task, err := store.Stop(args[1])
-		if err != nil {
+		return a.backgroundStopCommand(store, args, overrides, format)
+	case "restart":
+		return a.backgroundRestartCommand(store, args, overrides, format)
+	case "logs":
+		return a.backgroundLogsCommand(store, args, overrides, format)
+	case "watch":
+		return a.backgroundWatchCommand(store, args, overrides, format)
+	case "prune":
+		return a.backgroundPruneCommand(store, args, overrides, format)
+	case "supervise":
+		return a.backgroundSuperviseCommand(store, args, overrides, format)
+	default:
+		return unexpectedExtraArgsError{Command: "background", Args: []string{args[0]}, Usage: backgroundUsage}
+	}
+}
+
+func (a *App) backgroundBoardCommand(store background.Store, args []string, overrides config.FlagOverrides, format string) error {
+	stalledAfter, err := parseBackgroundBoardArgs(args[1:])
+	if err != nil {
+		return err
+	}
+	board, err := store.LaneBoard(stalledAfter)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		return renderBackgroundReport(a.Out, backgroundCommandReport{
+			Kind:   "background",
+			Action: "board",
+			Status: "ok",
+			Board:  &board,
+		})
+	}
+	data, _ := json.MarshalIndent(board, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) backgroundHeartbeatCommand(store background.Store, args []string, overrides config.FlagOverrides, format string) error {
+	id, heartbeat, err := parseBackgroundHeartbeatArgs(args[1:])
+	if err != nil {
+		return err
+	}
+	task, err := store.UpdateHeartbeat(id, heartbeat)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		return renderBackgroundReport(a.Out, backgroundCommandReport{
+			Kind:   "background",
+			Action: "heartbeat",
+			Status: "ok",
+			Count:  1,
+			TaskID: task.ID,
+			Task:   &task,
+		})
+	}
+	data, _ := json.MarshalIndent(task, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) backgroundListCommand(store background.Store, args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) > 2 {
+		return unexpectedExtraArgsError{Command: "background list", Args: append([]string(nil), args[2:]...), Usage: backgroundUsage}
+	}
+	tasks, err := store.List()
+	if err != nil {
+		return err
+	}
+	sessionID, err := a.sessionIDFromOverrides(overrides)
+	if err != nil {
+		return err
+	}
+	if len(args) > 1 {
+		sessionID = args[1]
+	}
+	tasks = background.FilterBySession(tasks, sessionID)
+	if format == "json" {
+		return renderBackgroundReport(a.Out, backgroundCommandReport{
+			Kind:      "background",
+			Action:    "list",
+			Status:    "ok",
+			Count:     len(tasks),
+			SessionID: sessionID,
+			Tasks:     tasks,
+		})
+	}
+	data, _ := json.MarshalIndent(tasks, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) backgroundLogsCommand(store background.Store, args []string, overrides config.FlagOverrides, format string) error {
+	id, limit, err := parseBackgroundLogsArgs(args[1:])
+	if err != nil {
+		return err
+	}
+	logs, err := store.Logs(id, limit)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		return renderBackgroundReport(a.Out, backgroundCommandReport{
+			Kind:   "background",
+			Action: "logs",
+			Status: "ok",
+			TaskID: id,
+			Log:    logs,
+			Bytes:  len([]byte(logs)),
+		})
+	}
+	fmt.Fprint(a.Out, logs)
+	return nil
+}
+
+func (a *App) backgroundPruneCommand(store background.Store, args []string, overrides config.FlagOverrides, format string) error {
+	options, err := parseBackgroundPruneArgs(args[1:])
+	if err != nil {
+		return err
+	}
+	result, err := store.Prune(options)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		return renderBackgroundReport(a.Out, backgroundCommandReport{
+			Kind:    "background",
+			Action:  "prune",
+			Status:  "ok",
+			Count:   result.RemovedCount,
+			Prune:   &result,
+			Message: "Background task metadata pruned",
+		})
+	}
+	data, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) backgroundRestartCommand(store background.Store, args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) > 2 {
+		return unexpectedExtraArgsError{Command: "background restart", Args: append([]string(nil), args[2:]...), Usage: backgroundUsage}
+	}
+	task, err := store.Restart(args[1], a.Workspace)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		if err := renderBackgroundReport(a.Out, backgroundCommandReport{
+			Kind:    "background",
+			Action:  "restart",
+			Status:  "ok",
+			Count:   1,
+			TaskID:  task.ID,
+			Task:    &task,
+			Message: "Background task restarted",
+		}); err != nil {
 			return err
 		}
-		if format == "json" {
-			if err := renderBackgroundReport(a.Out, backgroundCommandReport{
-				Kind:    "background",
-				Action:  "stop",
-				Status:  "ok",
-				Count:   1,
-				TaskID:  task.ID,
-				Task:    &task,
-				Message: "Background task stopped",
-			}); err != nil {
-				return err
-			}
-			a.runTaskCompletedHook(context.Background(), task, "manual")
-			a.runNotificationHook(context.Background(), "background_task_stopped", "Background task stopped", fmt.Sprintf("Background task %s stopped: %s", task.ID, task.Command))
-			if task.Kind == "agent" {
-				a.runSubagentStopHook(context.Background(), task.ID, subagentTypeForTask(task), task.LogPath, lastBackgroundLogLine(store, task), false)
-			}
-			return nil
+		a.runTaskCreatedHook(context.Background(), task)
+		a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
+		return nil
+	}
+	data, _ := json.MarshalIndent(task, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	a.runTaskCreatedHook(context.Background(), task)
+	a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
+	return nil
+}
+
+func (a *App) backgroundRunCommand(store background.Store, args []string, overrides config.FlagOverrides, format string) error {
+	command, options, err := parseBackgroundRunArgs(args[1:])
+	if err != nil {
+		return err
+	}
+	sessionID, err := a.sessionIDFromOverrides(overrides)
+	if err != nil {
+		return err
+	}
+	options.SessionID = sessionID
+	task, err := store.RunWithOptions(command, a.Workspace, options)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		if err := renderBackgroundReport(a.Out, backgroundCommandReport{
+			Kind:      "background",
+			Action:    "run",
+			Status:    "ok",
+			Count:     1,
+			SessionID: task.SessionID,
+			TaskID:    task.ID,
+			Task:      &task,
+			Message:   "Background task started",
+		}); err != nil {
+			return err
 		}
-		data, _ := json.MarshalIndent(task, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
+		a.runTaskCreatedHook(context.Background(), task)
+		a.runNotificationHook(context.Background(), "background_task_started", "Background task started", fmt.Sprintf("Background task %s started: %s", task.ID, task.Command))
+		return nil
+	}
+	data, _ := json.MarshalIndent(task, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	a.runTaskCreatedHook(context.Background(), task)
+	a.runNotificationHook(context.Background(), "background_task_started", "Background task started", fmt.Sprintf("Background task %s started: %s", task.ID, task.Command))
+	return nil
+}
+
+func (a *App) backgroundStatusCommand(store background.Store, args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) > 2 {
+		return unexpectedExtraArgsError{Command: "background status", Args: append([]string(nil), args[2:]...), Usage: backgroundUsage}
+	}
+	task, err := store.Status(args[1])
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		return renderBackgroundReport(a.Out, backgroundCommandReport{
+			Kind:   "background",
+			Action: "status",
+			Status: "ok",
+			Count:  1,
+			TaskID: task.ID,
+			Task:   &task,
+		})
+	}
+	data, _ := json.MarshalIndent(task, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) backgroundStopCommand(store background.Store, args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) > 2 {
+		return unexpectedExtraArgsError{Command: "background stop", Args: append([]string(nil), args[2:]...), Usage: backgroundUsage}
+	}
+	task, err := store.Stop(args[1])
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		if err := renderBackgroundReport(a.Out, backgroundCommandReport{
+			Kind:    "background",
+			Action:  "stop",
+			Status:  "ok",
+			Count:   1,
+			TaskID:  task.ID,
+			Task:    &task,
+			Message: "Background task stopped",
+		}); err != nil {
+			return err
+		}
 		a.runTaskCompletedHook(context.Background(), task, "manual")
 		a.runNotificationHook(context.Background(), "background_task_stopped", "Background task stopped", fmt.Sprintf("Background task %s stopped: %s", task.ID, task.Command))
 		if task.Kind == "agent" {
 			a.runSubagentStopHook(context.Background(), task.ID, subagentTypeForTask(task), task.LogPath, lastBackgroundLogLine(store, task), false)
 		}
 		return nil
-	case "restart":
-		if len(args) > 2 {
-			return unexpectedExtraArgsError{Command: "background restart", Args: append([]string(nil), args[2:]...), Usage: backgroundUsage}
-		}
-		task, err := store.Restart(args[1], a.Workspace)
-		if err != nil {
+	}
+	data, _ := json.MarshalIndent(task, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	a.runTaskCompletedHook(context.Background(), task, "manual")
+	a.runNotificationHook(context.Background(), "background_task_stopped", "Background task stopped", fmt.Sprintf("Background task %s stopped: %s", task.ID, task.Command))
+	if task.Kind == "agent" {
+		a.runSubagentStopHook(context.Background(), task.ID, subagentTypeForTask(task), task.LogPath, lastBackgroundLogLine(store, task), false)
+	}
+	return nil
+}
+
+func (a *App) backgroundSuperviseCommand(store background.Store, args []string, overrides config.FlagOverrides, format string) error {
+	if len(args) > 1 {
+		return unexpectedExtraArgsError{Command: "background supervise", Args: append([]string(nil), args[1:]...), Usage: backgroundUsage}
+	}
+	result, err := store.SuperviseOnce(time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		if err := renderBackgroundReport(a.Out, backgroundCommandReport{
+			Kind:      "background",
+			Action:    "supervise",
+			Status:    "ok",
+			Count:     len(result.Restarted),
+			Supervise: &result,
+		}); err != nil {
 			return err
 		}
-		if format == "json" {
-			if err := renderBackgroundReport(a.Out, backgroundCommandReport{
-				Kind:    "background",
-				Action:  "restart",
-				Status:  "ok",
-				Count:   1,
-				TaskID:  task.ID,
-				Task:    &task,
-				Message: "Background task restarted",
-			}); err != nil {
-				return err
-			}
-			a.runTaskCreatedHook(context.Background(), task)
-			a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
-			return nil
-		}
-		data, _ := json.MarshalIndent(task, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		a.runTaskCreatedHook(context.Background(), task)
-		a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
-		return nil
-	case "logs":
-		id, limit, err := parseBackgroundLogsArgs(args[1:])
-		if err != nil {
-			return err
-		}
-		logs, err := store.Logs(id, limit)
-		if err != nil {
-			return err
-		}
-		if format == "json" {
-			return renderBackgroundReport(a.Out, backgroundCommandReport{
-				Kind:   "background",
-				Action: "logs",
-				Status: "ok",
-				TaskID: id,
-				Log:    logs,
-				Bytes:  len([]byte(logs)),
-			})
-		}
-		fmt.Fprint(a.Out, logs)
-		return nil
-	case "watch":
-		id, offset, maxEvents, err := parseBackgroundWatchArgs(args[1:])
-		if err != nil {
-			return err
-		}
-		encoder := json.NewEncoder(a.Out)
-		return store.Watch(context.Background(), id, background.WatchOptions{Offset: offset, MaxEvents: maxEvents}, func(event background.WatchEvent) error {
-			return encoder.Encode(event)
-		})
-	case "prune":
-		options, err := parseBackgroundPruneArgs(args[1:])
-		if err != nil {
-			return err
-		}
-		result, err := store.Prune(options)
-		if err != nil {
-			return err
-		}
-		if format == "json" {
-			return renderBackgroundReport(a.Out, backgroundCommandReport{
-				Kind:    "background",
-				Action:  "prune",
-				Status:  "ok",
-				Count:   result.RemovedCount,
-				Prune:   &result,
-				Message: "Background task metadata pruned",
-			})
-		}
-		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	case "supervise":
-		if len(args) > 1 {
-			return unexpectedExtraArgsError{Command: "background supervise", Args: append([]string(nil), args[1:]...), Usage: backgroundUsage}
-		}
-		result, err := store.SuperviseOnce(time.Now().UTC())
-		if err != nil {
-			return err
-		}
-		if format == "json" {
-			if err := renderBackgroundReport(a.Out, backgroundCommandReport{
-				Kind:      "background",
-				Action:    "supervise",
-				Status:    "ok",
-				Count:     len(result.Restarted),
-				Supervise: &result,
-			}); err != nil {
-				return err
-			}
-			for _, task := range result.Restarted {
-				a.runTaskCreatedHook(context.Background(), task)
-				a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
-			}
-			return nil
-		}
-		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
 		for _, task := range result.Restarted {
 			a.runTaskCreatedHook(context.Background(), task)
 			a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
 		}
 		return nil
-	default:
-		return unexpectedExtraArgsError{Command: "background", Args: []string{args[0]}, Usage: backgroundUsage}
 	}
+	data, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	for _, task := range result.Restarted {
+		a.runTaskCreatedHook(context.Background(), task)
+		a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
+	}
+	return nil
+}
+
+func (a *App) backgroundWatchCommand(store background.Store, args []string, overrides config.FlagOverrides, format string) error {
+	id, offset, maxEvents, err := parseBackgroundWatchArgs(args[1:])
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(a.Out)
+	return store.Watch(context.Background(), id, background.WatchOptions{Offset: offset, MaxEvents: maxEvents}, func(event background.WatchEvent) error {
+		return encoder.Encode(event)
+	})
 }
 
 func backgroundActionRequiresID(action string) bool {

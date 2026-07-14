@@ -53,7 +53,6 @@ gocognit|internal/agent/prompt.go|(*App).tuiSlashHandler|47
 gocognit|internal/agent/prompt.go|parsePromptArgs|42
 gocognit|internal/agent/prompt.go|tuiSessionEntries|42
 gocognit|internal/agent/prompt.go|validateJSONSchemaObject|56
-gocognit|internal/agent/remote.go|(*App).BackgroundWithFormat|100
 gocognit|internal/agent/remote.go|(*App).TeamWithFormat|42
 gocognit|internal/agent/remote.go|(*App).Updater|47
 gocognit|internal/agent/remote.go|(*App).watchTeam|75
