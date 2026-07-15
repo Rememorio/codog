@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +43,154 @@ func requireTaskIDAliasRequirement(t *testing.T, schema map[string]any, aliases 
 	for _, alias := range aliases {
 		require.True(t, seen[alias], "missing task id alias %q", alias)
 	}
+}
+
+func TestFormatLSPDiagnosticFeedbackIsBounded(t *testing.T) {
+	diagnostics := make([]codeintel.LSPDiagnostic, 21)
+	for index := range diagnostics {
+		diagnostics[index] = codeintel.LSPDiagnostic{
+			Range:  codeintel.LSPRange{Start: codeintel.LSPPosition{Line: index, Character: 2}},
+			Source: "gopls", Message: fmt.Sprintf("diagnostic %d", index+1),
+		}
+	}
+	feedback := formatLSPDiagnosticFeedback("main.go", diagnostics)
+	require.Contains(t, feedback, "main.go:1:3 [gopls] diagnostic 1")
+	require.Contains(t, feedback, "1 additional diagnostics omitted")
+	require.NotContains(t, feedback, "diagnostic 21")
+	require.Empty(t, formatLSPDiagnosticFeedback("main.go", nil))
+}
+
+func TestRegistryFileDiagnosticsSkipsUnconfiguredFiles(t *testing.T) {
+	registry := NewRegistryWithOptions(t.TempDir(), RegistryOptions{ConfigHome: t.TempDir()})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+	feedback, err := registry.FileDiagnostics(context.Background(), "README.md")
+	require.NoError(t, err)
+	require.Empty(t, feedback)
+	feedback, err = registry.FileDiagnostics(context.Background(), "main.go")
+	require.NoError(t, err)
+	require.Empty(t, feedback)
+}
+
+func TestRegistryFileDiagnosticsUsesConfiguredServer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell command")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644))
+	command := "CODOG_TOOLS_FAKE_LSP=1 " + shellQuote(os.Args[0]) + " -test.run '^TestRegistryFakeLSPServer$'"
+	store := codeintel.NewLSPStore(configHome, workspace)
+	_, err := store.Start("go", []string{"sh", "-c", command})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = store.Stop("go") })
+	registry := NewRegistryWithOptions(workspace, RegistryOptions{ConfigHome: configHome})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+
+	feedback, err := registry.FileDiagnostics(context.Background(), "main.go")
+	require.NoError(t, err)
+	require.Contains(t, feedback, "main.go:1:1 [tools-fake-lsp] configured diagnostic")
+}
+
+func TestRegistryFakeLSPServer(t *testing.T) {
+	if os.Getenv("CODOG_TOOLS_FAKE_LSP") != "1" {
+		return
+	}
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		message, err := readRegistryLSPMessage(reader)
+		if err != nil {
+			return
+		}
+		var request struct {
+			ID     any             `json:"id,omitempty"`
+			Method string          `json:"method,omitempty"`
+			Params json.RawMessage `json:"params,omitempty"`
+		}
+		if json.Unmarshal(message, &request) != nil {
+			return
+		}
+		switch request.Method {
+		case "initialize":
+			_ = writeRegistryLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"capabilities": map[string]any{}}})
+		case "textDocument/didOpen":
+			var params struct {
+				TextDocument struct {
+					URI string `json:"uri"`
+				} `json:"textDocument"`
+			}
+			_ = json.Unmarshal(request.Params, &params)
+			_ = writeRegistryLSPMessage(os.Stdout, map[string]any{
+				"jsonrpc": "2.0", "id": "config-before-diagnostics", "method": "workspace/configuration",
+				"params": map[string]any{"items": []map[string]any{{"section": "gopls"}}},
+			})
+			response, err := readRegistryLSPMessage(reader)
+			if err != nil {
+				return
+			}
+			var configurationResponse struct {
+				ID     any             `json:"id"`
+				Result json.RawMessage `json:"result"`
+			}
+			if json.Unmarshal(response, &configurationResponse) != nil || fmt.Sprint(configurationResponse.ID) != "config-before-diagnostics" {
+				return
+			}
+			_ = writeRegistryLSPMessage(os.Stdout, map[string]any{
+				"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+				"params": map[string]any{"uri": params.TextDocument.URI, "diagnostics": []map[string]any{{
+					"range":  map[string]any{"start": map[string]any{"line": 0, "character": 0}, "end": map[string]any{"line": 0, "character": 7}},
+					"source": "tools-fake-lsp", "message": "configured diagnostic",
+				}}},
+			})
+		case "shutdown":
+			_ = writeRegistryLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": nil})
+		case "exit":
+			return
+		default:
+			if request.ID != nil {
+				_ = writeRegistryLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": nil})
+			}
+		}
+	}
+}
+
+func readRegistryLSPMessage(reader *bufio.Reader) (json.RawMessage, error) {
+	length := 0
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			break
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "Content-Length") {
+			continue
+		}
+		length, err = strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return nil, err
+		}
+	}
+	if length <= 0 {
+		return nil, io.ErrUnexpectedEOF
+	}
+	data := make([]byte, length)
+	_, err := io.ReadFull(reader, data)
+	return data, err
+}
+
+func writeRegistryLSPMessage(writer io.Writer, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n", len(data)); err != nil {
+		return err
+	}
+	_, err = writer.Write(data)
+	return err
 }
 
 func TestRegistryExecutesClaudeToolAliases(t *testing.T) {

@@ -2169,10 +2169,10 @@ func TestCodeIntelLSPCommands(t *testing.T) {
 	require.True(t, lspActionExists(actions.Actions, "references", "textDocument/references"))
 	out.Reset()
 
-	require.NoError(t, app.CodeIntel([]string{"lsp", "start", "go", "sleep", "30"}))
+	fakeCommand := "CODOG_AGENT_FAKE_LSP=1 " + shellQuote(os.Args[0]) + " -test.run '^TestACPFakeLSPServer$'"
+	require.NoError(t, app.CodeIntel([]string{"lsp", "start", "go", "sh", "-c", fakeCommand}))
 	require.Contains(t, out.String(), `"language": "go"`)
-	require.Contains(t, out.String(), `"status": "running"`)
-	t.Cleanup(func() { _ = app.CodeIntel([]string{"lsp", "stop", "go"}) })
+	require.Contains(t, out.String(), `"status": "ready"`)
 	out.Reset()
 
 	require.NoError(t, app.CodeIntel([]string{"lsp", "list"}))
@@ -2190,7 +2190,7 @@ func TestCodeIntelLSPCommands(t *testing.T) {
 	require.NoError(t, app.CodeIntel([]string{"lsp", "list", "--output-format=text"}))
 	require.Contains(t, out.String(), "LSP Servers")
 	require.Contains(t, out.String(), "go")
-	require.Contains(t, out.String(), "running")
+	require.Contains(t, out.String(), "ready")
 	out.Reset()
 
 	require.NoError(t, app.CodeIntel([]string{"lsp", "stop", "go"}))
@@ -2273,18 +2273,18 @@ func TestResumedCodeIntelLSPStartAndStop(t *testing.T) {
 		Out:       &out,
 	}
 
-	require.NoError(t, app.runResumedCodeIntelLSPSlash([]string{"start", "go", "sleep", "30"}, "json"))
+	fakeCommand := "CODOG_AGENT_FAKE_LSP=1 " + shellQuote(os.Args[0]) + " -test.run '^TestACPFakeLSPServer$'"
+	require.NoError(t, app.runResumedCodeIntelLSPSlash([]string{"start", "go", "sh", "-c", fakeCommand}, "json"))
 	var started codeintel.LSPServerStatus
 	require.NoError(t, json.Unmarshal(out.Bytes(), &started))
 	require.Equal(t, "go", started.Language)
-	require.Equal(t, "running", started.Task.Status)
-	require.NotEmpty(t, started.TaskID)
-	t.Cleanup(func() { _, _ = background.NewStore(configHome).Stop(started.TaskID) })
+	require.Equal(t, "ready", started.Task.Status)
+	require.Empty(t, started.TaskID)
 	out.Reset()
 
 	require.NoError(t, app.runResumedCodeIntelLSPSlash([]string{"list"}, "json"))
 	require.Contains(t, out.String(), `"language": "go"`)
-	require.Contains(t, out.String(), started.TaskID)
+	require.Contains(t, out.String(), `"status": "ready"`)
 	out.Reset()
 
 	require.NoError(t, app.runResumedCodeIntelLSPSlash([]string{"stop", "go"}, "json"))

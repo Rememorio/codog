@@ -37,6 +37,7 @@ type Server struct {
 	MaxSessions int
 	Hooks       config.HookConfig
 	MCPServers  map[string]config.MCPServerConfig
+	LSPClients  *codeintel.LSPClientPool
 	LeaseTTL    time.Duration
 	Executable  string
 	EditorToken string
@@ -112,10 +113,10 @@ func RouteSpecs() []RouteSpec {
 		{Path: "/lsp/actions", Methods: []string{http.MethodGet}, Description: "List supported LSP query actions."},
 		{Path: "/lsp/discover", Methods: []string{http.MethodGet}, Description: "Discover common language server commands."},
 		{Path: "/lsp/list", Methods: []string{http.MethodGet}, Description: "List managed LSP servers."},
-		{Path: "/lsp/start", Methods: []string{http.MethodPost}, Description: "Start a managed LSP server."},
+		{Path: "/lsp/start", Methods: []string{http.MethodPost}, Description: "Verify and register a managed LSP server."},
 		{Path: "/lsp/status", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read one managed LSP server status."},
 		{Path: "/lsp/stop", Methods: []string{http.MethodPost}, Description: "Stop one managed LSP server."},
-		{Path: "/lsp/query", Methods: []string{http.MethodPost}, Description: "Run a one-shot LSP query through a managed server."},
+		{Path: "/lsp/query", Methods: []string{http.MethodPost}, Description: "Run an LSP query through a managed server."},
 		{Path: "/mcp/list", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List configured MCP servers."},
 		{Path: "/mcp/show", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Describe and preflight one MCP server."},
 		{Path: "/mcp/auth", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Inspect MCP authentication and capability readiness."},
@@ -2304,6 +2305,12 @@ func (s Server) lspStop(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err, http.StatusBadRequest)
 		return
 	}
+	if s.LSPClients != nil {
+		if err := s.LSPClients.Invalidate(payload.Language); err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+	}
 	writeJSON(w, map[string]any{"kind": "lsp_stop", "status": "ok", "server": status})
 }
 
@@ -2348,12 +2355,18 @@ func (s Server) lspQuery(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(payload.TimeoutMS)*time.Millisecond)
 		defer cancel()
 	}
-	result, err := store.Query(ctx, payload.Language, codeintel.LSPQueryRequest{
+	request := codeintel.LSPQueryRequest{
 		Action:    payload.Action,
 		Path:      firstNonEmpty(payload.Path, payload.FilePath),
 		Line:      payload.Line,
 		Character: payload.Character,
-	})
+	}
+	var result codeintel.LSPQueryResult
+	if s.LSPClients != nil {
+		result, err = s.LSPClients.Query(ctx, store, payload.Language, request)
+	} else {
+		result, err = store.Query(ctx, payload.Language, request)
+	}
 	if err != nil {
 		writeError(w, err, http.StatusBadRequest)
 		return

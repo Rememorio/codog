@@ -27,6 +27,7 @@ import (
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/bridge"
+	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/customcommands"
@@ -75,15 +76,40 @@ type App struct {
 	mcpMu               sync.Mutex
 	mcpToolsLoaded      bool
 	mcpToolsStale       bool
+	lspMu               sync.Mutex
+	lspClients          *codeintel.LSPClientPool
 	dynamicSkillPaths   []string
 }
 
 // Close releases persistent runtime resources owned by the application.
 func (a *App) Close() error {
-	if a == nil || a.Tools == nil {
+	if a == nil {
 		return nil
 	}
-	return a.Tools.Close()
+	var joined error
+	if a.Tools != nil {
+		joined = errors.Join(joined, a.Tools.Close())
+	}
+	a.lspMu.Lock()
+	clients := a.lspClients
+	a.lspClients = nil
+	a.lspMu.Unlock()
+	if clients != nil {
+		joined = errors.Join(joined, clients.Close())
+	}
+	return joined
+}
+
+func (a *App) lspClientPool() *codeintel.LSPClientPool {
+	if a.Tools != nil && a.Tools.LSPClientPool() != nil {
+		return a.Tools.LSPClientPool()
+	}
+	a.lspMu.Lock()
+	defer a.lspMu.Unlock()
+	if a.lspClients == nil {
+		a.lspClients = codeintel.NewLSPClientPool()
+	}
+	return a.lspClients
 }
 
 func (a *App) mcpToolsAreLoaded() bool {
@@ -2401,6 +2427,7 @@ func (a *App) remoteControlServerWithMaxSessions(addr string, maxSessions int) c
 		MaxSessions: maxSessions,
 		Hooks:       a.Config.Hooks,
 		MCPServers:  a.Config.MCPServers,
+		LSPClients:  a.lspClientPool(),
 		LeaseTTL:    time.Duration(a.Config.Future.RemoteLeaseSeconds) * time.Second,
 		Executable:  executable,
 		EditorToken: a.Config.Future.EditorBridgeToken,

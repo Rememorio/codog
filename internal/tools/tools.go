@@ -25,6 +25,7 @@ import (
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/bashvalidation"
+	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/mcpauthdiag"
@@ -90,8 +91,11 @@ type MCPTool struct {
 // Registry holds all tools available for a model turn.
 type Registry struct {
 	tools        map[string]Tool
+	workspace    string
+	configHome   string
 	mcpServers   map[string]config.MCPServerConfig
 	mcpClients   *mcp.ClientPool
+	lspClients   *codeintel.LSPClientPool
 	mcpOptionsMu sync.RWMutex
 	mcpOptions   mcp.ClientOptions
 }
@@ -643,8 +647,11 @@ func NewRegistry(workspace string) *Registry {
 func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg := &Registry{
 		tools:      map[string]Tool{},
+		workspace:  workspace,
+		configHome: opts.ConfigHome,
 		mcpServers: cloneMCPServers(opts.MCPServers),
 		mcpClients: mcp.NewClientPool(),
+		lspClients: codeintel.NewLSPClientPool(),
 	}
 	reg.registerBuiltinTools(workspace, opts)
 	return reg
@@ -652,10 +659,25 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 
 // Close releases persistent protocol sessions owned by the registry.
 func (r *Registry) Close() error {
-	if r == nil || r.mcpClients == nil {
+	if r == nil {
 		return nil
 	}
-	return r.mcpClients.Close()
+	var joined error
+	if r.mcpClients != nil {
+		joined = errors.Join(joined, r.mcpClients.Close())
+	}
+	if r.lspClients != nil {
+		joined = errors.Join(joined, r.lspClients.Close())
+	}
+	return joined
+}
+
+// LSPClientPool returns the registry-owned language-server session pool.
+func (r *Registry) LSPClientPool() *codeintel.LSPClientPool {
+	if r == nil {
+		return nil
+	}
+	return r.lspClients
 }
 
 // Register adds or replaces a tool by the name declared in its definition.
@@ -713,7 +735,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(PermissionCheckTool{})
 	r.Register(NotebookReadTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
-	r.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs, ConfigHome: opts.ConfigHome})
+	r.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs, ConfigHome: opts.ConfigHome, Clients: r.lspClients})
 	r.Register(EnterWorktreeTool{Workspace: workspace})
 	r.Register(ExitWorktreeTool{Workspace: workspace})
 	r.Register(EnterPlanModeTool{Workspace: workspace})

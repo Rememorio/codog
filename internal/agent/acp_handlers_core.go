@@ -392,6 +392,9 @@ func (a *App) addACPLSPLifecycleHandlers(h *acpserver.Handlers) {
 		if err != nil {
 			return nil, err
 		}
+		if err := a.lspClientPool().Invalidate(req.Language); err != nil {
+			return nil, err
+		}
 		return map[string]any{"kind": "lsp_stop", "status": "ok", "server": status}, nil
 	}
 }
@@ -404,7 +407,7 @@ func (a *App) addACPLSPQueryHandler(h *acpserver.Handlers) {
 			defer cancel()
 		}
 		store := codeintel.NewLSPStore(a.Config.ConfigHome, a.Workspace)
-		return store.Query(ctx, req.Language, codeintel.LSPQueryRequest{
+		return a.lspClientPool().Query(ctx, store, req.Language, codeintel.LSPQueryRequest{
 			Action:          req.Action,
 			Path:            firstNonEmpty(req.Path, req.FilePath),
 			Query:           req.Query,

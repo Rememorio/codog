@@ -31,6 +31,19 @@ func TestAppCloseHandlesEmptyAndInitializedRuntimes(t *testing.T) {
 	require.NoError(t, (&App{Tools: tools.NewRegistry(t.TempDir())}).Close())
 }
 
+func TestAppLSPClientPoolUsesRegistryOrOwnedFallback(t *testing.T) {
+	standalone := &App{}
+	first := standalone.lspClientPool()
+	require.NotNil(t, first)
+	require.Same(t, first, standalone.lspClientPool())
+	require.NoError(t, standalone.Close())
+
+	registry := tools.NewRegistry(t.TempDir())
+	withRegistry := &App{Tools: registry}
+	require.Same(t, registry.LSPClientPool(), withRegistry.lspClientPool())
+	require.NoError(t, withRegistry.Close())
+}
+
 func TestResumedDebugToolCallAllowedFollowsRegistry(t *testing.T) {
 	registry := tools.NewRegistry(t.TempDir())
 	app := &App{Tools: registry}

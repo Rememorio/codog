@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/Rememorio/codog/internal/anthropic"
@@ -504,8 +505,24 @@ func (e *turnExecution) applyFileChangedHooks(call *ToolCall, input json.RawMess
 		if call.IsError {
 			return true
 		}
+		e.applyFileChangedFeedback(call, change.Path)
 	}
 	return false
+}
+
+func (e *turnExecution) applyFileChangedFeedback(call *ToolCall, path string) {
+	if e.runner.FileChangedFeedback == nil {
+		return
+	}
+	feedback, err := e.runner.FileChangedFeedback(e.ctx, path)
+	if err != nil {
+		feedback = fmt.Sprintf("Language-server diagnostics unavailable for %s: %v", path, err)
+	}
+	feedback = strings.TrimSpace(feedback)
+	if feedback == "" {
+		return
+	}
+	call.Output = strings.TrimRight(call.Output, "\n") + "\n\n" + feedback
 }
 
 func (e *turnExecution) recordToolCall(blockID string, call ToolCall) {

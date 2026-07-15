@@ -636,7 +636,7 @@ func (s LSPStore) Query(ctx context.Context, language string, request LSPQueryRe
 	if err != nil {
 		return LSPQueryResult{}, err
 	}
-	server, err := s.load(language)
+	server, err := s.loadForQuery(language)
 	if err != nil {
 		return LSPQueryResult{}, err
 	}
@@ -1281,6 +1281,12 @@ func (c *lspClient) waitForDiagnostics(uri string) ([]LSPDiagnostic, error) {
 		var msg lspRPCMessage
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			return nil, err
+		}
+		if msg.ID != nil && msg.Method != "" {
+			if err := c.handleServerRequest(msg); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		c.recordNotification(msg)
 	}

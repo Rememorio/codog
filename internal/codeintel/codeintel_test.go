@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rememorio/codog/internal/background"
 	"github.com/stretchr/testify/require"
 )
 
@@ -598,13 +600,17 @@ func TestLSPStoreLifecycle(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
 	store := NewLSPStore(configHome, workspace)
-	status, err := store.Start("go", []string{"sleep", "30"})
+	command := "CODOG_FAKE_LSP=1 " + shellCommand([]string{os.Args[0], "-test.run", "TestFakeLSPServer"})
+	status, err := store.Start("go", []string{"sh", "-c", command})
 	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = store.Stop("go") })
 	require.Equal(t, "go", status.Language)
-	require.Equal(t, "running", status.Task.Status)
-	require.Contains(t, status.Command, "sleep")
-	require.Contains(t, status.Command, "30")
+	require.Equal(t, "ready", status.Task.Status)
+	require.Equal(t, "lazy", status.Mode)
+	require.Empty(t, status.TaskID)
+	require.Contains(t, status.Command, "TestFakeLSPServer")
+
+	_, err = store.Start("go", []string{"sh", "-c", command})
+	require.ErrorContains(t, err, "already configured")
 
 	list, err := store.List()
 	require.NoError(t, err)
@@ -614,16 +620,14 @@ func TestLSPStoreLifecycle(t *testing.T) {
 	current, err := store.Status("go")
 	require.NoError(t, err)
 	require.Equal(t, status.TaskID, current.TaskID)
-	require.Equal(t, "running", current.Task.Status)
+	require.Equal(t, "ready", current.Task.Status)
 
 	stopped, err := store.Stop("go")
 	require.NoError(t, err)
 	require.Equal(t, "stopped", stopped.Task.Status)
 	require.NotNil(t, stopped.Task.CompletedAt)
-	require.Eventually(t, func() bool {
-		current, err := store.Status("go")
-		return err == nil && current.Task.Status != "running"
-	}, 2*time.Second, 50*time.Millisecond)
+	_, err = store.Status("go")
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestLSPStoreRejectsUnsafeLanguage(t *testing.T) {
@@ -631,6 +635,43 @@ func TestLSPStoreRejectsUnsafeLanguage(t *testing.T) {
 	_, err := store.Start("../go", []string{"gopls"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "safe name")
+}
+
+func TestLSPStoreRejectsServerInitializationFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell command")
+	}
+	store := NewLSPStore(t.TempDir(), t.TempDir())
+	command := "CODOG_FAKE_LSP=1 CODOG_FAKE_LSP_INIT_ERROR=1 " + shellCommand([]string{os.Args[0], "-test.run", "TestFakeLSPServer"})
+
+	_, err := store.Start("go", []string{"sh", "-c", command})
+	require.ErrorContains(t, err, "initialize lsp server")
+	require.ErrorContains(t, err, "initialize rejected")
+	_, err = store.Status("go")
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestLSPStoreMigratesLegacyBackgroundRecordBeforeQuery(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sleep")
+	}
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	task, err := background.NewStore(configHome).Run("sleep 30", workspace)
+	require.NoError(t, err)
+	store := NewLSPStore(configHome, workspace)
+	require.NoError(t, store.save(LSPServer{
+		Language: "go", Command: "gopls", TaskID: task.ID, Workspace: workspace, StartedAt: task.StartedAt,
+	}))
+
+	server, err := store.loadForQuery("go")
+	require.NoError(t, err)
+	require.Empty(t, server.TaskID)
+	require.Equal(t, "lazy", server.Mode)
+	require.Eventually(t, func() bool {
+		current, statusErr := background.NewStore(configHome).Status(task.ID)
+		return statusErr == nil && !background.IsActiveStatus(current.Status)
+	}, 2*time.Second, 20*time.Millisecond)
 }
 
 func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
@@ -1360,6 +1401,160 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "fake-rule", result.Diagnostics[0].Data.(map[string]any)["rule"])
 }
 
+func TestLSPClientPoolReusesInitializedServer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell command")
+	}
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	starts := filepath.Join(t.TempDir(), "starts.log")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
+	command := fmt.Sprintf("CODOG_FAKE_LSP=1 CODOG_FAKE_LSP_STARTS=%s %s -test.run=TestFakeLSPServer", shellQuote(starts), shellQuote(os.Args[0]))
+	store := NewLSPStore(configHome, workspace)
+	require.NoError(t, store.save(LSPServer{Language: "go", Command: command, Workspace: workspace, StartedAt: time.Now()}))
+	pool := NewLSPClientPool()
+	t.Cleanup(func() { require.NoError(t, pool.Close()) })
+
+	for range 2 {
+		result, err := pool.Query(context.Background(), store, "go", LSPQueryRequest{Action: "hover", Path: "main.go", Line: 2, Character: 5})
+		require.NoError(t, err)
+		require.Equal(t, "textDocument/hover", result.Method)
+	}
+	diagnostics, err := pool.Query(context.Background(), store, "go", LSPQueryRequest{Action: "diagnostics", Path: "main.go"})
+	require.NoError(t, err)
+	require.Len(t, diagnostics.Diagnostics, 1)
+	require.Equal(t, "fake diagnostic", diagnostics.Diagnostics[0].Message)
+
+	data, err := os.ReadFile(starts)
+	require.NoError(t, err)
+	require.Equal(t, "started\n", string(data))
+
+	require.NoError(t, pool.Invalidate("go"))
+	require.NoError(t, pool.Invalidate("python"))
+	_, err = pool.Query(context.Background(), store, "go", LSPQueryRequest{Action: "hover", Path: "main.go", Line: 2, Character: 5})
+	require.NoError(t, err)
+	data, err = os.ReadFile(starts)
+	require.NoError(t, err)
+	require.Equal(t, "started\nstarted\n", string(data))
+	require.Error(t, pool.Invalidate("../go"))
+}
+
+func TestLSPClientPoolLifecycleValidation(t *testing.T) {
+	var nilPool *LSPClientPool
+	require.NoError(t, nilPool.Close())
+	require.NoError(t, nilPool.Invalidate("go"))
+	_, err := nilPool.Query(context.Background(), NewLSPStore(t.TempDir(), t.TempDir()), "go", LSPQueryRequest{})
+	require.ErrorContains(t, err, "pool is nil")
+
+	pool := NewLSPClientPool()
+	require.NoError(t, pool.Close())
+	require.NoError(t, pool.Close())
+	_, err = pool.session("go", "gopls", t.TempDir())
+	require.ErrorContains(t, err, "pool is closed")
+}
+
+func TestLSPProcessCloseHandlesPartialAndUnresponsiveProcesses(t *testing.T) {
+	var nilProcess *lspProcess
+	require.NoError(t, nilProcess.close(true))
+	require.NoError(t, (&lspProcess{}).close(false))
+	require.NoError(t, (&pooledLSPSession{}).closeProcess(false))
+
+	stdoutReader, stdoutWriter := io.Pipe()
+	stdinReader, stdinWriter := io.Pipe()
+	process := &lspProcess{
+		client: &lspClient{stdin: stdinWriter, stdout: bufio.NewReader(stdoutReader)},
+		stdin:  stdinWriter,
+		cancel: func() {
+			_ = stdoutWriter.Close()
+			_ = stdinReader.Close()
+		},
+		wait: func() error { return nil },
+	}
+	started := time.Now()
+	require.NoError(t, process.close(true))
+	require.GreaterOrEqual(t, time.Since(started), lspShutdownTimeout)
+	_ = stdoutReader.Close()
+}
+
+func TestLSPClientPoolRejectsInvalidQueriesAndStartup(t *testing.T) {
+	pool := NewLSPClientPool()
+	t.Cleanup(func() { _ = pool.Close() })
+	store := NewLSPStore(t.TempDir(), t.TempDir())
+	_, err := pool.Query(context.Background(), store, "../go", LSPQueryRequest{})
+	require.ErrorContains(t, err, "safe name")
+	_, err = pool.Query(context.Background(), store, "go", LSPQueryRequest{})
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	_, err = startLSPProcess(context.Background(), t.TempDir(), "")
+	require.ErrorContains(t, err, "command is required")
+	_, err = startLSPProcess(context.Background(), filepath.Join(t.TempDir(), "missing"), "gopls")
+	require.Error(t, err)
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = startLSPProcess(canceled, t.TempDir(), "sleep 30")
+	require.ErrorIs(t, err, context.Canceled)
+
+	command := "CODOG_FAKE_LSP=1 CODOG_FAKE_LSP_INIT_ERROR=1 " + shellCommand([]string{os.Args[0], "-test.run", "TestFakeLSPServer"})
+	_, err = startLSPProcess(context.Background(), t.TempDir(), command)
+	require.ErrorContains(t, err, "initialize rejected")
+
+	require.Equal(t, "primary", mustLSPWorkspace(t, "primary", "fallback"))
+	require.Equal(t, "fallback", mustLSPWorkspace(t, "", "fallback"))
+}
+
+func TestLSPClientPoolCancelsHungQueryAndReconnects(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell command")
+	}
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644))
+	store := NewLSPStore(t.TempDir(), workspace)
+	command := "CODOG_FAKE_LSP=1 CODOG_FAKE_LSP_HANG_HOVER=1 " + shellCommand([]string{os.Args[0], "-test.run", "TestFakeLSPServer"})
+	require.NoError(t, store.save(LSPServer{Language: "go", Command: command, Workspace: workspace}))
+	pool := NewLSPClientPool()
+	t.Cleanup(func() { _ = pool.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := pool.Query(ctx, store, "go", LSPQueryRequest{Action: "hover", Path: "main.go"})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	server, err := store.load("go")
+	require.NoError(t, err)
+	server.Command = "CODOG_FAKE_LSP=1 " + shellCommand([]string{os.Args[0], "-test.run", "TestFakeLSPServer"})
+	require.NoError(t, store.save(server))
+	result, err := pool.Query(context.Background(), store, "go", LSPQueryRequest{Action: "hover", Path: "main.go"})
+	require.NoError(t, err)
+	require.Equal(t, "textDocument/hover", result.Method)
+}
+
+func TestLSPClientPoolReturnsEmptyDiagnosticsOnTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell command")
+	}
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644))
+	store := NewLSPStore(t.TempDir(), workspace)
+	command := "CODOG_FAKE_LSP=1 CODOG_FAKE_LSP_NO_DIAGNOSTICS=1 " + shellCommand([]string{os.Args[0], "-test.run", "TestFakeLSPServer"})
+	require.NoError(t, store.save(LSPServer{Language: "go", Command: command, Workspace: workspace}))
+	pool := NewLSPClientPool()
+	t.Cleanup(func() { _ = pool.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	result, err := pool.Query(ctx, store, "go", LSPQueryRequest{Action: "diagnostics", Path: "main.go"})
+	require.NoError(t, err)
+	require.Empty(t, result.Diagnostics)
+}
+
+func mustLSPWorkspace(t *testing.T, primary, fallback string) string {
+	t.Helper()
+	workspace, err := lspWorkspace(primary, fallback)
+	require.NoError(t, err)
+	return workspace
+}
+
 func TestApplyLSPTextEdits(t *testing.T) {
 	source := "alpha\nbeta\n"
 	var edit lspTextEdit
@@ -1528,6 +1723,14 @@ func TestFakeLSPServer(t *testing.T) {
 		return
 	}
 	defer os.Exit(0)
+	if path := os.Getenv("CODOG_FAKE_LSP_STARTS"); path != "" {
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			return
+		}
+		_, _ = file.WriteString("started\n")
+		_ = file.Close()
+	}
 	reader := bufio.NewReader(os.Stdin)
 	currentURI := ""
 	rootURI := ""
@@ -1566,6 +1769,9 @@ func handleFakeLSPNotification(msg lspRPCMessage, currentURI *string) {
 	}
 	_ = decodeLSPParams(msg.Params, &params)
 	*currentURI = params.TextDocument.URI
+	if os.Getenv("CODOG_FAKE_LSP_NO_DIAGNOSTICS") == "1" {
+		return
+	}
 	_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "textDocument/publishDiagnostics", Params: map[string]any{
 		"uri": params.TextDocument.URI,
 		"diagnostics": []map[string]any{{
@@ -1622,6 +1828,10 @@ func handleFakeLSPPrimaryRequest(reader *bufio.Reader, msg lspRPCMessage, curren
 	switch msg.Method {
 	case "initialize":
 		handled = true
+		if os.Getenv("CODOG_FAKE_LSP_INIT_ERROR") == "1" {
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Error: &lspRPCError{Code: -32002, Message: "initialize rejected"}})
+			return currentURI, rootURI, handled
+		}
 		var params struct {
 			RootURI string `json:"rootUri"`
 		}
@@ -1665,6 +1875,9 @@ func handleFakeLSPPrimaryRequest(reader *bufio.Reader, msg lspRPCMessage, curren
 		})})
 	case "textDocument/hover":
 		handled = true
+		if os.Getenv("CODOG_FAKE_LSP_HANG_HOVER") == "1" {
+			return currentURI, rootURI, handled
+		}
 		_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"contents": map[string]any{"kind": "markdown", "value": "fake hover"}})})
 	case "textDocument/completion":
 		handled = true

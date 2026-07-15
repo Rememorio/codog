@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/Rememorio/codog/internal/agentruns"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bridge"
+	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/stretchr/testify/require"
@@ -1597,10 +1600,14 @@ func TestControlLSPEndpoints(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644))
+	lspClients := codeintel.NewLSPClientPool()
+	t.Cleanup(func() { require.NoError(t, lspClients.Close()) })
 	server := httptest.NewServer(Server{
 		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
 		ConfigHome: filepath.Join(root, "home"),
 		Workspace:  workspace,
+		LSPClients: lspClients,
 	}.Handler())
 	defer server.Close()
 
@@ -1622,7 +1629,11 @@ func TestControlLSPEndpoints(t *testing.T) {
 	require.Contains(t, string(body), `"kind":"lsp_discover"`)
 	require.Contains(t, string(body), `"language":"go"`)
 
-	resp, err = http.Post(server.URL+"/lsp/start", "application/json", bytes.NewBufferString(`{"language":"go","command_args":["sleep","30"]}`))
+	startPayload, err := json.Marshal(map[string]any{
+		"language": "go", "command_args": []string{os.Args[0], "-test.run=^TestControlFakeLSPServer$"},
+	})
+	require.NoError(t, err)
+	resp, err = http.Post(server.URL+"/lsp/start", "application/json", bytes.NewReader(startPayload))
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -1635,6 +1646,14 @@ func TestControlLSPEndpoints(t *testing.T) {
 		_, _ = http.Post(server.URL+"/lsp/stop", "application/json", bytes.NewBufferString(`{"language":"go"}`))
 	})
 
+	resp, err = http.Post(server.URL+"/lsp/query", "application/json", bytes.NewBufferString(`{"language":"go","action":"hover","path":"main.go"}`))
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"method":"textDocument/hover"`)
+
 	resp, err = http.Get(server.URL + "/lsp/list")
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
@@ -1643,7 +1662,7 @@ func TestControlLSPEndpoints(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"kind":"lsp_list"`)
 	require.Contains(t, string(body), `"count":1`)
-	require.Contains(t, string(body), `"status":"running"`)
+	require.Contains(t, string(body), `"status":"ready"`)
 
 	resp, err = http.Get(server.URL + "/lsp/status?language=go")
 	require.NoError(t, err)
@@ -1670,6 +1689,77 @@ func TestControlLSPEndpoints(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"kind":"lsp_stop"`)
 	require.Contains(t, string(body), `"status":"stopped"`)
+}
+
+func TestControlFakeLSPServer(t *testing.T) {
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		message, err := readControlLSPMessage(reader)
+		if err != nil {
+			return
+		}
+		var request struct {
+			ID     any    `json:"id,omitempty"`
+			Method string `json:"method,omitempty"`
+		}
+		if json.Unmarshal(message, &request) != nil {
+			return
+		}
+		switch request.Method {
+		case "initialize":
+			_ = writeControlLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"capabilities": map[string]any{}}})
+		case "shutdown":
+			_ = writeControlLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": nil})
+		case "textDocument/hover":
+			_ = writeControlLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"contents": "control hover"}})
+		case "exit":
+			return
+		default:
+			if request.ID != nil {
+				_ = writeControlLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": nil})
+			}
+		}
+	}
+}
+
+func readControlLSPMessage(reader *bufio.Reader) (json.RawMessage, error) {
+	length := 0
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			break
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "Content-Length") {
+			continue
+		}
+		length, err = strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return nil, err
+		}
+	}
+	if length <= 0 {
+		return nil, io.ErrUnexpectedEOF
+	}
+	data := make([]byte, length)
+	_, err := io.ReadFull(reader, data)
+	return data, err
+}
+
+func writeControlLSPMessage(writer io.Writer, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n", len(data)); err != nil {
+		return err
+	}
+	_, err = writer.Write(data)
+	return err
 }
 
 func TestControlLSPStartRejectsEmptyCommandArg(t *testing.T) {

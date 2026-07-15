@@ -1,6 +1,7 @@
 package codeintel
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,11 +25,14 @@ type LSPCandidate struct {
 	Description string   `json:"description,omitempty"`
 }
 
-// LSPServer records a configured background language-server process.
+// LSPServer records a configured language server. New records use lazy mode:
+// Start verifies the protocol handshake, while long-lived Codog runtimes open
+// and reuse the process on the first query.
 type LSPServer struct {
 	Language  string    `json:"language"`
 	Command   string    `json:"command"`
 	TaskID    string    `json:"task_id"`
+	Mode      string    `json:"mode,omitempty"`
 	Workspace string    `json:"workspace"`
 	StartedAt time.Time `json:"started_at"`
 }
@@ -68,14 +72,14 @@ func DefaultLSPCandidates() []LSPCandidate {
 	return candidates
 }
 
-// Start launches and records a background language server for a language.
+// Start verifies and records a language server for lazy session reuse.
 func (s LSPStore) Start(language string, commandArgs []string) (LSPServerStatus, error) {
 	language, err := normalizeLanguage(language)
 	if err != nil {
 		return LSPServerStatus{}, err
 	}
-	if existing, err := s.Status(language); err == nil && background.IsActiveStatus(existing.Task.Status) {
-		return LSPServerStatus{}, fmt.Errorf("lsp server %q is already running", language)
+	if existing, err := s.Status(language); err == nil && (existing.Task.Status == "ready" || background.IsActiveStatus(existing.Task.Status)) {
+		return LSPServerStatus{}, fmt.Errorf("lsp server %q is already configured", language)
 	}
 	command, err := lspCommand(language, commandArgs)
 	if err != nil {
@@ -88,22 +92,27 @@ func (s LSPStore) Start(language string, commandArgs []string) (LSPServerStatus,
 			return LSPServerStatus{}, err
 		}
 	}
-	task, err := background.NewStore(s.ConfigHome).Run(command, workspace)
+	probeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	process, err := startLSPProcess(probeCtx, workspace, command)
 	if err != nil {
-		return LSPServerStatus{}, err
+		return LSPServerStatus{}, fmt.Errorf("initialize lsp server %q: %w", language, err)
 	}
+	if err := process.close(true); err != nil {
+		return LSPServerStatus{}, fmt.Errorf("close lsp server probe %q: %w", language, err)
+	}
+	startedAt := time.Now().UTC()
 	server := LSPServer{
 		Language:  language,
 		Command:   command,
-		TaskID:    task.ID,
+		Mode:      "lazy",
 		Workspace: workspace,
-		StartedAt: task.StartedAt,
+		StartedAt: startedAt,
 	}
 	if err := s.save(server); err != nil {
-		_, _ = background.NewStore(s.ConfigHome).Stop(task.ID)
 		return LSPServerStatus{}, err
 	}
-	return LSPServerStatus{LSPServer: server, Task: task}, nil
+	return LSPServerStatus{LSPServer: server, Task: readyLSPTask(server)}, nil
 }
 
 // List returns all persisted language-server statuses.
@@ -143,6 +152,9 @@ func (s LSPStore) Status(language string) (LSPServerStatus, error) {
 	if err != nil {
 		return LSPServerStatus{}, err
 	}
+	if server.TaskID == "" {
+		return LSPServerStatus{LSPServer: server, Task: readyLSPTask(server)}, nil
+	}
 	task, err := background.NewStore(s.ConfigHome).Status(server.TaskID)
 	if err != nil {
 		return LSPServerStatus{}, err
@@ -150,11 +162,21 @@ func (s LSPStore) Status(language string) (LSPServerStatus, error) {
 	return LSPServerStatus{LSPServer: server, Task: task}, nil
 }
 
-// Stop stops the background language server for a language.
+// Stop removes a language-server registration or stops a legacy background
+// record created by an older Codog release.
 func (s LSPStore) Stop(language string) (LSPServerStatus, error) {
 	status, err := s.Status(language)
 	if err != nil {
 		return LSPServerStatus{}, err
+	}
+	if status.TaskID == "" {
+		completedAt := time.Now().UTC()
+		status.Task.Status = "stopped"
+		status.Task.CompletedAt = &completedAt
+		if err := os.Remove(s.path(status.Language)); err != nil && !os.IsNotExist(err) {
+			return LSPServerStatus{}, err
+		}
+		return status, nil
 	}
 	task, err := background.NewStore(s.ConfigHome).Stop(status.TaskID)
 	if err != nil {
@@ -162,6 +184,16 @@ func (s LSPStore) Stop(language string) (LSPServerStatus, error) {
 	}
 	status.Task = task
 	return status, nil
+}
+
+func readyLSPTask(server LSPServer) background.Task {
+	return background.Task{
+		Kind:      "lsp",
+		Command:   server.Command,
+		Workspace: server.Workspace,
+		Status:    "ready",
+		StartedAt: server.StartedAt,
+	}
 }
 
 func (s LSPStore) save(server LSPServer) error {
@@ -182,6 +214,23 @@ func (s LSPStore) load(language string) (LSPServer, error) {
 	}
 	var server LSPServer
 	if err := json.Unmarshal(data, &server); err != nil {
+		return LSPServer{}, err
+	}
+	return server, nil
+}
+
+func (s LSPStore) loadForQuery(language string) (LSPServer, error) {
+	server, err := s.load(language)
+	if err != nil || server.TaskID == "" {
+		return server, err
+	}
+	legacyStore := background.NewStore(s.ConfigHome)
+	if task, statusErr := legacyStore.Status(server.TaskID); statusErr == nil && background.IsActiveStatus(task.Status) {
+		_, _ = legacyStore.Stop(server.TaskID)
+	}
+	server.TaskID = ""
+	server.Mode = "lazy"
+	if err := s.save(server); err != nil {
 		return LSPServer{}, err
 	}
 	return server, nil

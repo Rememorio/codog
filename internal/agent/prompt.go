@@ -1745,20 +1745,21 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		opts.ConfigurePrompter(prompter)
 	}
 	runner := runloop.Runner{
-		Config:           effectiveConfig,
-		Client:           a.Client,
-		Tools:            a.Tools,
-		Prompter:         prompter,
-		HookPromptRunner: a.hookPromptRunner(effectiveConfig),
-		Workspace:        a.Workspace,
-		SessionID:        sess.ID,
-		Out:              firstWriter(opts.Out, a.Out),
-		System:           a.systemPromptForInput(input),
-		OnToolStart:      opts.OnToolStart,
-		OnToolUse:        onToolUse,
-		BeforeRequest:    a.RegisterMCPTools,
-		MaxBudgetUSD:     opts.MaxBudgetUSD,
-		PriorCostUSD:     opts.PriorCostUSD,
+		Config:              effectiveConfig,
+		Client:              a.Client,
+		Tools:               a.Tools,
+		Prompter:            prompter,
+		HookPromptRunner:    a.hookPromptRunner(effectiveConfig),
+		Workspace:           a.Workspace,
+		SessionID:           sess.ID,
+		Out:                 firstWriter(opts.Out, a.Out),
+		System:              a.systemPromptForInput(input),
+		OnToolStart:         opts.OnToolStart,
+		OnToolUse:           onToolUse,
+		BeforeRequest:       a.RegisterMCPTools,
+		FileChangedFeedback: a.Tools.FileDiagnostics,
+		MaxBudgetUSD:        opts.MaxBudgetUSD,
+		PriorCostUSD:        opts.PriorCostUSD,
 	}
 	result, err := runner.RunWithUserContent(ctx, sess.Messages, userContent, modelInput)
 	if appendErr := a.appendTurnResult(sess, result); appendErr != nil {

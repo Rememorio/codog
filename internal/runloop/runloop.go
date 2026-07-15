@@ -63,21 +63,22 @@ func (e BudgetExceededError) Error() string {
 // Runner coordinates model streaming, tool execution, hooks, and compaction
 // for a single user prompt.
 type Runner struct {
-	Config           config.Config
-	Client           ModelClient
-	Tools            *tools.Registry
-	Prompter         *tools.Prompter
-	Hooks            hooks.Runner
-	HookPromptRunner hooks.PromptRunner
-	Workspace        string
-	SessionID        string
-	Out              io.Writer
-	System           string
-	OnToolStart      func(ToolCall)
-	OnToolUse        func(ToolCall)
-	BeforeRequest    func(context.Context) error
-	MaxBudgetUSD     float64
-	PriorCostUSD     float64
+	Config              config.Config
+	Client              ModelClient
+	Tools               *tools.Registry
+	Prompter            *tools.Prompter
+	Hooks               hooks.Runner
+	HookPromptRunner    hooks.PromptRunner
+	Workspace           string
+	SessionID           string
+	Out                 io.Writer
+	System              string
+	OnToolStart         func(ToolCall)
+	OnToolUse           func(ToolCall)
+	BeforeRequest       func(context.Context) error
+	FileChangedFeedback func(context.Context, string) (string, error)
+	MaxBudgetUSD        float64
+	PriorCostUSD        float64
 }
 
 // Run submits input with prior messages, executes tool loops until the model

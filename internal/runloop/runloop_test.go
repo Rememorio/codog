@@ -960,6 +960,54 @@ func TestRunnerExecutesFileChangedHookAfterWrite(t *testing.T) {
 	require.Contains(t, hookPayload.Input, `"path":"notes.txt"`)
 }
 
+func TestRunnerAppendsLanguageServerFeedbackAfterWrite(t *testing.T) {
+	workspace := t.TempDir()
+	client := &scriptedClient{responses: []anthropic.AssistantMessage{
+		{Blocks: []anthropic.ContentBlock{{
+			Type: "tool_use", ID: "tool-1", Name: "write_file",
+			Input: []byte(`{"path":"main.go","content":"package main"}`),
+		}}},
+		{Blocks: []anthropic.ContentBlock{{Type: "text", Text: "done"}}},
+	}}
+	var changedPath string
+	result, err := Runner{
+		Config: config.Config{Model: "mock", MaxTokens: 128, MaxTurns: 2},
+		Client: client, Tools: tools.NewRegistry(workspace), Workspace: workspace,
+		FileChangedFeedback: func(_ context.Context, path string) (string, error) {
+			changedPath = path
+			return "Language-server diagnostics for main.go:\n- main.go:1:1 [gopls] syntax error", nil
+		},
+	}.Run(context.Background(), nil, "write source")
+	require.NoError(t, err)
+	require.Equal(t, "main.go", changedPath)
+	require.Len(t, result.ToolCalls, 1)
+	require.False(t, result.ToolCalls[0].IsError)
+	require.Contains(t, result.ToolCalls[0].Output, "Language-server diagnostics")
+	require.Contains(t, result.ToolCalls[0].Output, "syntax error")
+}
+
+func TestRunnerKeepsSuccessfulWriteWhenLanguageServerFeedbackFails(t *testing.T) {
+	workspace := t.TempDir()
+	client := &scriptedClient{responses: []anthropic.AssistantMessage{
+		{Blocks: []anthropic.ContentBlock{{
+			Type: "tool_use", ID: "tool-1", Name: "write_file",
+			Input: []byte(`{"path":"main.go","content":"package main"}`),
+		}}},
+		{Blocks: []anthropic.ContentBlock{{Type: "text", Text: "done"}}},
+	}}
+	result, err := Runner{
+		Config: config.Config{Model: "mock", MaxTokens: 128, MaxTurns: 2},
+		Client: client, Tools: tools.NewRegistry(workspace), Workspace: workspace,
+		FileChangedFeedback: func(context.Context, string) (string, error) {
+			return "", errors.New("server stopped")
+		},
+	}.Run(context.Background(), nil, "write source")
+	require.NoError(t, err)
+	require.False(t, result.ToolCalls[0].IsError)
+	require.Contains(t, result.ToolCalls[0].Output, "diagnostics unavailable")
+	require.Contains(t, result.ToolCalls[0].Output, "server stopped")
+}
+
 func TestRunnerAppliesHookEnvironmentToLaterBashTool(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

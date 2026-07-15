@@ -3661,12 +3661,19 @@ func (a *App) codeIntelLSPPayload(store *codeintel.LSPStore, action string, args
 		if err != nil {
 			return nil, err
 		}
-		return store.Query(context.Background(), language, req)
+		return a.lspClientPool().Query(context.Background(), *store, language, req)
 	case "stop":
 		if len(args) < 1 {
 			return nil, errors.New("usage: codog code-intel lsp stop LANGUAGE")
 		}
-		return store.Stop(args[0])
+		status, err := store.Stop(args[0])
+		if err != nil {
+			return nil, err
+		}
+		if err := a.lspClientPool().Invalidate(args[0]); err != nil {
+			return nil, err
+		}
+		return status, nil
 	default:
 		return nil, unknownCodeIntelLSPActionError(action)
 	}

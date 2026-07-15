@@ -290,6 +290,7 @@ type LSPTool struct {
 	Workspace      string
 	AdditionalDirs []string
 	ConfigHome     string
+	Clients        *codeintel.LSPClientPool
 }
 
 func (LSPTool) Definition() anthropic.ToolDefinition {
@@ -1362,7 +1363,8 @@ func (t LSPTool) executeServerLSP(ctx context.Context, action string, language s
 		}
 		language = codeintel.InferLanguageID(path)
 	}
-	return codeintel.NewLSPStore(t.ConfigHome, t.Workspace).Query(ctx, language, codeintel.LSPQueryRequest{
+	store := codeintel.NewLSPStore(t.ConfigHome, t.Workspace)
+	request := codeintel.LSPQueryRequest{
 		Action:    action,
 		Path:      path,
 		Query:     query,
@@ -1370,7 +1372,56 @@ func (t LSPTool) executeServerLSP(ctx context.Context, action string, language s
 		Line:      line,
 		Character: character,
 		NewName:   newName,
-	})
+	}
+	if t.Clients != nil {
+		return t.Clients.Query(ctx, store, language, request)
+	}
+	return store.Query(ctx, language, request)
+}
+
+// FileDiagnostics returns bounded language-server feedback for a file changed
+// by a model tool. Missing language-server configuration is not an error.
+func (r *Registry) FileDiagnostics(ctx context.Context, path string) (string, error) {
+	if r == nil || r.lspClients == nil || strings.TrimSpace(r.configHome) == "" {
+		return "", nil
+	}
+	language := codeintel.InferLanguageID(path)
+	if language == "plaintext" {
+		return "", nil
+	}
+	store := codeintel.NewLSPStore(r.configHome, r.workspace)
+	if _, err := store.Status(language); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	result, err := r.lspClients.Query(ctx, store, language, codeintel.LSPQueryRequest{Action: "diagnostics", Path: path})
+	if err != nil {
+		return "", err
+	}
+	return formatLSPDiagnosticFeedback(path, result.Diagnostics), nil
+}
+
+func formatLSPDiagnosticFeedback(path string, diagnostics []codeintel.LSPDiagnostic) string {
+	if len(diagnostics) == 0 {
+		return ""
+	}
+	const limit = 20
+	var b strings.Builder
+	fmt.Fprintf(&b, "Language-server diagnostics for %s:\n", path)
+	for index, diagnostic := range diagnostics {
+		if index == limit {
+			fmt.Fprintf(&b, "- ... %d additional diagnostics omitted\n", len(diagnostics)-limit)
+			break
+		}
+		fmt.Fprintf(&b, "- %s:%d:%d", path, diagnostic.Range.Start.Line+1, diagnostic.Range.Start.Character+1)
+		if diagnostic.Source != "" {
+			fmt.Fprintf(&b, " [%s]", diagnostic.Source)
+		}
+		fmt.Fprintf(&b, " %s\n", strings.Join(strings.Fields(diagnostic.Message), " "))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func scopedRelativePath(workspace string, additionalDirs []string, requested string) (string, error) {
