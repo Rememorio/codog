@@ -604,9 +604,8 @@ func TestDefaultTUIWelcomeMatchesInteractiveAgentWorkflow(t *testing.T) {
 	preview := PreviewWithCandidates("", nil, 100, 24, false, false)
 
 	require.Contains(t, preview.View, "codog")
-	require.Contains(t, preview.View, "Interactive coding agent ready.")
-	require.Contains(t, preview.View, "Mention @files")
-	require.Contains(t, preview.View, "run !shell commands")
+	require.Contains(t, preview.View, "____")
+	require.Contains(t, preview.View, "Codog")
 	require.Contains(t, preview.View, "Ask codog...")
 }
 

@@ -857,7 +857,7 @@ func methodNotFound(out io.Writer, req request) (bool, error) {
 func initializeResult(opts Options) map[string]any {
 	version := strings.TrimSpace(opts.Version)
 	if version == "" {
-		version = "0.1.0"
+		version = "0.1.1"
 	}
 	return map[string]any{
 		"protocolVersion": "codog-acp-0.1",

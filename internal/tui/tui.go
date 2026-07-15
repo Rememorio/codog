@@ -3,11 +3,13 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/term"
 )
 
 type Result struct {
@@ -284,6 +286,10 @@ type ShellOptions struct {
 	Todos                     TodoListFunc
 	ModelOptions              []string
 	CurrentModel              string
+	Version                   string
+	Workspace                 string
+	GitBranch                 string
+	ShowWelcome               bool
 	SelectModel               ModelSelectFunc
 	SelectPermissionMode      PermissionModeSelectFunc
 	Theme                     string
@@ -441,6 +447,9 @@ type model struct {
 	modelPicker               bool
 	modelOptions              []string
 	currentModel              string
+	version                   string
+	workspace                 string
+	gitBranch                 string
 	modelPickerSelected       int
 	selectModel               ModelSelectFunc
 	selectPermissionMode      PermissionModeSelectFunc
@@ -1916,6 +1925,9 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	}
 	ta := newPromptTextarea(options.Prefill)
 	entries := transcriptEntries(options.Entries)
+	if options.ShowWelcome {
+		entries = append([]transcriptEntry{{Role: "welcome"}}, entries...)
+	}
 	m := newModel(ctx, ta, options.Candidates, entries)
 	m.fileCandidates = append([]string(nil), options.FileCandidates...)
 	m.submit = options.Submit
@@ -1934,6 +1946,9 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.todos = options.Todos
 	m.modelOptions = normalizeModelOptions(options.ModelOptions)
 	m.currentModel = strings.TrimSpace(options.CurrentModel)
+	m.version = strings.TrimSpace(options.Version)
+	m.workspace = strings.TrimSpace(options.Workspace)
+	m.gitBranch = strings.TrimSpace(options.GitBranch)
 	m.selectModel = options.SelectModel
 	m.selectPermissionMode = options.SelectPermissionMode
 	m.theme, _ = NormalizeThemeName(options.Theme)
@@ -1973,6 +1988,9 @@ func Shell(ctx context.Context, options ShellOptions) error {
 		return err
 	}
 	m.inline = true
+	if width, height, err := term.GetSize(os.Stdout.Fd()); err == nil {
+		m.layout(width, height)
+	}
 	m.prepareInlineTranscript()
 	_, err := tea.NewProgram(m).Run()
 	return err

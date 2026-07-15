@@ -22,8 +22,8 @@ out `HEAD`.
 Create and push an annotated tag from the verified `main` commit:
 
 ```sh
-git tag -a v0.1.0 -m "Codog v0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.1 -m "Codog v0.1.1"
+git push origin v0.1.1
 ```
 
 Pushing the tag starts the `Release` workflow. A failed workflow can be rerun
@@ -37,7 +37,7 @@ The release also includes `SHA256SUMS`.
 To reproduce the artifacts without publishing them:
 
 ```sh
-scripts/release.sh --version 0.1.0 --commit v0.1.0 --output-dir dist
+scripts/release.sh --version 0.1.1 --commit v0.1.1 --output-dir dist
 ```
 
 ## Verify
@@ -46,10 +46,10 @@ Inspect the published release and verify downloaded artifacts before announcing
 it:
 
 ```sh
-gh release view v0.1.0
-gh release download v0.1.0 --dir dist-verify
+gh release view v0.1.1
+gh release download v0.1.1 --dir dist-verify
 (cd dist-verify && shasum -a 256 -c SHA256SUMS)
-GOBIN="$(mktemp -d)" go install github.com/Rememorio/codog@v0.1.0
+GOBIN="$(mktemp -d)" go install github.com/Rememorio/codog@v0.1.1
 ```
 
 Run the native archive's `codog --version --json` and confirm its version and

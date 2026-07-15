@@ -32,6 +32,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/contextview"
 	"github.com/Rememorio/codog/internal/cron"
+	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/hooks"
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/outputstyle"
@@ -1930,6 +1931,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 	if a.planModeActive() {
 		a.enterTUIPlanMode(modeState)
 	}
+	gitBranch, _ := gitops.Branch(a.Workspace)
 	submitter := tuiTurnSubmitter{
 		app: a, sess: sess, modeState: modeState,
 		permissionAnswers: permissionAnswers, questionAnswers: questionAnswers,
@@ -1965,6 +1967,10 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		},
 		ModelOptions: a.tuiModelOptions(),
 		CurrentModel: strings.TrimSpace(a.Config.Model),
+		Version:      version,
+		Workspace:    a.Workspace,
+		GitBranch:    gitBranch,
+		ShowWelcome:  len(sess.Messages) == 0,
 		SelectModel: func(ctx context.Context, model string) (tui.RuntimeControlResult, error) {
 			return a.selectTUIModel(ctx, model)
 		},

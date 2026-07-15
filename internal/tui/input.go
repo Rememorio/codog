@@ -25,13 +25,7 @@ func newPromptTextarea(input string) textarea.Model {
 
 func defaultTranscriptEntries() []transcriptEntry {
 	return []transcriptEntry{
-		{
-			Role: "system",
-			Text: strings.Join([]string{
-				"Interactive coding agent ready.",
-				"Mention @files, run !shell commands, or type /help.",
-			}, "\n"),
-		},
+		{Role: "welcome"},
 	}
 }
 

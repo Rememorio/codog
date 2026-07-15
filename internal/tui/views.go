@@ -1491,7 +1491,7 @@ func (m *model) refreshViewport() {
 	}
 	for index, entry := range m.transcript[start:] {
 		index += start
-		lines = append(lines, renderTranscriptEntry(entry, max(8, m.viewport.Width-2), index, len(m.transcript), m.transcriptMode, stylesForTheme(m.theme)))
+		lines = append(lines, m.renderTranscriptEntry(entry, max(8, m.viewport.Width-2), index))
 	}
 	m.viewport.SetContent(strings.Join(lines, "\n\n"))
 }
@@ -1524,9 +1524,23 @@ func (m model) renderTranscriptRange(start int, end int) string {
 	width := max(8, m.viewport.Width-2)
 	entries := make([]string, 0, end-start)
 	for index := start; index < end; index++ {
-		entries = append(entries, renderTranscriptEntry(m.transcript[index], width, index, len(m.transcript), m.transcriptMode, stylesForTheme(m.theme)))
+		entries = append(entries, m.renderTranscriptEntry(m.transcript[index], width, index))
 	}
 	return strings.Join(entries, "\n\n")
+}
+
+func (m model) renderTranscriptEntry(entry transcriptEntry, width int, index int) string {
+	styles := stylesForTheme(m.theme)
+	if strings.EqualFold(strings.TrimSpace(entry.Role), "welcome") {
+		return renderWelcome(welcomeInfo{
+			Version:    m.version,
+			Model:      m.currentModel,
+			Permission: m.modeLabel,
+			Workspace:  m.workspace,
+			GitBranch:  m.gitBranch,
+		}, width, styles)
+	}
+	return renderTranscriptEntry(entry, width, index, len(m.transcript), m.transcriptMode, styles)
 }
 
 func sequenceCommands(commands ...tea.Cmd) tea.Cmd {

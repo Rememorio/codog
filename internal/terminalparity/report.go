@@ -172,7 +172,7 @@ func Build() Report {
 		TUIDefaultInline:          true,
 		TUIResumePicker:           resumePreviewReady(resumePreview),
 		TUIWorkspaceTrustPrompt:   trustPreviewReady(trustPreview),
-		TUITranscriptViewport:     strings.Contains(submitPreview.View, "Interactive coding agent ready"),
+		TUITranscriptViewport:     containsAll(submitPreview.View, "Codog", "____"),
 		TUILocalHelpPanel:         previewHasAll(helpPreview.HelpOpen, helpPreview.View, "Core commands"),
 		TUISettingsTabs:           previewHasAll(settingsPreview.CommandView, settingsPreview.View, "Status", "Config", "Usage", "Model", "glm52"),
 		TUIExtensionTabs:          previewHasAll(extensionsPreview.CommandView, extensionsPreview.View, "Skills", "MCP", "Hooks", "Plugins", "Agents", "local"),

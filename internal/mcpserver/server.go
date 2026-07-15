@@ -91,7 +91,7 @@ func handle(ctx context.Context, out io.Writer, registry *tools.Registry, opts O
 	case "initialize":
 		version := strings.TrimSpace(opts.Version)
 		if version == "" {
-			version = "0.1.0"
+			version = "0.1.1"
 		}
 		return writeResult(out, req.ID, map[string]any{
 			"protocolVersion": "2024-11-05",

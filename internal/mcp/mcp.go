@@ -974,7 +974,7 @@ func Initialize(ctx context.Context, serverName string, server config.MCPServerC
 		Params: map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
+			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.1"},
 		},
 	}); err != nil {
 		message := mcpProcessError(err, cmd, &stderr).Error()
@@ -1103,7 +1103,7 @@ func ListTools(ctx context.Context, serverName string, server config.MCPServerCo
 		Params: map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
+			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.1"},
 		},
 	}); err != nil {
 		return ToolListResult{Server: serverName, Error: mcpProcessError(err, cmd, &stderr).Error()}
@@ -1330,7 +1330,7 @@ func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, 
 		Params: map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
+			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.1"},
 		},
 	}); err != nil {
 		return nil, mcpProcessError(err, cmd, &stderr)
@@ -1373,7 +1373,7 @@ func initializeHTTP(ctx context.Context, serverName string, server config.MCPSer
 		Params: map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
+			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.1"},
 		},
 	}, "")
 	if err != nil {

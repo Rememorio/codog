@@ -46,7 +46,7 @@ import (
 	"github.com/Rememorio/codog/internal/tui"
 )
 
-const version = "0.1.0"
+const version = "0.1.1"
 const maxSystemGitStatusChars = 2000
 const maxDynamicSkillContextPaths = 64
 
