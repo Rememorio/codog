@@ -918,6 +918,33 @@ func TestSanitizeOpenAIToolMessagePairing(t *testing.T) {
 	require.Len(t, sanitizeOpenAIToolMessagePairing(userPreceding), 2)
 }
 
+func TestOpenAIRequestPreservesRichToolResultsAndFollowingToolCalls(t *testing.T) {
+	wire, err := openAIRequestFromAnthropic(Request{
+		Model: "gpt-4o", MaxTokens: 64,
+		Messages: []Message{
+			{Role: "assistant", Content: []ContentBlock{
+				{Type: "tool_use", ID: "image-call", Name: "read_file", Input: json.RawMessage(`{}`)},
+				{Type: "tool_use", ID: "text-call", Name: "read_file", Input: json.RawMessage(`{}`)},
+			}},
+			ToolResultMessageWithSupplemental("image-call", "image metadata", false, []ContentBlock{{
+				Type: "image", Source: &ContentSource{Type: "base64", MediaType: "image/png", Data: "aW1n"},
+			}}),
+			ToolResultMessage("text-call", "text result", false),
+		},
+	}, "https://api.openai.com/v1")
+	require.NoError(t, err)
+	require.Len(t, wire.Messages, 4)
+	require.Equal(t, []string{"assistant", "tool", "user", "tool"}, []string{
+		wire.Messages[0].Role, wire.Messages[1].Role, wire.Messages[2].Role, wire.Messages[3].Role,
+	})
+	require.Equal(t, "image-call", wire.Messages[1].ToolCallID)
+	require.Equal(t, "text-call", wire.Messages[3].ToolCallID)
+	parts, ok := wire.Messages[2].Content.([]openAIContentPart)
+	require.True(t, ok)
+	require.Len(t, parts, 1)
+	require.Equal(t, "data:image/png;base64,aW1n", parts[0].ImageURL.URL)
+}
+
 func TestOpenAIRequestDropsAssistantOrphanedToolResults(t *testing.T) {
 	wire, err := openAIRequestFromAnthropic(Request{
 		Model:     "gpt-4o",

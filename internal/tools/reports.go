@@ -1854,20 +1854,16 @@ func firstPositiveInt(values ...int) int {
 
 func imageMediaType(path string, data []byte) (string, bool) {
 	detected := strings.ToLower(http.DetectContentType(data[:min(len(data), 512)]))
-	if strings.HasPrefix(detected, "image/") {
+	if modelImageMediaType(detected) {
 		return detected, true
 	}
 	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(path), ".")) {
-	case "bmp":
-		return "image/bmp", true
 	case "gif":
 		return "image/gif", true
 	case "jpg", "jpeg":
 		return "image/jpeg", true
 	case "png":
 		return "image/png", true
-	case "svg":
-		return "image/svg+xml", true
 	case "webp":
 		return "image/webp", true
 	default:
@@ -1889,6 +1885,33 @@ func imageReadResult(path string, data []byte, mediaType string) map[string]any 
 		result["height"] = cfg.Height
 	}
 	return result
+}
+
+func documentReadResult(path string, data []byte, mediaType string) map[string]any {
+	return map[string]any{
+		"kind":       "document",
+		"path":       path,
+		"bytes":      len(data),
+		"media_type": mediaType,
+		"encoding":   "base64",
+		"base64":     base64.StdEncoding.EncodeToString(data),
+	}
+}
+
+func richReadPath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".bmp", ".gif", ".jpeg", ".jpg", ".pdf", ".png", ".svg", ".webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func pdfMediaType(path string, data []byte) bool {
+	if strings.EqualFold(filepath.Ext(path), ".pdf") || bytes.HasPrefix(bytes.TrimSpace(data), []byte("%PDF-")) {
+		return true
+	}
+	return strings.EqualFold(http.DetectContentType(data[:min(len(data), 512)]), "application/pdf")
 }
 
 func safePathInScope(workspace string, additionalDirs []string, requested string, allowMissing bool) (string, error) {

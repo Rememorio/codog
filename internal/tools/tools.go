@@ -47,6 +47,7 @@ const (
 	// PermissionAllow marks tools that are explicitly allow-listed.
 	PermissionAllow    Permission = "allow"
 	maxFileToolBytes   int64      = 2_000_000
+	maxRichReadBytes   int64      = 5 * 1024 * 1024
 	maxRemoteBodyBytes int64      = 2_000_000
 	maxRAGBodyBytes    int64      = 2_000_000
 	maxRAGQueryChars              = 12_000

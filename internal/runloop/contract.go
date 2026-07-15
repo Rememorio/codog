@@ -57,7 +57,7 @@ func (v *transcriptValidator) validateMessage(messageIndex int, message anthropi
 	if message.Role == "assistant" && len(v.pending) > 0 {
 		v.report.addIssue(messageIndex, 0, "pending_tool_results", "assistant message appeared before all pending tool results were returned")
 	}
-	if message.Role == "user" && len(v.pending) > 0 && !messageContainsOnlyToolResults(message) {
+	if message.Role == "user" && len(v.pending) > 0 && !messageContainsToolResultsAndSupplementalContent(message) {
 		v.report.addIssue(messageIndex, 0, "interleaved_user_content", "user content appeared before all pending tool results were returned")
 	}
 	for blockIndex, block := range message.Content {
@@ -148,14 +148,19 @@ func (r *TranscriptReport) addIssue(messageIndex int, blockIndex int, code strin
 	})
 }
 
-func messageContainsOnlyToolResults(message anthropic.Message) bool {
+func messageContainsToolResultsAndSupplementalContent(message anthropic.Message) bool {
 	if len(message.Content) == 0 {
 		return false
 	}
+	hasToolResult := false
 	for _, block := range message.Content {
-		if block.Type != "tool_result" {
+		switch block.Type {
+		case "tool_result":
+			hasToolResult = true
+		case "image", "document":
+		default:
 			return false
 		}
 	}
-	return true
+	return hasToolResult
 }

@@ -30,6 +30,8 @@ type ToolCall struct {
 	Input   string `json:"input"`
 	Output  string `json:"output"`
 	IsError bool   `json:"is_error"`
+
+	supplemental []anthropic.ContentBlock
 }
 
 // TurnResult is the complete state produced by one runner invocation.

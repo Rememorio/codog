@@ -533,7 +533,8 @@ func TestReadFileToolReadsImages(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pixel.png"), imageData, 0o644))
 
-	out, err := NewRegistry(workspace).Execute(context.Background(), "Read", []byte(`{"file_path":"pixel.png"}`), nil)
+	registry := NewRegistry(workspace)
+	out, err := registry.Execute(context.Background(), "Read", []byte(`{"file_path":"pixel.png"}`), nil)
 	require.NoError(t, err)
 	require.Contains(t, out, `"kind": "image"`)
 	require.Contains(t, out, `"media_type": "image/png"`)
@@ -541,6 +542,31 @@ func TestReadFileToolReadsImages(t *testing.T) {
 	require.Contains(t, out, `"width": 1`)
 	require.Contains(t, out, `"height": 1`)
 	require.Contains(t, out, base64.StdEncoding.EncodeToString(imageData))
+	modelText, supplemental := registry.ModelResult("read_file", out)
+	require.NotContains(t, modelText, base64.StdEncoding.EncodeToString(imageData))
+	require.Len(t, supplemental, 1)
+	require.Equal(t, "image", supplemental[0].Type)
+	require.Equal(t, "image/png", supplemental[0].Source.MediaType)
+	require.Equal(t, base64.StdEncoding.EncodeToString(imageData), supplemental[0].Source.Data)
+}
+
+func TestReadFileToolReadsPDFAsDocument(t *testing.T) {
+	workspace := t.TempDir()
+	pdfData := []byte("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "sample.pdf"), pdfData, 0o644))
+	registry := NewRegistry(workspace)
+	out, err := registry.Execute(context.Background(), "read_file", []byte(`{"path":"sample.pdf"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "document"`)
+	require.Contains(t, out, `"media_type": "application/pdf"`)
+	require.Contains(t, out, base64.StdEncoding.EncodeToString(pdfData))
+
+	modelText, supplemental := registry.ModelResult("Read", out)
+	require.NotContains(t, modelText, base64.StdEncoding.EncodeToString(pdfData))
+	require.Len(t, supplemental, 1)
+	require.Equal(t, "document", supplemental[0].Type)
+	require.Equal(t, "application/pdf", supplemental[0].Source.MediaType)
+	require.Equal(t, base64.StdEncoding.EncodeToString(pdfData), supplemental[0].Source.Data)
 }
 
 func TestTodoToolsReadAndWriteWorkspaceTodos(t *testing.T) {

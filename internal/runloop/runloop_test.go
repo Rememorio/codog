@@ -2,6 +2,7 @@ package runloop
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -187,6 +188,55 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 	require.InDelta(t, 0.3, *client.requests[0].Temperature, 0.0001)
 	require.Equal(t, "high", client.requests[0].ReasoningEffort)
 	require.Equal(t, false, client.requests[0].ExtraBody["parallel_tool_calls"])
+}
+
+func TestRunnerReturnsReadMediaAsStructuredModelContent(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		file      string
+		data      []byte
+		blockType string
+		mediaType string
+	}{
+		{
+			name: "image", file: "pixel.png", blockType: "image", mediaType: "image/png",
+			data: mustDecodeBase64(t, "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="),
+		},
+		{name: "pdf", file: "sample.pdf", blockType: "document", mediaType: "application/pdf", data: []byte("%PDF-1.4\n%%EOF\n")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(workspace, test.file), test.data, 0o644))
+			input, err := json.Marshal(map[string]string{"path": test.file})
+			require.NoError(t, err)
+			client := &scriptedClient{responses: []anthropic.AssistantMessage{
+				{Blocks: []anthropic.ContentBlock{{Type: "tool_use", ID: "read-media", Name: "read_file", Input: input}}},
+				{Blocks: []anthropic.ContentBlock{{Type: "text", Text: "done"}}},
+			}}
+			result, err := (Runner{
+				Config: config.Config{Model: "mock", MaxTokens: 64, MaxTurns: 2},
+				Client: client, Tools: tools.NewRegistry(workspace), Workspace: workspace,
+			}).Run(context.Background(), nil, "inspect media")
+			require.NoError(t, err)
+			require.Len(t, client.requests, 2)
+			toolResult := client.requests[1].Messages[2]
+			require.Len(t, toolResult.Content, 2)
+			require.Equal(t, "tool_result", toolResult.Content[0].Type)
+			require.NotContains(t, toolResult.Content[0].Content, base64.StdEncoding.EncodeToString(test.data))
+			require.Equal(t, test.blockType, toolResult.Content[1].Type)
+			require.Equal(t, test.mediaType, toolResult.Content[1].Source.MediaType)
+			require.Equal(t, base64.StdEncoding.EncodeToString(test.data), toolResult.Content[1].Source.Data)
+			require.NotContains(t, result.ToolCalls[0].Output, base64.StdEncoding.EncodeToString(test.data))
+			require.NoError(t, ValidateTurnResult(result))
+		})
+	}
+}
+
+func mustDecodeBase64(t *testing.T, value string) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString(value)
+	require.NoError(t, err)
+	return data
 }
 
 func TestRunnerExecutesSafeToolBatchConcurrentlyInTranscriptOrder(t *testing.T) {
@@ -1145,6 +1195,20 @@ func TestValidateTranscriptAcceptsToolUseResultPairs(t *testing.T) {
 	require.Equal(t, 1, report.ToolUseCount)
 	require.Equal(t, 1, report.ToolResultCount)
 	require.Empty(t, report.Issues)
+}
+
+func TestValidateTranscriptAllowsOnlyRichSupplementalToolContent(t *testing.T) {
+	toolUse := anthropic.Message{Role: "assistant", Content: []anthropic.ContentBlock{{Type: "tool_use", ID: "read", Name: "read_file"}}}
+	richResult := anthropic.ToolResultMessageWithSupplemental("read", "image metadata", false, []anthropic.ContentBlock{{
+		Type: "image", Source: &anthropic.ContentSource{Type: "base64", MediaType: "image/png", Data: "aW1n"},
+	}})
+	require.True(t, ValidateTranscript([]anthropic.Message{toolUse, richResult}).Valid)
+
+	invalidResult := richResult
+	invalidResult.Content = append(invalidResult.Content, anthropic.ContentBlock{Type: "text", Text: "interleaved"})
+	report := ValidateTranscript([]anthropic.Message{toolUse, invalidResult})
+	require.False(t, report.Valid)
+	requireIssueCodes(t, report, "interleaved_user_content")
 }
 
 func TestValidateTranscriptRejectsBrokenToolPairing(t *testing.T) {

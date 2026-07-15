@@ -298,6 +298,8 @@ func (e *turnExecution) executeConcurrentToolBlocks(blocks []anthropic.ContentBl
 			if results[index].err != nil {
 				item.call.Output = results[index].err.Error()
 				item.call.IsError = true
+			} else {
+				item.call.Output, item.call.supplemental = e.runner.Tools.ModelResult(item.call.Name, item.call.Output)
 			}
 			item.call.Output = mergeHookFeedback(item.preMessages, item.call.Output, item.call.IsError)
 			e.applyPostToolHook(&item.call, item.input)
@@ -406,7 +408,7 @@ func (e *turnExecution) executePreparedTool(call *ToolCall, input json.RawMessag
 		call.Output = err.Error()
 		call.IsError = true
 	} else {
-		call.Output = output
+		call.Output, call.supplemental = e.runner.Tools.ModelResult(call.Name, output)
 		e.loadToolSearchResult(canonical, output)
 	}
 	call.Output = mergeHookFeedback(preMessages, call.Output, call.IsError)
@@ -502,9 +504,12 @@ func (e *turnExecution) applyFileChangedHooks(call *ToolCall, input json.RawMess
 }
 
 func (e *turnExecution) recordToolCall(blockID string, call ToolCall) {
+	if call.IsError {
+		call.supplemental = nil
+	}
 	e.toolCalls = append(e.toolCalls, call)
 	e.runner.emitToolUse(call)
-	e.messages = append(e.messages, anthropic.ToolResultMessage(blockID, call.Output, call.IsError))
+	e.messages = append(e.messages, anthropic.ToolResultMessageWithSupplemental(blockID, call.Output, call.IsError, call.supplemental))
 }
 
 func (e *turnExecution) maxTurnsResult() (TurnResult, error) {

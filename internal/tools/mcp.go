@@ -1737,7 +1737,7 @@ type ReadFileTool struct {
 func (ReadFileTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "read_file",
-		Description: "Read a UTF-8 text file from the workspace.",
+		Description: "Read a UTF-8 text file, supported image, or PDF from the workspace.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -1771,15 +1771,25 @@ func (t ReadFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 	if err != nil {
 		return "", err
 	}
-	data, truncated, err := readFileLimited(path, maxFileToolBytes)
+	readLimit := maxFileToolBytes
+	if richReadPath(path) {
+		readLimit = maxRichReadBytes
+	}
+	data, truncated, err := readFileLimited(path, readLimit)
 	if err != nil {
 		return "", err
 	}
 	if mediaType, ok := imageMediaType(path, data); ok {
 		if truncated {
-			return "", fmt.Errorf("image exceeds maximum readable size of %d bytes", maxFileToolBytes)
+			return "", fmt.Errorf("image exceeds maximum readable size of %d bytes", readLimit)
 		}
 		return pretty(imageReadResult(path, data, mediaType)), nil
+	}
+	if pdfMediaType(path, data) {
+		if truncated {
+			return "", fmt.Errorf("PDF exceeds maximum readable size of %d bytes", readLimit)
+		}
+		return pretty(documentReadResult(path, data, "application/pdf")), nil
 	}
 	if bytes.Contains(data[:min(len(data), 8192)], []byte{0}) {
 		return "", errors.New("file appears to be binary")

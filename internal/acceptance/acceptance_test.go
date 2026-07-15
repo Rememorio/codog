@@ -2,6 +2,7 @@ package acceptance
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -1096,6 +1097,48 @@ func TestRealBinaryRunLoopExecutesWorkspaceTools(t *testing.T) {
 	mu.Lock()
 	require.GreaterOrEqual(t, requests, 2)
 	mu.Unlock()
+}
+
+func TestRealBinaryReturnsReadImageAsModelContent(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	imageData, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pixel.png"), imageData, 0o644))
+	var mu sync.Mutex
+	var requests []json.RawMessage
+	server := httptest.NewServer(mockanthropic.Server{
+		Turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{ID: "read-image", Name: "read_file", Input: json.RawMessage(`{"path":"pixel.png"}`)}}},
+			{Text: "image read ok"},
+		},
+		OnRequest: func(request json.RawMessage) {
+			mu.Lock()
+			defer mu.Unlock()
+			requests = append(requests, append(json.RawMessage(nil), request...))
+		},
+	}.Handler())
+	defer server.Close()
+
+	result := runCodogWithExtraEnv(t, bin, workspace, configHome, []string{
+		"ANTHROPIC_API_KEY=acceptance-anthropic-key",
+		"ANTHROPIC_BASE_URL=" + server.URL,
+	}, nil, "--permission-mode", "allow", "--model", "claude-sonnet-4-5", "-p", "inspect image", "--max-turns", "3")
+	require.Equal(t, 0, result.Code, result.Combined())
+	require.Contains(t, result.Stdout, "image read ok")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, requests, 2)
+	var second anthropic.Request
+	require.NoError(t, json.Unmarshal(requests[1], &second))
+	require.Len(t, second.Messages, 3)
+	require.Len(t, second.Messages[2].Content, 2)
+	require.Equal(t, "tool_result", second.Messages[2].Content[0].Type)
+	require.NotContains(t, second.Messages[2].Content[0].Content, base64.StdEncoding.EncodeToString(imageData))
+	require.Equal(t, "image", second.Messages[2].Content[1].Type)
+	require.Equal(t, base64.StdEncoding.EncodeToString(imageData), second.Messages[2].Content[1].Source.Data)
 }
 
 func TestRealBinaryPermissionPromptApproveAndDeny(t *testing.T) {

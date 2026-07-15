@@ -73,13 +73,22 @@ func TextMessage(role, text string) Message {
 }
 
 func ToolResultMessage(id, content string, isError bool) Message {
+	return ToolResultMessageWithSupplemental(id, content, isError, nil)
+}
+
+// ToolResultMessageWithSupplemental returns a tool result followed by image or
+// document blocks produced by that tool.
+func ToolResultMessageWithSupplemental(id, content string, isError bool, supplemental []ContentBlock) Message {
+	blocks := make([]ContentBlock, 0, 1+len(supplemental))
+	blocks = append(blocks, ContentBlock{
+		Type:      "tool_result",
+		ToolUseID: id,
+		Content:   content,
+		IsError:   isError,
+	})
+	blocks = append(blocks, supplemental...)
 	return Message{
-		Role: "user",
-		Content: []ContentBlock{{
-			Type:      "tool_result",
-			ToolUseID: id,
-			Content:   content,
-			IsError:   isError,
-		}},
+		Role:    "user",
+		Content: blocks,
 	}
 }
