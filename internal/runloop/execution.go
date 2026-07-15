@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/hooks"
@@ -22,6 +23,22 @@ type turnExecution struct {
 	messageUsages []MessageUsage
 	toolCalls     []ToolCall
 	loadedTools   map[string]struct{}
+}
+
+const maxConcurrentToolExecutions = 10
+
+type preparedToolCall struct {
+	blockID     string
+	call        ToolCall
+	input       json.RawMessage
+	preMessages []string
+	execution   tools.AuthorizedExecution
+	ready       bool
+}
+
+type concurrentToolResult struct {
+	output string
+	err    error
 }
 
 func newTurnExecution(ctx context.Context, runner Runner, previous []anthropic.Message, content []anthropic.ContentBlock, input string) (*turnExecution, error) {
@@ -214,9 +231,112 @@ func (e *turnExecution) result(iterations int, stopFeedback []string) TurnResult
 }
 
 func (e *turnExecution) executeToolBlocks(blocks []anthropic.ContentBlock) {
-	for _, block := range blocks {
-		e.executeToolBlock(block)
+	for index := 0; index < len(blocks); {
+		if !e.toolConcurrencySafe(blocks[index]) {
+			e.executeToolBlock(blocks[index])
+			index++
+			continue
+		}
+		end := index + 1
+		for end < len(blocks) && e.toolConcurrencySafe(blocks[end]) {
+			end++
+		}
+		if end-index == 1 {
+			e.executeToolBlock(blocks[index])
+		} else {
+			e.executeConcurrentToolBlocks(blocks[index:end])
+		}
+		index = end
 	}
+}
+
+func (e *turnExecution) toolConcurrencySafe(block anthropic.ContentBlock) bool {
+	return !hasHookConfig(e.hookRunner.Config) && e.runner.Tools.ConcurrencySafe(block.Name, block.Input)
+}
+
+func (e *turnExecution) executeConcurrentToolBlocks(blocks []anthropic.ContentBlock) {
+	prepared := make([]preparedToolCall, len(blocks))
+	results := make([]concurrentToolResult, len(blocks))
+	for index, block := range blocks {
+		prepared[index] = e.prepareConcurrentTool(block)
+		if prepared[index].ready {
+			e.runner.emitToolStart(prepared[index].call)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(e.toolCtx)
+	defer cancel()
+	semaphore := make(chan struct{}, maxConcurrentToolExecutions)
+	var wait sync.WaitGroup
+	var cancelOnce sync.Once
+	for index := range prepared {
+		if !prepared[index].ready {
+			continue
+		}
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				results[index].err = ctx.Err()
+				return
+			}
+			results[index].output, results[index].err = prepared[index].execution.Execute(ctx, prepared[index].input)
+			if results[index].err != nil {
+				cancelOnce.Do(cancel)
+			}
+		}(index)
+	}
+	wait.Wait()
+
+	for index := range prepared {
+		item := &prepared[index]
+		if item.ready {
+			item.call.Output = results[index].output
+			if results[index].err != nil {
+				item.call.Output = results[index].err.Error()
+				item.call.IsError = true
+			}
+			item.call.Output = mergeHookFeedback(item.preMessages, item.call.Output, item.call.IsError)
+			e.applyPostToolHook(&item.call, item.input)
+		}
+		e.recordToolCall(item.blockID, item.call)
+	}
+}
+
+func (e *turnExecution) prepareConcurrentTool(block anthropic.ContentBlock) preparedToolCall {
+	input := append(json.RawMessage(nil), block.Input...)
+	prepared := preparedToolCall{
+		blockID: block.ID,
+		call:    ToolCall{ID: block.ID, Name: block.Name, Input: string(input)},
+		input:   input,
+	}
+	if !e.runner.toolSelectionAllows(block.Name) {
+		prepared.call.Output = fmt.Sprintf("tool %s is not available because it was not included by --tools", block.Name)
+		prepared.call.IsError = true
+		return prepared
+	}
+	preOutput, ready := e.applyPreToolHook(&prepared.call, &prepared.input)
+	if !ready {
+		return prepared
+	}
+	prompter, ready := e.executionPrompter(&prepared.call, prepared.input, preOutput.PermissionDecision)
+	if !ready {
+		return prepared
+	}
+	execution, err := e.runner.Tools.AuthorizeExecution(prepared.call.Name, prepared.input, prompter)
+	if err != nil {
+		prepared.call.Output = err.Error()
+		prepared.call.IsError = true
+		e.applyFailureHook(&prepared.call, prepared.input)
+		return prepared
+	}
+	prepared.preMessages = preOutput.Messages
+	prepared.execution = execution
+	prepared.ready = true
+	return prepared
 }
 
 func (e *turnExecution) executeToolBlock(block anthropic.ContentBlock) {

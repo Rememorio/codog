@@ -9,9 +9,11 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/hooks"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/stretchr/testify/require"
 )
@@ -35,6 +37,60 @@ func (c *scriptedClient) Stream(_ context.Context, req anthropic.Request, onText
 
 type errorClient struct {
 	err error
+}
+
+type controlledReadTool struct {
+	name    string
+	safe    bool
+	started chan<- string
+	release <-chan struct{}
+	ready   <-chan struct{}
+	fail    string
+}
+
+func (t controlledReadTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name: t.name,
+		InputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"label": map[string]any{"type": "string"}},
+			"required":   []string{"label"},
+		},
+	}
+}
+
+func (controlledReadTool) Permission() tools.Permission { return tools.PermissionReadOnly }
+
+func (t controlledReadTool) ConcurrencySafe(json.RawMessage) bool { return t.safe }
+
+func (t controlledReadTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Label string `json:"label"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	select {
+	case t.started <- payload.Label:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	if t.ready != nil {
+		select {
+		case <-t.ready:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	if payload.Label == t.fail {
+		return "", errors.New("controlled read failed")
+	}
+	select {
+	case <-t.release:
+		return payload.Label, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 func (c errorClient) Stream(context.Context, anthropic.Request, func(string)) (anthropic.AssistantMessage, error) {
@@ -131,6 +187,127 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 	require.InDelta(t, 0.3, *client.requests[0].Temperature, 0.0001)
 	require.Equal(t, "high", client.requests[0].ReasoningEffort)
 	require.Equal(t, false, client.requests[0].ExtraBody["parallel_tool_calls"])
+}
+
+func TestRunnerExecutesSafeToolBatchConcurrentlyInTranscriptOrder(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{}, 2)
+	registry := tools.NewRegistry(t.TempDir())
+	registry.Register(controlledReadTool{name: "controlled_read", safe: true, started: started, release: release})
+	client := &scriptedClient{responses: []anthropic.AssistantMessage{
+		{Blocks: []anthropic.ContentBlock{
+			{Type: "tool_use", ID: "first", Name: "controlled_read", Input: json.RawMessage(`{"label":"first"}`)},
+			{Type: "tool_use", ID: "second", Name: "controlled_read", Input: json.RawMessage(`{"label":"second"}`)},
+		}},
+		{Blocks: []anthropic.ContentBlock{{Type: "text", Text: "done"}}},
+	}}
+	events := []string{}
+	resultCh := make(chan TurnResult, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		result, err := (Runner{
+			Config: config.Config{Model: "mock", MaxTokens: 64, MaxTurns: 2},
+			Client: client, Tools: registry,
+			OnToolStart: func(call ToolCall) { events = append(events, "start:"+call.ID) },
+			OnToolUse:   func(call ToolCall) { events = append(events, "done:"+call.ID) },
+		}).Run(context.Background(), nil, "read both")
+		resultCh <- result
+		errCh <- err
+	}()
+
+	seen := map[string]bool{}
+	for range 2 {
+		select {
+		case label := <-started:
+			seen[label] = true
+		case <-time.After(time.Second):
+			t.Fatal("safe tool batch did not start concurrently")
+		}
+	}
+	require.Equal(t, map[string]bool{"first": true, "second": true}, seen)
+	release <- struct{}{}
+	release <- struct{}{}
+	require.NoError(t, <-errCh)
+	result := <-resultCh
+	require.Equal(t, []string{"first", "second"}, []string{result.ToolCalls[0].Output, result.ToolCalls[1].Output})
+	require.Equal(t, []string{"start:first", "start:second", "done:first", "done:second"}, events)
+	require.Equal(t, "first", result.Messages[2].Content[0].Content)
+	require.Equal(t, "second", result.Messages[3].Content[0].Content)
+	require.NoError(t, ValidateTurnResult(result))
+}
+
+func TestRunnerKeepsUnsafeToolCallsSerial(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{}, 2)
+	registry := tools.NewRegistry(t.TempDir())
+	registry.Register(controlledReadTool{name: "controlled_serial", safe: false, started: started, release: release})
+	client := &scriptedClient{responses: []anthropic.AssistantMessage{
+		{Blocks: []anthropic.ContentBlock{
+			{Type: "tool_use", ID: "first", Name: "controlled_serial", Input: json.RawMessage(`{"label":"first"}`)},
+			{Type: "tool_use", ID: "second", Name: "controlled_serial", Input: json.RawMessage(`{"label":"second"}`)},
+		}},
+		{Blocks: []anthropic.ContentBlock{{Type: "text", Text: "done"}}},
+	}}
+	done := make(chan error, 1)
+	go func() {
+		_, err := (Runner{Config: config.Config{Model: "mock", MaxTokens: 64, MaxTurns: 2}, Client: client, Tools: registry}).Run(context.Background(), nil, "read serially")
+		done <- err
+	}()
+	require.Equal(t, "first", <-started)
+	select {
+	case label := <-started:
+		t.Fatalf("second unsafe tool started before first completed: %s", label)
+	case <-time.After(50 * time.Millisecond):
+	}
+	release <- struct{}{}
+	require.Equal(t, "second", <-started)
+	release <- struct{}{}
+	require.NoError(t, <-done)
+}
+
+func TestToolHooksDisableConcurrentBatching(t *testing.T) {
+	registry := tools.NewRegistry(t.TempDir())
+	execution := turnExecution{
+		runner:     Runner{Tools: registry},
+		hookRunner: hooks.Runner{Config: config.HookConfig{PreToolUse: []string{"configured"}}},
+	}
+	require.False(t, execution.toolConcurrencySafe(anthropic.ContentBlock{
+		Type: "tool_use", Name: "read_file", Input: json.RawMessage(`{"path":"README.md"}`),
+	}))
+}
+
+func TestRunnerCancelsSiblingAfterConcurrentToolFailure(t *testing.T) {
+	started := make(chan string, 2)
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	registry := tools.NewRegistry(t.TempDir())
+	registry.Register(controlledReadTool{
+		name: "failing_read", safe: true, started: started, release: release, ready: ready, fail: "first",
+	})
+	client := &scriptedClient{responses: []anthropic.AssistantMessage{
+		{Blocks: []anthropic.ContentBlock{
+			{Type: "tool_use", ID: "first", Name: "failing_read", Input: json.RawMessage(`{"label":"first"}`)},
+			{Type: "tool_use", ID: "second", Name: "failing_read", Input: json.RawMessage(`{"label":"second"}`)},
+		}},
+		{Blocks: []anthropic.ContentBlock{{Type: "text", Text: "done"}}},
+	}}
+	resultCh := make(chan TurnResult, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		result, err := (Runner{Config: config.Config{Model: "mock", MaxTokens: 64, MaxTurns: 2}, Client: client, Tools: registry}).Run(context.Background(), nil, "read")
+		resultCh <- result
+		errCh <- err
+	}()
+	<-started
+	<-started
+	close(ready)
+	require.NoError(t, <-errCh)
+	result := <-resultCh
+	require.Len(t, result.ToolCalls, 2)
+	require.True(t, result.ToolCalls[0].IsError)
+	require.Contains(t, result.ToolCalls[0].Output, "controlled read failed")
+	require.True(t, result.ToolCalls[1].IsError)
+	require.Contains(t, result.ToolCalls[1].Output, "context canceled")
 }
 
 func TestRunnerStopsWhenMaxBudgetExceeded(t *testing.T) {

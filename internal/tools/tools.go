@@ -972,33 +972,18 @@ func toolInfo(tool Tool) ToolInfo {
 }
 
 func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessage, prompter *Prompter) (string, error) {
-	canonical, tool, ok := r.resolve(name)
+	canonical, _, ok := r.resolve(name)
 	if !ok {
 		return "", r.unknownToolError(name)
 	}
 	if strings.EqualFold(canonical, "permission_check") {
 		return r.executePermissionCheck(input, prompter)
 	}
-	decision := PermissionDecision{}
-	if prompter != nil {
-		var err error
-		decision, err = prompter.AuthorizeDecision(canonical, tool.Permission(), input)
-		if err != nil {
-			return "", err
-		}
-	}
-	output, err := tool.Execute(ctx, input)
-	feedback := strings.TrimSpace(decision.Feedback)
+	execution, err := r.AuthorizeExecution(canonical, input, prompter)
 	if err != nil {
-		if feedback != "" {
-			return output, fmt.Errorf("%w; permission feedback: %s", err, feedback)
-		}
-		return output, err
+		return "", err
 	}
-	if feedback == "" {
-		return output, err
-	}
-	return appendPermissionFeedback(output, feedback), nil
+	return execution.Execute(ctx, input)
 }
 
 func (r *Registry) unknownToolError(name string) error {
