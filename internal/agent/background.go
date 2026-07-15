@@ -249,6 +249,8 @@ func (a *App) ReloadPlugins(args []string) error {
 }
 
 func (a *App) ReloadPluginsWithFormat(args []string, defaultFormat string) error {
+	a.mcpLoadMu.Lock()
+	defer a.mcpLoadMu.Unlock()
 	req, err := parseReloadPluginsArgs(args, defaultFormat)
 	if err != nil {
 		return err
@@ -266,7 +268,9 @@ func (a *App) ReloadPluginsWithFormat(args []string, defaultFormat string) error
 		before = len(a.Tools.Infos())
 	}
 	oldRegistry := a.Tools
+	a.mcpMu.Lock()
 	oldMCPLoaded := a.mcpToolsLoaded
+	a.mcpMu.Unlock()
 	oldManifests := a.PluginManifests
 	oldAgentDefinitions := a.AgentDefinitions
 	a.PluginManifests = manifests
@@ -278,13 +282,21 @@ func (a *App) ReloadPluginsWithFormat(args []string, defaultFormat string) error
 		return err
 	}
 	a.Tools = nextRegistry
+	a.mcpMu.Lock()
 	a.mcpToolsLoaded = false
+	a.mcpMu.Unlock()
 	if err := a.RegisterPluginTools(); err != nil {
+		_ = nextRegistry.Close()
 		a.Tools = oldRegistry
+		a.mcpMu.Lock()
 		a.mcpToolsLoaded = oldMCPLoaded
+		a.mcpMu.Unlock()
 		a.PluginManifests = oldManifests
 		a.AgentDefinitions = oldAgentDefinitions
 		return err
+	}
+	if oldRegistry != nil {
+		_ = oldRegistry.Close()
 	}
 	report := buildReloadPluginsReport(a.Workspace, manifests, before, len(a.Tools.Infos()), oldMCPLoaded)
 	if req.Format == "json" {
@@ -401,19 +413,26 @@ func renderReloadPluginsReport(out io.Writer, report reloadPluginsReport) {
 }
 
 func (a *App) RegisterMCPTools(ctx context.Context) error {
+	a.mcpLoadMu.Lock()
+	defer a.mcpLoadMu.Unlock()
+	a.mcpMu.Lock()
 	if a.mcpToolsLoaded {
+		a.mcpMu.Unlock()
 		return nil
 	}
 	if len(a.Config.MCPServers) == 0 {
 		a.mcpToolsLoaded = true
+		a.mcpMu.Unlock()
 		return nil
 	}
+	stale := a.mcpToolsStale
+	a.mcpToolsStale = false
+	a.mcpMu.Unlock()
 	if a.Tools == nil {
 		return errors.New("cannot register MCP tools without a tool registry")
 	}
-	if a.mcpToolsStale {
+	if stale {
 		a.Tools.RemoveMCPTools()
-		a.mcpToolsStale = false
 	}
 	clientOptions := a.Tools.MCPClientOptions()
 	clientOptions.OnNotification = a.handleMCPNotification
@@ -422,7 +441,7 @@ func (a *App) RegisterMCPTools(ctx context.Context) error {
 	registered := 0
 	for _, serverName := range sortedMCPServerNames(a.Config.MCPServers) {
 		server := a.Config.MCPServers[serverName]
-		result := mcp.ListTools(ctx, serverName, server)
+		result := a.Tools.ListMCPTools(ctx, serverName, server)
 		if result.Error != "" {
 			failures = append(failures, fmt.Sprintf("%s: %s", serverName, result.Error))
 			continue
@@ -432,16 +451,7 @@ func (a *App) RegisterMCPTools(ctx context.Context) error {
 			if a.Tools.Has(name) {
 				return fmt.Errorf("mcp tool %q conflicts with an existing tool", name)
 			}
-			a.Tools.Register(tools.MCPTool{
-				Name:        name,
-				Description: remoteTool.Description,
-				Schema:      remoteTool.InputSchema,
-				Required:    tools.PermissionWorkspace,
-				ServerName:  serverName,
-				Server:      server,
-				RemoteName:  remoteTool.Name,
-				Options:     a.Tools.MCPClientOptions,
-			})
+			a.Tools.RegisterMCPTool(serverName, server, remoteTool)
 			registered++
 		}
 	}
@@ -455,15 +465,21 @@ func (a *App) RegisterMCPTools(ctx context.Context) error {
 			return fmt.Errorf("no MCP tools registered; %s", strings.Join(failures, "; "))
 		}
 	}
-	a.mcpToolsLoaded = true
+	a.mcpMu.Lock()
+	if !a.mcpToolsStale {
+		a.mcpToolsLoaded = true
+	}
+	a.mcpMu.Unlock()
 	return nil
 }
 
 func (a *App) handleMCPNotification(notification mcp.Notification) {
 	switch notification.Method {
 	case "notifications/tools/list_changed", "notifications/prompts/list_changed", "notifications/resources/list_changed":
+		a.mcpMu.Lock()
 		a.mcpToolsLoaded = false
 		a.mcpToolsStale = true
+		a.mcpMu.Unlock()
 	}
 }
 
@@ -756,18 +772,24 @@ func (a *App) activateCreatedAgentDefinition(definition agentdefs.Definition) er
 		return nil
 	}
 	previousTools := a.Tools
+	a.mcpMu.Lock()
 	previousMCPLoaded := a.mcpToolsLoaded
+	a.mcpMu.Unlock()
 	next, err := a.newToolRegistry()
 	if err != nil {
 		a.AgentDefinitions = previousDefinitions
 		return err
 	}
 	a.Tools = next
+	a.mcpMu.Lock()
 	a.mcpToolsLoaded = false
+	a.mcpMu.Unlock()
 	if err := a.RegisterPluginTools(); err != nil {
 		a.AgentDefinitions = previousDefinitions
 		a.Tools = previousTools
+		a.mcpMu.Lock()
 		a.mcpToolsLoaded = previousMCPLoaded
+		a.mcpMu.Unlock()
 		return err
 	}
 	return nil

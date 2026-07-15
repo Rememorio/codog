@@ -38,6 +38,7 @@ import (
 type GetMCPPromptTool struct {
 	Servers map[string]config.MCPServerConfig
 	Options func() mcp.ClientOptions
+	Clients *mcp.ClientPool
 }
 
 func (t GetMCPPromptTool) Definition() anthropic.ToolDefinition {
@@ -78,7 +79,12 @@ func (t GetMCPPromptTool) Execute(ctx context.Context, input json.RawMessage) (s
 	if !ok {
 		return "", unknownMCPServerError(payload.Server, t.Servers)
 	}
-	result := mcp.GetPromptWithOptions(ctx, payload.Server, server, payload.Prompt, payload.Arguments, currentMCPOptions(t.Options))
+	var result mcp.PromptGetResult
+	if t.Clients != nil {
+		result = t.Clients.GetPrompt(ctx, payload.Server, server, payload.Prompt, payload.Arguments, currentMCPOptions(t.Options))
+	} else {
+		result = mcp.GetPromptWithOptions(ctx, payload.Server, server, payload.Prompt, payload.Arguments, currentMCPOptions(t.Options))
+	}
 	if result.Error != "" {
 		return "", errors.New(result.Error)
 	}

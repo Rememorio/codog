@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/config"
+	protocol "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -111,6 +112,215 @@ func TestCallToolDeclinesElicitationWithoutHandler(t *testing.T) {
 	call := CallTool(context.Background(), "test", server, "echo", json.RawMessage(`{}`))
 	require.Empty(t, call.Error)
 	require.Contains(t, string(call.Result), `"action":"decline"`)
+}
+
+func TestClientPoolPreservesServerStateAndReceivesIdleNotifications(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestMCPHelperProcess"},
+		Env:     []string{"CODOG_MCP_HELPER=1", "CODOG_MCP_PERSISTENCE=1"},
+	}
+	pool := NewClientPool()
+	t.Cleanup(func() { require.NoError(t, pool.Close()) })
+	notifications := make(chan Notification, 1)
+	options := ClientOptions{OnNotification: func(notification Notification) {
+		notifications <- notification
+	}}
+
+	tools := pool.ListTools(context.Background(), "stateful", server, options)
+	require.Empty(t, tools.Error)
+	first := pool.CallTool(context.Background(), "stateful", server, "echo", nil, options)
+	require.Empty(t, first.Error)
+	require.Contains(t, string(first.Result), "hi call 1")
+
+	select {
+	case notification := <-notifications:
+		require.Equal(t, "notifications/tools/list_changed", notification.Method)
+	case <-time.After(2 * time.Second):
+		t.Fatal("persistent MCP notification was not delivered between calls")
+	}
+
+	second := pool.CallTool(context.Background(), "stateful", server, "echo", nil, options)
+	require.Empty(t, second.Error)
+	require.Contains(t, string(second.Result), "hi call 2")
+
+	resources := pool.ListResources(context.Background(), "stateful", server, options)
+	require.Empty(t, resources.Error)
+	require.Contains(t, string(resources.Resources), "codog://note")
+
+	templates := pool.ListResourceTemplates(context.Background(), "stateful", server, options)
+	require.Empty(t, templates.Error)
+	require.Contains(t, string(templates.Templates), "codog://notes/{name}")
+
+	read := pool.ReadResource(context.Background(), "stateful", server, "codog://note", options)
+	require.Empty(t, read.Error)
+	require.Contains(t, string(read.Result), "note body")
+
+	prompts := pool.ListPrompts(context.Background(), "stateful", server, options)
+	require.Empty(t, prompts.Error)
+	require.Contains(t, string(prompts.Prompts), "review")
+
+	prompt := pool.GetPrompt(context.Background(), "stateful", server, "review", json.RawMessage(`{"topic":"hooks"}`), options)
+	require.Empty(t, prompt.Error)
+	require.Contains(t, string(prompt.Result), "Review hooks")
+}
+
+func TestClientPoolLifecycleAndOperationFailures(t *testing.T) {
+	var nilPool *ClientPool
+	require.NoError(t, nilPool.Close())
+	require.Contains(t, nilPool.ListTools(context.Background(), "nil", config.MCPServerConfig{}, ClientOptions{}).Error, "pool is nil")
+
+	pool := NewClientPool()
+	first, err := pool.client("server", config.MCPServerConfig{Command: "first"}, ClientOptions{})
+	require.NoError(t, err)
+	second, err := pool.client("server", config.MCPServerConfig{Command: "second"}, ClientOptions{})
+	require.NoError(t, err)
+	require.NotSame(t, first, second)
+	require.NoError(t, pool.Close())
+	require.NoError(t, pool.Close())
+	require.Contains(t, pool.ListTools(context.Background(), "closed", config.MCPServerConfig{}, ClientOptions{}).Error, "pool is closed")
+
+	missing := NewClientPool()
+	t.Cleanup(func() { require.NoError(t, missing.Close()) })
+	server := config.MCPServerConfig{}
+	require.Contains(t, missing.ListTools(context.Background(), "missing", server, ClientOptions{}).Error, "missing command")
+	require.Contains(t, missing.CallTool(context.Background(), "missing", server, "echo", nil, ClientOptions{}).Error, "missing command")
+	require.Contains(t, missing.ListResources(context.Background(), "missing", server, ClientOptions{}).Error, "missing command")
+	require.Contains(t, missing.ReadResource(context.Background(), "missing", server, "codog://note", ClientOptions{}).Error, "missing command")
+	require.Contains(t, missing.ListResourceTemplates(context.Background(), "missing", server, ClientOptions{}).Error, "missing command")
+	require.Contains(t, missing.ListPrompts(context.Background(), "missing", server, ClientOptions{}).Error, "missing command")
+	require.Contains(t, missing.GetPrompt(context.Background(), "missing", server, "review", nil, ClientOptions{}).Error, "missing command")
+
+	require.NotEmpty(t, missing.CallTool(context.Background(), "missing", server, "echo", json.RawMessage(`{`), ClientOptions{}).Error)
+	require.NotEmpty(t, missing.GetPrompt(context.Background(), "missing", server, "review", json.RawMessage(`{`), ClientOptions{}).Error)
+}
+
+func TestClientPoolPropagatesServerOperationFailures(t *testing.T) {
+	pool := NewClientPool()
+	t.Cleanup(func() { require.NoError(t, pool.Close()) })
+	server := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestMCPHelperProcess"},
+		Env: []string{
+			"CODOG_MCP_HELPER=1", "CODOG_MCP_FAIL_TOOLS=1", "CODOG_MCP_FAIL_CALL=1",
+			"CODOG_MCP_FAIL_RESOURCES=1", "CODOG_MCP_FAIL_PROMPTS=1",
+		},
+	}
+
+	require.Contains(t, pool.ListTools(context.Background(), "failing", server, ClientOptions{}).Error, "tool discovery failed")
+	require.Contains(t, pool.CallTool(context.Background(), "failing", server, "echo", nil, ClientOptions{}).Error, "tool call failed")
+	require.Contains(t, pool.ListResources(context.Background(), "failing", server, ClientOptions{}).Error, "resource discovery failed")
+	require.Contains(t, pool.ReadResource(context.Background(), "failing", server, "codog://note", ClientOptions{}).Error, "resource read failed")
+	require.Contains(t, pool.ListResourceTemplates(context.Background(), "failing", server, ClientOptions{}).Error, "resource templates failed")
+	require.Contains(t, pool.ListPrompts(context.Background(), "failing", server, ClientOptions{}).Error, "prompt discovery failed")
+	require.Contains(t, pool.GetPrompt(context.Background(), "failing", server, "review", nil, ClientOptions{}).Error, "prompt render failed")
+}
+
+func TestPooledClientOptionsForwardInteractionsAndNotifications(t *testing.T) {
+	client := &pooledClient{}
+	var elicited ElicitationRequest
+	var notifications []Notification
+	client.options.set(ClientOptions{
+		Elicit: func(_ context.Context, request ElicitationRequest) (ElicitationResult, error) {
+			elicited = request
+			return ElicitationResult{Action: "accept", Content: map[string]any{"choice": "yes"}}, nil
+		},
+		OnNotification: func(notification Notification) {
+			notifications = append(notifications, notification)
+		},
+	})
+	options := client.protocolOptions()
+	result, err := options.ElicitationHandler(context.Background(), &protocol.ElicitRequest{Params: &protocol.ElicitParams{
+		Mode: "form", Message: "Choose", RequestedSchema: map[string]any{"type": "object"},
+	}})
+	require.NoError(t, err)
+	require.Equal(t, "accept", result.Action)
+	require.Equal(t, "Choose", elicited.Message)
+	require.Equal(t, map[string]any{"type": "object"}, elicited.RequestedSchema)
+
+	options.ToolListChangedHandler(context.Background(), &protocol.ToolListChangedRequest{Params: &protocol.ToolListChangedParams{}})
+	options.PromptListChangedHandler(context.Background(), &protocol.PromptListChangedRequest{Params: &protocol.PromptListChangedParams{}})
+	options.ResourceListChangedHandler(context.Background(), &protocol.ResourceListChangedRequest{Params: &protocol.ResourceListChangedParams{}})
+	options.ResourceUpdatedHandler(context.Background(), &protocol.ResourceUpdatedNotificationRequest{Params: &protocol.ResourceUpdatedNotificationParams{URI: "codog://note"}})
+	options.LoggingMessageHandler(context.Background(), &protocol.LoggingMessageRequest{Params: &protocol.LoggingMessageParams{Data: "log"}})
+	options.ProgressNotificationHandler(context.Background(), &protocol.ProgressNotificationClientRequest{Params: &protocol.ProgressNotificationParams{Progress: 1}})
+	options.ElicitationCompleteHandler(context.Background(), &protocol.ElicitationCompleteNotificationRequest{Params: &protocol.ElicitationCompleteParams{ElicitationID: "request-1"}})
+	require.Equal(t, []string{
+		"notifications/tools/list_changed", "notifications/prompts/list_changed", "notifications/resources/list_changed",
+		"notifications/resources/updated", "notifications/message", "notifications/progress", "notifications/elicitation/complete",
+	}, notificationMethods(notifications))
+
+	client.options.set(ClientOptions{})
+	declined, err := client.protocolOptions().ElicitationHandler(context.Background(), &protocol.ElicitRequest{Params: &protocol.ElicitParams{Message: "Choose"}})
+	require.NoError(t, err)
+	require.Equal(t, "decline", declined.Action)
+	client.protocolOptions().ToolListChangedHandler(context.Background(), &protocol.ToolListChangedRequest{Params: &protocol.ToolListChangedParams{}})
+
+	client.options.set(ClientOptions{Elicit: func(context.Context, ElicitationRequest) (ElicitationResult, error) {
+		return ElicitationResult{}, errors.New("interaction failed")
+	}})
+	_, err = client.protocolOptions().ElicitationHandler(context.Background(), &protocol.ElicitRequest{Params: &protocol.ElicitParams{Message: "Choose"}})
+	require.ErrorContains(t, err, "interaction failed")
+}
+
+func TestPooledClientTransportRootsAndCallContext(t *testing.T) {
+	client := &pooledClient{}
+	_, err := client.transport()
+	require.ErrorContains(t, err, "missing command")
+	client.server.URL = "ftp://example.test/mcp"
+	_, err = client.transport()
+	require.Error(t, err)
+
+	rootA := Root{URI: "file:///a", Name: "a"}
+	rootB := Root{URI: "file:///b", Name: "b"}
+	client.client = protocol.NewClient(&protocol.Implementation{Name: "test", Version: "1"}, nil)
+	client.roots = rootsByURI([]Root{rootA})
+	client.options.set(ClientOptions{Roots: []Root{rootB}})
+	client.syncRootsLocked()
+	require.Equal(t, map[string]Root{rootB.URI: rootB}, client.roots)
+	client.client = nil
+	client.syncRootsLocked()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	requestCtx, requestCancel := mcpCallContext(ctx, config.MCPServerConfig{})
+	require.NotNil(t, requestCtx)
+	requestCancel()
+	cancel()
+	deadlineCtx, deadlineCancel := context.WithTimeout(context.Background(), time.Second)
+	defer deadlineCancel()
+	reused, reusedCancel := mcpCallContext(deadlineCtx, config.MCPServerConfig{})
+	require.Equal(t, deadlineCtx, reused)
+	reusedCancel()
+}
+
+func TestMCPHeaderTransportAddsResolvedHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "Bearer token", request.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+	require.NoError(t, err)
+	transport := mcpHeaderTransport{base: http.DefaultTransport, server: config.MCPServerConfig{
+		Headers: map[string]string{"Authorization": "Bearer token"},
+	}}
+	response, err := transport.RoundTrip(request)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Empty(t, request.Header.Get("Authorization"))
+
+	missingHelper := mcpHeaderTransport{base: http.DefaultTransport, server: config.MCPServerConfig{HeadersHelper: filepath.Join(t.TempDir(), "missing")}}
+	_, err = missingHelper.RoundTrip(request)
+	require.Error(t, err)
+}
+
+func notificationMethods(notifications []Notification) []string {
+	methods := make([]string, len(notifications))
+	for i, notification := range notifications {
+		methods[i] = notification.Method
+	}
+	return methods
 }
 
 func TestServerRequestResponsesCoverProtocolOutcomes(t *testing.T) {
@@ -793,6 +1003,7 @@ func TestMCPHelperProcess(t *testing.T) {
 		return
 	}
 	reader := bufio.NewScanner(os.Stdin)
+	toolCalls := 0
 	for reader.Scan() {
 		line := reader.Text()
 		if strings.TrimSpace(line) == "" {
@@ -827,7 +1038,8 @@ func TestMCPHelperProcess(t *testing.T) {
 				},
 			}}})
 		case "tools/call":
-			handleMCPHelperToolCall(reader, id)
+			toolCalls++
+			handleMCPHelperToolCall(reader, id, toolCalls)
 		case "resources/list":
 			if os.Getenv("CODOG_MCP_FAIL_RESOURCES") == "1" {
 				writeMCPError(id, "resource discovery failed")
@@ -879,13 +1091,21 @@ func TestMCPHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func handleMCPHelperToolCall(reader *bufio.Scanner, id any) {
+func handleMCPHelperToolCall(reader *bufio.Scanner, id any, call int) {
 	if os.Getenv("CODOG_MCP_FAIL_CALL") == "1" {
 		writeMCPError(id, "tool call failed")
 		return
 	}
 	if os.Getenv("CODOG_MCP_SERVER_REQUESTS") != "1" {
-		writeMCP(id, map[string]any{"content": []map[string]any{{"type": "text", "text": "hi"}}})
+		text := "hi"
+		if os.Getenv("CODOG_MCP_PERSISTENCE") == "1" {
+			text = fmt.Sprintf("hi call %d", call)
+		}
+		result := map[string]any{"content": []map[string]any{{"type": "text", "text": text}}}
+		writeMCP(id, result)
+		if call == 1 && os.Getenv("CODOG_MCP_PERSISTENCE") == "1" {
+			writeMCPNotification("notifications/tools/list_changed", map[string]any{"reason": "state changed"})
+		}
 		return
 	}
 	writeMCPRequest(101, "roots/list", nil)

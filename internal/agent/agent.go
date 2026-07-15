@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Rememorio/codog/internal/agentdefs"
@@ -70,9 +71,25 @@ type App struct {
 
 	ConfigLoadError     string
 	ConfigLoadErrorKind string
+	mcpLoadMu           sync.Mutex
+	mcpMu               sync.Mutex
 	mcpToolsLoaded      bool
 	mcpToolsStale       bool
 	dynamicSkillPaths   []string
+}
+
+// Close releases persistent runtime resources owned by the application.
+func (a *App) Close() error {
+	if a == nil || a.Tools == nil {
+		return nil
+	}
+	return a.Tools.Close()
+}
+
+func (a *App) mcpToolsAreLoaded() bool {
+	a.mcpMu.Lock()
+	defer a.mcpMu.Unlock()
+	return a.mcpToolsLoaded
 }
 
 func (a *App) runtimePluginManifests() ([]plugins.Manifest, error) {
@@ -225,6 +242,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err := run.buildApp(); err != nil {
 		return err
 	}
+	defer func() { _ = run.app.Close() }()
 	if handled, err := run.prepareRuntime(); handled {
 		return err
 	}

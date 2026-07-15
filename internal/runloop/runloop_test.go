@@ -190,6 +190,36 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 	require.Equal(t, false, client.requests[0].ExtraBody["parallel_tool_calls"])
 }
 
+func TestRunnerRefreshesRuntimeToolsBeforeEveryModelRequest(t *testing.T) {
+	workspace := t.TempDir()
+	client := &scriptedClient{responses: []anthropic.AssistantMessage{
+		{Blocks: []anthropic.ContentBlock{{Type: "tool_use", ID: "tool-1", Name: "glob", Input: []byte(`{"pattern":"*.txt"}`)}}},
+		{Blocks: []anthropic.ContentBlock{{Type: "text", Text: "done"}}},
+	}}
+	refreshes := 0
+	_, err := Runner{
+		Config: config.Config{Model: "mock", MaxTokens: 64, MaxTurns: 2},
+		Client: client, Tools: tools.NewRegistry(workspace), Workspace: workspace,
+		BeforeRequest: func(context.Context) error {
+			refreshes++
+			return nil
+		},
+	}.Run(context.Background(), nil, "list files")
+	require.NoError(t, err)
+	require.Equal(t, 2, refreshes)
+}
+
+func TestRunnerStopsWhenRuntimeToolRefreshFails(t *testing.T) {
+	client := &scriptedClient{responses: []anthropic.AssistantMessage{{Blocks: []anthropic.ContentBlock{{Type: "text", Text: "unused"}}}}}
+	_, err := Runner{
+		Config: config.Config{Model: "mock", MaxTokens: 64, MaxTurns: 1},
+		Client: client, Tools: tools.NewRegistry(t.TempDir()),
+		BeforeRequest: func(context.Context) error { return errors.New("refresh failed") },
+	}.Run(context.Background(), nil, "hello")
+	require.EqualError(t, err, "refresh failed")
+	require.Empty(t, client.requests)
+}
+
 func TestRunnerReturnsReadMediaAsStructuredModelContent(t *testing.T) {
 	for _, test := range []struct {
 		name      string

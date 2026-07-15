@@ -24,6 +24,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestAppCloseHandlesEmptyAndInitializedRuntimes(t *testing.T) {
+	var nilApp *App
+	require.NoError(t, nilApp.Close())
+	require.NoError(t, (&App{}).Close())
+	require.NoError(t, (&App{Tools: tools.NewRegistry(t.TempDir())}).Close())
+}
+
 func TestResumedDebugToolCallAllowedFollowsRegistry(t *testing.T) {
 	registry := tools.NewRegistry(t.TempDir())
 	app := &App{Tools: registry}

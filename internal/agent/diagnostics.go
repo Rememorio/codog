@@ -1538,7 +1538,7 @@ func (a *App) DebugToolCall(ctx context.Context, args []string, overrides config
 		return errors.New("tool registry is not initialized")
 	}
 	info, ok := a.Tools.Info(req.Tool)
-	if !ok && !a.mcpToolsLoaded && len(a.Config.MCPServers) > 0 {
+	if !ok && !a.mcpToolsAreLoaded() && len(a.Config.MCPServers) > 0 {
 		if err := a.RegisterMCPTools(ctx); err != nil {
 			return err
 		}

@@ -1756,6 +1756,7 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		System:           a.systemPromptForInput(input),
 		OnToolStart:      opts.OnToolStart,
 		OnToolUse:        onToolUse,
+		BeforeRequest:    a.RegisterMCPTools,
 		MaxBudgetUSD:     opts.MaxBudgetUSD,
 		PriorCostUSD:     opts.PriorCostUSD,
 	}

@@ -75,6 +75,7 @@ type Runner struct {
 	System           string
 	OnToolStart      func(ToolCall)
 	OnToolUse        func(ToolCall)
+	BeforeRequest    func(context.Context) error
 	MaxBudgetUSD     float64
 	PriorCostUSD     float64
 }

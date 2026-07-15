@@ -248,7 +248,7 @@ func (a *App) resumedDebugToolCallAllowed(ctx context.Context, name string) (boo
 	if a.Tools.Has(name) {
 		return true, nil
 	}
-	if a.mcpToolsLoaded || len(a.Config.MCPServers) == 0 {
+	if a.mcpToolsAreLoaded() || len(a.Config.MCPServers) == 0 {
 		return false, nil
 	}
 	if err := a.RegisterMCPTools(ctx); err != nil {

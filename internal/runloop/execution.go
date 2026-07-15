@@ -109,6 +109,11 @@ func (e *turnExecution) applyUserPromptHook(input string) error {
 
 func (e *turnExecution) run() (TurnResult, error) {
 	for turn := 0; turn < e.runner.Config.MaxTurns; turn++ {
+		if e.runner.BeforeRequest != nil {
+			if err := e.runner.BeforeRequest(e.ctx); err != nil {
+				return TurnResult{}, err
+			}
+		}
 		request, err := e.request()
 		if err != nil {
 			return TurnResult{}, err
