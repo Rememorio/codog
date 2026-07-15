@@ -11,6 +11,9 @@ import (
 	"strings"
 )
 
+// Current is the semantic version reported by Codog binaries and protocols.
+const Current = "0.1.2"
+
 var (
 	GitSHA    = "unknown"
 	GitBranch = "unknown"

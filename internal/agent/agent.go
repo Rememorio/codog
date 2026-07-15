@@ -46,9 +46,10 @@ import (
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/trustresolver"
 	"github.com/Rememorio/codog/internal/tui"
+	"github.com/Rememorio/codog/internal/versioninfo"
 )
 
-const version = "0.1.1"
+const version = versioninfo.Current
 const maxSystemGitStatusChars = 2000
 const maxDynamicSkillContextPaths = 64
 

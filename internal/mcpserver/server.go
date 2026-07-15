@@ -16,6 +16,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/toolnames"
 	"github.com/Rememorio/codog/internal/tools"
+	"github.com/Rememorio/codog/internal/versioninfo"
 )
 
 // Options configures the local MCP server identity, workspace, and permission
@@ -91,7 +92,7 @@ func handle(ctx context.Context, out io.Writer, registry *tools.Registry, opts O
 	case "initialize":
 		version := strings.TrimSpace(opts.Version)
 		if version == "" {
-			version = "0.1.1"
+			version = versioninfo.Current
 		}
 		return writeResult(out, req.ID, map[string]any{
 			"protocolVersion": "2024-11-05",

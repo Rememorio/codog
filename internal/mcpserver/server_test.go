@@ -10,8 +10,21 @@ import (
 	"testing"
 
 	"github.com/Rememorio/codog/internal/tools"
+	"github.com/Rememorio/codog/internal/versioninfo"
 	"github.com/stretchr/testify/require"
 )
+
+func TestServeUsesCurrentVersionByDefault(t *testing.T) {
+	var out bytes.Buffer
+	require.NoError(t, Serve(context.Background(), strings.NewReader(
+		"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n",
+	), &out, tools.NewRegistry(t.TempDir()), Options{}))
+
+	responses := decodeResponses(t, out.String())
+	require.Len(t, responses, 1)
+	serverInfo := responses[0]["result"].(map[string]any)["serverInfo"].(map[string]any)
+	require.Equal(t, versioninfo.Current, serverInfo["version"])
+}
 
 func TestServeListsAndCallsTools(t *testing.T) {
 	workspace := t.TempDir()

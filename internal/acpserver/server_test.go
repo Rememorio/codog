@@ -10,9 +10,16 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/versioninfo"
 	"github.com/Rememorio/codog/internal/workspaceops"
 	"github.com/stretchr/testify/require"
 )
+
+func TestInitializeResultUsesCurrentVersionByDefault(t *testing.T) {
+	result := initializeResult(Options{})
+	serverInfo := result["serverInfo"].(map[string]any)
+	require.Equal(t, versioninfo.Current, serverInfo["version"])
+}
 
 func TestHandleRejectsUnknownNamespacedMethods(t *testing.T) {
 	for _, namespace := range []string{

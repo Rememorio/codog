@@ -12,6 +12,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/versioninfo"
 	"github.com/Rememorio/codog/internal/workspaceops"
 )
 
@@ -857,7 +858,7 @@ func methodNotFound(out io.Writer, req request) (bool, error) {
 func initializeResult(opts Options) map[string]any {
 	version := strings.TrimSpace(opts.Version)
 	if version == "" {
-		version = "0.1.1"
+		version = versioninfo.Current
 	}
 	return map[string]any{
 		"protocolVersion": "codog-acp-0.1",

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/versioninfo"
 )
 
 const (
@@ -1837,7 +1838,7 @@ func initializeRequest(id int) rpcRequest {
 				"roots":       map[string]any{"listChanged": false},
 				"elicitation": map[string]any{"form": map[string]any{}, "url": map[string]any{}},
 			},
-			"clientInfo": map[string]any{"name": "codog", "version": "0.1.1"},
+			"clientInfo": map[string]any{"name": "codog", "version": versioninfo.Current},
 		},
 	}
 }

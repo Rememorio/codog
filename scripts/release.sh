@@ -84,8 +84,8 @@ commit_sha="$(git rev-parse "${commit}^{commit}")" || die "cannot resolve commit
 head_sha="$(git rev-parse HEAD)"
 [ "${commit_sha}" = "${head_sha}" ] || die "release commit must match the checked-out HEAD"
 
-source_version="$(sed -n 's/^const version = "\([^"]*\)".*/\1/p' internal/agent/agent.go)"
-[ -n "${source_version}" ] || die "cannot read the Codog version from internal/agent/agent.go"
+source_version="$(sed -n 's/^const Current = "\([^"]*\)".*/\1/p' internal/versioninfo/versioninfo.go)"
+[ -n "${source_version}" ] || die "cannot read the Codog version from internal/versioninfo/versioninfo.go"
 [ "${source_version}" = "${version}" ] ||
   die "release version ${version} does not match source version ${source_version}"
 

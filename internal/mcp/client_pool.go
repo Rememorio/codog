@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/versioninfo"
 	protocol "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -143,7 +144,7 @@ func (c *pooledClient) sessionFor(ctx context.Context) (*protocol.ClientSession,
 }
 
 func (c *pooledClient) connectLocked(ctx context.Context) (*protocol.ClientSession, error) {
-	client := protocol.NewClient(&protocol.Implementation{Name: "codog", Version: "0.1.1"}, c.protocolOptions())
+	client := protocol.NewClient(&protocol.Implementation{Name: "codog", Version: versioninfo.Current}, c.protocolOptions())
 	for _, root := range c.options.get().Roots {
 		client.AddRoots(&protocol.Root{URI: root.URI, Name: root.Name})
 	}

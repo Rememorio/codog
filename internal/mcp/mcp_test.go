@@ -16,9 +16,16 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/versioninfo"
 	protocol "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
+
+func TestInitializeRequestUsesCurrentVersion(t *testing.T) {
+	request := initializeRequest(1)
+	clientInfo := request.Params["clientInfo"].(map[string]any)
+	require.Equal(t, versioninfo.Current, clientInfo["version"])
+}
 
 func TestCallToolAndReadResource(t *testing.T) {
 	server := config.MCPServerConfig{
