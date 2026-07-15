@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -70,6 +71,114 @@ func TestCallToolAndReadResource(t *testing.T) {
 	require.Contains(t, string(auth.ServerInfo), `"name":"test"`)
 	require.Equal(t, 1, auth.ToolCount)
 	require.Equal(t, 1, auth.ResourceCount)
+}
+
+func TestCallToolHandlesServerRequestsAndNotifications(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestMCPHelperProcess"},
+		Env:     []string{"CODOG_MCP_HELPER=1", "CODOG_MCP_SERVER_REQUESTS=1"},
+	}
+	root, err := RootForPath(t.TempDir())
+	require.NoError(t, err)
+	var elicitation ElicitationRequest
+	var notifications []Notification
+	call := CallToolWithOptions(context.Background(), "test", server, "echo", json.RawMessage(`{"text":"hi"}`), ClientOptions{
+		Roots: []Root{root},
+		Elicit: func(_ context.Context, request ElicitationRequest) (ElicitationResult, error) {
+			elicitation = request
+			return ElicitationResult{Action: "accept", Content: map[string]any{"choice": "yes"}}, nil
+		},
+		OnNotification: func(notification Notification) {
+			notifications = append(notifications, notification)
+		},
+	})
+	require.Empty(t, call.Error)
+	require.Equal(t, "Choose a value", elicitation.Message)
+	require.Equal(t, "form", elicitation.Mode)
+	require.Len(t, notifications, 1)
+	require.Equal(t, "notifications/tools/list_changed", notifications[0].Method)
+	require.Contains(t, string(call.Result), root.URI)
+	require.Contains(t, string(call.Result), `"choice":"yes"`)
+}
+
+func TestCallToolDeclinesElicitationWithoutHandler(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestMCPHelperProcess"},
+		Env:     []string{"CODOG_MCP_HELPER=1", "CODOG_MCP_SERVER_REQUESTS=1"},
+	}
+	call := CallTool(context.Background(), "test", server, "echo", json.RawMessage(`{}`))
+	require.Empty(t, call.Error)
+	require.Contains(t, string(call.Result), `"action":"decline"`)
+}
+
+func TestServerRequestResponsesCoverProtocolOutcomes(t *testing.T) {
+	id := json.RawMessage(`"request-1"`)
+	ping := serverRequestResponse(context.Background(), rpcEnvelope{ID: id, Method: "ping"}, ClientOptions{})
+	require.Nil(t, ping.Error)
+	require.Equal(t, map[string]any{}, ping.Result)
+
+	roots := serverRequestResponse(context.Background(), rpcEnvelope{ID: id, Method: "roots/list"}, ClientOptions{})
+	require.Nil(t, roots.Error)
+	require.Equal(t, map[string]any{"roots": []Root{}}, roots.Result)
+
+	invalidParams := serverRequestResponse(context.Background(), rpcEnvelope{ID: id, Method: "elicitation/create", Params: json.RawMessage(`{`)}, ClientOptions{})
+	require.Equal(t, -32602, invalidParams.Error.Code)
+
+	handlerFailure := serverRequestResponse(context.Background(), rpcEnvelope{ID: id, Method: "elicitation/create", Params: json.RawMessage(`{"message":"choose"}`)}, ClientOptions{
+		Elicit: func(context.Context, ElicitationRequest) (ElicitationResult, error) {
+			return ElicitationResult{}, errors.New("interaction failed")
+		},
+	})
+	require.Equal(t, -32603, handlerFailure.Error.Code)
+	require.Contains(t, handlerFailure.Error.Message, "interaction failed")
+
+	invalidAction := serverRequestResponse(context.Background(), rpcEnvelope{ID: id, Method: "elicitation/create", Params: json.RawMessage(`{"message":"choose"}`)}, ClientOptions{
+		Elicit: func(context.Context, ElicitationRequest) (ElicitationResult, error) {
+			return ElicitationResult{Action: "later"}, nil
+		},
+	})
+	require.Equal(t, -32603, invalidAction.Error.Code)
+
+	unsupported := serverRequestResponse(context.Background(), rpcEnvelope{ID: id, Method: "sampling/createMessage"}, ClientOptions{})
+	require.Equal(t, -32601, unsupported.Error.Code)
+	require.False(t, validElicitationAction("later"))
+	require.True(t, validElicitationAction("cancel"))
+	require.False(t, rpcIDMatches(json.RawMessage(`"1"`), 1))
+}
+
+func TestHTTPSSEParserHandlesFragmentsAndFailures(t *testing.T) {
+	response, err := readHTTPSSE(context.Background(), strings.NewReader("data: {\"jsonrpc\":\"2.0\",\n"+
+		"data: \"id\":3,\"result\":{\"ok\":true}}\n\n"), config.MCPServerConfig{}, "", 3, ClientOptions{})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"ok":true}`, string(response.Result))
+	response, err = readHTTPSSE(context.Background(), strings.NewReader("data: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}"), config.MCPServerConfig{}, "", 3, ClientOptions{})
+	require.NoError(t, err)
+	require.JSONEq(t, `{}`, string(response.Result))
+
+	_, err = readHTTPSSE(context.Background(), strings.NewReader("data: [DONE]\n\n"), config.MCPServerConfig{}, "", 3, ClientOptions{})
+	require.ErrorContains(t, err, "ended before")
+	_, _, err = processHTTPSSEData(context.Background(), config.MCPServerConfig{}, "", 3, "{", ClientOptions{})
+	require.Error(t, err)
+	_, done, err := processHTTPSSEData(context.Background(), config.MCPServerConfig{}, "", 3, `{"jsonrpc":"2.0","id":2,"result":{}}`, ClientOptions{})
+	require.NoError(t, err)
+	require.False(t, done)
+	_, done, err = processHTTPSSEData(context.Background(), config.MCPServerConfig{}, "", 3, "", ClientOptions{})
+	require.NoError(t, err)
+	require.False(t, done)
+}
+
+func TestSendHTTPServerResponseRejectsBadEndpointAndStatus(t *testing.T) {
+	err := sendHTTPServerResponse(context.Background(), config.MCPServerConfig{URL: "file:///tmp/mcp"}, "", rpcServerResponse{})
+	require.ErrorContains(t, err, "must use http or https")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+	err = sendHTTPServerResponse(context.Background(), config.MCPServerConfig{URL: server.URL}, "session", rpcServerResponse{JSONRPC: "2.0", ID: json.RawMessage(`1`)})
+	require.ErrorContains(t, err, "status 403")
 }
 
 func TestHTTPMCPTransportListsCallsAndReads(t *testing.T) {
@@ -168,6 +277,71 @@ func TestHTTPMCPTransportListsCallsAndReads(t *testing.T) {
 	require.NotContains(t, ServerSignature(cfg), "secret")
 	require.NotContains(t, ServerConfigHash(cfg), "secret")
 	require.NotContains(t, ServerConfigHash(cfg), "dynamic")
+}
+
+func TestHTTPMCPHandlesServerRequestsInSSEStream(t *testing.T) {
+	serverResponses := make(chan map[string]any, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var message map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&message))
+		method, _ := message["method"].(string)
+		if method == "" {
+			serverResponses <- message
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		id := message["id"]
+		switch method {
+		case "initialize":
+			w.Header().Set("Mcp-Session-Id", "session-stream")
+			writeHTTPMCP(t, w, id, map[string]any{
+				"protocolVersion": protocolVersion,
+				"capabilities":    map[string]any{"tools": map[string]any{}},
+				"serverInfo":      map[string]any{"name": "stream"},
+			})
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/call":
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, ok := w.(http.Flusher)
+			require.True(t, ok)
+			writeHTTPSSEEvent(t, w, map[string]any{"jsonrpc": "2.0", "id": 101, "method": "roots/list"})
+			flusher.Flush()
+			rootsResponse := <-serverResponses
+			writeHTTPSSEEvent(t, w, map[string]any{
+				"jsonrpc": "2.0", "id": "form-1", "method": "elicitation/create",
+				"params": map[string]any{"mode": "form", "message": "Choose", "requestedSchema": map[string]any{
+					"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}},
+				}},
+			})
+			flusher.Flush()
+			elicitationResponse := <-serverResponses
+			writeHTTPSSEEvent(t, w, map[string]any{"jsonrpc": "2.0", "method": "notifications/resources/list_changed"})
+			writeHTTPSSEEvent(t, w, map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{
+				"roots": rootsResponse["result"], "elicitation": elicitationResponse["result"],
+			}})
+			flusher.Flush()
+		default:
+			writeHTTPMCPError(t, w, id, "unsupported method")
+		}
+	}))
+	defer server.Close()
+
+	root, err := RootForPath(t.TempDir())
+	require.NoError(t, err)
+	var notifications []Notification
+	result := CallToolWithOptions(context.Background(), "stream", config.MCPServerConfig{URL: server.URL}, "echo", nil, ClientOptions{
+		Roots: []Root{root},
+		Elicit: func(context.Context, ElicitationRequest) (ElicitationResult, error) {
+			return ElicitationResult{Action: "accept", Content: map[string]any{"value": "ok"}}, nil
+		},
+		OnNotification: func(notification Notification) { notifications = append(notifications, notification) },
+	})
+	require.Empty(t, result.Error)
+	require.Contains(t, string(result.Result), root.URI)
+	require.Contains(t, string(result.Result), `"value":"ok"`)
+	require.Len(t, notifications, 1)
+	require.Equal(t, "notifications/resources/list_changed", notifications[0].Method)
 }
 
 func TestMCPRuntimeExpandsEnvironmentAndHomeSyntax(t *testing.T) {
@@ -653,11 +827,7 @@ func TestMCPHelperProcess(t *testing.T) {
 				},
 			}}})
 		case "tools/call":
-			if os.Getenv("CODOG_MCP_FAIL_CALL") == "1" {
-				writeMCPError(id, "tool call failed")
-				continue
-			}
-			writeMCP(id, map[string]any{"content": []map[string]any{{"type": "text", "text": "hi"}}})
+			handleMCPHelperToolCall(reader, id)
 		case "resources/list":
 			if os.Getenv("CODOG_MCP_FAIL_RESOURCES") == "1" {
 				writeMCPError(id, "resource discovery failed")
@@ -709,6 +879,30 @@ func TestMCPHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
+func handleMCPHelperToolCall(reader *bufio.Scanner, id any) {
+	if os.Getenv("CODOG_MCP_FAIL_CALL") == "1" {
+		writeMCPError(id, "tool call failed")
+		return
+	}
+	if os.Getenv("CODOG_MCP_SERVER_REQUESTS") != "1" {
+		writeMCP(id, map[string]any{"content": []map[string]any{{"type": "text", "text": "hi"}}})
+		return
+	}
+	writeMCPRequest(101, "roots/list", nil)
+	rootsResponse := readMCPHelperMessage(reader)
+	writeMCPRequest("elicitation-1", "elicitation/create", map[string]any{
+		"mode": "form", "message": "Choose a value",
+		"requestedSchema": map[string]any{"type": "object", "properties": map[string]any{"choice": map[string]any{"type": "string"}}},
+	})
+	elicitationResponse := readMCPHelperMessage(reader)
+	writeMCPNotification("notifications/tools/list_changed", map[string]any{"reason": "test"})
+	writeMCP(id, map[string]any{
+		"content":     []map[string]any{{"type": "text", "text": "hi"}},
+		"roots":       rootsResponse["result"],
+		"elicitation": elicitationResponse["result"],
+	})
+}
+
 func TestMCPHeadersHelperProcess(t *testing.T) {
 	if os.Getenv("CODOG_MCP_HEADERS_HELPER") != "1" {
 		return
@@ -744,6 +938,30 @@ func writeMCPError(id any, message string) {
 	fmt.Println(string(data))
 }
 
+func writeMCPRequest(id any, method string, params map[string]any) {
+	payload := map[string]any{"jsonrpc": "2.0", "id": id, "method": method}
+	if params != nil {
+		payload["params"] = params
+	}
+	data, _ := json.Marshal(payload)
+	fmt.Println(string(data))
+}
+
+func writeMCPNotification(method string, params map[string]any) {
+	payload := map[string]any{"jsonrpc": "2.0", "method": method, "params": params}
+	data, _ := json.Marshal(payload)
+	fmt.Println(string(data))
+}
+
+func readMCPHelperMessage(reader *bufio.Scanner) map[string]any {
+	if !reader.Scan() {
+		return nil
+	}
+	var payload map[string]any
+	_ = json.Unmarshal(reader.Bytes(), &payload)
+	return payload
+}
+
 func writeHTTPMCP(t *testing.T, w http.ResponseWriter, id any, result map[string]any) {
 	t.Helper()
 	payload := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
@@ -759,5 +977,13 @@ func writeHTTPMCPError(t *testing.T, w http.ResponseWriter, id any, message stri
 	data, err := json.Marshal(payload)
 	require.NoError(t, err)
 	_, err = w.Write(data)
+	require.NoError(t, err)
+}
+
+func writeHTTPSSEEvent(t *testing.T, w http.ResponseWriter, payload map[string]any) {
+	t.Helper()
+	data, err := json.Marshal(payload)
+	require.NoError(t, err)
+	_, err = fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
 	require.NoError(t, err)
 }

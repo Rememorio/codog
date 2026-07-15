@@ -404,6 +404,20 @@ func (a *App) RegisterMCPTools(ctx context.Context) error {
 	if a.mcpToolsLoaded {
 		return nil
 	}
+	if len(a.Config.MCPServers) == 0 {
+		a.mcpToolsLoaded = true
+		return nil
+	}
+	if a.Tools == nil {
+		return errors.New("cannot register MCP tools without a tool registry")
+	}
+	if a.mcpToolsStale {
+		a.Tools.RemoveMCPTools()
+		a.mcpToolsStale = false
+	}
+	clientOptions := a.Tools.MCPClientOptions()
+	clientOptions.OnNotification = a.handleMCPNotification
+	a.Tools.SetMCPClientOptions(clientOptions)
 	failures := []string{}
 	registered := 0
 	for _, serverName := range sortedMCPServerNames(a.Config.MCPServers) {
@@ -426,6 +440,7 @@ func (a *App) RegisterMCPTools(ctx context.Context) error {
 				ServerName:  serverName,
 				Server:      server,
 				RemoteName:  remoteTool.Name,
+				Options:     a.Tools.MCPClientOptions,
 			})
 			registered++
 		}
@@ -442,6 +457,14 @@ func (a *App) RegisterMCPTools(ctx context.Context) error {
 	}
 	a.mcpToolsLoaded = true
 	return nil
+}
+
+func (a *App) handleMCPNotification(notification mcp.Notification) {
+	switch notification.Method {
+	case "notifications/tools/list_changed", "notifications/prompts/list_changed", "notifications/resources/list_changed":
+		a.mcpToolsLoaded = false
+		a.mcpToolsStale = true
+	}
 }
 
 func sortedMCPServerNames(servers map[string]config.MCPServerConfig) []string {

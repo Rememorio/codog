@@ -11,6 +11,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/reportconformance"
 	"github.com/Rememorio/codog/internal/reportschema"
 	"github.com/Rememorio/codog/internal/runloop"
@@ -284,4 +285,29 @@ func TestVoiceActionHelpers(t *testing.T) {
 	app.Config.VoiceCommand = ""
 	require.Error(t, app.updateVoiceEnabled(&voiceRequest{Action: "on", Target: "user", Path: configPath}))
 	require.Error(t, app.updateVoiceCommand(&voiceRequest{Action: "set-command", Target: "user", Path: configPath}))
+}
+
+func TestTUITurnInstallsAndRestoresMCPQuestionInteraction(t *testing.T) {
+	registry := tools.NewRegistry(t.TempDir())
+	options := registry.MCPClientOptions()
+	options.OnNotification = func(_ mcp.Notification) {}
+	registry.SetMCPClientOptions(options)
+	submission := tuiTurnSubmission{
+		submitter: tuiTurnSubmitter{
+			app:             &App{Tools: registry},
+			questionAnswers: make(chan string),
+		},
+		ctx:  context.Background(),
+		emit: func(tui.Entry) {},
+	}
+	restore := submission.installQuestionInteractions()
+	interactive := registry.MCPClientOptions()
+	require.NotNil(t, interactive.Elicit)
+	require.NotNil(t, interactive.OnNotification)
+	require.True(t, registry.Has("ask_user_question"))
+
+	restore()
+	restored := registry.MCPClientOptions()
+	require.Nil(t, restored.Elicit)
+	require.NotNil(t, restored.OnNotification)
 }

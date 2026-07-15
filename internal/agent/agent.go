@@ -71,6 +71,7 @@ type App struct {
 	ConfigLoadError     string
 	ConfigLoadErrorKind string
 	mcpToolsLoaded      bool
+	mcpToolsStale       bool
 	dynamicSkillPaths   []string
 }
 

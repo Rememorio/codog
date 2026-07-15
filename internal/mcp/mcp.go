@@ -22,7 +22,10 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 )
 
-const claudeAIServerPrefix = "claude.ai "
+const (
+	claudeAIServerPrefix = "claude.ai "
+	protocolVersion      = "2025-06-18"
+)
 
 var ccrProxyPathMarkers = []string{"/v2/session_ingress/shttp/mcp/", "/v2/ccr-sessions/"}
 
@@ -83,6 +86,42 @@ type InitializeResult struct {
 	Capabilities    json.RawMessage `json:"capabilities,omitempty"`
 	ServerInfo      json.RawMessage `json:"server_info,omitempty"`
 	Error           string          `json:"error,omitempty"`
+}
+
+// Root describes a workspace root exposed to an MCP server.
+type Root struct {
+	URI  string `json:"uri"`
+	Name string `json:"name,omitempty"`
+}
+
+// ElicitationRequest is a server-initiated request for user input.
+type ElicitationRequest struct {
+	Mode            string         `json:"mode,omitempty"`
+	Message         string         `json:"message"`
+	RequestedSchema map[string]any `json:"requestedSchema,omitempty"`
+	URL             string         `json:"url,omitempty"`
+	ElicitationID   string         `json:"elicitationId,omitempty"`
+}
+
+// ElicitationResult is returned to an MCP server after user interaction.
+type ElicitationResult struct {
+	Action  string         `json:"action"`
+	Content map[string]any `json:"content,omitempty"`
+}
+
+// Notification reports a server capability or inventory change observed while
+// an MCP request is active.
+type Notification struct {
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params,omitempty"`
+}
+
+// ClientOptions controls server-initiated MCP behavior. Without an elicitation
+// handler, Codog declines requests so non-interactive commands never block.
+type ClientOptions struct {
+	Roots          []Root
+	Elicit         func(context.Context, ElicitationRequest) (ElicitationResult, error)
+	OnNotification func(Notification)
 }
 
 // AuthStatusResult summarizes authentication and discovery health for an MCP
@@ -291,11 +330,30 @@ type rpcRequest struct {
 }
 
 type rpcResponse struct {
-	ID     int             `json:"id"`
+	ID     json.RawMessage `json:"id"`
 	Result json.RawMessage `json:"result"`
-	Error  *struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	Error  *rpcServerError `json:"error"`
+}
+
+type rpcEnvelope struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id,omitempty"`
+	Method  string          `json:"method,omitempty"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *rpcServerError `json:"error,omitempty"`
+}
+
+type rpcServerResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Result  any             `json:"result,omitempty"`
+	Error   *rpcServerError `json:"error,omitempty"`
+}
+
+type rpcServerError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 }
 
 // NormalizeNameForTooling converts an MCP server or member name into the form
@@ -967,20 +1025,11 @@ func Initialize(ctx context.Context, serverName string, server config.MCPServerC
 	defer stopMCPProcess(cmd)
 
 	reader := bufio.NewReader(stdout)
-	if err := send(stdin, rpcRequest{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "initialize",
-		Params: map[string]any{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.1"},
-		},
-	}); err != nil {
+	if err := send(stdin, initializeRequest(1)); err != nil {
 		message := mcpProcessError(err, cmd, &stderr).Error()
 		return InitializeResult{Server: serverName, Status: "error", Error: message, Lifecycle: lifecycleFailure("initialize_handshake", message, true, map[string]string{"server": serverName})}
 	}
-	resp, err := readResponse(reader)
+	resp, err := readResponseForID(ctx, reader, stdin, 1, ClientOptions{})
 	if err != nil {
 		message := mcpProcessError(err, cmd, &stderr).Error()
 		return InitializeResult{Server: serverName, Status: "error", Error: message, Lifecycle: lifecycleFailure("initialize_handshake", message, true, map[string]string{"server": serverName})}
@@ -1096,24 +1145,15 @@ func ListTools(ctx context.Context, serverName string, server config.MCPServerCo
 	defer stopMCPProcess(cmd)
 
 	reader := bufio.NewReader(stdout)
-	if err := send(stdin, rpcRequest{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "initialize",
-		Params: map[string]any{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.1"},
-		},
-	}); err != nil {
+	if err := send(stdin, initializeRequest(1)); err != nil {
 		return ToolListResult{Server: serverName, Error: mcpProcessError(err, cmd, &stderr).Error()}
 	}
-	if _, err := readResponse(reader); err != nil {
+	if _, err := readResponseForID(ctx, reader, stdin, 1, ClientOptions{}); err != nil {
 		return ToolListResult{Server: serverName, Error: mcpProcessError(err, cmd, &stderr).Error()}
 	}
 	_ = send(stdin, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
 	_ = send(stdin, rpcRequest{JSONRPC: "2.0", ID: 2, Method: "tools/list"})
-	resp, err := readResponse(reader)
+	resp, err := readResponseForID(ctx, reader, stdin, 2, ClientOptions{})
 	if err != nil {
 		return ToolListResult{Server: serverName, Error: mcpProcessError(err, cmd, &stderr).Error()}
 	}
@@ -1174,10 +1214,16 @@ func decodeTool(raw map[string]json.RawMessage) (ToolInfo, error) {
 
 // CallTool invokes one MCP tool after initializing the server connection.
 func CallTool(ctx context.Context, serverName string, server config.MCPServerConfig, toolName string, arguments json.RawMessage) ToolCallResult {
+	return CallToolWithOptions(ctx, serverName, server, toolName, arguments, ClientOptions{})
+}
+
+// CallToolWithOptions invokes one MCP tool and handles server-initiated
+// requests and notifications while the call is active.
+func CallToolWithOptions(ctx context.Context, serverName string, server config.MCPServerConfig, toolName string, arguments json.RawMessage, opts ClientOptions) ToolCallResult {
 	if len(arguments) == 0 {
 		arguments = json.RawMessage(`{}`)
 	}
-	result, err := requestAfterInitialize(ctx, server, rpcRequest{
+	result, err := requestAfterInitializeWithOptions(ctx, server, rpcRequest{
 		JSONRPC: "2.0",
 		ID:      3,
 		Method:  "tools/call",
@@ -1185,7 +1231,7 @@ func CallTool(ctx context.Context, serverName string, server config.MCPServerCon
 			"name":      toolName,
 			"arguments": json.RawMessage(arguments),
 		},
-	})
+	}, opts)
 	if err != nil {
 		return ToolCallResult{
 			Server:    serverName,
@@ -1199,11 +1245,16 @@ func CallTool(ctx context.Context, serverName string, server config.MCPServerCon
 
 // ListResources discovers the resources exposed by one MCP server.
 func ListResources(ctx context.Context, serverName string, server config.MCPServerConfig) ResourceListResult {
-	result, err := requestAfterInitialize(ctx, server, rpcRequest{
+	return ListResourcesWithOptions(ctx, serverName, server, ClientOptions{})
+}
+
+// ListResourcesWithOptions discovers resources with server-request handling.
+func ListResourcesWithOptions(ctx context.Context, serverName string, server config.MCPServerConfig, opts ClientOptions) ResourceListResult {
+	result, err := requestAfterInitializeWithOptions(ctx, server, rpcRequest{
 		JSONRPC: "2.0",
 		ID:      3,
 		Method:  "resources/list",
-	})
+	}, opts)
 	if err != nil {
 		return ResourceListResult{
 			Server:    serverName,
@@ -1217,12 +1268,17 @@ func ListResources(ctx context.Context, serverName string, server config.MCPServ
 // ReadResource reads one MCP resource by URI after initializing the server
 // connection.
 func ReadResource(ctx context.Context, serverName string, server config.MCPServerConfig, uri string) ResourceReadResult {
-	result, err := requestAfterInitialize(ctx, server, rpcRequest{
+	return ReadResourceWithOptions(ctx, serverName, server, uri, ClientOptions{})
+}
+
+// ReadResourceWithOptions reads a resource with server-request handling.
+func ReadResourceWithOptions(ctx context.Context, serverName string, server config.MCPServerConfig, uri string, opts ClientOptions) ResourceReadResult {
+	result, err := requestAfterInitializeWithOptions(ctx, server, rpcRequest{
 		JSONRPC: "2.0",
 		ID:      3,
 		Method:  "resources/read",
 		Params:  map[string]any{"uri": uri},
-	})
+	}, opts)
 	if err != nil {
 		return ResourceReadResult{
 			Server:    serverName,
@@ -1236,11 +1292,17 @@ func ReadResource(ctx context.Context, serverName string, server config.MCPServe
 
 // ListResourceTemplates discovers resource templates exposed by one MCP server.
 func ListResourceTemplates(ctx context.Context, serverName string, server config.MCPServerConfig) ResourceTemplateListResult {
-	result, err := requestAfterInitialize(ctx, server, rpcRequest{
+	return ListResourceTemplatesWithOptions(ctx, serverName, server, ClientOptions{})
+}
+
+// ListResourceTemplatesWithOptions discovers resource templates with
+// server-request handling.
+func ListResourceTemplatesWithOptions(ctx context.Context, serverName string, server config.MCPServerConfig, opts ClientOptions) ResourceTemplateListResult {
+	result, err := requestAfterInitializeWithOptions(ctx, server, rpcRequest{
 		JSONRPC: "2.0",
 		ID:      3,
 		Method:  "resources/templates/list",
-	})
+	}, opts)
 	if err != nil {
 		return ResourceTemplateListResult{
 			Server:    serverName,
@@ -1253,11 +1315,16 @@ func ListResourceTemplates(ctx context.Context, serverName string, server config
 
 // ListPrompts discovers prompts exposed by one MCP server.
 func ListPrompts(ctx context.Context, serverName string, server config.MCPServerConfig) PromptListResult {
-	result, err := requestAfterInitialize(ctx, server, rpcRequest{
+	return ListPromptsWithOptions(ctx, serverName, server, ClientOptions{})
+}
+
+// ListPromptsWithOptions discovers prompts with server-request handling.
+func ListPromptsWithOptions(ctx context.Context, serverName string, server config.MCPServerConfig, opts ClientOptions) PromptListResult {
+	result, err := requestAfterInitializeWithOptions(ctx, server, rpcRequest{
 		JSONRPC: "2.0",
 		ID:      3,
 		Method:  "prompts/list",
-	})
+	}, opts)
 	if err != nil {
 		return PromptListResult{
 			Server:    serverName,
@@ -1270,10 +1337,15 @@ func ListPrompts(ctx context.Context, serverName string, server config.MCPServer
 
 // GetPrompt renders one MCP prompt after initializing the server connection.
 func GetPrompt(ctx context.Context, serverName string, server config.MCPServerConfig, promptName string, arguments json.RawMessage) PromptGetResult {
+	return GetPromptWithOptions(ctx, serverName, server, promptName, arguments, ClientOptions{})
+}
+
+// GetPromptWithOptions renders a prompt with server-request handling.
+func GetPromptWithOptions(ctx context.Context, serverName string, server config.MCPServerConfig, promptName string, arguments json.RawMessage, opts ClientOptions) PromptGetResult {
 	if len(arguments) == 0 {
 		arguments = json.RawMessage(`{}`)
 	}
-	result, err := requestAfterInitialize(ctx, server, rpcRequest{
+	result, err := requestAfterInitializeWithOptions(ctx, server, rpcRequest{
 		JSONRPC: "2.0",
 		ID:      3,
 		Method:  "prompts/get",
@@ -1281,7 +1353,7 @@ func GetPrompt(ctx context.Context, serverName string, server config.MCPServerCo
 			"name":      promptName,
 			"arguments": json.RawMessage(arguments),
 		},
-	})
+	}, opts)
 	if err != nil {
 		return PromptGetResult{
 			Server:    serverName,
@@ -1294,9 +1366,13 @@ func GetPrompt(ctx context.Context, serverName string, server config.MCPServerCo
 }
 
 func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, req rpcRequest) (json.RawMessage, error) {
+	return requestAfterInitializeWithOptions(ctx, server, req, ClientOptions{})
+}
+
+func requestAfterInitializeWithOptions(ctx context.Context, server config.MCPServerConfig, req rpcRequest, opts ClientOptions) (json.RawMessage, error) {
 	server = resolveMCPServerConfig(server)
 	if isHTTPServer(server) {
-		return requestAfterInitializeHTTP(ctx, server, req)
+		return requestAfterInitializeHTTPWithOptions(ctx, server, req, opts)
 	}
 	if server.Command == "" {
 		return nil, fmt.Errorf("missing command")
@@ -1323,26 +1399,17 @@ func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, 
 	defer stopMCPProcess(cmd)
 
 	reader := bufio.NewReader(stdout)
-	if err := send(stdin, rpcRequest{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "initialize",
-		Params: map[string]any{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.1"},
-		},
-	}); err != nil {
+	if err := send(stdin, initializeRequest(1)); err != nil {
 		return nil, mcpProcessError(err, cmd, &stderr)
 	}
-	if _, err := readResponse(reader); err != nil {
+	if _, err := readResponseForID(ctx, reader, stdin, 1, opts); err != nil {
 		return nil, mcpProcessError(err, cmd, &stderr)
 	}
 	_ = send(stdin, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
 	if err := send(stdin, req); err != nil {
 		return nil, mcpProcessError(err, cmd, &stderr)
 	}
-	resp, err := readResponse(reader)
+	resp, err := readResponseForID(ctx, reader, stdin, req.ID, opts)
 	if err != nil {
 		return nil, mcpProcessError(err, cmd, &stderr)
 	}
@@ -1360,22 +1427,17 @@ func stdioRequestTimeout(server config.MCPServerConfig) time.Duration {
 }
 
 func initializeHTTP(ctx context.Context, serverName string, server config.MCPServerConfig) (InitializeResult, string) {
+	return initializeHTTPWithOptions(ctx, serverName, server, ClientOptions{})
+}
+
+func initializeHTTPWithOptions(ctx context.Context, serverName string, server config.MCPServerConfig, opts ClientOptions) (InitializeResult, string) {
 	if strings.TrimSpace(server.URL) == "" {
 		return InitializeResult{Server: serverName, Status: "error", Error: "missing url", Lifecycle: lifecycleFailure("config_load", "missing url", false, map[string]string{"server": serverName})}, ""
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	resp, sessionID, err := sendHTTPRPC(ctx, server, rpcRequest{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "initialize",
-		Params: map[string]any{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.1"},
-		},
-	}, "")
+	resp, sessionID, err := sendHTTPRPCWithOptions(ctx, server, initializeRequest(1), "", opts)
 	if err != nil {
 		return InitializeResult{Server: serverName, Status: "error", Error: err.Error(), Lifecycle: lifecycleFailure("initialize_handshake", err.Error(), true, map[string]string{"server": serverName, "url": redactedURL(server.URL)})}, sessionID
 	}
@@ -1400,12 +1462,12 @@ func initializeHTTP(ctx context.Context, serverName string, server config.MCPSer
 	}, sessionID
 }
 
-func requestAfterInitializeHTTP(ctx context.Context, server config.MCPServerConfig, req rpcRequest) (json.RawMessage, error) {
+func requestAfterInitializeHTTPWithOptions(ctx context.Context, server config.MCPServerConfig, req rpcRequest, opts ClientOptions) (json.RawMessage, error) {
 	server = resolveMCPServerConfig(server)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	initialized, sessionID := initializeHTTP(ctx, "", server)
+	initialized, sessionID := initializeHTTPWithOptions(ctx, "", server, opts)
 	if initialized.Error != "" {
 		return nil, errors.New(initialized.Error)
 	}
@@ -1416,7 +1478,7 @@ func requestAfterInitializeHTTP(ctx context.Context, server config.MCPServerConf
 	if nextSessionID != "" {
 		sessionID = nextSessionID
 	}
-	resp, _, err := sendHTTPRPC(ctx, server, req, sessionID)
+	resp, _, err := sendHTTPRPCWithOptions(ctx, server, req, sessionID, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -1429,6 +1491,10 @@ func requestAfterInitializeHTTP(ctx context.Context, server config.MCPServerConf
 var errHTTPNotificationNoBody = errors.New("mcp notification returned no body")
 
 func sendHTTPRPC(ctx context.Context, server config.MCPServerConfig, rpc rpcRequest, sessionID string) (rpcResponse, string, error) {
+	return sendHTTPRPCWithOptions(ctx, server, rpc, sessionID, ClientOptions{})
+}
+
+func sendHTTPRPCWithOptions(ctx context.Context, server config.MCPServerConfig, rpc rpcRequest, sessionID string, opts ClientOptions) (rpcResponse, string, error) {
 	server = resolveMCPServerConfig(server)
 	endpoint, err := validateHTTPServerURL(server.URL)
 	if err != nil {
@@ -1444,7 +1510,7 @@ func sendHTTPRPC(ctx context.Context, server config.MCPServerConfig, rpc rpcRequ
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("MCP-Protocol-Version", "2024-11-05")
+	req.Header.Set("MCP-Protocol-Version", protocolVersion)
 	headers, err := resolveHTTPHeaders(ctx, server)
 	if err != nil {
 		return rpcResponse{}, "", err
@@ -1465,6 +1531,10 @@ func sendHTTPRPC(ctx context.Context, server config.MCPServerConfig, rpc rpcRequ
 	}
 	defer func() { _ = resp.Body.Close() }()
 	nextSessionID := firstNonEmpty(resp.Header.Get("Mcp-Session-Id"), resp.Header.Get("mcp-session-id"))
+	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+		decoded, err := readHTTPSSE(ctx, resp.Body, server, firstNonEmpty(nextSessionID, sessionID), rpc.ID, opts)
+		return decoded, nextSessionID, err
+	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
 	if err != nil {
 		return rpcResponse{}, nextSessionID, err
@@ -1478,18 +1548,111 @@ func sendHTTPRPC(ctx context.Context, server config.MCPServerConfig, rpc rpcRequ
 		}
 		return rpcResponse{}, nextSessionID, errors.New("http mcp response body is empty")
 	}
-	payload := body
-	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") || bytes.Contains(body, []byte("data:")) {
-		payload, err = firstSSEData(body)
-		if err != nil {
-			return rpcResponse{}, nextSessionID, err
-		}
-	}
 	var decoded rpcResponse
-	if err := json.Unmarshal(payload, &decoded); err != nil {
+	if err := json.Unmarshal(body, &decoded); err != nil {
 		return rpcResponse{}, nextSessionID, err
 	}
 	return decoded, nextSessionID, nil
+}
+
+func readHTTPSSE(ctx context.Context, body io.Reader, server config.MCPServerConfig, sessionID string, expectedID int, opts ClientOptions) (rpcResponse, error) {
+	scanner := bufio.NewScanner(io.LimitReader(body, 4*1024*1024))
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	var data strings.Builder
+	for scanner.Scan() {
+		line := strings.TrimRight(scanner.Text(), "\r")
+		if line != "" {
+			if strings.HasPrefix(line, "data:") {
+				if data.Len() > 0 {
+					data.WriteByte('\n')
+				}
+				data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			}
+			continue
+		}
+		response, done, err := processHTTPSSEData(ctx, server, sessionID, expectedID, data.String(), opts)
+		data.Reset()
+		if err != nil || done {
+			return response, err
+		}
+	}
+	if data.Len() > 0 {
+		response, done, err := processHTTPSSEData(ctx, server, sessionID, expectedID, data.String(), opts)
+		if err != nil || done {
+			return response, err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return rpcResponse{}, err
+	}
+	return rpcResponse{}, errors.New("text/event-stream response ended before the matching MCP response")
+}
+
+func processHTTPSSEData(ctx context.Context, server config.MCPServerConfig, sessionID string, expectedID int, data string, opts ClientOptions) (rpcResponse, bool, error) {
+	data = strings.TrimSpace(data)
+	if data == "" || data == "[DONE]" {
+		return rpcResponse{}, false, nil
+	}
+	var message rpcEnvelope
+	if err := json.Unmarshal([]byte(data), &message); err != nil {
+		return rpcResponse{}, false, err
+	}
+	if message.Method != "" {
+		if len(message.ID) == 0 || string(message.ID) == "null" {
+			if opts.OnNotification != nil {
+				opts.OnNotification(Notification{Method: message.Method, Params: append(json.RawMessage(nil), message.Params...)})
+			}
+			return rpcResponse{}, false, nil
+		}
+		if err := sendHTTPServerResponse(ctx, server, sessionID, serverRequestResponse(ctx, message, opts)); err != nil {
+			return rpcResponse{}, false, err
+		}
+		return rpcResponse{}, false, nil
+	}
+	if !rpcIDMatches(message.ID, expectedID) {
+		return rpcResponse{}, false, nil
+	}
+	return rpcResponse{ID: message.ID, Result: message.Result, Error: message.Error}, true, nil
+}
+
+func sendHTTPServerResponse(ctx context.Context, server config.MCPServerConfig, sessionID string, response rpcServerResponse) error {
+	endpoint, err := validateHTTPServerURL(server.URL)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(response)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", protocolVersion)
+	headers, err := resolveHTTPHeaders(ctx, server)
+	if err != nil {
+		return err
+	}
+	for key, value := range headers {
+		if strings.TrimSpace(key) != "" {
+			req.Header.Set(key, value)
+		}
+	}
+	if strings.TrimSpace(sessionID) != "" {
+		req.Header.Set("Mcp-Session-Id", strings.TrimSpace(sessionID))
+	}
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("http MCP server-request response failed with status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func resolveHTTPHeaders(ctx context.Context, server config.MCPServerConfig) (map[string]string, error) {
@@ -1594,29 +1757,6 @@ func validateHTTPServerURL(rawURL string) (string, error) {
 	return parsed.String(), nil
 }
 
-func firstSSEData(body []byte) ([]byte, error) {
-	events := strings.Split(string(body), "\n\n")
-	for _, event := range events {
-		var builder strings.Builder
-		for _, line := range strings.Split(event, "\n") {
-			line = strings.TrimRight(line, "\r")
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			if builder.Len() > 0 {
-				builder.WriteByte('\n')
-			}
-			builder.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-		}
-		data := strings.TrimSpace(builder.String())
-		if data == "" || data == "[DONE]" {
-			continue
-		}
-		return []byte(data), nil
-	}
-	return nil, errors.New("text/event-stream response contained no JSON data")
-}
-
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -1677,6 +1817,31 @@ func clipMCPText(value string, limit int) string {
 	return value[:limit] + "...[truncated]"
 }
 
+// RootForPath converts a local directory into an MCP file root.
+func RootForPath(path string) (Root, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return Root{}, err
+	}
+	return Root{URI: (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String(), Name: filepath.Base(abs)}, nil
+}
+
+func initializeRequest(id int) rpcRequest {
+	return rpcRequest{
+		JSONRPC: "2.0",
+		ID:      id,
+		Method:  "initialize",
+		Params: map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities": map[string]any{
+				"roots":       map[string]any{"listChanged": false},
+				"elicitation": map[string]any{"form": map[string]any{}, "url": map[string]any{}},
+			},
+			"clientInfo": map[string]any{"name": "codog", "version": "0.1.1"},
+		},
+	}
+}
+
 func send(w io.Writer, req rpcRequest) error {
 	data, err := json.Marshal(req)
 	if err != nil {
@@ -1686,14 +1851,98 @@ func send(w io.Writer, req rpcRequest) error {
 	return err
 }
 
-func readResponse(r *bufio.Reader) (rpcResponse, error) {
-	line, err := r.ReadBytes('\n')
+func sendServerResponse(w io.Writer, response rpcServerResponse) error {
+	data, err := json.Marshal(response)
 	if err != nil {
-		return rpcResponse{}, err
+		return err
 	}
-	var resp rpcResponse
-	if err := json.Unmarshal(line, &resp); err != nil {
-		return rpcResponse{}, err
+	_, err = fmt.Fprintf(w, "%s\n", data)
+	return err
+}
+
+func readResponseForID(ctx context.Context, r *bufio.Reader, w io.Writer, expectedID int, opts ClientOptions) (rpcResponse, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return rpcResponse{}, err
+		}
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			return rpcResponse{}, err
+		}
+		var message rpcEnvelope
+		if err := json.Unmarshal(line, &message); err != nil {
+			return rpcResponse{}, err
+		}
+		if message.Method != "" {
+			if len(message.ID) == 0 || string(message.ID) == "null" {
+				if opts.OnNotification != nil {
+					opts.OnNotification(Notification{Method: message.Method, Params: append(json.RawMessage(nil), message.Params...)})
+				}
+				continue
+			}
+			if err := handleServerRequest(ctx, w, message, opts); err != nil {
+				return rpcResponse{}, err
+			}
+			continue
+		}
+		if !rpcIDMatches(message.ID, expectedID) {
+			continue
+		}
+		return rpcResponse{ID: message.ID, Result: message.Result, Error: message.Error}, nil
 	}
-	return resp, nil
+}
+
+func handleServerRequest(ctx context.Context, w io.Writer, request rpcEnvelope, opts ClientOptions) error {
+	return sendServerResponse(w, serverRequestResponse(ctx, request, opts))
+}
+
+func serverRequestResponse(ctx context.Context, request rpcEnvelope, opts ClientOptions) rpcServerResponse {
+	response := rpcServerResponse{JSONRPC: "2.0", ID: request.ID}
+	switch request.Method {
+	case "ping":
+		response.Result = map[string]any{}
+	case "roots/list":
+		roots := opts.Roots
+		if roots == nil {
+			roots = []Root{}
+		}
+		response.Result = map[string]any{"roots": roots}
+	case "elicitation/create":
+		var elicitation ElicitationRequest
+		if err := json.Unmarshal(request.Params, &elicitation); err != nil {
+			response.Error = &rpcServerError{Code: -32602, Message: "invalid elicitation parameters"}
+			break
+		}
+		result := ElicitationResult{Action: "decline"}
+		if opts.Elicit != nil {
+			var err error
+			result, err = opts.Elicit(ctx, elicitation)
+			if err != nil {
+				response.Error = &rpcServerError{Code: -32603, Message: clipMCPText(err.Error(), 1024)}
+				break
+			}
+		}
+		if !validElicitationAction(result.Action) {
+			response.Error = &rpcServerError{Code: -32603, Message: "elicitation handler returned an invalid action"}
+			break
+		}
+		response.Result = result
+	default:
+		response.Error = &rpcServerError{Code: -32601, Message: "method not supported"}
+	}
+	return response
+}
+
+func validElicitationAction(action string) bool {
+	switch action {
+	case "accept", "decline", "cancel":
+		return true
+	default:
+		return false
+	}
+}
+
+func rpcIDMatches(raw json.RawMessage, expected int) bool {
+	var id int
+	return json.Unmarshal(raw, &id) == nil && id == expected
 }

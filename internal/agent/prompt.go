@@ -2079,9 +2079,8 @@ type tuiTurnSubmission struct {
 func (s *tuiTurnSubmission) run(prompt string, attachments []string) (string, error) {
 	s.streamOut = tuiStreamWriter{buffer: &s.out, emit: s.emit}
 	s.submitter.modeState.Apply(&s.submitter.app.Config)
-	s.submitter.app.Tools.Register(tools.AskUserQuestionTool{
-		In: &lineAnswerReader{answers: s.submitter.questionAnswers, done: s.ctx.Done()}, Out: io.Discard, OnRequest: s.onQuestion,
-	})
+	restoreQuestionInteractions := s.installQuestionInteractions()
+	defer restoreQuestionInteractions()
 	defer func() { _ = s.submitter.app.refreshBuiltinToolScope() }()
 	err := s.submitter.app.runSessionTurnWithOptions(s.ctx, "tui", s.submitter.sess, prompt, "idle", turnOptions{
 		Out: &s.streamOut, Attachments: attachments,
@@ -2090,6 +2089,18 @@ func (s *tuiTurnSubmission) run(prompt string, attachments []string) (string, er
 		OnToolUse:         s.onToolUse,
 	})
 	return s.response(err)
+}
+
+func (s *tuiTurnSubmission) installQuestionInteractions() func() {
+	questionTool := tools.AskUserQuestionTool{
+		In: &lineAnswerReader{answers: s.submitter.questionAnswers, done: s.ctx.Done()}, Out: io.Discard, OnRequest: s.onQuestion,
+	}
+	s.submitter.app.Tools.Register(questionTool)
+	previousMCPOptions := s.submitter.app.Tools.MCPClientOptions()
+	interactiveMCPOptions := previousMCPOptions
+	interactiveMCPOptions.Elicit = tools.NewMCPElicitationHandler(questionTool)
+	s.submitter.app.Tools.SetMCPClientOptions(interactiveMCPOptions)
+	return func() { s.submitter.app.Tools.SetMCPClientOptions(previousMCPOptions) }
 }
 
 func (s *tuiTurnSubmission) onQuestion(request tools.UserQuestionRequest) {

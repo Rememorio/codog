@@ -20,6 +20,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/customcommands"
 	"github.com/Rememorio/codog/internal/focus"
+	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/mcpauthdiag"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/oauth"
@@ -695,6 +696,41 @@ func TestRegisterMCPToolsContinuesAfterBrokenServer(t *testing.T) {
 	err := app.RegisterMCPTools(context.Background())
 	require.ErrorContains(t, err, "no MCP tools registered")
 	require.False(t, app.mcpToolsLoaded)
+}
+
+func TestMCPNotificationInvalidatesAndReloadsDynamicTools(t *testing.T) {
+	server := agentMCPHelperServerConfig()
+	app := &App{
+		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{"test": server}},
+		Tools:  tools.NewRegistry(t.TempDir()),
+	}
+	require.NoError(t, app.RegisterMCPTools(context.Background()))
+	require.True(t, app.mcpToolsLoaded)
+	require.True(t, app.Tools.Has(tools.NewMCPToolName("test", "echo")))
+
+	app.handleMCPNotification(mcp.Notification{Method: "notifications/tools/list_changed"})
+	require.False(t, app.mcpToolsLoaded)
+	require.True(t, app.mcpToolsStale)
+	require.NoError(t, app.RegisterMCPTools(context.Background()))
+	require.True(t, app.mcpToolsLoaded)
+	require.False(t, app.mcpToolsStale)
+	require.True(t, app.Tools.Has(tools.NewMCPToolName("test", "echo")))
+
+	app.handleMCPNotification(mcp.Notification{Method: "notifications/unknown"})
+	require.True(t, app.mcpToolsLoaded)
+}
+
+func TestRegisterMCPToolsRejectsMissingRegistry(t *testing.T) {
+	app := &App{Config: config.Config{MCPServers: map[string]config.MCPServerConfig{"test": agentMCPHelperServerConfig()}}}
+	require.EqualError(t, app.RegisterMCPTools(context.Background()), "cannot register MCP tools without a tool registry")
+}
+
+func agentMCPHelperServerConfig() config.MCPServerConfig {
+	return config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestAgentMCPHelperProcess"},
+		Env:     []string{"CODOG_AGENT_MCP_HELPER=1"},
+	}
 }
 
 func TestMCPConfigCommands(t *testing.T) {

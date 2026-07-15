@@ -37,6 +37,7 @@ import (
 // GetMCPPromptTool renders one prompt exposed by a configured MCP server.
 type GetMCPPromptTool struct {
 	Servers map[string]config.MCPServerConfig
+	Options func() mcp.ClientOptions
 }
 
 func (t GetMCPPromptTool) Definition() anthropic.ToolDefinition {
@@ -77,7 +78,7 @@ func (t GetMCPPromptTool) Execute(ctx context.Context, input json.RawMessage) (s
 	if !ok {
 		return "", unknownMCPServerError(payload.Server, t.Servers)
 	}
-	result := mcp.GetPrompt(ctx, payload.Server, server, payload.Prompt, payload.Arguments)
+	result := mcp.GetPromptWithOptions(ctx, payload.Server, server, payload.Prompt, payload.Arguments, currentMCPOptions(t.Options))
 	if result.Error != "" {
 		return "", errors.New(result.Error)
 	}

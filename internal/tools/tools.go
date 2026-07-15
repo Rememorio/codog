@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	// Register image decoders for read_image and notebook image outputs.
@@ -81,12 +82,15 @@ type MCPTool struct {
 	ServerName  string
 	Server      config.MCPServerConfig
 	RemoteName  string
+	Options     func() mcp.ClientOptions
 }
 
 // Registry holds all tools available for a model turn.
 type Registry struct {
-	tools      map[string]Tool
-	mcpServers map[string]config.MCPServerConfig
+	tools        map[string]Tool
+	mcpServers   map[string]config.MCPServerConfig
+	mcpOptionsMu sync.RWMutex
+	mcpOptions   mcp.ClientOptions
 }
 
 // ToolInfo is the JSON-safe metadata view of one registered tool.
@@ -647,6 +651,16 @@ func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Definition().Name] = tool
 }
 
+// RemoveMCPTools removes dynamically discovered MCP tool adapters while
+// preserving the built-in MCP management tools.
+func (r *Registry) RemoveMCPTools() {
+	for name, tool := range r.tools {
+		if _, ok := tool.(MCPTool); ok {
+			delete(r.tools, name)
+		}
+	}
+}
+
 // UpdateBuiltinScope re-registers built-in tools with a new workspace or
 // execution configuration while preserving the registry object.
 func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
@@ -658,6 +672,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 		r.tools = map[string]Tool{}
 	}
 	r.mcpServers = cloneMCPServers(opts.MCPServers)
+	r.SetMCPClientOptions(mcpClientOptions(workspace, opts.AdditionalDirs))
 	r.Register(BashTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, DefaultShell: opts.DefaultShell, PowerShell: opts.PowerShell, SandboxStrategy: opts.SandboxStrategy, Sandbox: opts.Sandbox})
 	r.Register(PowerShellTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.PowerShell})
 	r.Register(BashOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -737,13 +752,13 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(REPLTool{Workspace: workspace, ConfigEnv: opts.ConfigEnv})
 	r.Register(SkillTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(ConfigTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
-	r.Register(MCPDispatchTool{Servers: opts.MCPServers})
+	r.Register(MCPDispatchTool{Servers: opts.MCPServers, Options: r.MCPClientOptions})
 	r.Register(MCPAuthTool{Servers: opts.MCPServers, ConfigHome: opts.ConfigHome, OAuthProfile: opts.OAuthProfile})
-	r.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
-	r.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
-	r.Register(ListMCPResourceTemplatesTool{Servers: opts.MCPServers})
-	r.Register(ListMCPPromptsTool{Servers: opts.MCPServers})
-	r.Register(GetMCPPromptTool{Servers: opts.MCPServers})
+	r.Register(ListMCPResourcesTool{Servers: opts.MCPServers, Options: r.MCPClientOptions})
+	r.Register(ReadMCPResourceTool{Servers: opts.MCPServers, Options: r.MCPClientOptions})
+	r.Register(ListMCPResourceTemplatesTool{Servers: opts.MCPServers, Options: r.MCPClientOptions})
+	r.Register(ListMCPPromptsTool{Servers: opts.MCPServers, Options: r.MCPClientOptions})
+	r.Register(GetMCPPromptTool{Servers: opts.MCPServers, Options: r.MCPClientOptions})
 	r.Register(GitStatusTool{Workspace: workspace})
 	r.Register(BranchFreshnessTool{Workspace: workspace})
 	r.Register(GitDiffTool{Workspace: workspace})
@@ -763,6 +778,23 @@ func cloneMCPServers(servers map[string]config.MCPServerConfig) map[string]confi
 		out[name] = server
 	}
 	return out
+}
+
+// SetMCPClientOptions updates roots and interactive handlers used by MCP tool
+// calls. It is safe to call between or during interactive turns.
+func (r *Registry) SetMCPClientOptions(options mcp.ClientOptions) {
+	r.mcpOptionsMu.Lock()
+	defer r.mcpOptionsMu.Unlock()
+	r.mcpOptions = options
+}
+
+// MCPClientOptions returns a snapshot of the current MCP interaction options.
+func (r *Registry) MCPClientOptions() mcp.ClientOptions {
+	r.mcpOptionsMu.RLock()
+	defer r.mcpOptionsMu.RUnlock()
+	options := r.mcpOptions
+	options.Roots = append([]mcp.Root(nil), options.Roots...)
+	return options
 }
 
 func configuredRAGBaseURL(explicit string) string {
@@ -1544,7 +1576,7 @@ func (t MCPTool) Permission() Permission {
 }
 
 func (t MCPTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
-	result := mcp.CallTool(ctx, t.ServerName, t.Server, t.RemoteName, input)
+	result := mcp.CallToolWithOptions(ctx, t.ServerName, t.Server, t.RemoteName, input, currentMCPOptions(t.Options))
 	if result.Error != "" {
 		return "", errors.New(result.Error)
 	}
@@ -1557,6 +1589,7 @@ func (t MCPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 // MCPDispatchTool calls a named tool on one configured MCP server.
 type MCPDispatchTool struct {
 	Servers map[string]config.MCPServerConfig
+	Options func() mcp.ClientOptions
 }
 
 type mcpDispatchInput struct {
@@ -1614,7 +1647,7 @@ func (t MCPDispatchTool) Execute(ctx context.Context, input json.RawMessage) (st
 	if len(payload.Arguments) == 0 {
 		payload.Arguments = json.RawMessage(`{}`)
 	}
-	result := mcp.CallTool(ctx, payload.Server, server, payload.Tool, payload.Arguments)
+	result := mcp.CallToolWithOptions(ctx, payload.Server, server, payload.Tool, payload.Arguments, currentMCPOptions(t.Options))
 	if result.Error != "" {
 		return "", errors.New(result.Error)
 	}
@@ -1735,6 +1768,7 @@ func normalizeMCPAuthAction(action string) string {
 // ListMCPResourcesTool lists resources exposed by configured MCP servers.
 type ListMCPResourcesTool struct {
 	Servers map[string]config.MCPServerConfig
+	Options func() mcp.ClientOptions
 }
 
 type listMCPResourcesInput struct {
@@ -1774,7 +1808,7 @@ func (t ListMCPResourcesTool) Execute(ctx context.Context, input json.RawMessage
 		if !ok {
 			return "", unknownMCPServerError(payload.Server, t.Servers)
 		}
-		result := mcp.ListResources(ctx, payload.Server, server)
+		result := mcp.ListResourcesWithOptions(ctx, payload.Server, server, currentMCPOptions(t.Options))
 		if result.Error != "" {
 			return "", errors.New(result.Error)
 		}
@@ -1784,7 +1818,7 @@ func (t ListMCPResourcesTool) Execute(ctx context.Context, input json.RawMessage
 	names := sortedMCPServerNames(t.Servers)
 	results := make([]mcp.ResourceListResult, 0, len(names))
 	for _, name := range names {
-		results = append(results, mcp.ListResources(ctx, name, t.Servers[name]))
+		results = append(results, mcp.ListResourcesWithOptions(ctx, name, t.Servers[name], currentMCPOptions(t.Options)))
 	}
 	return pretty(map[string]any{
 		"kind":    "mcp_resources",
@@ -1796,6 +1830,7 @@ func (t ListMCPResourcesTool) Execute(ctx context.Context, input json.RawMessage
 // ReadMCPResourceTool reads one resource URI from a configured MCP server.
 type ReadMCPResourceTool struct {
 	Servers map[string]config.MCPServerConfig
+	Options func() mcp.ClientOptions
 }
 
 type readMCPResourceInput struct {
@@ -1844,7 +1879,7 @@ func (t ReadMCPResourceTool) Execute(ctx context.Context, input json.RawMessage)
 	if !ok {
 		return "", unknownMCPServerError(payload.Server, t.Servers)
 	}
-	result := mcp.ReadResource(ctx, payload.Server, server, payload.URI)
+	result := mcp.ReadResourceWithOptions(ctx, payload.Server, server, payload.URI, currentMCPOptions(t.Options))
 	if result.Error != "" {
 		return "", errors.New(result.Error)
 	}
@@ -1855,6 +1890,7 @@ func (t ReadMCPResourceTool) Execute(ctx context.Context, input json.RawMessage)
 // MCP servers.
 type ListMCPResourceTemplatesTool struct {
 	Servers map[string]config.MCPServerConfig
+	Options func() mcp.ClientOptions
 }
 
 func (t ListMCPResourceTemplatesTool) Definition() anthropic.ToolDefinition {
@@ -1888,7 +1924,7 @@ func (t ListMCPResourceTemplatesTool) Execute(ctx context.Context, input json.Ra
 		if !ok {
 			return "", unknownMCPServerError(payload.Server, t.Servers)
 		}
-		result := mcp.ListResourceTemplates(ctx, payload.Server, server)
+		result := mcp.ListResourceTemplatesWithOptions(ctx, payload.Server, server, currentMCPOptions(t.Options))
 		if result.Error != "" {
 			return "", errors.New(result.Error)
 		}
@@ -1897,7 +1933,7 @@ func (t ListMCPResourceTemplatesTool) Execute(ctx context.Context, input json.Ra
 	names := sortedMCPServerNames(t.Servers)
 	results := make([]mcp.ResourceTemplateListResult, 0, len(names))
 	for _, name := range names {
-		results = append(results, mcp.ListResourceTemplates(ctx, name, t.Servers[name]))
+		results = append(results, mcp.ListResourceTemplatesWithOptions(ctx, name, t.Servers[name], currentMCPOptions(t.Options)))
 	}
 	return pretty(map[string]any{"kind": "mcp_resource_templates", "servers": results, "total": len(results)}), nil
 }
@@ -1905,6 +1941,7 @@ func (t ListMCPResourceTemplatesTool) Execute(ctx context.Context, input json.Ra
 // ListMCPPromptsTool lists prompts exposed by configured MCP servers.
 type ListMCPPromptsTool struct {
 	Servers map[string]config.MCPServerConfig
+	Options func() mcp.ClientOptions
 }
 
 func (t ListMCPPromptsTool) Definition() anthropic.ToolDefinition {
@@ -1938,7 +1975,7 @@ func (t ListMCPPromptsTool) Execute(ctx context.Context, input json.RawMessage) 
 		if !ok {
 			return "", unknownMCPServerError(payload.Server, t.Servers)
 		}
-		result := mcp.ListPrompts(ctx, payload.Server, server)
+		result := mcp.ListPromptsWithOptions(ctx, payload.Server, server, currentMCPOptions(t.Options))
 		if result.Error != "" {
 			return "", errors.New(result.Error)
 		}
@@ -1947,7 +1984,7 @@ func (t ListMCPPromptsTool) Execute(ctx context.Context, input json.RawMessage) 
 	names := sortedMCPServerNames(t.Servers)
 	results := make([]mcp.PromptListResult, 0, len(names))
 	for _, name := range names {
-		results = append(results, mcp.ListPrompts(ctx, name, t.Servers[name]))
+		results = append(results, mcp.ListPromptsWithOptions(ctx, name, t.Servers[name], currentMCPOptions(t.Options)))
 	}
 	return pretty(map[string]any{"kind": "mcp_prompts", "servers": results, "total": len(results)}), nil
 }
