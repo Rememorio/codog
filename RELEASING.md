@@ -8,14 +8,65 @@ archives, generates `SHA256SUMS`, and publishes the artifacts to GitHub.
 
 1. Update the version reported by Codog and finish all release changes on
    `main`.
-2. Run `scripts/smoke.sh` and confirm the `main` CI run passes.
-3. Confirm `git status --short --branch` is clean and `main` matches
+2. Draft release notes using the structure and guidance below.
+3. Run `scripts/smoke.sh` and confirm the `main` CI run passes.
+4. Confirm `git status --short --branch` is clean and `main` matches
    `origin/main`.
-4. Confirm the version has no existing tag or GitHub Release.
+5. Confirm the version has no existing tag or GitHub Release.
 
 The release script rejects a version that differs from the version compiled
 into Codog. It also rejects dirty checkouts and commits other than the checked
 out `HEAD`.
+
+## Release Notes
+
+Release notes are a user-facing upgrade guide, not a generated commit list.
+Do not publish a release whose body contains only a full-changelog link.
+
+- Start with one sentence describing the release theme and user value.
+- Keep `Highlights` to three to six concrete, user-visible outcomes.
+- Mention internal work only when it explains reliability, security,
+  performance, or compatibility.
+- Add `Compatibility` when users need to know about migrations, changed
+  defaults, deprecations, or the absence of breaking changes.
+- Use a dedicated `Breaking Changes` or `Security` section when applicable;
+  never bury those details in a general highlight.
+- Use the exact release tag in the install command.
+- Describe the supported archives and `SHA256SUMS` consistently.
+- End with a compare link, or a commit link for the first public release.
+- Do not make capability, compatibility, or security claims that were not
+  verified by the release gates.
+
+Use this structure, omitting `Compatibility` only when it does not apply:
+
+````markdown
+<One-sentence release summary.>
+
+## Highlights
+
+- <User outcome>
+- <User outcome>
+- <Reliability, security, or performance improvement>
+
+## Compatibility
+
+<Migration requirements, changed defaults, or compatibility statement.>
+
+## Install or Upgrade
+
+```sh
+go install github.com/Rememorio/codog@vX.Y.Z
+```
+
+## Downloads
+
+Prebuilt archives are available for macOS, Linux, and Windows on `amd64` and
+`arm64`. Verify downloads with the accompanying `SHA256SUMS` file.
+
+## Full Changelog
+
+[vPREVIOUS...vX.Y.Z](https://github.com/Rememorio/codog/compare/vPREVIOUS...vX.Y.Z)
+````
 
 ## Publish
 
