@@ -12,7 +12,7 @@ import (
 )
 
 // Current is the semantic version reported by Codog binaries and protocols.
-const Current = "0.1.2"
+const Current = "0.2.0"
 
 var (
 	GitSHA    = "unknown"

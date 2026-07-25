@@ -264,6 +264,11 @@ func TestRestartTaskReusesCommandAndWorkspace(t *testing.T) {
 		logs, err := store.Logs(restarted.ID, 1024)
 		return err == nil && strings.Contains(logs, workspace)
 	}, 2*time.Second, 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	completed, err := store.Wait(ctx, restarted.ID)
+	require.NoError(t, err)
+	require.False(t, IsActiveStatus(completed.Status))
 }
 
 func TestScopeBindingPropagatesToBoardAndWatchEvents(t *testing.T) {

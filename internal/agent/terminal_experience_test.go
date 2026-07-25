@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -66,4 +67,40 @@ func TestToggleTUIRawOutputReturnsModelState(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(app.Config.ConfigHome, "config.json"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"tui_raw_output_mode": true`)
+}
+
+func TestAccessibilityCommandsDispatchRawOutputAndPets(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{
+		Workspace: t.TempDir(),
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Out:       &out,
+	}
+	wrap := func(err error) error { return err }
+
+	require.NoError(t, runCLIAccessibilityCommands(
+		context.Background(), app, "raw", []string{"status"}, config.FlagOverrides{}, nil, "text", wrap,
+	))
+	require.Contains(t, out.String(), "Codog Raw Output")
+
+	out.Reset()
+	require.NoError(t, runCLIAccessibilityCommands(
+		context.Background(), app, "pets", []string{"list"}, config.FlagOverrides{}, nil, "text", wrap,
+	))
+	require.Contains(t, out.String(), "Codog Terminal Companions")
+}
+
+func TestToggleTUIRawOutputPropagatesCancellationAndConfigErrors(t *testing.T) {
+	app := &App{Workspace: t.TempDir(), Config: config.Config{ConfigHome: t.TempDir()}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := app.toggleTUIRawOutput(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+
+	configFile := filepath.Join(t.TempDir(), "config-home")
+	require.NoError(t, os.WriteFile(configFile, []byte("not a directory"), 0o600))
+	app.Config.ConfigHome = configFile
+	_, err = app.toggleTUIRawOutput(context.Background())
+	require.Error(t, err)
+	require.Equal(t, "Raw output: off (rich transcript)", rawOutputNoticeText(false))
 }

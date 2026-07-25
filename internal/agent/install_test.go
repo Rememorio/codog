@@ -99,7 +99,7 @@ func TestUpdaterPayloadBoundaries(t *testing.T) {
 
 func TestUpdaterCheckUsesConfiguredManifestURL(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		require.NoError(t, json.NewEncoder(w).Encode(updater.Manifest{Version: "0.2.0"}))
+		require.NoError(t, json.NewEncoder(w).Encode(updater.Manifest{Version: "0.2.1"}))
 	}))
 	defer server.Close()
 
@@ -119,7 +119,7 @@ func TestUpdaterCheckUsesConfiguredManifestURL(t *testing.T) {
 	require.Equal(t, "updater", report.Kind)
 	require.Equal(t, "check", report.Action)
 	require.Equal(t, "ok", report.Status)
-	require.Equal(t, "0.2.0", report.Result.LatestVersion)
+	require.Equal(t, "0.2.1", report.Result.LatestVersion)
 	require.True(t, report.Result.UpdateAvailable)
 }
 

@@ -22,6 +22,7 @@ import (
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bookmarks"
+	"github.com/Rememorio/codog/internal/companion"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/cron"
 	"github.com/Rememorio/codog/internal/githubsetup"
@@ -305,13 +306,16 @@ func TestTUIModeStateSyncsExternalPermissionChanges(t *testing.T) {
 
 func TestTUIRuntimeBadgesReflectConfig(t *testing.T) {
 	fast := true
+	raw := true
 	app := &App{Config: config.Config{
-		Model:           "glm52",
-		FastMode:        &fast,
-		ReasoningEffort: "high",
+		Model:            "glm52",
+		FastMode:         &fast,
+		ReasoningEffort:  "high",
+		TUIRawOutputMode: &raw,
+		TUIPet:           companion.BuiltinID,
 	}}
 
-	require.Equal(t, []string{"model: glm52", "fast: on", "thinking: high"}, app.tuiRuntimeBadges())
+	require.Equal(t, []string{"model: glm52", "fast: on", "thinking: high", "raw: on", "pet: codog"}, app.tuiRuntimeBadges())
 }
 
 func TestResumeSessionChoicesUseIdentityAndPromptFallback(t *testing.T) {
