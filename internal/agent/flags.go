@@ -428,7 +428,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"references", "scope", "search", "security-review", "self-test", "server", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "slash", "skill", "skills", "speak", "ssh", "state", "status", "statusline", "symbols",
 		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "summary", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "terminalsetup", "theme", "tokens", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
-		"teleport", "ultraplan", "ultrareview", "unpin", "upgrade", "usage", "version", "vim", "voice", "web-setup", "workspace", "cwd", "rewind":
+		"teleport", "ultraplan", "ultrareview", "unpin", "upgrade", "usage", "version", "vim", "voice", "visualize", "web-setup", "workspace", "cwd", "rewind":
 		return true
 	default:
 		return false
@@ -2020,6 +2020,20 @@ func commandHelpSpecGroup5(topic string) (commandHelpSpec, bool) {
 			MutatesWorkspace:        false,
 			OutputFields:            []string{"assets", "sessions_discovered", "sessions_eligible", "sessions_imported", "sessions_skipped", "sessions_failed", "sessions"},
 			StatusValues:            []string{"ready", "imported", "up_to_date", "partial", "error", "not_found"},
+		}, true
+	case "visualize":
+		return commandHelpSpec{
+			Topic:                   "visualize",
+			Command:                 "visualize",
+			Usage:                   visualizeUsage,
+			Text:                    "Visualize\n\nUsage:\n  codog visualize [list|path|show|open] [FILE] [--output-format text|json]\n  /visualize [list|path|show|open] [FILE]\n\nLists and opens self-contained HTML visualizations from `.codog/visualizations`. Codog always opens a generated sandbox viewer, never the assistant-authored source directly.\n",
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        false,
+			OutputFields:            []string{"source_dir", "item", "items", "opener"},
+			StatusValues:            []string{"ok", "error"},
 		}, true
 	case "bookmarks":
 		return commandHelpSpec{

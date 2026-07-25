@@ -1919,6 +1919,10 @@ func (m *model) finishStreamingOutput(role string, output string) {
 		m.transcript[m.streamingIndex].Text = output
 		return
 	}
+	if strings.Contains(current, "::codog-inline-vis{") && !strings.Contains(output, "::codog-inline-vis{") {
+		m.transcript[m.streamingIndex].Text = output
+		return
+	}
 	if current == output || strings.Contains(current, output) {
 		return
 	}

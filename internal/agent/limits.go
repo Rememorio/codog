@@ -2833,6 +2833,9 @@ func (a *App) systemPromptForInput(input string) string {
 	if fastModeEnabled(a.Config.FastMode) {
 		builder.WriteString("\n\n<codog_fast_mode>enabled</codog_fast_mode>")
 	}
+	builder.WriteString("\n\n<codog_visualizations>")
+	builder.WriteString("When an interactive explanation materially benefits from a chart, diagram, or explorer, write one self-contained HTML file under .codog/visualizations/ using only inline scripts, styles, and data. Do not use remote URLs or external assets. Then emit a standalone directive: ::codog-inline-vis{\"file\":\"NAME.html\",\"title\":\"TITLE\"}. Do not emit the directive unless the file was created successfully.")
+	builder.WriteString("</codog_visualizations>")
 	includedSkills := map[string]bool{}
 	for _, name := range a.Config.EnabledSkills {
 		skill, err := a.findRuntimeSkill(name)

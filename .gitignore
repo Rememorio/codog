@@ -27,6 +27,7 @@ coverage.out
 **/.codog/traces/
 **/.codog/worktrees/
 **/.codog/context-viz.html
+**/.codog/visualizations/
 **/.codog/think-back-*.html
 /internal/agent/audit/
 .DS_Store

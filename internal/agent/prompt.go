@@ -1921,7 +1921,7 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		return err
 	}
 	a.writeWorkerState("tui", "idle", sess, "")
-	entries := tuiSessionEntries(sess)
+	entries := a.rewriteVisualizationEntries(tuiSessionEntries(sess))
 	if banner := buildDeepLinkBanner(a.Workspace, overrides, time.Now()); banner != "" {
 		entries = append(entries, tui.Entry{Role: "system", Text: banner})
 	}
@@ -2151,13 +2151,23 @@ func (s *tuiTurnSubmission) response(err error) (string, error) {
 	if response == "" {
 		response = strings.TrimSpace(lastAssistantText(s.submitter.sess.Messages))
 	}
+	rewritten, visualizationChanged := s.submitter.app.rewriteVisualizationMarkdown(response)
+	if visualizationChanged {
+		response = strings.TrimSpace(rewritten)
+	}
 	if toolSummary := renderTUIToolSummary(s.toolCalls); toolSummary != "" && !s.liveToolEvents {
 		if s.streamOut.Emitted() {
+			if visualizationChanged {
+				return strings.TrimSpace(strings.Join([]string{toolSummary, response}, "\n\n")), err
+			}
 			return toolSummary, err
 		}
 		response = strings.TrimSpace(strings.Join([]string{toolSummary, response}, "\n\n"))
 	}
 	if s.streamOut.Emitted() || s.liveToolEvents {
+		if visualizationChanged {
+			return response, err
+		}
 		return "", err
 	}
 	return response, err
@@ -2631,7 +2641,7 @@ func (a *App) tuiSessionState(sess *session.Session) tui.SessionState {
 	}
 	return tui.SessionState{
 		ID:         sess.ID,
-		Entries:    tuiSessionEntries(sess),
+		Entries:    a.rewriteVisualizationEntries(tuiSessionEntries(sess)),
 		History:    a.tuiPromptHistory(sess.ID),
 		Candidates: a.slashMenuCandidates(sess.ID),
 	}

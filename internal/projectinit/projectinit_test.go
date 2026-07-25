@@ -80,6 +80,7 @@ func TestInitializeCreatesExpectedArtifacts(t *testing.T) {
 	require.Contains(t, string(gitignore), ".codog/traces/")
 	require.Contains(t, string(gitignore), ".codog/worktrees/")
 	require.Contains(t, string(gitignore), ".codog/context-viz.html")
+	require.Contains(t, string(gitignore), ".codog/visualizations/")
 	require.Contains(t, string(gitignore), ".codog/think-back-*.html")
 }
 

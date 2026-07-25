@@ -3206,6 +3206,10 @@ func (a *App) handleAuthSessionsSlash(ctx context.Context, command string, field
 		if err := a.ClaudeImport(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/visualize":
+		if err := a.Visualize(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/clear":
 		a.handleClearSlash(ctx, fields[1:], sess)
 	case "/conversation":

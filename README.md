@@ -97,6 +97,14 @@ REPL, TUI, or bridge call:
 The session ledger is JSONL, so runs can be inspected, resumed, compacted, or
 exported without a database.
 
+Interactive responses can include self-contained HTML visualizations for charts,
+diagrams, and small explorers. Sources live under `.codog/visualizations`, while
+Codog presents a generated viewer from its private config directory. The viewer
+uses a sandboxed iframe and a restrictive content policy: inline interaction is
+allowed, but network access, forms, popups, host navigation, and same-origin
+access are not. Visualization files are local artifacts and are ignored by
+default.
+
 ## Code Intelligence
 
 Codog includes an experimental Go-focused code-intelligence layer behind the

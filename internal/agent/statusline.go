@@ -2215,6 +2215,7 @@ func builtInCommandNames() []string {
 		"version",
 		"vim",
 		"voice",
+		"visualize",
 		"web-setup",
 		"workspace",
 	})
@@ -4374,6 +4375,10 @@ func (a *App) runResumedSlashSessions(ctx context.Context, name string, args []s
 		return a.History(resumeSlashArgs("history", args, format), resumed)
 	case "/backfill-sessions":
 		return a.BackfillSessions(resumeSlashArgs("backfill-sessions", args, format))
+	case "/import":
+		return a.ClaudeImport(resumeSlashArgs("import", args, format))
+	case "/visualize":
+		return a.Visualize(resumeSlashArgs("visualize", args, format))
 	case "/generatesessionname", "/generate-session-name":
 		return a.GenerateSessionName(resumeSlashArgs("generateSessionName", args, format), resumed)
 	case "/rewind":

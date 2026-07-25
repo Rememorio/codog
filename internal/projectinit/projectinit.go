@@ -46,6 +46,7 @@ var gitignoreEntries = []string{
 	".codog/traces/",
 	".codog/worktrees/",
 	".codog/context-viz.html",
+	".codog/visualizations/",
 	".codog/think-back-*.html",
 }
 

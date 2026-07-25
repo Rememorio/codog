@@ -903,6 +903,8 @@ func runCLISessionsCommands(ctx context.Context, app *App, command string, rest 
 		return nil
 	case "import":
 		return wrapStructured(app.ClaudeImport(rest))
+	case "visualize":
+		return wrapStructured(app.Visualize(rest))
 	case "resume", "continue":
 		return wrapStructured(app.ResumeCommand(rest))
 	case "clear":
