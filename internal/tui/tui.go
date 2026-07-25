@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Rememorio/codog/internal/companion"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -187,6 +188,9 @@ type SlashResult struct {
 	OpenTodos          bool
 	OpenMessageActions bool
 	RuntimeAction      string
+	RawOutput          *bool
+	Companion          *companion.Manifest
+	CompanionChanged   bool
 	Diff               *DiffView
 	PermissionSettings *PermissionSettings
 	Information        *InformationView
@@ -259,6 +263,7 @@ type RuntimeControlResult struct {
 	Setting    string
 	Value      string
 	VimEnabled *bool
+	RawOutput  *bool
 }
 
 // ShellOptions configures the interactive TUI shell.
@@ -297,6 +302,7 @@ type ShellOptions struct {
 	ToggleFast                RuntimeControlFunc
 	ToggleThinking            RuntimeControlFunc
 	ToggleVim                 RuntimeControlFunc
+	ToggleRaw                 RuntimeControlFunc
 	StopBackground            RuntimeControlFunc
 	CompactSession            RuntimeControlFunc
 	UndoLast                  RuntimeControlFunc
@@ -315,6 +321,8 @@ type ShellOptions struct {
 	ContextKeybindings        map[string]map[string][]string
 	CycleMode                 func() string
 	ReadModeLabel             func() string
+	RawOutput                 bool
+	Companion                 *companion.Manifest
 	// FullScreen opts into the alternate-screen renderer. The default inline
 	// renderer keeps completed conversation turns in terminal scrollback.
 	FullScreen bool
@@ -333,6 +341,8 @@ type Preview struct {
 	HelpOpen        bool
 	HasStash        bool
 	Transcript      bool
+	RawOutput       bool
+	Companion       string
 	QuickOpen       bool
 	GlobalSearch    bool
 	TodosOpen       bool
@@ -396,6 +406,7 @@ type model struct {
 	fileCandidates            []string
 	helpOpen                  bool
 	transcriptMode            bool
+	rawOutput                 bool
 	quickOpen                 bool
 	busy                      bool
 	status                    string
@@ -476,6 +487,7 @@ type model struct {
 	toggleFast                RuntimeControlFunc
 	toggleThinking            RuntimeControlFunc
 	toggleVim                 RuntimeControlFunc
+	toggleRaw                 RuntimeControlFunc
 	stopBackground            RuntimeControlFunc
 	compactSession            RuntimeControlFunc
 	undoLast                  RuntimeControlFunc
@@ -537,6 +549,7 @@ type model struct {
 	questionCustomValues      []string
 	questionComposerDraft     string
 	questionDraftCaptured     bool
+	companion                 *companion.Manifest
 }
 
 type transcriptEntry struct {
@@ -1960,6 +1973,7 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.toggleFast = options.ToggleFast
 	m.toggleThinking = options.ToggleThinking
 	m.toggleVim = options.ToggleVim
+	m.toggleRaw = options.ToggleRaw
 	m.stopBackground = options.StopBackground
 	m.compactSession = options.CompactSession
 	m.undoLast = options.UndoLast
@@ -1979,6 +1993,8 @@ func Shell(ctx context.Context, options ShellOptions) error {
 	m.contextKeybindings = normalizeTUIContextKeybindings(options.ContextKeybindings)
 	m.cycleMode = options.CycleMode
 	m.readModeLabel = options.ReadModeLabel
+	m.rawOutput = options.RawOutput
+	m.companion = cloneCompanion(options.Companion)
 	m.initialPrompt = strings.TrimSpace(options.InitialPrompt)
 	m.attachments = append([]string(nil), options.InitialAttachments...)
 	m.setHistory(options.History)

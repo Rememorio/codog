@@ -105,6 +105,17 @@ allowed, but network access, forms, popups, host navigation, and same-origin
 access are not. Visualization files are local artifacts and are ignored by
 default.
 
+For copy-heavy work, `/raw` or `Alt+R` switches the transcript to plain logical
+text without ANSI styling, Markdown rendering, line counters, or layout
+gutters. The preference is local and persistent; `Ctrl+O` remains the separate
+expanded transcript view.
+
+Terminal companions are deliberately optional and default to off. `/pets`
+opens the local picker for the bundled text-only Codog or custom manifests under
+the Codog config home. Companions show ready, running, attention, and failure
+states without entering model context, downloading assets, or occupying narrow
+terminals.
+
 ## Code Intelligence
 
 Codog includes an experimental Go-focused code-intelligence layer behind the

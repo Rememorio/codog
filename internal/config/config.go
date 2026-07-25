@@ -1085,6 +1085,8 @@ type Config struct {
 	AppendSystemPrompt         string                     `json:"append_system_prompt,omitempty"`
 	Language                   string                     `json:"language,omitempty"`
 	Theme                      string                     `json:"theme,omitempty"`
+	TUIRawOutputMode           *bool                      `json:"tui_raw_output_mode,omitempty"`
+	TUIPet                     string                     `json:"tui_pet,omitempty"`
 	EditorMode                 string                     `json:"editorMode,omitempty"`
 	DefaultShell               string                     `json:"defaultShell,omitempty"`
 	ReasoningEffort            string                     `json:"reasoning_effort,omitempty"`

@@ -20,6 +20,7 @@ import (
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bridge"
+	"github.com/Rememorio/codog/internal/companion"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/customcommands"
 	"github.com/Rememorio/codog/internal/fileinventory"
@@ -790,6 +791,33 @@ func (a *App) toggleTUIVim(ctx context.Context) (tui.RuntimeControlResult, error
 	}, nil
 }
 
+func (a *App) toggleTUIRawOutput(ctx context.Context) (tui.RuntimeControlResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	report, err := a.applyRawOutput(rawOutputRequest{Action: "toggle", Format: "text", Target: "user"})
+	if err != nil {
+		return tui.RuntimeControlResult{}, err
+	}
+	enabled := report.Enabled
+	return tui.RuntimeControlResult{
+		Title:     "Raw Output",
+		Status:    "raw output " + onOff(enabled),
+		Lines:     []string{rawOutputNoticeText(enabled)},
+		Badges:    []string{"raw: " + onOff(enabled)},
+		Setting:   "raw",
+		Value:     onOff(enabled),
+		RawOutput: &enabled,
+	}, nil
+}
+
+func rawOutputNoticeText(enabled bool) string {
+	if enabled {
+		return "Raw output: on (plain copy-friendly transcript)"
+	}
+	return "Raw output: off (rich transcript)"
+}
+
 func (a *App) tuiRuntimeBadges() []string {
 	badges := []string{}
 	if model := strings.TrimSpace(a.Config.Model); model != "" {
@@ -797,6 +825,12 @@ func (a *App) tuiRuntimeBadges() []string {
 	}
 	badges = append(badges, "fast: "+onOff(fastModeEnabled(a.Config.FastMode)))
 	badges = append(badges, "thinking: "+effectiveEffort(a.Config.ReasoningEffort))
+	if rawOutputEnabled(a.Config.TUIRawOutputMode) {
+		badges = append(badges, "raw: on")
+	}
+	if selected := strings.TrimSpace(a.Config.TUIPet); selected != "" && selected != companion.DisabledID {
+		badges = append(badges, "pet: "+selected)
+	}
 	return badges
 }
 
@@ -2579,6 +2613,14 @@ func (a *App) handlePreferencesSlash(ctx context.Context, command string, fields
 		}
 	case "/theme":
 		if err := a.Theme(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/raw":
+		if err := a.RawOutput(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/pets", "/pet":
+		if err := a.Pets(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/vim":

@@ -845,6 +845,9 @@ func (m *model) applyRuntimeControlResult(result RuntimeControlResult) {
 		m.vimNormal = false
 		m.vimOperator = ""
 	}
+	if result.RawOutput != nil {
+		m.setRawOutput(*result.RawOutput)
+	}
 	m.runtimeBadges = mergeRuntimeBadges(m.runtimeBadges, runtimeBadgesFromResult(result))
 	m.status = status
 	if m.updateCommandViewValue(result.Setting, result.Value) {

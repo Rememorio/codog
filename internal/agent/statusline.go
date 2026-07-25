@@ -2114,6 +2114,8 @@ func builtInCommandNames() []string {
 		"parity",
 		"passes",
 		"paste",
+		"pet",
+		"pets",
 		"perf-issue",
 		"permissions",
 		"pin",
@@ -2133,6 +2135,7 @@ func builtInCommandNames() []string {
 		"python",
 		"rate-limit",
 		"rate-limit-options",
+		"raw",
 		"reasoning",
 		"references",
 		"release-notes",
@@ -4023,6 +4026,10 @@ func (a *App) runResumedSlashPreferences(ctx context.Context, name string, args 
 		return a.runResumedSpeakSlash(ctx, resumeSlashArgs("speak", args, format), resumed, format)
 	case "/vim":
 		return a.runResumedVimSlash(resumeSlashArgs("vim", args, format), format)
+	case "/raw":
+		return a.RawOutput(resumeSlashArgs("raw", args, format))
+	case "/pets", "/pet":
+		return a.Pets(resumeSlashArgs("pets", args, format))
 	case "/chrome":
 		return a.runResumedChromeSlash(resumeSlashArgs("chrome", args, format), format)
 	case "/notifications":

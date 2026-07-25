@@ -422,9 +422,9 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "deferred-init", "definition", "desktop", "diagnostics", "diff", "doctor", "dump-manifests", "effort", "enterprise", "env", "exit", "exit-plan",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "git", "good-claude", "green", "green-contract", "heapdump", "hooks", "import", "language",
 		"format", "help", "history", "hover", "ide", "init", "init-verifiers", "insights", "install", "install-github-app", "install-slack-app", "ios", "issue", "keybindings", "listen", "log", "map", "marketplace", "max-tokens", "max-turns",
-		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauth", "oauth-refresh", "onboarding", "open", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauth", "oauth-refresh", "onboarding", "open", "output-style", "parity", "passes", "paste", "pet", "pets", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
 		"pr-comments", "pr_comments", "profile", "prompt", "prompt-history", "privacy-settings", "project", "providers", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
-		"remote", "remote-control", "remote-env", "remote-setup", "rename", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "safer-scope", "sandbox-toggle",
+		"raw", "remote", "remote-control", "remote-env", "remote-setup", "rename", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "rollback", "safer-scope", "sandbox-toggle",
 		"references", "scope", "search", "security-review", "self-test", "server", "settings", "setup", "setup-token", "setupgithubactions", "session", "sessions", "slash", "skill", "skills", "speak", "ssh", "state", "status", "statusline", "symbols",
 		"bashes", "stash", "stale-base", "startup-report", "stickers", "stats", "summary", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "terminalsetup", "theme", "tokens", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
@@ -935,7 +935,7 @@ func commandHelpSpecGroup1(topic string) (commandHelpSpec, bool) {
 			"tui",
 			"tui",
 			"codog [flags] tui",
-			"TUI\n\nUsage:\n  codog [flags] tui\n  codog [flags]\n\nStarts the inline Bubble Tea agent session and keeps completed turns in terminal scrollback. Enter sends the prompt, Alt+Enter or Ctrl+J inserts a newline, slash commands run inside the active session, and JSONL resume state is preserved.\n",
+			"TUI\n\nUsage:\n  codog [flags] tui\n  codog [flags]\n\nStarts the inline Bubble Tea agent session and keeps completed turns in terminal scrollback. Enter sends the prompt, Alt+Enter or Ctrl+J inserts a newline, and Alt+R toggles copy-friendly raw output. Slash commands run inside the active session, JSONL resume state is preserved, and terminal companions remain hidden unless selected with `/pets`.\n",
 			[]string{"session_id", "message", "tool_calls", "usage"},
 			[]string{"ok", "error"},
 		), true
@@ -2035,6 +2035,40 @@ func commandHelpSpecGroup5(topic string) (commandHelpSpec, bool) {
 			OutputFields:            []string{"source_dir", "item", "items", "opener"},
 			StatusValues:            []string{"ok", "error"},
 		}, true
+	case "raw":
+		return commandHelpSpec{
+			Topic:                   "raw",
+			Command:                 "raw",
+			Usage:                   rawOutputUsage,
+			Text:                    "Raw Output\n\nUsage:\n  codog raw [status|on|off|toggle] [--target user|project|local] [--output-format text|json]\n  /raw [on|off|toggle|status]\n\nSwitches the interactive transcript between rich rendering and plain logical text for clean terminal selection. `Alt+R` toggles the same persisted user preference; `Ctrl+O` remains the expanded transcript view.\n",
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        true,
+			OutputFields:            []string{"enabled", "config_path"},
+			StatusValues:            []string{"ok", "error"},
+		}, true
+	case "pets":
+		return commandHelpSpec{
+			Topic:                   "pets",
+			Command:                 "pets",
+			Usage:                   petsUsage,
+			Text:                    "Terminal Companions\n\nUsage:\n  codog pets [list|status|use ID|off|example] [--output PATH] [--target user|project|local] [--output-format text|json]\n  /pets [list|status|use ID|off|example]\n\nConfigures an optional local terminal companion. The built-in Codog uses portable text artwork and never downloads assets. Custom manifests are loaded from `$CODOG_CONFIG_HOME/pets/ID/pet.json`; `example` writes a starter manifest.\n",
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        true,
+			OutputFields:            []string{"selected", "enabled", "companions", "config_path", "manifest_path"},
+			StatusValues:            []string{"ok", "error"},
+		}, true
+	case "pet":
+		spec, _ := commandHelpSpecGroup5("pets")
+		spec.Topic = "pet"
+		spec.Command = "pet"
+		spec.Aliases = []string{"pets"}
+		return spec, true
 	case "bookmarks":
 		return commandHelpSpec{
 			Topic:                   "bookmarks",

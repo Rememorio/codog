@@ -897,6 +897,9 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 			OpenTodos:          result.OpenTodos,
 			OpenMessageActions: result.OpenMessageActions,
 			RuntimeAction:      result.RuntimeAction,
+			RawOutput:          result.RawOutput,
+			Companion:          cloneCompanion(result.Companion),
+			CompanionChanged:   result.CompanionChanged,
 			Diff:               result.Diff,
 			PermissionSettings: result.PermissionSettings,
 			Information:        result.Information,
@@ -908,7 +911,7 @@ func runSlashCommand(ctx context.Context, slash SlashFunc, line string) tea.Cmd 
 }
 
 func slashResultHasInteractiveView(result SlashResult) bool {
-	return strings.TrimSpace(result.Query) != "" || result.Session != nil || len(result.SessionChoices) > 0 || result.OpenModelPicker || result.OpenThemePicker || result.OpenTodos || result.OpenMessageActions || strings.TrimSpace(result.RuntimeAction) != "" || result.Diff != nil || result.PermissionSettings != nil || result.Information != nil || result.CommandView != nil || result.ExportDialog != nil || result.TextInputDialog != nil
+	return strings.TrimSpace(result.Query) != "" || result.Session != nil || len(result.SessionChoices) > 0 || result.OpenModelPicker || result.OpenThemePicker || result.OpenTodos || result.OpenMessageActions || strings.TrimSpace(result.RuntimeAction) != "" || result.RawOutput != nil || result.CompanionChanged || result.Diff != nil || result.PermissionSettings != nil || result.Information != nil || result.CommandView != nil || result.ExportDialog != nil || result.TextInputDialog != nil
 }
 
 type turnStreamMsg struct {

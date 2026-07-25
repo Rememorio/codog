@@ -1079,6 +1079,10 @@ func runCLIAccessibilityCommands(ctx context.Context, app *App, command string, 
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	case "raw":
+		return wrapStructured(app.RawOutput(rest))
+	case "pets", "pet":
+		return wrapStructured(app.Pets(rest))
 	case "effort":
 		if err := app.Effort(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))

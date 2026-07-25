@@ -99,6 +99,39 @@ expect eof
 	require.NotContains(t, output, "\x1b[?1049h")
 }
 
+func TestRealBinaryTUIRawOutputAndCompanionWithTTY(t *testing.T) {
+	bin := buildCodogBinary(t)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+
+	output := runExpectCodog(t, bin, workspace, configHome, nil, `
+set timeout 20
+spawn -noecho $env(CODOG_TEST_BIN) --model glm52 tui
+expect "codog"
+send "/raw\r"
+expect "Raw output on"
+send "/pets\r"
+expect "terminal companion"
+expect "Codog"
+send "\033\[B"
+send "\r"
+expect "Terminal companion: Codog"
+send "/raw off\r"
+expect "Raw output off"
+expect "ready"
+send "/exit\r"
+expect eof
+`)
+
+	require.Contains(t, output, "Raw output on")
+	require.Contains(t, output, "Terminal companion: Codog")
+	require.Contains(t, output, "Raw output off")
+	configData, err := os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(configData), `"tui_raw_output_mode": false`)
+	require.Contains(t, string(configData), `"tui_pet": "codog"`)
+}
+
 func TestRealBinaryTUITagsAndSearchesSavedSessionWithTTY(t *testing.T) {
 	bin := buildCodogBinary(t)
 	workspace := t.TempDir()

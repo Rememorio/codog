@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func isLocalHelpInput(value string) bool {
@@ -57,6 +58,25 @@ func renderTranscriptEntry(entry transcriptEntry, width int, index int, total in
 		content = renderAssistantMarkdown(text, width, styles)
 	}
 	return styles.role(role).Render(header) + "\n" + content
+}
+
+func renderRawTranscriptEntry(entry transcriptEntry) string {
+	role := strings.ToLower(strings.TrimSpace(entry.Role))
+	if role == "" {
+		role = "message"
+	}
+	text := entry.Text
+	if entry.Tool != nil {
+		role = "tool"
+		text = toolActivityTranscriptText(*entry.Tool)
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	text = strings.TrimSpace(ansi.Strip(text))
+	if text == "" {
+		text = "(empty)"
+	}
+	return role + "\n" + text
 }
 
 func renderToolActivity(activity ToolActivity, width int, expanded bool, themed ...themeStyles) string {

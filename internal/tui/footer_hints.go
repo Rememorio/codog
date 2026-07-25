@@ -184,6 +184,14 @@ func (m model) defaultFooterHints() footerHints {
 	} else {
 		hints.add("Ctrl+O transcript")
 	}
+	if m.rawOutput {
+		hints.add("Alt+R rich output")
+	} else {
+		hints.add("Alt+R raw output")
+	}
+	if m.companion != nil {
+		hints.add("pet: " + m.companion.ID)
+	}
 	if m.vimEnabled {
 		if m.vimNormal {
 			hints.add("vim: normal")

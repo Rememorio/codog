@@ -74,6 +74,19 @@ func (m model) handleTurnSessionChoices(msg turnDoneMsg) (tea.Model, tea.Cmd, bo
 
 func (m model) handleTurnPrimaryAction(msg turnDoneMsg) (tea.Model, tea.Cmd, bool) {
 	switch {
+	case msg.RawOutput != nil:
+		m.prepareTurnAction()
+		m.setRawOutput(*msg.RawOutput)
+		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: rawOutputNotice(*msg.RawOutput)})
+		m.refreshViewport()
+		return m, m.flushInlineTranscript(), true
+	case msg.CompanionChanged:
+		m.prepareTurnAction()
+		m.companion = cloneCompanion(msg.Companion)
+		m.status = companionSelectionStatus(m.companion)
+		m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: companionSelectionNotice(m.companion)})
+		m.reflowTerminalExperience()
+		return m, m.flushInlineTranscript(), true
 	case strings.TrimSpace(msg.Query) != "":
 		m.prepareTurnAction()
 		if output := strings.TrimSpace(msg.Output); output != "" {

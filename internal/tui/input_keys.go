@@ -393,6 +393,10 @@ func (m model) updateViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.togglePromptStash()
 		return m, nil
 	case "ctrl+o":
+		if m.rawOutput {
+			m.status = "raw output · Alt+R restores rich output"
+			return m, nil
+		}
 		if m.helpOpen {
 			m.helpOpen = false
 		}
@@ -408,6 +412,15 @@ func (m model) updateViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		m.viewport.GotoBottom()
 		return m, nil
+	case "alt+r", "meta+r":
+		if m.toggleRaw == nil {
+			m.setRawOutput(!m.rawOutput)
+			m.transcript = append(m.transcript, transcriptEntry{Role: "system", Text: rawOutputNotice(m.rawOutput)})
+			m.refreshViewport()
+			return m, m.flushInlineTranscript()
+		}
+		m.status = "updating raw output"
+		return m, runRuntimeControlCommand(m.ctx, m.toggleRaw)
 	case "ctrl+g":
 		return m.openExternalEditor()
 	case "pgup":

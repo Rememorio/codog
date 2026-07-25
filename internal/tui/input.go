@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Rememorio/codog/internal/companion"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -221,7 +222,13 @@ func (m model) View() string {
 	if m.inline {
 		body = compactViewportView(body)
 	}
+	companionView := m.renderCompanion(styles)
+	contentWidth := m.width
+	if companionView != "" {
+		contentWidth = max(24, m.width-lipgloss.Width(companionView)-2)
+	}
 	composerTextarea := m.textarea
+	composerTextarea.SetWidth(contentWidth)
 	if m.inline {
 		composerTextarea.SetHeight(m.inlineComposerHeight())
 	}
@@ -229,8 +236,9 @@ func (m model) View() string {
 	if !m.inline {
 		composer = styles.panelTitle().Render(" composer ") + "\n" + composer
 	}
-	composer = m.renderComposerPanels(composer, styles)
-	composer = m.renderActiveComposerDialog(composer, composerTextarea, styles)
+	composer = m.renderComposerPanels(composer, styles, contentWidth)
+	composer = m.renderActiveComposerDialog(composer, composerTextarea, styles, contentWidth)
+	composer = joinComposerCompanion(composer, companionView, contentWidth)
 	statusText := fitFooterText(m.promptFooterText(barWidth), barContentWidth)
 	status := styles.status().Width(barWidth).Render(statusText)
 	if m.inline {
@@ -248,7 +256,7 @@ func (m model) View() string {
 	return strings.Join(parts, "\n")
 }
 
-func (m model) renderComposerPanels(composer string, styles themeStyles) string {
+func (m model) renderComposerPanels(composer string, styles themeStyles, width int) string {
 	if m.commandArgumentHint != "" || m.inlineGhostText != "" {
 		composer += "\n" + renderCommandAssist(m.commandArgumentHint, m.inlineGhostText, styles)
 	}
@@ -259,41 +267,41 @@ func (m model) renderComposerPanels(composer string, styles themeStyles) string 
 		composer += "\n" + renderHistorySearch(m.searchHits, m.searchPos, m.textarea.Value(), styles)
 	}
 	if m.quickOpen {
-		composer += "\n" + renderQuickOpen(m.quickOpenMatches, m.quickOpenSelected, m.textarea.Value(), m.width, m.quickOpenPreviewPath, m.quickOpenPreviewLines, styles)
+		composer += "\n" + renderQuickOpen(m.quickOpenMatches, m.quickOpenSelected, m.textarea.Value(), width, m.quickOpenPreviewPath, m.quickOpenPreviewLines, styles)
 	}
 	if m.globalSearch {
-		composer += "\n" + renderGlobalSearch(m.globalSearchMatches, m.globalSearchSelected, m.textarea.Value(), m.width, m.globalSearchPreviewPath, m.globalSearchPreviewLine, m.globalSearchPreviewLines, styles)
+		composer += "\n" + renderGlobalSearch(m.globalSearchMatches, m.globalSearchSelected, m.textarea.Value(), width, m.globalSearchPreviewPath, m.globalSearchPreviewLine, m.globalSearchPreviewLines, styles)
 	}
 	if m.todosOpen {
-		composer += "\n" + renderTodosPanel(m.todoItems, m.todosLoading, m.todoErr, m.width, styles)
+		composer += "\n" + renderTodosPanel(m.todoItems, m.todosLoading, m.todoErr, width, styles)
 	}
 	if m.modelPicker {
-		composer += "\n" + renderModelPicker(m.modelOptions, m.currentModel, m.modelPickerSelected, m.width, styles)
+		composer += "\n" + renderModelPicker(m.modelOptions, m.currentModel, m.modelPickerSelected, width, styles)
 	}
 	if m.themePicker {
-		composer += "\n" + renderThemePicker(m.theme, m.themePickerSelected, m.width, styles)
+		composer += "\n" + renderThemePicker(m.theme, m.themePickerSelected, width, styles)
 	}
 	if m.permissionSettings != nil {
-		composer += "\n" + renderPermissionSettings(*m.permissionSettings, m.permissionModeSelected, m.width, styles)
+		composer += "\n" + renderPermissionSettings(*m.permissionSettings, m.permissionModeSelected, width, styles)
 	}
 	if m.commandView != nil {
-		composer += "\n" + renderCommandView(*m.commandView, m.commandViewTab, m.commandViewItem, m.commandViewOffset, m.width, m.height, styles)
+		composer += "\n" + renderCommandView(*m.commandView, m.commandViewTab, m.commandViewItem, m.commandViewOffset, width, m.height, styles)
 	}
 	if m.information != nil {
-		composer += "\n" + renderInformation(*m.information, m.informationOffset, m.width, m.height, styles)
+		composer += "\n" + renderInformation(*m.information, m.informationOffset, width, m.height, styles)
 	}
 	if m.messageActions {
 		targetPos, targetCount := m.messageActionTargetPosition()
-		composer += "\n" + renderMessageActions(m.messageActionEntry(), m.messageActionSelected, m.width, targetPos, targetCount, styles)
+		composer += "\n" + renderMessageActions(m.messageActionEntry(), m.messageActionSelected, width, targetPos, targetCount, styles)
 	}
 	if m.diffDialog {
-		composer += "\n" + renderDiffDialog(m.diffSources, m.diffSourceSelected, m.diffFileSelected, m.diffDetail, m.width, styles)
+		composer += "\n" + renderDiffDialog(m.diffSources, m.diffSourceSelected, m.diffFileSelected, m.diffDetail, width, styles)
 	}
 	if len(m.queuedPrompts) > 0 {
 		composer += "\n" + renderQueuedPrompts(m.queuedPrompts, styles)
 	}
 	if m.attachmentsOpen {
-		composer += "\n" + renderAttachmentPanel(m.attachments, m.attachmentSelected, m.width, styles)
+		composer += "\n" + renderAttachmentPanel(m.attachments, m.attachmentSelected, width, styles)
 	} else if len(m.attachments) > 0 {
 		composer += "\n" + renderPendingAttachments(m.attachments, styles)
 	}
@@ -303,22 +311,22 @@ func (m model) renderComposerPanels(composer string, styles themeStyles) string 
 	return composer
 }
 
-func (m model) renderActiveComposerDialog(composer string, composerTextarea textarea.Model, styles themeStyles) string {
+func (m model) renderActiveComposerDialog(composer string, composerTextarea textarea.Model, styles themeStyles, width int) string {
 	if m.exportDialog != nil {
-		composer = renderExportDialog(*m.exportDialog, m.exportDialogSelected, m.exportFilenameInput, composerTextarea.View(), m.width, styles)
+		composer = renderExportDialog(*m.exportDialog, m.exportDialogSelected, m.exportFilenameInput, composerTextarea.View(), width, styles)
 	}
 	if m.textInputDialog != nil {
-		composer = renderTextInputDialog(*m.textInputDialog, composerTextarea.View(), m.width, styles)
+		composer = renderTextInputDialog(*m.textInputDialog, composerTextarea.View(), width, styles)
 	}
 	if m.sessionPicker != nil {
 		composer = m.sessionPicker.View()
 	} else if m.awaitingPermission && m.permissionRequest != nil {
-		composer = renderPermissionRequest(*m.permissionRequest, m.permissionSelected, m.permissionInput, m.permissionInputAnswer, m.width, styles)
+		composer = renderPermissionRequest(*m.permissionRequest, m.permissionSelected, m.permissionInput, m.permissionInputAnswer, width, styles)
 		if m.permissionInput {
 			composer += "\n" + composerTextarea.View()
 		}
 	} else if m.awaitingQuestion && m.questionRequest != nil {
-		composer = renderQuestionRequest(*m.questionRequest, m.questionIndex, m.questionSelected, m.questionCustom, m.questionSelections, m.questionCustomValues, m.width, styles)
+		composer = renderQuestionRequest(*m.questionRequest, m.questionIndex, m.questionSelected, m.questionCustom, m.questionSelections, m.questionCustomValues, width, styles)
 		if m.questionCustom {
 			composer += "\n" + composerTextarea.View()
 		}
@@ -417,6 +425,9 @@ type turnDoneMsg struct {
 	OpenTodos          bool
 	OpenMessageActions bool
 	RuntimeAction      string
+	RawOutput          *bool
+	Companion          *companion.Manifest
+	CompanionChanged   bool
 	Diff               *DiffView
 	PermissionSettings *PermissionSettings
 	Information        *InformationView
@@ -1109,6 +1120,10 @@ func (m model) handleBoundTUIActionGroup4A(key string) (model, bool, tea.Cmd) {
 func (m model) handleBoundTUIActionGroup4B(key string) (model, bool, tea.Cmd) {
 	switch {
 	case m.isBoundTUIAction("toggle expanded transcript", key):
+		if m.rawOutput {
+			m.status = "raw output · Alt+R restores rich output"
+			return m, true, nil
+		}
 		if m.helpOpen {
 			m.helpOpen = false
 		}

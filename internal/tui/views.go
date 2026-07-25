@@ -890,6 +890,9 @@ func (m model) promptFooterText(width int) string {
 	if m.transcriptMode && !strings.EqualFold(baseStatus, "transcript") {
 		status = appendStatusMode(status, "transcript", width)
 	}
+	if m.rawOutput && !strings.Contains(strings.ToLower(baseStatus), "raw output") {
+		status = appendStatusMode(status, "raw output", width)
+	}
 	mode := permissionModeFooterLabel(m.modeLabel)
 	if !footerHintsContain(hints, mode) {
 		status = appendStatusMode(status, mode, width)
@@ -1469,6 +1472,7 @@ func (m *model) layout(width int, height int) {
 		composerHeight = 1
 		reservedHeight = 5
 	}
+	reservedHeight += max(0, m.companionRows()-composerHeight)
 	m.textarea.SetHeight(composerHeight)
 	viewportHeight := height - reservedHeight
 	if viewportHeight < 6 {
@@ -1486,12 +1490,15 @@ func (m *model) refreshViewport() {
 	}
 	lines := []string{}
 	start := 0
-	if m.inline && !m.transcriptMode {
+	if m.inline && !m.transcriptMode && !m.rawOutput {
 		start = min(max(m.printedEntries, 0), len(m.transcript))
 	}
 	for index, entry := range m.transcript[start:] {
 		index += start
-		lines = append(lines, m.renderTranscriptEntry(entry, max(8, m.viewport.Width-2), index))
+		rendered := m.renderTranscriptEntry(entry, max(8, m.viewport.Width-2), index)
+		if strings.TrimSpace(rendered) != "" {
+			lines = append(lines, rendered)
+		}
 	}
 	m.viewport.SetContent(strings.Join(lines, "\n\n"))
 }
@@ -1524,13 +1531,22 @@ func (m model) renderTranscriptRange(start int, end int) string {
 	width := max(8, m.viewport.Width-2)
 	entries := make([]string, 0, end-start)
 	for index := start; index < end; index++ {
-		entries = append(entries, m.renderTranscriptEntry(m.transcript[index], width, index))
+		rendered := m.renderTranscriptEntry(m.transcript[index], width, index)
+		if strings.TrimSpace(rendered) != "" {
+			entries = append(entries, rendered)
+		}
 	}
 	return strings.Join(entries, "\n\n")
 }
 
 func (m model) renderTranscriptEntry(entry transcriptEntry, width int, index int) string {
 	styles := stylesForTheme(m.theme)
+	if m.rawOutput {
+		if strings.EqualFold(strings.TrimSpace(entry.Role), "welcome") {
+			return ""
+		}
+		return renderRawTranscriptEntry(entry)
+	}
 	if strings.EqualFold(strings.TrimSpace(entry.Role), "welcome") {
 		return renderWelcome(welcomeInfo{
 			Version:    m.version,

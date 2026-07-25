@@ -29,6 +29,7 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bookmarks"
 	"github.com/Rememorio/codog/internal/codeintel"
+	"github.com/Rememorio/codog/internal/companion"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/contextview"
 	"github.com/Rememorio/codog/internal/cron"
@@ -1933,6 +1934,10 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 	if a.planModeActive() {
 		a.enterTUIPlanMode(modeState)
 	}
+	selectedCompanion, companionErr := companion.Load(a.Config.ConfigHome, a.Config.TUIPet)
+	if companionErr != nil && a.Err != nil {
+		fmt.Fprintln(a.Err, "warning: terminal companion:", companionErr)
+	}
 	gitBranch, _ := gitops.Branch(a.Workspace)
 	submitter := tuiTurnSubmitter{
 		app: a, sess: sess, modeState: modeState,
@@ -1992,6 +1997,9 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 		ToggleVim: func(ctx context.Context) (tui.RuntimeControlResult, error) {
 			return a.toggleTUIVim(ctx)
 		},
+		ToggleRaw: func(ctx context.Context) (tui.RuntimeControlResult, error) {
+			return a.toggleTUIRawOutput(ctx)
+		},
 		StopBackground: func(ctx context.Context) (tui.RuntimeControlResult, error) {
 			return a.stopTUIBackground(ctx)
 		},
@@ -2039,6 +2047,8 @@ func (a *App) TUI(ctx context.Context, overrides config.FlagOverrides) error {
 			modeState.Sync(a.Config)
 			return modeState.Label()
 		},
+		RawOutput: rawOutputEnabled(a.Config.TUIRawOutputMode),
+		Companion: selectedCompanion,
 		PermissionRespond: func(response tui.PermissionResponse) {
 			select {
 			case permissionAnswers <- encodeTUIPermissionResponse(response):
@@ -2485,6 +2495,28 @@ func (a *App) tuiSessionControlSlashResult(ctx context.Context, req tuiSlashRequ
 
 func (a *App) tuiDisplayControlSlashResult(req tuiSlashRequest, sess *session.Session, modeState *tuiModeState) (tui.SlashResult, bool, error) {
 	switch req.command {
+	case "/raw":
+		request, err := parseRawOutputArgs(req.args, "toggle")
+		if err != nil {
+			return tui.SlashResult{Handled: true}, true, err
+		}
+		report, err := a.applyRawOutput(request)
+		enabled := report.Enabled
+		return tui.SlashResult{Handled: true, RawOutput: &enabled}, true, err
+	case "/pets", "/pet":
+		if len(req.args) == 0 || (len(req.args) == 1 && strings.EqualFold(req.args[0], "list")) {
+			view := a.tuiPetPickerView()
+			return tui.SlashResult{Handled: true, CommandView: &view}, true, nil
+		}
+		request, err := parsePetsArgs(req.args)
+		if err != nil {
+			return tui.SlashResult{Handled: true}, true, err
+		}
+		if request.Action != "use" && request.Action != "off" {
+			return tui.SlashResult{}, false, nil
+		}
+		_, selected, err := a.applyPets(request)
+		return tui.SlashResult{Handled: true, Companion: selected, CompanionChanged: true}, true, err
 	case "/theme", "/color":
 		if len(req.args) == 0 {
 			return tui.SlashResult{Handled: true, OpenThemePicker: true}, true, nil
