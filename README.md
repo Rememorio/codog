@@ -186,6 +186,13 @@ MCP servers can be declared with Codog's `mcp_servers` key, Claude-style
 `mcpServers`, or VS Code-style `mcp.servers`; all three are normalized into the
 same runtime server list.
 
+Existing Claude Code projects can be inspected with `codog import`. Codog reads
+compatible project rules, settings, skills, commands, agents, hooks, and MCP
+configuration in place, so those files remain the source of truth. Running
+`codog import run` converts recent Claude Code transcripts for the current
+workspace into Codog's JSONL session store without overwriting an existing
+session id.
+
 Use `codog config help --output-format json` to inspect the section names
 supported by the current binary. The main public sections are:
 

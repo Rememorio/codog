@@ -420,7 +420,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 	case "acp", "add-dir", "advisor", "agents", "subagent", "allowed-tools", "android", "ant-trace", "api", "api-key", "app", "auth", "autofix-pr", "backfill-sessions", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome", "cost",
 		"break-cache", "bridge", "bridge-kick", "bootstrap-plan", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "completion", "config", "continue", "context", "context-noninteractive", "conversation", "cron", "ctx_viz",
 		"debug-tool-call", "deferred-init", "definition", "desktop", "diagnostics", "diff", "doctor", "dump-manifests", "effort", "enterprise", "env", "exit", "exit-plan",
-		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "git", "good-claude", "green", "green-contract", "heapdump", "hooks", "language",
+		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "git", "good-claude", "green", "green-contract", "heapdump", "hooks", "import", "language",
 		"format", "help", "history", "hover", "ide", "init", "init-verifiers", "insights", "install", "install-github-app", "install-slack-app", "ios", "issue", "keybindings", "listen", "log", "map", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauth", "oauth-refresh", "onboarding", "open", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
 		"pr-comments", "pr_comments", "profile", "prompt", "prompt-history", "privacy-settings", "project", "providers", "permissions", "quit", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
@@ -2006,6 +2006,20 @@ func commandHelpSpecGroup5(topic string) (commandHelpSpec, bool) {
 			MutatesWorkspace:        false,
 			OutputFields:            []string{"sessions", "session_details", "session_id", "messages", "query", "matches", "issues", "next_actions", "message_index", "snippet", "created_at", "updated_at", "pinned_messages"},
 			StatusValues:            []string{"ok", "warn", "error"},
+		}, true
+	case "import":
+		return commandHelpSpec{
+			Topic:                   "import",
+			Command:                 "import",
+			Usage:                   "codog import [status|run] [--source DIR] [--max-sessions N|--all] [--max-age DAYS] [--output-format text|json]",
+			Text:                    "Import\n\nUsage:\n  codog import [status|run] [--source DIR] [--max-sessions N|--all] [--max-age DAYS] [--output-format text|json]\n  /import [status|run]\n\nDiscovers local Claude Code project rules, settings, skills, commands, agents, hooks, MCP configuration, and recent sessions. Compatible project assets remain loaded from their existing paths; `run` converts eligible workspace sessions into Codog's JSONL store without overwriting existing session ids.\n",
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        false,
+			OutputFields:            []string{"assets", "sessions_discovered", "sessions_eligible", "sessions_imported", "sessions_skipped", "sessions_failed", "sessions"},
+			StatusValues:            []string{"ready", "imported", "up_to_date", "partial", "error", "not_found"},
 		}, true
 	case "bookmarks":
 		return commandHelpSpec{

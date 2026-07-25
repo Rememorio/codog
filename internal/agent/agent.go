@@ -901,6 +901,8 @@ func runCLISessionsCommands(ctx context.Context, app *App, command string, rest 
 			return renderSessionsCommandError(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
+	case "import":
+		return wrapStructured(app.ClaudeImport(rest))
 	case "resume", "continue":
 		return wrapStructured(app.ResumeCommand(rest))
 	case "clear":

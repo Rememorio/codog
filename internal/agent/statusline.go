@@ -2073,6 +2073,7 @@ func builtInCommandNames() []string {
 		"hooks",
 		"hover",
 		"ide",
+		"import",
 		"init",
 		"init-verifiers",
 		"insights",
